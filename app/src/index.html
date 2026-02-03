@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<!-- VERSION-MODULAR-AI-HELPER-FIX-20241116-0350 -->
+<!-- FORCE RELOAD 2024-11-16-03-50 -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+  <meta http-equiv="Pragma" content="no-cache"/>
+  <meta http-equiv="Expires" content="0"/>
+  <!-- CACHE BUSTER v2024.12.09 FAVICON UPDATE -->
+  <title>RON Treasury</title>
+  <link rel="icon" href="/favicon.ico?v=20241209" type="image/x-icon">
+  <link rel="icon" href="/favicon.png?v=20241209" type="image/png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script>
+    tailwind.config = { theme: { extend: { fontFamily: { sans: ['Inter','sans-serif'] } } } };
+  </script>
+  <link rel="stylesheet" href="/css/main.css?v=20241210">
+  <script type="module" src="/js/main.js?v=20241210"></script>
+  <script type="module" src="/js/utils/input-binding.js?v=20241210"></script>
+  <script type="module" src="/js/features/ai-helper/widget.js?v=20241210"></script>
+</head>
+<body class="bg-gray-100">
+  <div id="landing-view" class="min-h-screen flex items-center justify-center px-4 py-12">
+    <div class="max-w-md w-full space-y-6">
+      <div class="bg-white shadow-2xl rounded-2xl p-8">
+        <div class="flex justify-center mb-4">
+          <img src="/logo.png" alt="RON Logo" class="h-40 w-auto">
+        </div>
+        <h1 class="text-3xl font-bold text-gray-900 text-center">Nauru Treasury</h1>
+        <p class="text-sm text-gray-600 text-center mt-2">Sign in to prepare, review, and manage ABA batches.</p>
+        <form id="landing-login-form" class="mt-6 space-y-4">
+          <div>
+            <label for="landing-email" class="block text-sm font-medium text-gray-700">Email</label>
+            <input id="landing-email" type="email" required autocomplete="email" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200" placeholder="name@example.nr">
+          </div>
+          <div>
+            <label for="landing-password" class="block text-sm font-medium text-gray-700">Password</label>
+            <input id="landing-password" type="password" required minlength="6" autocomplete="current-password" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200" placeholder="••••••••">
+          </div>
+          <div class="text-right">
+            <button type="button" id="landing-forgot-password" class="text-xs text-indigo-600 hover:text-indigo-800">Forgot password?</button>
+          </div>
+          <p id="landing-login-error" class="text-xs text-red-600 hidden"></p>
+          <button type="submit" class="w-full px-4 py-2.5 bg-amber-500 text-white font-semibold rounded-md shadow-sm hover:bg-amber-600">Sign In</button>
+        </form>
+        <div class="mt-6">
+          <details class="bg-white border border-gray-200 rounded-xl p-4">
+            <summary class="font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer">Need an account? Sign Up</summary>
+            <form id="landing-signup-form" class="mt-4 space-y-4">
+              <div>
+                <label for="signup-name" class="block text-sm font-medium text-gray-700">Full Name</label>
+                <input id="signup-name" type="text" required maxlength="40" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-indigo-200" placeholder="Your name">
+              </div>
+              <div>
+                <label for="signup-email" class="block text-sm font-medium text-gray-700">Email</label>
+                <input id="signup-email" type="email" required autocomplete="email" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-indigo-200" placeholder="name@example.nr">
+              </div>
+              <div>
+                <label for="signup-password" class="block text-sm font-medium text-gray-700">Password</label>
+                <input id="signup-password" type="password" required minlength="6" autocomplete="new-password" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-indigo-200" placeholder="••••••••">
+              </div>
+              <div>
+                <label for="signup-dept" class="block text-sm font-medium text-gray-700">Department Head</label>
+                <input id="signup-dept" type="text" maxlength="2" pattern="\d{2}" required class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-indigo-200" placeholder="e.g. 12">
+              </div>
+              <p id="signup-error" class="text-xs text-red-600 hidden"></p>
+              <button type="submit" class="w-full px-4 py-2.5 bg-indigo-500 text-white font-semibold rounded-md shadow-sm hover:bg-indigo-600">Request Access</button>
+              <p class="text-xs text-gray-500 mt-2 text-center">Your request will be sent to an administrator for review and approval.</p>
+            </form>
+          </details>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="app-shell" class="hidden p-4 sm:p-6 lg:p-8">
+    <div class="max-w-7xl mx-auto bg-white p-5 sm:p-6 rounded-2xl shadow-xl">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-6">
+        <div>
+          <h1 class="text-2xl sm:text-3xl font-bold text-gray-900">ABA Workflow Tools</h1>
+          <p id="account-context" class="text-sm text-gray-600 mt-1"></p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="change-password-btn" class="px-3 py-2 bg-indigo-500 text-white rounded-md hover:bg-indigo-600 text-sm hidden">Change Password</button>
+          <button id="logout-btn" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm hidden">Sign Out</button>
+        </div>
+      </div>
+
+    <!-- Tabs -->
+    <div class="flex gap-6 mb-6 border-b">
+      <div id="tab-generator" class="tab tab-active pb-3">Generator</div>
+      <div id="tab-my" class="tab pb-3">My Batches</div>
+      <div id="tab-reader" class="tab pb-3">Reader</div>
+      <div id="tab-banking" class="tab pb-3 hidden" aria-disabled="true">Banking</div>
+      <div id="tab-saas" class="tab pb-3 hidden" aria-disabled="true">SaaS</div>
+      <div id="tab-reviewer" class="tab pb-3 hidden" aria-disabled="true">Reviewer</div>
+      <div id="tab-admin" class="tab pb-3 hidden">Admin</div>
+    </div>
+
+  <!-- ======= GENERATOR ======= -->
+  <div id="panel-generator">
+    <!-- Header Settings -->
+    <div class="card p-4 sm:p-5 mb-4 header-compact">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- LEFT: Preset + LOCKED bank details -->
+        <div>
+          <div class="flex items-end justify-between mb-2">
+            <h2 class="section-title">RON Bank Account Details</h2>
+          </div>
+
+          <div class="mb-2 grid grid-cols-2 gap-3 items-end">
+            <div>
+              <label for="header-preset" class="block label-sm">Pick a Bank Account:</label>
+              <div class="mt-1 preset-highlight">
+                <select id="header-preset" class="input-sm text-sm border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 rounded-md w-preset">
+                  <option value="CBA-RON">CBA-RON</option>
+                  <option value="CBA-Agent">CBA-Agent</option>
+                  <option value="CBA-DFAT">CBA-DFAT</option>
+                  <option value="CBA-NSUDP">CBA-NSUDP</option>
+                  <option value="CBA-NZAID">CBA-NZAID</option>
+                  <option value="CBA-DEV.FUND">CBA-DEV.FUND</option>
+                  <option value="CBA-Seabed.Account">CBA-Seabed.Account</option>
+                  <option value="CBA-Tank Farm">CBA-Tank Farm</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label for="fi" class="block label-sm">Financial Institution</label>
+              <input type="text" id="fi" maxlength="3" class="mt-1 block w-full input-sm text-sm border-gray-300 rounded-md locked" readonly>
+            </div>
+          </div>
+          <p class="text-xs text-gray-500 mt-1">Switch preset to populate and lock bank fields.</p>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+            <div>
+              <label for="apca" class="block label-sm">APCA User ID</label>
+              <input type="text" id="apca" maxlength="6" class="mt-1 block w-full input-sm text-sm border-gray-300 rounded-md locked" readonly>
+            </div>
+            <div>
+              <label for="reel" class="block label-sm">Reel Sequence</label>
+              <input type="text" id="reel" value="1" class="mt-1 block w-full input-sm text-sm border-gray-300 rounded-md locked" readonly>
+            </div>
+            <div>
+              <label for="trace_bsb" class="block label-sm">Trace BSB, NNN-NNN</label>
+              <input type="text" id="trace_bsb" maxlength="7" class="mt-1 block w-full input-sm text-sm border-gray-300 rounded-md locked" readonly>
+            </div>
+            <div>
+              <label for="trace_acct" class="block label-sm">Trace Account</label>
+              <input type="text" id="trace_acct" maxlength="9" class="mt-1 block w-full input-sm text-sm border-gray-300 rounded-md locked" readonly>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: EDITABLE -->
+        <div>
+          <div class="flex items-end justify-between mb-2">
+            <h2 class="section-title">Department Specific Fields to Complete</h2>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div class="sm:col-span-2">
+              <label for="user" class="block label-sm">Name of User, max 26</label>
+              <input type="text" id="user" maxlength="26" class="mt-1 block w-full input-sm text-sm rounded-md editable-header">
+            </div>
+            <div>
+              <label for="desc" class="block label-sm">Description, max 12</label>
+              <input type="text" id="desc" maxlength="12" class="mt-1 block w-full input-sm text-sm rounded-md editable-header">
+            </div>
+            <div>
+              <label for="proc" class="block label-sm">Processing Date, DDMMYY</label>
+              <input type="text" id="proc" maxlength="6" class="mt-1 block w-full input-sm text-sm rounded-md editable-header">
+            </div>
+            <div class="sm:col-span-2">
+              <label for="remitter" class="block label-sm">Remitter Name, max 16</label>
+              <input type="text" id="remitter" maxlength="16" class="mt-1 block w-full input-sm text-sm rounded-md editable-header">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- BALANCING ENTRY (collapsible) -->
+      <div class="mt-4">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center">
+            <input id="balance_required" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" checked disabled>
+            <label for="balance_required" class="ml-2 label-sm">Balancing Entry, always on</label>
+          </div>
+          <span class="text-xs text-gray-500">Locked details on the left, txn code fixed to 13.</span>
+        </div>
+        <details id="balancing-section">
+          <summary class="cursor-pointer select-none text-sm text-gray-700">
+            <span class="summary-chevron text-gray-400">▾</span> Show balancing fields
+          </summary>
+
+        <div id="balancing-fields" class="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label for="balance_bsb" class="block label-sm">Balance BSB</label>
+            <input type="text" id="balance_bsb" class="mt-1 block w-full input-sm text-sm border-gray-300 rounded-md locked" readonly>
+          </div>
+          <div>
+            <label for="balance_acct" class="block label-sm">Balance Account</label>
+            <input type="text" id="balance_acct" class="mt-1 block w-full input-sm text-sm border-gray-300 rounded-md locked" readonly>
+          </div>
+          <div>
+            <label for="balance_title" class="block label-sm">Balance Account Title</label>
+            <input type="text" id="balance_title" class="mt-1 block w-full input-sm text-sm border-gray-300 rounded-md locked" readonly>
+          </div>
+          <div class="sm:col-span-3 flex items-end gap-3">
+            <div>
+              <label for="balance_txn_code" class="block label-sm">Balance Txn Code</label>
+              <input id="balance_txn_code" class="mt-1 input-sm text-sm border-gray-300 rounded-md locked w-compact text-center" value="13" readonly>
+            </div>
+            <div class="text-xs text-gray-500 pb-1">Debit balancing record will be added automatically.</div>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <!-- Transactions Panel -->
+    <div class="card p-4 sm:p-5 mb-6">
+      <h2 class="text-lg font-semibold text-gray-800 mb-3">Transactions</h2>
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <input type="file" id="csv-file-input" accept=".csv" class="hidden">
+          <button id="import-csv" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Import CSV</button>
+          <button id="export-csv" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Export Filtered CSV</button>
+          <button id="add-row" class="px-3 py-2 bg-indigo-500 text-white rounded-md hover:bg-indigo-600 text-sm">Add Row</button>
+          <button id="clear-all" class="px-3 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 text-sm">Clear All</button>
+          <!-- Bulk Lodgement Ref -->
+          <input id="bulk-lodgement-ref" type="text" maxlength="18" placeholder="Lodgement Ref" title="Max 18 characters" class="px-2 py-1 text-sm border border-gray-300 rounded-md" />
+          <button id="apply-bulk-lodgement" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm" title="Apply the entered value to all rows">Apply to All</button>
+        </div>
+        <div class="flex items-center gap-2">
+          <label for="transaction-search" class="sr-only">Search transactions</label>
+          <input id="transaction-search" type="search" placeholder="Search transactions" class="px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 w-48 sm:w-64" autocomplete="off" />
+        </div>
+      </div>
+      <div class="overflow-x-auto overflow-y-scroll relative shadow-sm sm:rounded-lg max-h-[60vh] transaction-scroll">
+        <table class="table-sticky w-full text-sm text-left text-gray-600 border border-gray-300">
+          <thead class="text-xs text-gray-700 uppercase bg-gray-200 border-b border-gray-300">
+          <tr>
+            <th class="py-2 px-2 border-r border-gray-300 w-12 text-center">Row</th>
+            <th class="py-2 px-2 border-r border-gray-300 w-24">
+              <button type="button" class="sort-btn" data-sort-key="bsb">BSB<span class="sort-indicator" aria-hidden="true"></span><span class="sr-only">Sort by BSB</span></button>
+            </th>
+            <th class="py-2 px-2 border-r border-gray-300 w-32">
+              <button type="button" class="sort-btn" data-sort-key="account">Account<span class="sort-indicator" aria-hidden="true"></span><span class="sr-only">Sort by account</span></button>
+            </th>
+            <th class="text-right py-2 px-2 border-r border-gray-300 w-28">
+              <button type="button" class="sort-btn justify-end" data-sort-key="amount">Amount<span class="sort-indicator" aria-hidden="true"></span><span class="sr-only">Sort by amount</span></button>
+            </th>
+            <th class="py-2 px-2 border-r border-gray-300 min-w-[16rem]">
+              <button type="button" class="sort-btn" data-sort-key="accountTitle">Account Title<span class="sort-indicator" aria-hidden="true"></span><span class="sr-only">Sort by account title</span></button>
+            </th>
+            <th class="py-2 px-2 border-r border-gray-300 min-w-[14rem]">
+              <button type="button" class="sort-btn" data-sort-key="lodgementRef">Lodgement Ref<span class="sort-indicator" aria-hidden="true"></span><span class="sr-only">Sort by lodgement reference</span></button>
+            </th>
+            <th class="py-2 px-2 border-r border-gray-300 text-center">Txn Code</th>
+            <th class="py-2 px-2 text-center border-r border-gray-300">Actions</th>
+          </tr>
+          </thead>
+          <tbody id="transaction-tbody"></tbody>
+        </table>
+      </div>
+      <p id="summary" class="mt-3 text-sm font-semibold text-gray-700"></p>
+      <div id="duplicate-summary" class="mt-2 text-sm"></div>
+      <div id="blocked-accounts-warning" class="mt-2 hidden">
+        <div class="bg-red-50 border border-red-200 rounded-md p-3">
+          <h4 class="text-sm font-semibold text-red-800 mb-1">⚠️ Blocked Accounts Detected</h4>
+          <div id="blocked-accounts-list" class="text-xs text-red-700"></div>
+          <p class="text-xs text-red-600 mt-2">Remove or correct these accounts before generating the ABA file.</p>
+        </div>
+      </div>
+      <div id="missing-lodgement-warning" class="mt-2 hidden">
+        <div class="bg-orange-50 border border-orange-200 rounded-md p-3">
+          <h4 class="text-sm font-semibold text-orange-800 mb-1">⚠️ Missing Lodgement References</h4>
+          <div id="missing-lodgement-list" class="text-xs text-orange-700"></div>
+          <p class="text-xs text-orange-600 mt-2">All transactions require a Lodgement Reference before generating the ABA file.</p>
+        </div>
+      </div>
+      <p id="errors" class="mt-2 text-sm text-red-600"></p>
+      <div id="import-summary" class="mt-2 text-sm text-gray-600"></div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="flex justify-center">
+      <button id="generate-aba" class="px-6 py-2.5 bg-green-500 text-white rounded-full font-semibold text-base shadow-md hover:bg-green-600">Generate ABA File</button>
+    </div>
+    <p class="mt-2 text-xs text-gray-900 text-center">For assistance, email Treasury support on <a href="mailto:fmis@naurufinance.info" class="underline">fmis@naurufinance.info</a></p>
+  </div>
+</div>
+
+  <!-- ======= MY BATCHES ======= -->
+  <div id="panel-my" class="hidden">
+    <div class="card p-4 sm:p-5 mb-4 space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <h2 class="section-title">My Batches</h2>
+          <div class="flex flex-wrap items-center gap-2">
+            <input id="my-batches-search" type="search" placeholder="Search code or PD#" class="px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring focus:ring-amber-200" />
+            <button id="my-batches-refresh" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Refresh</button>
+          </div>
+        </div>
+        <p id="my-batches-feedback" class="text-xs text-gray-500 hidden"></p>
+        <div class="border border-gray-200 rounded-lg">
+          <div class="overflow-x-auto">
+            <div class="max-h-96 overflow-y-auto">
+              <table class="w-full text-sm text-left text-gray-600" id="my-batches-table">
+                <thead class="bg-gray-100 text-xs uppercase text-gray-700">
+                  <tr>
+                    <th class="px-3 py-2">Code</th>
+                    <th class="px-3 py-2">Stage</th>
+                    <th class="px-3 py-2">PD#</th>
+                    <th class="px-3 py-2">Department</th>
+                    <th class="px-3 py-2">Created</th>
+                    <th class="px-3 py-2">Updated</th>
+                    <th class="px-3 py-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="my-batches-tbody">
+                  <tr><td colspan="7" class="px-3 py-3 text-center text-gray-500">No batches loaded yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card p-4 sm:p-5 text-sm text-gray-600 space-y-2">
+        <p class="font-semibold text-gray-800">How it works</p>
+        <ul class="list-disc list-inside space-y-1">
+          <li>Draft batches are fully editable. You can delete them or load them back into the Generator.</li>
+          <li>Submitted batches are read-only. Reviewers see the same information.</li>
+          <li>Rejected batches can be opened in Reader and loaded into the Generator to create a revision.</li>
+          <li>Every action (submit, reject, approve) records who made the change and when.</li>
+        </ul>
+      </div>
+    </div>
+
+  <!-- ======= ABA READER ======= -->
+  <div id="panel-reader" class="hidden">
+    <div class="card p-4 sm:p-5 mb-4">
+      <h2 class="text-lg font-semibold text-gray-800 mb-3">ABA Reader</h2>
+      <div class="flex flex-wrap items-center gap-3 mb-3">
+        <input type="file" id="aba-file-input" accept=".aba,.txt" class="hidden">
+        <button id="btn-load-aba" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Open ABA file</button>
+        <button id="btn-clear-reader" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Clear reader</button>
+        <!-- Export Parsed CSV intentionally removed -->
+        <button id="btn-load-into-generator" class="px-3 py-2 bg-indigo-500 text-white rounded-md hover:bg-indigo-600 text-sm disabled:opacity-50" disabled>Load into Generator</button>
+      </div>
+  <p id="reader-errors" class="text-sm text-red-600 mb-1"></p>
+  <div id="reader-duplicate-summary" class="text-xs text-amber-700 mb-2 hidden"></div>
+
+      <!-- Parsed Header -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div class="card p-3">
+          <h3 class="font-semibold mb-2">Header, Type 0</h3>
+          <div class="text-sm text-gray-700 space-y-1" id="reader-header">
+            <div>FI: <span id="r-fi" class="font-mono"></span></div>
+            <div>User Name: <span id="r-user" class="font-mono"></span></div>
+            <div>APCA: <span id="r-apca" class="font-mono"></span></div>
+            <div>Description: <span id="r-desc" class="font-mono"></span></div>
+            <div>Processing Date, DDMMYY: <span id="r-proc" class="font-mono"></span></div>
+            <div>Reel: <span id="r-reel" class="font-mono"></span></div>
+            <div id="r-bal-row" class="hidden">Bank account preset: <span id="r-bal-preset" class="font-mono"></span></div>
+            <div id="r-bal-acct-row" class="hidden">Account: <span id="r-bal-bsb" class="font-mono"></span> <span id="r-bal-acct" class="font-mono"></span></div>
+          </div>
+        </div>
+        <div class="card p-3">
+          <h3 class="font-semibold mb-2">Control, Type 7</h3>
+          <div class="text-sm text-gray-700 space-y-1" id="reader-control">
+            <div>Net Total: <span id="r-net" class="font-mono"></span></div>
+            <div>Total Credits: <span id="r-credits" class="font-mono"></span></div>
+            <div>Total Debits: <span id="r-debits" class="font-mono"></span></div>
+            <div>Record Count, incl balance: <span id="r-count" class="font-mono"></span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Parsed Transactions -->
+      <div class="overflow-x-auto overflow-y-scroll relative shadow-sm sm:rounded-lg max-h-[60vh] transaction-scroll">
+        <table class="table-sticky w-full text-sm text-left text-gray-600 border border-gray-300">
+          <thead class="text-xs text-gray-700 uppercase bg-gray-200 border-b border-gray-300">
+          <tr>
+            <th class="py-2 px-2 border-r border-gray-300">Line</th>
+            <th class="py-2 px-2 border-r border-gray-300">BSB</th>
+            <th class="py-2 px-2 border-r border-gray-300">Account</th>
+            <th class="text-right py-2 px-2 border-r border-gray-300">Amount</th>
+            <th class="py-2 px-2 border-r border-gray-300">Account Title</th>
+            <th class="py-2 px-2 border-r border-gray-300">Lodgement Ref</th>
+            <th class="py-2 px-2 border-r border-gray-300">Txn Code</th>
+            <th class="py-2 px-2 border-r border-gray-300">Trace BSB</th>
+            <th class="py-2 px-2 border-r border-gray-300">Trace Account</th>
+          </tr>
+          </thead>
+          <tbody id="reader-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <!-- ======= REVIEWER TOOLS ======= -->
+  <div id="panel-reviewer" class="hidden">
+    <div class="card p-4 sm:p-5 mb-4 space-y-4">
+      <div class="bg-amber-50 border border-amber-200 rounded-md px-3 py-2 text-sm text-amber-900">
+        Select a batch from Recent Archives to inspect the ABA details and record your decision.
+      </div>
+      <div class="grid gap-4 items-start lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div class="space-y-3">
+          <p id="retrieve-batch-error" class="text-xs text-red-600 hidden"></p>
+          <div id="retrieve-batch-result" class="text-sm text-gray-700 space-y-3"></div>
+        </div>
+        <div id="retrieve-decision-container" class="text-sm text-gray-700 space-y-3"></div>
+      </div>
+    </div>
+
+    <div id="reviewer-archives-card" class="card p-4 sm:p-5 space-y-4 hidden">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <h2 class="section-title">Batch Archives</h2>
+        <div class="flex flex-wrap items-center gap-2">
+          <input id="reviewer-archive-search" type="search" placeholder="Search code or PD#…" class="px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring focus:ring-amber-200" />
+          <button id="reviewer-toggle-archive-scope" class="px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm" aria-pressed="false">Show full archive</button>
+          <button id="reviewer-refresh-archives" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Refresh</button>
+        </div>
+      </div>
+      <p id="reviewer-archive-feedback" class="text-xs text-green-600 hidden"></p>
+      <div class="border border-gray-200 rounded-lg">
+        <div class="overflow-x-auto">
+          <div class="max-h-80 overflow-y-auto">
+            <table class="w-full text-sm text-left text-gray-600" id="reviewer-archive-table">
+              <thead class="bg-gray-100 text-xs uppercase text-gray-700">
+                <tr>
+                  <th class="px-3 py-2">Code</th>
+                  <th class="px-3 py-2">Stage</th>
+                  <th class="px-3 py-2">PD#</th>
+                  <th class="px-3 py-2">Department</th>
+                  <th class="px-3 py-2">Prepared</th>
+                  <th class="px-3 py-2">Prepared By</th>
+                  <th class="px-3 py-2">Created</th>
+                  <th class="px-3 py-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="reviewer-archive-tbody" data-role="reviewer">
+                <tr><td colspan="8" class="px-3 py-3 text-center text-gray-500">Sign in to view recent archives.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======= ADMIN TOOLS ======= -->
+  <div id="panel-admin" class="hidden">
+    <div id="admin-locked" class="card p-4 sm:p-5 mb-4 text-sm text-amber-800 bg-amber-50 border border-amber-200">
+      Admin access only. Sign in with an admin account to manage reviewers and archives.
+    </div>
+    <div id="admin-content" class="hidden">
+      <div class="flex flex-col md:flex-row gap-6">
+        <aside id="admin-nav" class="md:w-56 flex-shrink-0">
+          <nav class="flex flex-col space-y-2">
+            <button type="button" data-admin-section="signups" class="admin-nav-btn w-full text-left px-3 py-2 text-sm rounded-md bg-amber-100 text-amber-900 shadow-sm">Signup Requests</button>
+            <button type="button" data-admin-section="accounts" class="admin-nav-btn w-full text-left px-3 py-2 text-sm rounded-md text-gray-700 hover:bg-amber-50">User Accounts</button>
+            <button type="button" data-admin-section="blacklist" class="admin-nav-btn w-full text-left px-3 py-2 text-sm rounded-md text-gray-700 hover:bg-amber-50">Blocked Bank Accts</button>
+            <button type="button" data-admin-section="archives" class="admin-nav-btn w-full text-left px-3 py-2 text-sm rounded-md text-gray-700 hover:bg-amber-50">Batch Archives</button>
+            <button type="button" data-admin-section="testing" class="admin-nav-btn w-full text-left px-3 py-2 text-sm rounded-md text-gray-700 hover:bg-amber-50">Testing Mode</button>
+          </nav>
+        </aside>
+        <div id="admin-panel-container" class="flex-1 relative">
+          <section id="admin-panel-signups" data-admin-section="signups" class="admin-panel space-y-6 absolute top-0 left-0 right-0">
+            <div class="card p-4 sm:p-5 space-y-4">
+              <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <h2 class="section-title">Signup Requests</h2>
+                <button id="admin-refresh-signups" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Refresh</button>
+              </div>
+              <div class="space-y-6">
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between">
+                    <h3 class="font-semibold text-gray-800">Pending</h3>
+                    <span id="admin-pending-signup-count" class="text-xs text-gray-500"></span>
+                  </div>
+                  <div class="overflow-x-auto border border-gray-200 rounded-lg">
+                    <div class="max-h-60 overflow-y-auto">
+                      <table class="w-full text-sm text-left text-gray-600" id="admin-pending-signup-table">
+                        <thead class="bg-gray-100 text-xs uppercase text-gray-700">
+                          <tr>
+                            <th class="px-3 py-2">Name</th>
+                            <th class="px-3 py-2">Email</th>
+                            <th class="px-3 py-2">Department</th>
+                            <th class="px-3 py-2">Requested</th>
+                            <th class="px-3 py-2 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody id="admin-pending-signup-tbody">
+                          <tr><td colspan="5" class="px-3 py-3 text-center text-gray-500">No pending requests.</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between">
+                    <h3 class="font-semibold text-gray-800">Completed</h3>
+                    <span class="text-xs text-gray-500">Latest 25 approvals &amp; rejections</span>
+                  </div>
+                  <div class="overflow-x-auto border border-gray-200 rounded-lg">
+                    <div class="max-h-60 overflow-y-auto">
+                      <table class="w-full text-sm text-left text-gray-600" id="admin-signup-history-table">
+                        <thead class="bg-gray-100 text-xs uppercase text-gray-700">
+                          <tr>
+                            <th class="px-3 py-2">Name</th>
+                            <th class="px-3 py-2">Email</th>
+                            <th class="px-3 py-2">Department</th>
+                            <th class="px-3 py-2">Reviewed</th>
+                            <th class="px-3 py-2">Status</th>
+                            <th class="px-3 py-2">Reviewer</th>
+                          </tr>
+                        </thead>
+                        <tbody id="admin-signup-history-tbody">
+                          <tr><td colspan="6" class="px-3 py-3 text-center text-gray-500">No recent decisions.</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <p id="admin-signup-feedback" class="text-xs text-green-600 hidden"></p>
+            </div>
+          </section>
+
+          <section id="admin-panel-testing" data-admin-section="testing" class="admin-panel space-y-6 hidden absolute top-0 left-0 right-0">
+            <div class="card p-4 sm:p-5 space-y-4">
+              <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h2 class="section-title">Testing Mode</h2>
+                  <p class="text-xs text-gray-500 mt-1">When enabled, outbound emails (review notifications, account notices, etc.) are suppressed so you can run manual tests safely.</p>
+                </div>
+                <button id="admin-testing-toggle" class="px-4 py-2 bg-indigo-500 text-white rounded-md hover:bg-indigo-600 disabled:opacity-60 disabled:cursor-not-allowed">Checking…</button>
+              </div>
+              <div id="admin-testing-banner" class="bg-amber-100 border border-amber-300 text-amber-900 rounded-md px-3 py-2 text-sm hidden">
+                Testing mode is active. Reviewers and submitters will not receive automated emails until it is disabled.
+              </div>
+              <p id="admin-testing-status" class="text-sm text-gray-700">Loading testing status…</p>
+              <p id="admin-testing-meta" class="text-xs text-gray-500"></p>
+              <p id="admin-testing-feedback" class="text-xs text-gray-600 hidden"></p>
+            </div>
+          </section>
+
+
+          <section id="admin-panel-accounts" data-admin-section="accounts" class="admin-panel space-y-6 hidden absolute top-0 left-0 right-0">
+            <div class="card p-4 sm:p-5 space-y-4">
+              <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <h2 class="section-title flex items-center gap-2">User Accounts
+                  <span id="admin-reviewer-count" class="inline-flex items-center px-2 py-0.5 text-xs font-semibold bg-gray-200 text-gray-700 rounded-full">-</span>
+                </h2>
+                <button id="admin-refresh-reviewers" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Refresh</button>
+              </div>
+
+              <form id="admin-create-reviewer-form" class="grid gap-3 grid-cols-1 md:grid-cols-2 text-sm border border-dashed border-gray-300 rounded-lg p-3">
+                <h3 class="md:col-span-2 font-semibold text-gray-800">Add Account</h3>
+                <label class="flex flex-col gap-1">
+                  <span class="label-sm">Email</span>
+                  <input type="email" id="admin-new-email" required class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200">
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="label-sm">Display name</span>
+                  <input type="text" id="admin-new-name" class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200">
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="label-sm">Role</span>
+                  <select id="admin-new-role" class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200">
+                    <option value="user">User</option>
+                    <option value="banking">Banking</option>
+                    <option value="reviewer" selected>Reviewer</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="label-sm">Department Head</span>
+                  <input type="text" id="admin-new-dept" maxlength="2" pattern="\d{2}" class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200" placeholder="Required for users">
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="label-sm">Notify on submission</span>
+                  <select id="admin-new-notify" class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200">
+                    <option value="yes" selected>Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="label-sm">Send welcome email</span>
+                  <select id="admin-new-send-email" class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200">
+                    <option value="yes">Yes</option>
+                    <option value="no" selected>No</option>
+                  </select>
+                </label>
+                <div class="md:col-span-2 flex items-center justify-between gap-2">
+                  <p id="admin-create-reviewer-error" class="text-xs text-red-600 hidden"></p>
+                  <div class="flex items-center gap-2">
+                    <button type="button" id="admin-create-reviewer-cancel" class="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-100 hidden">Cancel edit</button>
+                    <button type="submit" id="admin-create-reviewer-submit" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">Create account</button>
+                  </div>
+                </div>
+                <p id="admin-create-reviewer-success" class="md:col-span-2 text-xs text-green-600 hidden"></p>
+              </form>
+              <div class="grid gap-3 md:grid-cols-2 text-sm">
+                <label class="flex flex-col gap-1">
+                  <span class="label-sm">Search</span>
+                  <input type="search" id="admin-reviewer-search" placeholder="Search name or email" class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200">
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="label-sm">Role filter</span>
+                  <select id="admin-reviewer-role" class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200">
+                    <option value="all" selected>All roles</option>
+                    <option value="user">Users</option>
+                    <option value="banking">Banking</option>
+                    <option value="reviewer">Reviewers</option>
+                    <option value="admin">Admins</option>
+                  </select>
+                </label>
+              </div>
+
+              <p id="admin-reviewer-feedback" class="text-xs text-green-600 hidden"></p>
+
+              <div class="border border-gray-200 rounded-lg">
+                <div class="overflow-x-auto">
+                  <div class="max-h-96 overflow-y-auto">
+                    <table class="w-full text-sm text-left text-gray-600" id="admin-reviewer-table">
+                      <thead class="bg-gray-100 text-xs uppercase text-gray-700 sticky top-0 z-10">
+                        <tr>
+                          <th class="px-3 py-2">Name</th>
+                          <th class="px-3 py-2">Email</th>
+                          <th class="px-3 py-2">Role</th>
+                          <th class="px-3 py-2">Department</th>
+                          <th class="px-3 py-2">Status</th>
+                          <th class="px-3 py-2">Notifications</th>
+                          <th class="px-3 py-2">Last Login</th>
+                          <th class="px-3 py-2 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody id="admin-reviewer-list">
+                        <tr><td colspan="8" class="px-3 py-3 text-center text-gray-500">No accounts loaded.</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="admin-panel-blacklist" data-admin-section="blacklist" class="admin-panel space-y-6 hidden absolute top-0 left-0 right-0">
+            <div class="card p-4 sm:p-5 space-y-4">
+              <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <h2 class="section-title flex items-center gap-2">Blocked Bank Accts
+                  <span id="admin-blacklist-count" class="inline-flex items-center px-2 py-0.5 text-xs font-semibold bg-gray-200 text-gray-700 rounded-full">-</span>
+                </h2>
+                <button id="admin-refresh-blacklist" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Refresh</button>
+              </div>
+              <form id="admin-blacklist-form" class="grid gap-3 grid-cols-1 md:grid-cols-4 text-sm border border-dashed border-gray-300 rounded-lg p-3">
+                <h3 class="md:col-span-4 font-semibold text-gray-800">Add to blacklist</h3>
+                <label class="flex flex-col gap-1">
+                  <span class="label-sm">BSB</span>
+                  <input type="text" id="admin-blacklist-bsb" required maxlength="7" pattern="\d{3}-\d{3}" placeholder="123-456" class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200">
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="label-sm">Account</span>
+                  <input type="text" id="admin-blacklist-account" required pattern="\d{5,16}" maxlength="16" placeholder="123456789" class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200">
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="label-sm">Acc. Name (optional)</span>
+                  <input type="text" id="admin-blacklist-label" maxlength="200" class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200" placeholder="Account name / payee">
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="label-sm">Active</span>
+                  <select id="admin-blacklist-active" class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200">
+                    <option value="yes" selected>Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+                <label class="flex flex-col gap-1 md:col-span-4">
+                  <span class="label-sm">Notes (optional)</span>
+                  <textarea id="admin-blacklist-notes" rows="2" maxlength="2000" class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200" placeholder="Internal notes or enforcement reason"></textarea>
+                </label>
+                <div class="md:col-span-4 flex flex-wrap gap-2 items-center">
+                  <button type="submit" id="admin-blacklist-submit" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">Add entry</button>
+                  <button type="button" id="admin-blacklist-cancel-edit" class="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-100 hidden">Cancel edit</button>
+                  <button type="button" id="admin-blacklist-import" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300">Import CSV</button>
+                  <input type="file" id="admin-blacklist-import-file" accept=".csv,.txt" class="hidden">
+                  <p id="admin-blacklist-error" class="text-xs text-red-600 hidden"></p>
+                </div>
+              </form>
+
+              <p class="text-xs text-gray-500">Import CSV files with columns such as BSB, Account, Acc. Name, Notes, Active. You can export the template from Excel.</p>
+
+              <div class="grid gap-3 md:grid-cols-2 text-sm">
+                <label class="flex flex-col gap-1 md:col-span-2">
+                  <span class="label-sm">Search</span>
+                  <input type="search" id="admin-blacklist-search" placeholder="Search BSB, account, or acc. name" class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring focus:ring-amber-200">
+                </label>
+              </div>
+
+              <p id="admin-blacklist-feedback" class="text-xs text-green-600 hidden"></p>
+
+              <div class="border border-gray-200 rounded-lg">
+                <div class="overflow-x-auto">
+                  <div class="max-h-80 overflow-y-auto">
+                    <table class="w-full text-sm text-left text-gray-600" id="admin-blacklist-table">
+                      <thead class="bg-gray-100 text-xs uppercase text-gray-700 sticky top-0 z-10">
+                        <tr>
+                          <th class="px-3 py-2">BSB</th>
+                          <th class="px-3 py-2">Account</th>
+                          <th class="px-3 py-2">Acc. Name</th>
+                          <th class="px-3 py-2">Notes</th>
+                          <th class="px-3 py-2">Status</th>
+                          <th class="px-3 py-2 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody id="admin-blacklist-tbody">
+                        <tr><td colspan="6" class="px-3 py-3 text-center text-gray-500">No blocked entries.</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="admin-panel-archives" data-admin-section="archives" class="admin-panel space-y-6 hidden absolute top-0 left-0 right-0">
+            <div class="card p-4 sm:p-5 space-y-4">
+              <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <h2 class="section-title">Batch Archives</h2>
+                <div class="flex flex-wrap items-center gap-2">
+                  <input id="admin-archive-search" type="search" placeholder="Search code or PD#…" class="px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring focus:ring-amber-200" />
+                  <button id="admin-toggle-archive-scope" class="px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm" aria-pressed="false">Show full archive</button>
+                  <button id="admin-refresh-archives" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Refresh</button>
+                </div>
+              </div>
+              <div id="admin-archive-stats" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 hidden" aria-live="polite">
+                <div class="p-3 border border-gray-200 rounded-lg bg-gray-50 shadow-sm">
+                  <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Total batches</p>
+                  <p id="admin-archive-stat-total" class="text-2xl font-semibold text-gray-900 mt-1">-</p>
+                  <p id="admin-archive-scope-hint" class="text-xs text-gray-500 mt-1">Scope: recent</p>
+                </div>
+                <div class="p-3 border border-blue-100 rounded-lg bg-blue-50 shadow-sm">
+                  <p class="text-xs font-semibold uppercase tracking-wide text-blue-700">Submitted</p>
+                  <p id="admin-archive-stat-submitted" class="text-2xl font-semibold text-blue-900 mt-1">-</p>
+                  <p class="text-xs text-blue-700 mt-1">Current view</p>
+                </div>
+                <div class="p-3 border border-green-100 rounded-lg bg-green-50 shadow-sm">
+                  <p class="text-xs font-semibold uppercase tracking-wide text-green-700">Approved</p>
+                  <p id="admin-archive-stat-approved" class="text-2xl font-semibold text-green-900 mt-1">-</p>
+                  <p class="text-xs text-green-700 mt-1">Current view</p>
+                </div>
+                <div class="p-3 border border-red-100 rounded-lg bg-red-50 shadow-sm">
+                  <p class="text-xs font-semibold uppercase tracking-wide text-red-700">Rejected</p>
+                  <p id="admin-archive-stat-rejected" class="text-2xl font-semibold text-red-900 mt-1">-</p>
+                  <p class="text-xs text-red-700 mt-1">Current view</p>
+                </div>
+              </div>
+              <p id="admin-archive-feedback" class="text-xs text-green-600 hidden"></p>
+              <div class="border border-gray-200 rounded-lg">
+                <div class="overflow-x-auto">
+                  <div class="max-h-80 overflow-y-auto">
+                    <table class="w-full text-sm text-left text-gray-600" id="admin-archive-table">
+                      <thead class="bg-gray-100 text-xs uppercase text-gray-700">
+                        <tr>
+                          <th class="px-3 py-2">Code</th>
+                          <th class="px-3 py-2">Stage</th>
+                          <th class="px-3 py-2">PD#</th>
+                          <th class="px-3 py-2">Department</th>
+                          <th class="px-3 py-2">Prepared</th>
+                          <th class="px-3 py-2">Prepared By</th>
+                          <th class="px-3 py-2">Created</th>
+                          <th class="px-3 py-2 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody id="admin-archive-tbody" data-role="admin">
+                        <tr><td colspan="8" class="px-3 py-3 text-center text-gray-500">No archives loaded.</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======= SAAS SYNC ======= -->
+  <div id="panel-saas" class="hidden">
+    <div class="card p-4 sm:p-5 mb-4">
+      <h2 class="section-title mb-4">SaaS File Synchronisation</h2>
+      <div class="space-y-4">
+        <div class="bg-blue-50 border border-blue-200 rounded-md p-4">
+          <h3 class="text-sm font-semibold text-blue-900 mb-2">Automatic Sync</h3>
+          <p class="text-sm text-blue-800">The SFTP sync runs automatically every 15 minutes to update files.</p>
+        </div>
+        
+        <div class="bg-amber-50 border border-amber-200 rounded-md p-4">
+          <h3 class="text-sm font-semibold text-amber-900 mb-2">Manual Sync</h3>
+          <p class="text-sm text-amber-800 mb-3">For urgent cases, you can trigger a manual sync.</p>
+          
+          <div class="flex items-center gap-3">
+            <button id="sync-now-btn" class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed">
+              Sync Now
+            </button>
+            <div id="sync-status" class="text-sm text-gray-600"></div>
+          </div>
+          
+          <div id="sync-feedback" class="mt-3 text-sm hidden"></div>
+        </div>
+        
+        <div class="bg-gray-50 border border-gray-200 rounded-md p-4">
+          <h3 class="text-sm font-semibold text-gray-900 mb-2">Recent Sync Requests</h3>
+          <div id="sync-history" class="text-sm text-gray-600">
+            <div class="text-center py-2">Loading recent requests...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======= BANKING TOOLS ======= -->
+  <div id="panel-banking" class="hidden">
+    <div class="flex flex-col md:flex-row gap-6">
+      <aside class="md:w-56 flex-shrink-0">
+        <nav class="flex flex-col space-y-2">
+          <button type="button" data-banking-section="converter" class="banking-nav-btn w-full text-left px-3 py-2 text-sm rounded-md bg-amber-100 text-amber-900 shadow-sm hover:bg-amber-50">CSV → BAI2</button>
+          <button type="button" data-banking-section="checker" class="banking-nav-btn w-full text-left px-3 py-2 text-sm rounded-md text-gray-700 hover:bg-amber-50">BAI2 File Check</button>
+        </nav>
+      </aside>
+      <div class="flex-1 relative">
+        <section id="banking-panel-converter" data-banking-section="converter" class="banking-panel space-y-5 absolute top-0 left-0 right-0">
+          <div class="card p-4 sm:p-5 space-y-5">
+            <div>
+              <h2 class="section-title">CSV to BAI2 Converter</h2>
+              <p class="text-sm text-gray-600">Upload a bank statement CSV (Process date, Description, Currency Code, Debit, Credit, Balance) to produce a BAI2 file for Australian banks.</p>
+            </div>
+            <form id="bai-metadata-form" class="grid grid-cols-1 lg:grid-cols-2 gap-4 text-sm">
+              <div class="space-y-3">
+                <div>
+                  <label for="bai-sender-id" class="block font-medium text-gray-700">Sender ID</label>
+                  <input id="bai-sender-id" type="text" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2" placeholder="e.g. CBA" value="CBA">
+                </div>
+                <div>
+                  <label for="bai-receiver-id" class="block font-medium text-gray-700">Receiver ID</label>
+                  <input id="bai-receiver-id" type="text" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2" placeholder="e.g. BANK" value="BANK">
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label for="bai-file-id" class="block font-medium text-gray-700">File ID</label>
+                    <input id="bai-file-id" type="number" min="1" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2" value="1">
+                  </div>
+                  <div>
+                    <label for="bai-group-status" class="block font-medium text-gray-700">Group Status</label>
+                    <select id="bai-group-status" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2">
+                      <option value="1">1 - Update</option>
+                      <option value="2">2 - Delete</option>
+                      <option value="3">3 - Preliminary</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="space-y-3">
+                <div>
+                  <label for="bai-account-number" class="block font-medium text-gray-700">Account Number</label>
+                  <input id="bai-account-number" type="text" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2" placeholder="e.g. 123456789">
+                </div>
+                <div>
+                  <label for="bai-currency" class="block font-medium text-gray-700">Currency Code</label>
+                  <input id="bai-currency" type="text" maxlength="3" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2" value="AUD">
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label for="bai-credit-code" class="block font-medium text-gray-700">Default Credit Txn Code</label>
+                    <input id="bai-credit-code" type="text" maxlength="3" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2" value="399">
+                  </div>
+                  <div>
+                    <label for="bai-debit-code" class="block font-medium text-gray-700">Default Debit Txn Code</label>
+                    <input id="bai-debit-code" type="text" maxlength="3" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2" value="699">
+                  </div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label for="bai-summary-code" class="block font-medium text-gray-700">Account Summary Type Code</label>
+                    <input id="bai-summary-code" type="text" maxlength="3" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2" value="015">
+                  </div>
+                  <div>
+                    <label for="bai-detail-funds" class="block font-medium text-gray-700">Detail Funds Type (optional)</label>
+                    <input id="bai-detail-funds" type="text" maxlength="10" class="mt-1 w-full border border-gray-300 rounded-md px-3 py-2" placeholder="e.g. NPP">
+                  </div>
+                </div>
+              </div>
+            </form>
+            <div class="space-y-3 text-sm">
+              <div class="flex flex-wrap items-center gap-3">
+                <input type="file" id="bai-csv-input" accept=".csv" class="hidden">
+                <button id="bai-select-csv" type="button" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300">Select CSV</button>
+                <span id="bai-file-info" class="text-xs text-gray-500">No file selected.</span>
+              </div>
+              <p id="bai-error" class="text-xs text-red-600 hidden"></p>
+              <textarea id="bai-output" rows="12" class="w-full font-mono text-xs border border-gray-300 rounded-md px-3 py-2" placeholder="Generated BAI2 output will appear here" readonly></textarea>
+              <div class="flex flex-wrap gap-3">
+                <button id="bai-generate-btn" type="button" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">Generate BAI2</button>
+                <button id="bai-download-btn" type="button" class="px-4 py-2 bg-indigo-500 text-white rounded-md hover:bg-indigo-600 disabled:opacity-50" disabled>Download BAI2</button>
+                <button id="bai-copy-btn" type="button" class="px-3 py-2 border border-gray-300 rounded-md text-gray-600 hover:bg-gray-100">Copy Output</button>
+              </div>
+              <p id="bai-summary" class="text-xs text-gray-600"></p>
+            </div>
+          </div>
+        </section>
+
+        <section id="banking-panel-checker" data-banking-section="checker" class="banking-panel hidden absolute top-0 left-0 right-0">
+          <div class="card p-4 sm:p-5 space-y-4">
+            <div>
+              <h2 class="section-title">BAI2 File Check</h2>
+              <p class="text-sm text-gray-600">Upload or paste a BAI2 file to validate record sequencing, totals, and file metadata before sharing with banks.</p>
+            </div>
+            <div class="space-y-3 text-sm">
+              <div class="flex flex-wrap items-center gap-3">
+                <input type="file" id="bai-check-input" accept=".bai,.txt" class="hidden">
+                <button id="bai-check-select" type="button" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300">Select BAI2 file</button>
+                <span id="bai-check-file-info" class="text-xs text-gray-500">No file selected.</span>
+              </div>
+              <textarea id="bai-check-text" rows="10" class="w-full font-mono text-xs border border-gray-300 rounded-md px-3 py-2" placeholder="Paste BAI2 content here"></textarea>
+              <p id="bai-check-error" class="text-xs text-red-600 hidden"></p>
+              <div class="flex flex-wrap gap-3">
+                <button id="bai-check-run" type="button" class="px-4 py-2 bg-indigo-500 text-white rounded-md hover:bg-indigo-600">Run Checks</button>
+                <button id="bai-check-clear" type="button" class="px-3 py-2 border border-gray-300 rounded-md text-gray-600 hover:bg-gray-100">Clear</button>
+                <button id="bai-check-sanitize" type="button" class="px-3 py-2 border border-gray-300 rounded-md text-gray-600 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed" disabled>Copy Sanitized Output</button>
+                <button id="bai-check-download" type="button" class="px-3 py-2 border border-gray-300 rounded-md text-gray-600 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed" disabled>Download Sanitized</button>
+              </div>
+              <p id="bai-check-sanitize-msg" class="text-xs text-green-600 hidden"></p>
+              <div>
+                <h3 class="font-medium text-gray-800 text-sm">Summary</h3>
+                <div id="bai-check-summary" class="mt-1 text-xs text-gray-600 border border-gray-200 rounded-md px-3 py-2 bg-gray-50 whitespace-pre-line">No results yet.</div>
+              </div>
+              <div>
+                <h3 class="font-medium text-gray-800 text-sm">Issues</h3>
+                <div id="bai-check-issues" class="mt-1 text-xs text-gray-600 border border-gray-200 rounded-md px-3 py-2 bg-gray-50">No issues reported yet.</div>
+              </div>
+              <div>
+                <h3 class="font-medium text-gray-800 text-sm">Preview</h3>
+                <div id="bai-check-preview" class="mt-1 text-xs text-gray-700 border border-gray-200 rounded-md bg-white max-h-64 overflow-y-auto">
+                  <div class="px-3 py-2 text-gray-500">Run checks to see parsed lines here.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Input binding script moved to /js/utils/input-binding.js -->
+
+<!-- AI Helper styles are now in /css/main.css -->
+
+<!-- Modal HTML -->
+<div id="modal-backdrop" class="hidden">
+  <div id="modal-content" class="bg-white rounded-lg shadow-2xl w-full max-w-md mx-4 p-5 relative">
+    <button id="modal-close" class="absolute top-3 right-3 text-gray-500 hover:text-gray-700 text-xl font-bold">✕</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<!-- AI Helper Chat Widget -->
+<div id="ai-helper-widget" class="fixed bottom-4 right-4 z-50">
+  <!-- Chat Toggle Button -->
+  <button id="ai-helper-toggle" class="bg-blue-600 hover:bg-blue-700 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-lg transition-transform hover:scale-110">
+    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+    </svg>
+  </button>
+  
+  <!-- Chat Window -->
+  <div id="ai-helper-window" class="hidden absolute bottom-16 right-0 w-96 h-[500px] bg-white rounded-lg shadow-2xl flex flex-col">
+    <!-- Header -->
+    <div class="bg-blue-600 text-white px-4 py-3 rounded-t-lg flex justify-between items-center">
+      <div class="flex items-center gap-2">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+        </svg>
+        <span class="font-semibold">AI Helper</span>
+      </div>
+      <button id="ai-helper-close" class="hover:bg-blue-700 rounded p-1">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+        </svg>
+      </button>
+    </div>
+    
+    <!-- Messages Area -->
+    <div id="ai-helper-messages" class="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
+      <div class="text-sm text-gray-600 bg-white rounded-lg p-3 shadow-sm">
+        "Ekamawir omo" How can I help you?
+      </div>
+    </div>
+    
+    <!-- Input Area -->
+    <div class="border-t p-3 bg-white rounded-b-lg">
+      <div class="flex gap-2">
+        <input 
+          id="ai-helper-input" 
+          type="text" 
+          placeholder="Ask me anything..." 
+          class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <button 
+          id="ai-helper-send" 
+          class="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+        >
+          Send
+        </button>
+      </div>
+      <div id="ai-helper-status" class="text-xs text-gray-500 mt-2 hidden"></div>
+    </div>
+  </div>
+</div>
+
+<!-- AI Helper script moved to /js/features/ai-helper/widget.js -->
+
+</body>
+</html>

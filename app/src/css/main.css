@@ -1,0 +1,341 @@
+/* Main Application Styles */
+
+body { 
+  font-family: 'Inter', sans-serif; 
+  background-color: #f3f4f6; 
+}
+
+/* Fix the top card (header + tabs) to prevent vertical shifting */
+#app-shell > .max-w-7xl {
+  position: relative;
+}
+
+/* Ensure header section has consistent height to prevent shifting */
+/* The header contains: h1 title, account-context paragraph, and buttons */
+#app-shell .flex.flex-col.gap-3 {
+  min-height: 6rem; /* Fixed height to accommodate h1 (text-2xl/3xl) + account-context + buttons */
+  margin-bottom: 1.5rem; /* mb-6 */
+  position: relative;
+}
+
+@media (min-width: 640px) {
+  #app-shell .flex.flex-col.gap-3 {
+    min-height: 5.5rem; /* Slightly less on larger screens where layout is horizontal */
+  }
+}
+
+/* Ensure account-context paragraph doesn't cause height changes */
+#account-context {
+  min-height: 1.25rem; /* Prevent height change when content appears/disappears */
+  display: block;
+}
+
+/* Ensure tab navigation has consistent height and position */
+#app-shell .flex.gap-6.mb-6.border-b {
+  position: relative;
+  margin-top: 0;
+  margin-bottom: 1.5rem; /* mb-6 */
+  padding-top: 0;
+  min-height: 2.75rem; /* Ensure consistent height for tabs (pb-3 = 0.75rem padding) */
+  display: flex;
+  align-items: flex-end; /* Align tabs to bottom of container */
+}
+
+.locked { 
+  background-color: #f3f4f6 !important; 
+  color: #6b7280 !important; 
+  cursor: not-allowed !important; 
+}
+
+.section-title { 
+  font-size: 1.05rem; 
+  font-weight: 600; 
+  color: #111827; 
+}
+
+.label-sm { 
+  font-size: .78rem; 
+  color: #374151; 
+}
+
+.input-sm { 
+  padding: .4rem .55rem; 
+}
+
+.card { 
+  background: #f9fafb; 
+  border: 1px solid #e5e7eb; 
+  border-radius: 0.75rem; 
+}
+
+.header-compact .input-sm { 
+  padding: 0.3rem 0.5rem; 
+}
+
+.header-compact .mt-1 { 
+  margin-top: 0.2rem; 
+}
+
+.w-compact { 
+  width: 4.5rem; 
+}
+
+.w-preset { 
+  width: 12rem; 
+}
+
+.preset-highlight { 
+  display: inline-block; 
+  border: 2px solid #dc2626; 
+  border-radius: 0.75rem; 
+  padding: 0.35rem; 
+  background-color: #fff; 
+}
+
+.editable-header { 
+  border: 2px solid #3b82f6 !important; 
+  background-color: #f0f9ff !important; 
+  box-shadow: 0 0 0 1px rgba(59,130,246,.15) inset; 
+}
+
+.tab { 
+  cursor: pointer; 
+  padding: 0.5rem 1rem; 
+  border-radius: 0.5rem 0.5rem 0 0; 
+  transition: all 0.2s ease; 
+  color: #6b7280; 
+}
+
+.tab:hover { 
+  background-color: #f9fafb; 
+}
+
+.tab-active { 
+  background-color: #e5e7eb; 
+  color: #111827; 
+  font-weight: 600; 
+  border-bottom: 2px solid #111827; 
+}
+
+.table-sticky thead th { 
+  position: sticky; 
+  top: 0; 
+  background-color: #e5e7eb; 
+  z-index: 1; 
+}
+
+.transaction-scroll { 
+  scrollbar-gutter: stable both-edges; 
+}
+
+.transaction-scroll::-webkit-scrollbar { 
+  width: 10px; 
+  height: 10px; 
+}
+
+.transaction-scroll::-webkit-scrollbar-track { 
+  background: #e5e7eb; 
+  border-radius: 9999px; 
+}
+
+.transaction-scroll::-webkit-scrollbar-thumb { 
+  background: #9ca3af; 
+  border-radius: 9999px; 
+}
+
+.transaction-scroll::-webkit-scrollbar-thumb:hover { 
+  background: #6b7280; 
+}
+
+#balancing-section summary { 
+  border: 1px solid #e5e7eb; 
+  border-radius: 0.75rem; 
+  background-color: #f9fafb; 
+  padding: 0.5rem 0.75rem; 
+  transition: background-color 0.2s ease; 
+}
+
+#balancing-section summary:hover { 
+  background-color: #f3f4f6; 
+}
+
+#balancing-section summary:focus-visible { 
+  outline: 2px solid #2563eb; 
+  outline-offset: 2px; 
+}
+
+#balancing-section summary::-webkit-details-marker { 
+  display: none; 
+}
+
+#balancing-section .summary-chevron { 
+  transition: transform 0.2s ease; 
+}
+
+#balancing-section[open] .summary-chevron { 
+  transform: rotate(180deg); 
+}
+
+.sort-btn { 
+  display: flex; 
+  align-items: center; 
+  gap: 0.35rem; 
+  width: 100%; 
+  background: transparent; 
+  border: none; 
+  color: inherit; 
+  font-weight: inherit; 
+  text-transform: inherit; 
+  padding: 0; 
+}
+
+.sort-btn:hover { 
+  color: #111827; 
+}
+
+.sort-btn:focus-visible { 
+  outline: 2px solid #2563eb; 
+  outline-offset: 2px; 
+}
+
+.sort-indicator { 
+  font-size: 0.75rem; 
+  line-height: 1; 
+  min-width: 0.75rem; 
+}
+
+.sort-active { 
+  color: #111827; 
+  font-weight: 600; 
+}
+
+.duplicate-row { 
+  background-color: #fef3c7 !important; 
+}
+
+.duplicate-row:hover { 
+  background-color: #fde68a !important; 
+}
+
+.duplicate-badge { 
+  display: inline-flex; 
+  align-items: center; 
+  padding: 0.1rem 0.4rem; 
+  border-radius: 9999px; 
+  font-size: 0.65rem; 
+  font-weight: 600; 
+  background-color: #f59e0b; 
+  color: #1f2937; 
+  text-transform: uppercase; 
+}
+
+/* AI Helper Message Formatting Styles */
+#ai-helper-messages h1,
+#ai-helper-messages h2,
+#ai-helper-messages h3 {
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+#ai-helper-messages li {
+  margin-left: 1rem;
+  margin-bottom: 0.25rem;
+  line-height: 1.5;
+}
+
+#ai-helper-messages pre {
+  margin: 0.5rem 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+#ai-helper-messages code {
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
+#ai-helper-messages strong {
+  font-weight: 600;
+}
+
+/* Tab Panel Alignment - Ensure all tabs start at consistent position */
+#panel-generator,
+#panel-my,
+#panel-reader,
+#panel-reviewer,
+#panel-saas,
+#panel-banking,
+#panel-admin {
+  position: relative;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+/* Ensure first element in each tab has no top margin to maintain alignment */
+/* For tabs with direct cards (My Batches, Reader, Reviewer, SaaS) */
+#panel-my > .card:first-child,
+#panel-reader > .card:first-child,
+#panel-reviewer > .card:first-child,
+#panel-saas > .card:first-child {
+  margin-top: 0;
+  /* Cards have p-4 sm:p-5 which includes top padding */
+}
+
+/* Generator has a comment before the card, but comment doesn't affect layout */
+#panel-generator > .card:first-of-type {
+  margin-top: 0;
+}
+
+/* Admin has admin-locked card first, then admin-content wrapper */
+#panel-admin > #admin-locked {
+  margin-top: 0;
+}
+
+/* Banking has a flex wrapper first */
+#panel-banking > .flex {
+  margin-top: 0;
+  padding-top: 0;
+}
+
+/* Banking and Admin tabs have wrapper divs - ensure content aligns to top */
+/* The gap-6 in the flex container is for horizontal spacing, not vertical */
+#panel-banking > .flex,
+#panel-admin > #admin-content > .flex {
+  margin-top: 0;
+  padding-top: 0;
+  align-items: flex-start;
+  /* gap-6 only applies to flex children spacing, not top margin */
+}
+
+/* Ensure Banking/Admin content area aligns with card top position */
+/* Cards in other tabs have p-4 sm:p-5 (1rem/1.25rem top padding) */
+/* The cards inside Banking/Admin sections should align with cards in other tabs */
+#panel-banking .flex-1.relative,
+#panel-admin #admin-panel-container {
+  margin-top: 0;
+  padding-top: 0;
+}
+
+/* Ensure Banking/Admin sections align to top of their container */
+/* The sections are absolute positioned, so they align to top-0 of relative parent */
+#panel-banking .banking-panel,
+#panel-admin .admin-panel {
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+/* Ensure cards inside Banking/Admin sections have same top padding as other tabs */
+#panel-banking .banking-panel > .card,
+#panel-admin .admin-panel > .card {
+  margin-top: 0;
+  /* Cards already have p-4 sm:p-5, which includes top padding */
+}
+
+/* Ensure Generator header-compact has same padding as other cards */
+/* header-compact only affects input padding, not card padding */
+#panel-generator .header-compact {
+  margin-top: 0;
+  /* Card already has p-4 sm:p-5, header-compact doesn't override it */
+}
+

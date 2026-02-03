@@ -1,0 +1,82 @@
+# Environment files with sensitive data
+.env
+.env.prod
+.env.production
+.env.local
+
+# Credentials documentation (NEVER commit)
+CREDENTIALS.md
+
+# Development environment (optional - you might want to include this)
+# .env.dev
+
+# VS Code Server
+.vscode-server/
+.vscode/
+.idea/
+
+# Docker volumes and data
+.docker/
+volumes/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# NPM cache
+.npm/
+
+# Logs
+logs/
+*.log
+*.cron.log
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Database dumps and archives
+*.sql
+*.db
+*.sqlite
+archive/
+
+# IDE
+*.swp
+*.swo
+
+# OS - macOS
+.DS_Store
+._*
+
+# OS - Linux
+.Trash-*
+
+# OS - Windows  
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+*.old
+backups/
+
+# Cloudflare tunnel secrets
+cloudflare/secret/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Large binary files
+*.tar.gz
+
+# Codex sessions
+.codex/
+
+# Cache directories
+.cache/

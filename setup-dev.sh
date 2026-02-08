@@ -135,6 +135,12 @@ if [ -f "$ENV_FILE" ]; then
         log_info "Using existing $ENV_FILE"
         ENV_NEEDS_CONFIG=false
     fi
+else
+    # Missing file - MUST create and configure
+    log_warn "$ENV_FILE not found - credential setup is required"
+    cp "$ENV_EXAMPLE" "$ENV_FILE"
+    log_success "Created $ENV_FILE from template"
+    ENV_NEEDS_CONFIG=true
 fi
 
 # ═══════════════════════════════════════════════════════════════
@@ -361,34 +367,13 @@ EOF
         log_warn "Remember to change the admin password after first login!"
         
     else
-        log_warn "Skipping interactive setup. You'll need to edit $ENV_FILE manually."
+        # User declined credential setup - cannot continue
         echo ""
-        if prompt_yes_no "Would you like to open the file in your editor now?"; then
-            if command_exists nano; then
-                nano "$ENV_FILE"
-            elif command_exists vim; then
-                vim "$ENV_FILE"
-            elif command_exists vi; then
-                vi "$ENV_FILE"
-            elif [ "$(uname)" = "Darwin" ]; then
-                open -t "$ENV_FILE"
-                log_info "Opened in default text editor. Save and close when done."
-                read -p "Press Enter when you've finished editing..."
-            else
-                log_warn "No suitable editor found. Please edit $ENV_FILE manually."
-                read -p "Press Enter when you've finished editing..."
-            fi
-        else
-            log_warn "Remember to edit $ENV_FILE before starting the services!"
-            echo ""
-            if prompt_yes_no "Do you want to continue anyway?"; then
-                log_info "Continuing with default values..."
-            else
-                echo ""
-                log_info "Setup paused. Edit $ENV_FILE and run this script again."
-                exit 0
-            fi
-        fi
+        log_error "❌ Credential configuration is required to run the application."
+        log_error "❌ Cannot start services with placeholder values."
+        echo ""
+        log_info "Please run this script again when you're ready to configure credentials."
+        exit 1
     fi
 fi
 

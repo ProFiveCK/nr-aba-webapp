@@ -110,6 +110,16 @@ else
     REQUIREMENTS_MET=false
 fi
 
+# Check Node.js (required for frontend build)
+if command_exists node; then
+    NODE_VERSION=$(node --version)
+    log_success "Node.js installed: $NODE_VERSION"
+else
+    log_error "Node.js is not installed"
+    log_warn "Install Node.js from: https://nodejs.org/"
+    REQUIREMENTS_MET=false
+fi
+
 if [ "$REQUIREMENTS_MET" = false ]; then
     echo ""
     log_error "Prerequisites not met. Please install required software and try again."
@@ -451,7 +461,42 @@ fi
 log_success "Configuration file exists"
 
 # ═══════════════════════════════════════════════════════════════
-# STEP 7: Build and Start Services
+# STEP 6B: Build Frontend
+# ═══════════════════════════════════════════════════════════════
+log_step "Building frontend application..."
+
+CLIENT_DIR="./app/client"
+if [ ! -d "$CLIENT_DIR/dist" ] || prompt_yes_no "Rebuild frontend?"; then
+    echo ""
+    log_info "Installing frontend dependencies..."
+    cd "$CLIENT_DIR"
+    
+    if [ ! -d "node_modules" ]; then
+        npm install
+    else
+        log_info "Dependencies already installed"
+    fi
+    
+    echo ""
+    log_info "Building production frontend (this may take a minute)..."
+    npm run build
+    
+    cd - > /dev/null
+    
+    if [ -d "$CLIENT_DIR/dist" ]; then
+        log_success "Frontend built successfully"
+    else
+        log_error "Frontend build failed!"
+        exit 1
+    fi
+else
+    log_success "Using existing frontend build"
+fi
+
+echo ""
+
+# ═══════════════════════════════════════════════════════════════
+# STEP 7: Build and Start Docker Services
 # ═══════════════════════════════════════════════════════════════
 log_step "Building and starting services..."
 

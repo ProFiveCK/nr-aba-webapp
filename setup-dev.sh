@@ -310,6 +310,12 @@ EOF
     fi
 fi
 
+# Create symlink for docker-compose compatibility
+if [ ! -L ".env" ]; then
+    ln -sf .env.prod .env
+    log_success "Created .env symlink → .env.prod"
+fi
+
 # ═══════════════════════════════════════════════════════════════
 # STEP 4: Network Setup
 # ═══════════════════════════════════════════════════════════════

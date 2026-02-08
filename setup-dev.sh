@@ -237,36 +237,6 @@ if [ "$ENV_NEEDS_CONFIG" = true ]; then
         read FRONTEND_URL
         FRONTEND_URL=${FRONTEND_URL:-$DEFAULT_URL}
         
-        # AI Helper (Optional)
-        echo ""
-        if prompt_yes_no "Enable AI Helper features? (Optional)"; then
-            echo ""
-            log_info "🤖 AI Helper Configuration"
-            echo "Choose AI provider:"
-            echo "  1) GitHub Models (requires GitHub token)"
-            echo "  2) Ollama (local, requires Ollama running)"
-            echo -n "Select [1]: "
-            read AI_CHOICE
-            AI_CHOICE=${AI_CHOICE:-1}
-            
-            if [ "$AI_CHOICE" = "1" ]; then
-                echo -n "GitHub Personal Access Token: "
-                read -s GITHUB_TOKEN
-                echo ""
-                AI_PROVIDER="github"
-                AI_ENABLED=true
-            else
-                echo -n "Ollama base URL [http://172.17.0.1:11434]: "
-                read OLLAMA_URL
-                OLLAMA_URL=${OLLAMA_URL:-http://172.17.0.1:11434}
-                AI_PROVIDER="ollama"
-                AI_ENABLED=true
-            fi
-        else
-            AI_ENABLED=false
-            log_info "Skipping AI Helper configuration"
-        fi
-        
         # Save to .env.prod
         echo ""
         log_info "💾 Saving configuration to $ENV_FILE..."
@@ -319,37 +289,11 @@ SFTP_SYNC_METHOD=direct
 WINDOWS_SYNC_URL=http://192.168.1.7:8088/sync-trigger
 SYNC_TIMEOUT=30000
 
-EOF
-
-        # Add AI Helper if configured
-        if [ "$AI_ENABLED" = true ]; then
-            cat >> "$ENV_FILE" << EOF
-# AI Helper Configuration
-AI_HELPER_ENABLED=true
-AI_PROVIDER=$AI_PROVIDER
-EOF
-            if [ "$AI_PROVIDER" = "github" ]; then
-                cat >> "$ENV_FILE" << EOF
-GITHUB_TOKEN=$GITHUB_TOKEN
-GITHUB_MODEL=gpt-4o-mini
-EOF
-            else
-                cat >> "$ENV_FILE" << EOF
-OLLAMA_BASE_URL=$OLLAMA_URL
-OLLAMA_MODEL=deepseek-v3.1:671b-cloud
-EOF
-            fi
-        else
-            cat >> "$ENV_FILE" << EOF
-# AI Helper Configuration (Disabled)
+# NOTE: AI Helper settings will be configured via Admin UI
+# Coming soon - Settings → AI Configuration
 AI_HELPER_ENABLED=false
-# AI_PROVIDER=github
-# GITHUB_TOKEN=your-token-here
-# GITHUB_MODEL=gpt-4o-mini
-# OLLAMA_BASE_URL=http://172.17.0.1:11434
-# OLLAMA_MODEL=deepseek-v3.1:671b-cloud
+
 EOF
-        fi
         
         log_success "Configuration saved to $ENV_FILE"
         echo ""

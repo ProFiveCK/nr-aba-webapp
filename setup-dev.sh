@@ -120,6 +120,23 @@ else
     REQUIREMENTS_MET=false
 fi
 
+# Check required port availability
+if [ "$(uname)" = "Darwin" ]; then
+    # macOS - check port 8080
+    REQUIRED_PORT=8080
+else
+    # Linux - check port 80
+    REQUIRED_PORT=80
+fi
+
+if lsof -Pi :$REQUIRED_PORT -sTCP:LISTEN -t >/dev/null 2>&1 || nc -z localhost $REQUIRED_PORT 2>/dev/null; then
+    log_error "Port $REQUIRED_PORT is already in use"
+    log_warn "Stop the service using port $REQUIRED_PORT or use: lsof -ti:$REQUIRED_PORT | xargs kill"
+    REQUIREMENTS_MET=false
+else
+    log_success "Port $REQUIRED_PORT is available"
+fi
+
 if [ "$REQUIREMENTS_MET" = false ]; then
     echo ""
     log_error "Prerequisites not met. Please install required software and try again."

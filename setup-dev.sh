@@ -172,9 +172,19 @@ if [ "$ENV_NEEDS_CONFIG" = true ]; then
             DB_PASS=$(openssl rand -base64 24 | tr -d "=+/" | cut -c1-32)
             log_success "Generated secure database password"
         else
-            echo -n "Enter database password: "
-            read -s DB_PASS
-            echo ""
+            while true; do
+                echo -n "Enter database password (minimum 6 characters): "
+                read -s DB_PASS
+                echo ""
+                
+                if [ ${#DB_PASS} -lt 6 ]; then
+                    log_error "Password must be at least 6 characters. Please try again."
+                    echo ""
+                else
+                    log_success "Password accepted"
+                    break
+                fi
+            done
         fi
         
         # JWT Secret
@@ -194,13 +204,24 @@ if [ "$ENV_NEEDS_CONFIG" = true ]; then
         read ADMIN_NAME
         ADMIN_NAME=${ADMIN_NAME:-System Admin}
         
-        echo -n "Admin password: "
-        read -s ADMIN_PASS
-        echo ""
-        if [ -z "$ADMIN_PASS" ]; then
-            ADMIN_PASS="ChangeMe@$(date +%Y)"
-            log_warn "No password provided, using: $ADMIN_PASS (change after first login!)"
-        fi
+        # Password input with validation
+        while true; do
+            echo -n "Admin password (minimum 6 characters): "
+            read -s ADMIN_PASS
+            echo ""
+            
+            if [ -z "$ADMIN_PASS" ]; then
+                ADMIN_PASS="ChangeMe@$(date +%Y)"
+                log_warn "No password provided, using: $ADMIN_PASS (change after first login!)"
+                break
+            elif [ ${#ADMIN_PASS} -lt 6 ]; then
+                log_error "Password must be at least 6 characters. Please try again."
+                echo ""
+            else
+                log_success "Password accepted"
+                break
+            fi
+        done
         
         # Detect OS and set appropriate web port
         echo ""

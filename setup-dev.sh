@@ -143,8 +143,10 @@ fi
 if [ "$ENV_NEEDS_CONFIG" = true ]; then
     log_step "Interactive credential setup..."
     echo ""
+    log_warn "The application requires credentials to run."
+    echo ""
     
-    if prompt_yes_no "Would you like to configure credentials interactively?"; then
+    if prompt_yes_no "Configure credentials interactively now?"; then
         echo ""
         
         # Database Password

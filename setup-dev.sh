@@ -413,8 +413,24 @@ log_step "Setting up Docker volumes..."
 
 VOLUME_NAME="ron-stack_pgdata"
 if docker volume inspect "$VOLUME_NAME" >/dev/null 2>&1; then
-    log_success "Volume '$VOLUME_NAME' already exists"
+    log_warn "Existing database volume found"
     EXISTING_VOLUME=true
+    echo ""
+    log_info "⚠️  If you're setting up fresh with NEW credentials, you MUST reset the database"
+    echo ""
+    
+    if prompt_yes_no "Reset database? (deletes all data)"; then
+        log_warn "Stopping services..."
+        $COMPOSE_CMD down >/dev/null 2>&1 || true
+        log_warn "Deleting database volume..."
+        docker volume rm "$VOLUME_NAME"
+        log_info "Creating fresh volume..."
+        docker volume create "$VOLUME_NAME"
+        log_success "Fresh database volume created"
+        EXISTING_VOLUME=false
+    else
+        log_info "Keeping existing database (ensure password matches!)"
+    fi
 else
     log_info "Creating Docker volume '$VOLUME_NAME'..."
     docker volume create "$VOLUME_NAME"
@@ -423,16 +439,31 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════
-# STEP 6: Build and Start Services
+# STEP 6: Verify Configuration
+# ═══════════════════════════════════════════════════════════════
+log_step "Verifying configuration..."
+
+if [ ! -f "$ENV_FILE" ]; then
+    log_error "$ENV_FILE not found! Setup failed."
+    exit 1
+fi
+
+log_success "Configuration file exists"
+
+# ═══════════════════════════════════════════════════════════════
+# STEP 7: Build and Start Services
 # ═══════════════════════════════════════════════════════════════
 log_step "Building and starting services..."
 
 echo ""
 if [ "$EXISTING_VOLUME" = true ]; then
-    log_warn "Existing database volume found. Your data will be preserved."
+    log_info "Using existing database"
+else
+    log_info "Fresh database will be created"
 fi
+echo ""
 
-if prompt_yes_no "Do you want to build and start the services now?"; then
+if prompt_yes_no "Build and start services now?"; then
     echo ""
     log_info "Building Docker images (this may take a few minutes on first run)..."
     $COMPOSE_CMD build

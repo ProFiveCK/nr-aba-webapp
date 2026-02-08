@@ -406,7 +406,7 @@ if docker volume inspect "$VOLUME_NAME" >/dev/null 2>&1; then
     
     if prompt_yes_no "Reset database? (deletes all data)"; then
         log_warn "Stopping services..."
-        $COMPOSE_CMD down >/dev/null 2>&1 || true
+        $COMPOSE_CMD --env-file .env.prod down >/dev/null 2>&1 || true
         log_warn "Deleting database volume..."
         docker volume rm "$VOLUME_NAME"
         log_info "Creating fresh volume..."
@@ -451,11 +451,11 @@ echo ""
 if prompt_yes_no "Build and start services now?"; then
     echo ""
     log_info "Building Docker images (this may take a few minutes on first run)..."
-    $COMPOSE_CMD build
+    $COMPOSE_CMD --env-file .env.prod build
     
     echo ""
     log_info "Starting services..."
-    $COMPOSE_CMD up -d
+    $COMPOSE_CMD --env-file .env.prod up -d
     
     echo ""
     log_success "Services started!"
@@ -467,11 +467,11 @@ if prompt_yes_no "Build and start services now?"; then
     # Check service status
     echo ""
     log_step "Service Status:"
-    $COMPOSE_CMD ps
+    $COMPOSE_CMD --env-file .env.prod ps
     
 else
     log_info "Skipping service startup. You can start manually with:"
-    echo "  $COMPOSE_CMD up -d"
+    echo "  $COMPOSE_CMD --env-file .env.prod up -d"
 fi
 
 # ═══════════════════════════════════════════════════════════════

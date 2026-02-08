@@ -237,31 +237,6 @@ if [ "$ENV_NEEDS_CONFIG" = true ]; then
         read FRONTEND_URL
         FRONTEND_URL=${FRONTEND_URL:-$DEFAULT_URL}
         
-        # SMTP Configuration (Optional)
-        echo ""
-        if prompt_yes_no "Configure SMTP for email notifications? (Optional)"; then
-            echo ""
-            log_info "📧 SMTP Configuration"
-            echo -n "SMTP Host: "
-            read SMTP_HOST
-            echo -n "SMTP Port [587]: "
-            read SMTP_PORT
-            SMTP_PORT=${SMTP_PORT:-587}
-            echo -n "SMTP User: "
-            read SMTP_USER
-            echo -n "SMTP Password: "
-            read -s SMTP_PASS
-            echo ""
-            echo -n "From Email [$SMTP_USER]: "
-            read SMTP_FROM
-            SMTP_FROM=${SMTP_FROM:-$SMTP_USER}
-            
-            CONFIGURE_SMTP=true
-        else
-            CONFIGURE_SMTP=false
-            log_info "Skipping SMTP configuration"
-        fi
-        
         # AI Helper (Optional)
         echo ""
         if prompt_yes_no "Enable AI Helper features? (Optional)"; then
@@ -336,33 +311,6 @@ DEFAULT_ADMIN_PASSWORD=$ADMIN_PASS
 DEFAULT_ADMIN_NAME=$ADMIN_NAME
 
 EOF
-
-        # Add SMTP if configured
-        if [ "$CONFIGURE_SMTP" = true ]; then
-            cat >> "$ENV_FILE" << EOF
-# SMTP Configuration
-SMTP_HOST=$SMTP_HOST
-SMTP_PORT=$SMTP_PORT
-SMTP_SECURE=false
-SMTP_USER=$SMTP_USER
-SMTP_PASS=$SMTP_PASS
-SMTP_FROM=$SMTP_FROM
-REPLY_TO_EMAIL=$SMTP_FROM
-
-EOF
-        else
-            cat >> "$ENV_FILE" << EOF
-# SMTP Configuration (Disabled)
-# SMTP_HOST=smtp.example.com
-# SMTP_PORT=587
-# SMTP_SECURE=false
-# SMTP_USER=noreply@example.com
-# SMTP_PASS=your-password
-# SMTP_FROM=noreply@example.com
-# REPLY_TO_EMAIL=noreply@example.com
-
-EOF
-        fi
 
         # Add SFTP Sync Config
         cat >> "$ENV_FILE" << EOF

@@ -70,6 +70,8 @@ cd aba-stack
 
 ### 2. Create Environment Configuration
 
+The stack uses **ONE** environment file for all services:
+
 ```bash
 cp .env.prod.example .env.prod
 ```

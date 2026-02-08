@@ -27,6 +27,19 @@ The interactive setup script will:
 - **[QUICK-START-MACOS.md](QUICK-START-MACOS.md)** - macOS-specific development guide
 - **[docs/](docs/)** - User guides for submitters, reviewers, and administrators
 
+### Environment Configuration
+
+**Single .env file:** The entire stack uses ONE environment configuration file (`.env.prod`) loaded by Docker Compose for all services.
+
+```bash
+# Copy template and configure
+cp .env.prod.example .env.prod
+nano .env.prod
+
+# Or use interactive setup
+./setup-dev.sh
+```
+
 ---
 
 ## High-Level Architecture

@@ -123,8 +123,6 @@ log_step "Setting up environment configuration..."
 
 ENV_FILE=".env.prod"
 ENV_EXAMPLE=".env.prod.example"
-BACKEND_ENV="app/backend/.env"
-BACKEND_ENV_EXAMPLE="app/backend/.env.example"
 
 # Check root .env.prod
 if [ -f "$ENV_FILE" ]; then
@@ -136,30 +134,6 @@ if [ -f "$ENV_FILE" ]; then
     else
         log_info "Using existing $ENV_FILE"
         ENV_NEEDS_CONFIG=false
-    fi
-else
-    log_warn "$ENV_FILE not found, creating from example..."
-    if [ -f "$ENV_EXAMPLE" ]; then
-        cp "$ENV_EXAMPLE" "$ENV_FILE"
-        log_success "Created $ENV_FILE from $ENV_EXAMPLE"
-        ENV_NEEDS_CONFIG=true
-    else
-        log_error "$ENV_EXAMPLE not found!"
-        exit 1
-    fi
-fi
-
-# Check backend .env
-if [ -f "$BACKEND_ENV" ]; then
-    log_success "Found existing $BACKEND_ENV"
-else
-    log_warn "$BACKEND_ENV not found, creating from example..."
-    if [ -f "$BACKEND_ENV_EXAMPLE" ]; then
-        cp "$BACKEND_ENV_EXAMPLE" "$BACKEND_ENV"
-        log_success "Created $BACKEND_ENV from $BACKEND_ENV_EXAMPLE"
-        ENV_NEEDS_CONFIG=true
-    else
-        log_warn "$BACKEND_ENV_EXAMPLE not found, will use root .env.prod"
     fi
 fi
 

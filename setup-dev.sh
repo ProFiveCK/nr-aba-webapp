@@ -192,12 +192,24 @@ if [ "$ENV_NEEDS_CONFIG" = true ]; then
             log_warn "No password provided, using: $ADMIN_PASS (change after first login!)"
         fi
         
-        # Frontend URL
+        # Detect OS and set appropriate web port
         echo ""
-        log_info "🌐 Application URL"
-        echo -n "Frontend URL [http://localhost]: "
+        log_info "🌐 Deployment Environment"
+        if [ "$(uname)" = "Darwin" ]; then
+            # macOS - use port 8080 (port 80 requires sudo)
+            WEB_PORT=8080
+            DEFAULT_URL="http://localhost:8080"
+            log_info "Detected macOS - using port 8080 for local development"
+        else
+            # Linux - production server, use port 80
+            WEB_PORT=80
+            DEFAULT_URL="http://localhost"
+            log_info "Detected Linux - using port 80 for production"
+        fi
+        
+        echo -n "Frontend URL [$DEFAULT_URL]: "
         read FRONTEND_URL
-        FRONTEND_URL=${FRONTEND_URL:-http://localhost}
+        FRONTEND_URL=${FRONTEND_URL:-$DEFAULT_URL}
         
         # SMTP Configuration (Optional)
         echo ""
@@ -276,6 +288,9 @@ DB_PORT=5432
 DB_USER=postgres
 DB_PASSWORD=$DB_PASS
 DB_NAME=aba
+
+# Web Server Port (8080 for macOS dev, 80 for production)
+WEB_PORT=$WEB_PORT
 
 # Production Web Port
 PROD_WEB_PORT=9000
@@ -482,15 +497,21 @@ log_step "Setup Complete! ${ROCKET}"
 echo ""
 
 # Display access information
-FRONTEND_URL=$(grep FRONTEND_BASE_URL "$ENV_FILE" 2>/dev/null | cut -d '=' -f2 || echo "http://localhost")
-if [ "$FRONTEND_URL" = "http://localhost" ]; then
-    FRONTEND_URL="http://localhost:80"
+WEB_PORT=$(grep "^WEB_PORT=" "$ENV_FILE" 2>/dev/null | cut -d '=' -f2 || echo "80")
+FRONTEND_URL=$(grep FRONTEND_BASE_URL "$ENV_FILE" 2>/dev/null | cut -d '=' -f2)
+
+if [ -z "$FRONTEND_URL" ] || [ "$FRONTEND_URL" = "http://localhost" ]; then
+    if [ "$WEB_PORT" = "80" ]; then
+        FRONTEND_URL="http://localhost"
+    else
+        FRONTEND_URL="http://localhost:$WEB_PORT"
+    fi
 fi
 
 echo -e "${GREEN}${BOLD}Access your application:${NC}"
-echo -e "  ${CYAN}Web Interface:${NC} http://localhost"
-echo -e "  ${CYAN}API Backend:${NC}   http://localhost/api"
-echo -e "  ${CYAN}Health Check:${NC}  http://localhost/api/health"
+echo -e "  ${CYAN}Web Interface:${NC} $FRONTEND_URL"
+echo -e "  ${CYAN}API Backend:${NC}   $FRONTEND_URL/api"
+echo -e "  ${CYAN}Health Check:${NC}  $FRONTEND_URL/api/health"
 echo ""
 
 echo -e "${BLUE}${BOLD}Useful Commands:${NC}"

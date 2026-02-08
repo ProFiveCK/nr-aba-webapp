@@ -193,21 +193,13 @@ if [ "$ENV_NEEDS_CONFIG" = true ]; then
         JWT_SECRET=$(openssl rand -base64 48 | tr -d "=+/" | cut -c1-64)
         log_success "Generated JWT secret"
         
-        # Admin Account
+        # Admin Account - Auto-configured with defaults
         echo ""
-        log_info "👤 Admin Account Setup"
-        echo -n "Admin email [admin@example.com]: "
-        read ADMIN_EMAIL
-        ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
-        
-        echo -n "Admin full name [System Admin]: "
-        read ADMIN_NAME
-        ADMIN_NAME=${ADMIN_NAME:-System Admin}
-        
-        # Set temporary admin password
+        log_info "👤 Creating Default Admin Account"
+        ADMIN_EMAIL="admin@example.com"
+        ADMIN_NAME="System Admin"
         ADMIN_PASS="Admin123!"
-        log_warn "📝 Temporary admin password set to: Admin123!"
-        log_warn "⚠️  IMPORTANT: Change this password immediately after first login!"
+        log_success "Default admin account configured"
         
         # Detect OS and set appropriate web port
         echo ""
@@ -560,10 +552,20 @@ if [ -z "$FRONTEND_URL" ] || [ "$FRONTEND_URL" = "http://localhost" ]; then
     fi
 fi
 
-echo -e "${GREEN}${BOLD}Access your application:${NC}"
-echo -e "  ${CYAN}Web Interface:${NC} $FRONTEND_URL"
-echo -e "  ${CYAN}API Backend:${NC}   $FRONTEND_URL/api"
-echo -e "  ${CYAN}Health Check:${NC}  $FRONTEND_URL/api/health"
+echo ""
+echo "══════════════════════════════════════════════════════════════════════════════"
+echo -e "${GREEN}${BOLD}                    🎉 SETUP COMPLETE! 🎉${NC}"
+echo "══════════════════════════════════════════════════════════════════════════════"
+echo ""
+echo -e "${YELLOW}${BOLD}📋 LOGIN TO YOUR APPLICATION:${NC}"
+echo ""
+echo -e "  ${GREEN}${BOLD}URL:${NC}      $FRONTEND_URL"
+echo -e "  ${GREEN}${BOLD}Username:${NC} admin@example.com"
+echo -e "  ${GREEN}${BOLD}Password:${NC} Admin123!"
+echo ""
+echo -e "${RED}${BOLD}⚠️  IMPORTANT: Change the password immediately after first login!${NC}"
+echo ""
+echo "══════════════════════════════════════════════════════════════════════════════"
 echo ""
 
 echo -e "${BLUE}${BOLD}Useful Commands:${NC}"
@@ -580,41 +582,23 @@ echo -e "  ${CYAN}Access DB:${NC}           $COMPOSE_CMD exec postgres psql -U p
 echo -e "  ${CYAN}Backup DB:${NC}           $COMPOSE_CMD exec postgres pg_dump -U postgres aba > backup.sql"
 echo -e "  ${CYAN}Restore DB:${NC}          cat backup.sql | $COMPOSE_CMD exec -T postgres psql -U postgres -d aba"
 echo ""
-
-echo -e "${GREEN}${BOLD}Default Admin Access:${NC}"
-DEFAULT_EMAIL=$(grep DEFAULT_ADMIN_EMAIL "$ENV_FILE" 2>/dev/null | cut -d '=' -f2 || echo "admin@example.com")
-DEFAULT_PASS=$(grep DEFAULT_ADMIN_PASSWORD "$ENV_FILE" 2>/dev/null | cut -d '=' -f2 || echo "change_me_on_first_login")
-echo -e "  ${CYAN}Email:${NC}    $DEFAULT_EMAIL"
-echo -e "  ${CYAN}Password:${NC} $DEFAULT_PASS"
-echo -e "  ${YELLOW}(Change this password after first login!)${NC}"
 echo ""
-
-if [ "$ENV_NEEDS_CONFIG" = true ]; then
-    log_warn "Remember to update credentials in $ENV_FILE"
-    log_warn "Generate secure secrets with: openssl rand -base64 32"
-fi
 
 echo -e "${BLUE}${BOLD}Documentation:${NC}"
-echo -e "  ${CYAN}Setup Guide:${NC}         SETUP-ENVIRONMENT.md"
+echo -e "  ${CYAN}Setup Guide:${NC}         DEPLOYMENT.md"
 echo -e "  ${CYAN}Main README:${NC}         README.md"
-echo -e "  ${CYAN}Deployment:${NC}          PRODUCTION-DEPLOYMENT-CHECKLIST.md"
-echo ""
-
-echo -e "${GREEN}${BOLD}Next Steps:${NC}"
-echo "  1. Verify services are running: $COMPOSE_CMD ps"
-echo "  2. Check the logs if needed: $COMPOSE_CMD logs -f"
-echo "  3. Open http://localhost in your browser"
-echo "  4. Login with the default admin credentials"
-echo "  5. Change the default admin password"
+echo -e "  ${CYAN}Quick Start:${NC}         QUICK-START-MACOS.md"
 echo ""
 
 if [ "$EXISTING_VOLUME" = false ]; then
-    log_info "Fresh database created. The application will bootstrap automatically."
+    log_info "Fresh database created. Application will bootstrap automatically."
 else
     log_info "Using existing database. Your previous data is intact."
 fi
 
 echo ""
+log_success "Ready to go! Open the URL above and login with the provided credentials."
+echo ""echo ""
 echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
 echo -e "${GREEN}${BOLD}  Setup complete! Happy developing! ${ROCKET}${NC}"
 echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"

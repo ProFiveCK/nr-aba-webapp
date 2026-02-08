@@ -4,9 +4,28 @@ This repository contains the full stack for the Nauru Treasury ABA generator/rev
 It bundles the static front-end, an Express/Node.js API, and supporting operations assets
 used to run the production environment.
 
-Use this README when you need to audit the system, spin up a new environment, or
-troubleshoot incidents. For user-facing instructions (submitters, reviewers, etc.)
-see the guides in `docs/`.
+## 🚀 Quick Start
+
+### New to this project?
+
+**Development Setup** (macOS/Linux):
+```bash
+./setup-dev.sh
+```
+
+The interactive setup script will:
+- ✅ Check prerequisites (Docker, Docker Compose)
+- ✅ Guide you through credential configuration
+- ✅ Generate secure secrets automatically
+- ✅ Set up and start all services
+
+**Access:** http://localhost after setup completes.
+
+### Documentation
+
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** - Complete deployment guide (prerequisites, setup, troubleshooting)
+- **[QUICK-START-MACOS.md](QUICK-START-MACOS.md)** - macOS-specific development guide
+- **[docs/](docs/)** - User guides for submitters, reviewers, and administrators
 
 ---
 

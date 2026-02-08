@@ -1,53 +1,112 @@
-# Production Deployment Checklist for aba-stack-rev
+# Production Deployment Checklist
 
-**Last Updated:** December 9, 2025  
-**Target Environment:** Production Server  
-**Deployment Method:** Copy code + restore database
+Quick checklist for deploying ABA Stack to production.
 
----
-
-## ✅ Pre-Deployment Verification
-
-### 1. Code Readiness
-- ✅ **Frontend built:** `app/client/dist/` exists with compiled assets (verified Nov 27)
-- ✅ **Backend ready:** `app/backend/src/` contains Node.js API server
-- ✅ **Docker configs:** `docker-compose.yml` and `Dockerfile` are production-ready
-- ✅ **Nginx config:** `app/docker/nginx.conf` properly routes `/` to static and `/api/` to backend
-
-### 2. Configuration Files
-- ✅ **`.env.prod` exists** in root directory
-- ⚠️ **VERIFY** all sensitive values are set:
-  - `POSTGRES_PASSWORD` (strong password)
-  - `JWT_SECRET` (unique secret for this instance)
-  - `DEFAULT_ADMIN_PASSWORD` (change after first login)
-  - `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` (for email notifications)
-  - `WINDOWS_SYNC_URL` (if using SFTP sync)
-  - `FRONTEND_BASE_URL` (production URL)
-
-### 3. Database Backup
-- ✅ **Latest backup:** `archive/aba-db-20251124-000001.sql` (Nov 24)
-- ⚠️ **ACTION NEEDED:** Create fresh backup before deployment
-- ✅ **Restore script:** `scripts/restore-db.sh` ready
-
-### 4. Dependencies
-- ✅ Backend `package.json` has all required dependencies
-- ✅ Frontend built with Vite (production-optimized)
-- ✅ No development-only dependencies in production images
+> **📚 For detailed deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md)**
 
 ---
 
-## 📦 Deployment Steps
+## Pre-Deployment
 
-### Step 1: Prepare Production Server
+### 1. Server Prerequisites
+- [ ] Docker installed (v20.10+)
+- [ ] Docker Compose installed (v2.0+)
+- [ ] Sufficient resources (4+ CPU, 8GB RAM, 50GB disk)
+- [ ] Port 80 available
+- [ ] SSH access configured
+
+### 2. Code Ready
+- [ ] Repository cloned to production server
+- [ ] Latest code pulled: `git pull origin main`
+- [ ] Frontend built (if not using CI/CD)
+
+### 3. Environment Configuration
+- [ ] `.env.prod` created from template
+- [ ] Database password set (strong, unique)
+- [ ] JWT secret generated
+- [ ] Admin credentials configured
+- [ ] Frontend URL set to production domain
+- [ ] SMTP configured (if using email notifications)
+
+### 4. Backup Current System
+- [ ] Database backup created
+- [ ] Code backup created
+- [ ] Backup tested (can restore if needed)
+
+---
+
+## Deployment Steps
+
+### Option 1: Interactive Setup (Recommended)
 
 ```bash
-```bash
-# SSH into production server
-ssh fmis@fs01.naurufinance.info
+cd /home/fmis/Stacks/aba-stack
+./setup-dev.sh
+```
 
-# Create directory structure
-sudo mkdir -p /opt/ron-aba-stack
-cd /opt/ron-aba-stack
+### Option 2: Manual Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for complete manual deployment steps.
+
+---
+
+## Post-Deployment
+
+### 1. Verify Services
+- [ ] All containers running: `docker compose ps`
+- [ ] Health check passes: `curl http://localhost/api/health`
+- [ ] Logs clean: `docker compose logs`
+
+### 2. Application Access
+- [ ] Web interface loads
+- [ ] Can login with admin credentials
+- [ ] Database has correct data
+
+### 3. Security
+- [ ] Changed default admin password
+- [ ] Removed/commented DEFAULT_ADMIN_PASSWORD from .env.prod
+- [ ] HTTPS configured (if using domain)
+- [ ] Firewall rules set
+
+### 4. Monitoring
+- [ ] Backup cron job configured
+- [ ] Log rotation set up
+- [ ] Monitoring/alerts configured (if using)
+
+---
+
+## Production-Specific Configuration
+
+### Backup Schedule
+
+Add to crontab:
+```bash
+# Daily backup at 2 AM
+0 2 * * * /home/fmis/Stacks/aba-stack/scripts/backup-and-monitor.sh
+```
+
+### Resource Monitoring
+
+```bash
+# Check container resources
+docker stats
+
+# Check disk space
+df -h
+
+# Check database size
+docker compose exec postgres psql -U postgres -d aba -c "SELECT pg_size_pretty(pg_database_size('aba'));"
+```
+
+---
+
+## Troubleshooting
+
+See [DEPLOYMENT.md - Troubleshooting](DEPLOYMENT.md#-troubleshooting) for common issues and solutions.
+
+---
+
+**Last Updated:** February 8, 2026
 
 # Ensure Docker is installed
 docker --version

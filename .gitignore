@@ -3,12 +3,18 @@
 .env.prod
 .env.production
 .env.local
+.env.dev
+app/backend/.env
+app/backend/.env.prod
+app/backend/.env.production
+app/backend/.env.local
+app/backend/.env.dev
+*.env.backup
+**/*.env.backup
 
 # Credentials documentation (NEVER commit)
 CREDENTIALS.md
-
-# Development environment (optional - you might want to include this)
-# .env.dev
+**/CREDENTIALS*.md
 
 # VS Code Server
 .vscode-server/
@@ -24,6 +30,14 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Build outputs
+dist/
+build/
+.next/
+out/
 
 # NPM cache
 .npm/
@@ -44,6 +58,15 @@ pids/
 *.db
 *.sqlite
 archive/
+backups/
+**/archive/
+**/backups/
+
+# Uploads and user-generated content
+uploads/
+**/uploads/
+attachments/
+**/attachments/
 
 # IDE
 *.swp

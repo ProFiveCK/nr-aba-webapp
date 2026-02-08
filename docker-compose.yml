@@ -9,9 +9,9 @@ services:
     env_file:
       - .env.prod
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: G7!xP@2vQz#1sL9w
-      POSTGRES_DB: aba
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-aba}
     volumes:
       - ron-stack_pgdata:/var/lib/postgresql/data
     networks:

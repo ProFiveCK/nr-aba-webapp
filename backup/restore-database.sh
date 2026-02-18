@@ -59,9 +59,8 @@ fi
 # Check archive folders in parent directories
 ARCHIVE_DIRS=(
     "$PROJECT_ROOT/archive"
-    "$PROJECT_ROOT/../archive/aba-stack-rev/archive"
-    "$PROJECT_ROOT/../archive/aba-stack-dev/archive"
-    "/Users/teuteulilo/MyProjects/archive"
+    "$PROJECT_ROOT/../archive"
+    "$HOME/archive"
 )
 
 for dir in "${ARCHIVE_DIRS[@]}"; do

@@ -10,11 +10,18 @@ echo "=========================================="
 echo ""
 
 # Configuration
-PROD_SERVER="fmis@fs01.naurufinance.info"
-PROD_PATH="/home/fmis/Stacks/aba-stack"
-LOCAL_PATH="/Users/teuteulilo/MyProjects/aba-stack-rev"
+# Set these via environment variables before running:
+#   PROD_SERVER=user@your-server
+#   PROD_PATH=/opt/aba-stack
+#
+# Optional:
+#   LOCAL_PATH=/path/to/aba-stack
+
+PROD_SERVER=${PROD_SERVER:-"user@your-server"}
+PROD_PATH=${PROD_PATH:-"/opt/aba-stack"}
+LOCAL_PATH=${LOCAL_PATH:-"$(pwd)"}
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-ARCHIVE_NAME="aba-stack-rev-deploy-$(date +%Y%m%d).tar.gz"
+ARCHIVE_NAME="aba-stack-deploy-$(date +%Y%m%d).tar.gz"
 
 # Colors
 RED='\033[0;31m'
@@ -24,6 +31,11 @@ NC='\033[0m' # No Color
 
 echo -e "${YELLOW}Step 1: Pre-flight checks${NC}"
 echo "Checking local build..."
+
+if [ "$PROD_SERVER" = "user@your-server" ]; then
+    echo -e "${RED}ERROR: Set PROD_SERVER (e.g. user@host) before running.${NC}"
+    exit 1
+fi
 
 # Check if dist exists
 if [ ! -d "$LOCAL_PATH/app/client/dist" ]; then
@@ -91,25 +103,29 @@ echo ""
 echo -e "${YELLOW}Step 4: Creating production backups${NC}"
 
 # Execute backup commands on production
-ssh "$PROD_SERVER" << 'ENDSSH'
+ssh "$PROD_SERVER" "PROD_PATH='$PROD_PATH' bash -s" << 'ENDSSH'
 set -e
 
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
+if [ -z "${PROD_PATH:-}" ]; then
+    echo "PROD_PATH is not set on the remote session"
+    exit 1
+fi
+
 echo "Creating archive directory..."
-mkdir -p /home/fmis/archive
+mkdir -p "$PROD_PATH/archive"
 
 echo "Backing up database..."
 docker exec ron-aba-postgres-prod pg_dump -U postgres aba > \
-  /home/fmis/archive/aba-db-pre-migration-${TIMESTAMP}.sql
+    "$PROD_PATH/archive/aba-db-pre-migration-${TIMESTAMP}.sql"
 
 echo "Backing up current code..."
-cd /home/fmis/Stacks
-tar -czf /home/fmis/archive/aba-stack-backup-${TIMESTAMP}.tar.gz aba-stack/
+tar -czf "$PROD_PATH/archive/aba-stack-backup-${TIMESTAMP}.tar.gz" --exclude='archive' -C "$(dirname "$PROD_PATH")" "$(basename "$PROD_PATH")"
 
 echo "Backups created:"
-ls -lh /home/fmis/archive/aba-db-pre-migration-${TIMESTAMP}.sql
-ls -lh /home/fmis/archive/aba-stack-backup-${TIMESTAMP}.tar.gz
+ls -lh "$PROD_PATH/archive/aba-db-pre-migration-${TIMESTAMP}.sql"
+ls -lh "$PROD_PATH/archive/aba-stack-backup-${TIMESTAMP}.tar.gz"
 ENDSSH
 
 if [ $? -ne 0 ]; then
@@ -123,28 +139,36 @@ echo ""
 echo -e "${YELLOW}Step 5: Deploying new code${NC}"
 
 # Deploy on production
-ssh "$PROD_SERVER" << ENDSSH
+ssh "$PROD_SERVER" "PROD_PATH='$PROD_PATH' bash -s" << 'ENDSSH'
 set -e
 
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+
 echo "Stopping services..."
-cd /home/fmis/Stacks/aba-stack
+cd "$PROD_PATH"
 docker compose down
 
 echo "Verifying volume exists..."
 docker volume ls | grep ron-stack_pgdata
 
 echo "Moving old code..."
-cd /home/fmis/Stacks
-mkdir -p aba-stack-old
-cd aba-stack
-mv * .* ../aba-stack-old/ 2>/dev/null || true
+cd "$(dirname "$PROD_PATH")"
+OLD_DIR="$(basename "$PROD_PATH")-old-$TIMESTAMP"
+mkdir -p "$OLD_DIR"
+cd "$(basename "$PROD_PATH")"
+shopt -s dotglob
+mv * "../$OLD_DIR/" 2>/dev/null || true
 
 echo "Extracting new code..."
-cd /home/fmis/Stacks/aba-stack
-tar -xzf /tmp/${ARCHIVE_NAME}
+cd "$PROD_PATH"
+tar -xzf "/tmp/${ARCHIVE_NAME}"
 
 echo "Copying production environment..."
-cp ../aba-stack-old/.env.prod ./.env.prod
+if [ -f "../$OLD_DIR/.env.prod" ]; then
+    cp "../$OLD_DIR/.env.prod" ./.env.prod
+else
+    echo "WARNING: No previous .env.prod found to copy; ensure .env.prod is configured."
+fi
 
 echo "Starting new stack..."
 docker network ls | grep -q ron-net || docker network create ron-net

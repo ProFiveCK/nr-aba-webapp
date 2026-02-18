@@ -11,7 +11,6 @@ used to run the production environment.
 **Development Setup** (macOS/Linux):
 ```bash
 ./setup-dev.sh
-```
 
 The interactive setup script will:
 - ✅ Check prerequisites (Docker, Docker Compose)
@@ -19,7 +18,10 @@ The interactive setup script will:
 - ✅ Generate secure secrets automatically
 - ✅ Set up and start all services
 
-**Access:** http://localhost after setup completes.
+**Access (after setup completes):**
+
+- Linux: <http://localhost>
+- macOS (default): <http://localhost:8080>
 
 ### Documentation
 
@@ -46,11 +48,11 @@ nano .env.prod
 
 | Layer | Location | Notes |
 | ----- | -------- | ----- |
-| Front-end | `app/src/index.html` | Single-page application served statically via Nginx. Handles Generator, Reader, My Batches, Reviewer, and Admin workflows. Uses localStorage for draft persistence. |
-| API | `app/backend/src/server.js` | Express server providing authentication, batch storage, review workflow, blacklist/whitelist, SFTP sync trigger, etc. |
-| Database | PostgreSQL 15 | Schema bootstrapped automatically by `backend/src/db.js`. Stores reviewers, batches, review history, sync requests, lists, etc. |
-| Reverse proxy | `app/docker/nginx.conf` | Routes `/` to static assets and `/api/` to the backend container. Exposes `/health` for uptime checks. |
-| Ops tooling | Root `docker-compose.yml`, `SFTP_SYNC_INTEGRATION.md`, `windows-scripts/` | Compose stack with Postgres, API, static web, and Watchtower. Optional integration documents for Windows-based SFTP sync. |
+| Front-end | `app/client/` | React + TypeScript + Vite app. Build output is served by the `web` (Nginx) container from `app/client/dist/`. |
+| API | `app/backend/src/server.js` | Express server providing auth, batch storage, review workflow, lists, and sync triggers. |
+| Database | PostgreSQL 15 | Schema is bootstrapped automatically by `app/backend/src/db.js` on API startup. |
+| Reverse proxy | `app/docker/nginx.conf` | Serves the SPA at `/`, proxies `/api/` to the API container, and proxies `/health` to the API health endpoint. |
+| Ops tooling | `docker-compose.yml`, `scripts/`, `windows-scripts/` | Compose stack plus operational scripts; includes optional Watchtower + Portainer agent. |
 
 Key backend invariants worth monitoring:
 
@@ -69,17 +71,15 @@ Key backend invariants worth monitoring:
 ├── docker-compose.yml       # Production-style stack definition
 ├── docs/                    # User/reviewer process docs and flow diagrams
 ├── app/
-│   ├── src/                 # Static front-end (HTML + JS + Tailwind CDN)
-│   ├── backend/             # Express API (Node 20+)
-│   ├── docker/nginx.conf    # Static site + API reverse proxy
-│   └── Dockerfile           # Multi-stage build for static assets (currently copy-only)
-├── update/                  # Legacy API snapshot (kept for reference; not deployed)
+│   ├── client/              # React/Vite front-end (build output in client/dist)
+│   ├── backend/             # Express API (Node 20)
+│   ├── docker/nginx.conf    # SPA + API reverse proxy
+│   └── Dockerfile           # Legacy static nginx image (not used by docker-compose.yml)
 ├── windows-scripts/         # Helpers for Windows deployment targets
 └── SFTP_SYNC_INTEGRATION.md # Detailed guide for Windows-triggered SFTP sync
 ```
 
-The `update/` folder mirrors an older iteration of the API. New work should happen in
-`app/backend/`; retain the legacy folder only for historical audits.
+Legacy folders (`app/src/`, top-level `src/`) are kept for reference and are not used by the current Docker Compose stack.
 
 ---
 
@@ -96,14 +96,16 @@ The `update/` folder mirrors an older iteration of the API. New work should happ
 ```bash
 # from repository root
 docker network create ron-net             # once, if not already present
+docker volume create ron-stack_pgdata     # once, if not already present
 docker compose up --build
 ```
 
 Services exposed locally:
 
-- Web UI: <http://localhost:9001>
-- API: <http://localhost:4000> (internal to compose; proxied via Nginx)
-- Postgres: internal only (no published port)
+- Web UI: <http://localhost> (or <http://localhost:8080> on macOS if you used `./setup-dev.sh`)
+- API: via the web container at <http://localhost/api/>
+- Health: <http://localhost/health>
+- Portainer agent (optional): <http://localhost:9001>
 
 Data persists in the `pgdata` named volume. Inspect logs with `docker compose logs -f api`
 or substitute `web`, `postgres`, `watchtower`.
@@ -116,7 +118,10 @@ cd app/backend
 npm install
 npm run dev   # watches server.js
 
-# front-end: open app/src/index.html in a static server (e.g. live-server)
+# front-end (dev server)
+cd ../client
+npm install
+npm run dev
 ```
 
 When running the API without Docker, provide a `.env` file (see variables below) and
@@ -145,7 +150,6 @@ The stack uses `.env.prod` in the root directory (referenced by `docker-compose.
 | `WINDOWS_SYNC_URL` | Endpoint for the Windows web service when using the `direct` method. |
 | `SYNC_TRIGGER_PATH` | Filesystem path watched by the Windows script when using the `file` method. |
 | `SYNC_TIMEOUT` | Milliseconds to wait for a sync confirmation (default 30000). |
-| `REVIEWER_SESSION_MINUTES` | Session length override for reviewer portal. |
 
 The API exposes a `/health` endpoint (proxied via Nginx) that returns `{"status":"ok"}` when
 the database and server are responsive.
@@ -188,22 +192,15 @@ Set `SFTP_SYNC_METHOD` plus either `WINDOWS_SYNC_URL` or `SYNC_TRIGGER_PATH` acc
 
 A scheduled backup job protects code, Postgres data, and database dumps.
 
-- **Script**: `/home/fmis/scripts/backup-ron-stack.sh`
-- **Scheduler**: invoked daily at `00:00` UTC by the host's cron service (see
-  `/home/fmis/scripts/backup-ron-stack-cron.log` for run history).
-- **Locking**: uses `/home/fmis/.backup_ron_stack.lock` to prevent overlapping runs.
-- **Artifacts** (retained for 15 days by default):
-  - `/home/fmis/archive/ron-stack-rev-<timestamp>.tar.gz` — repository snapshot.
-  - `/home/fmis/archive/<volume>-pgdata-<timestamp>.tar.gz` — Docker volume (`pgdata`) archive.
-  - `/home/fmis/archive/aba-db-<timestamp>.sql` — logical database dump via `pg_dump`.
-- **Log files**: `/home/fmis/archive/backup-<timestamp>.log` per run, plus the rolling
-  `/home/fmis/scripts/backup-ron-stack-cron.log`.
+- **Backup script**: `scripts/backup-ron-stack.sh`
+- **Monitoring + DB backup script**: `scripts/backup-and-monitor.sh`
+- **Artifacts**: written under `archive/` by default (override with `ARCHIVE_DIR=...`).
+- **Retention**: both scripts are intended to be run via cron; adjust schedules/paths to suit your host.
 
-To check the latest run:
+To check recent artifacts:
 
 ```bash
-tail -n 40 /home/fmis/scripts/backup-ron-stack-cron.log
-ls -lh /home/fmis/archive | grep 2025
+ls -lh archive | tail -n 25
 ```
 
 If the backup fails, the script logs the failure but continues with remaining steps. Investigate docker volume names,
@@ -215,7 +212,7 @@ The `batch_archives` table stays lean by moving older records into `batch_archiv
 data in the hot table by running the archival script regularly (e.g., monthly via cron or Watchtower).
 
 ```bash
-cd /home/fmis/Stacks/aba-stack/app/backend
+cd app/backend
 npm install                              # once
 npm run archive:batches -- --dry-run     # see how many batches would move
 npm run archive:batches                  # moves rows older than the retention window (default 12 months)
@@ -240,8 +237,7 @@ Set `BATCH_ARCHIVE_RETENTION_MONTHS` in `.env.prod` to change the retention poli
 - **Auto updates**: Watchtower container monitors other services with the label
   `com.centurylinklabs.watchtower.enable=true`. Disable it in environments where
   automatic pulls are undesired.
-- **Static hosting**: Nginx serves files straight from `app/src`. Any front-end
-  edits are reflected immediately without rebuilding the container (volume-mounted in compose).
+- **Static hosting**: Nginx serves the built front-end from `app/client/dist`. After front-end changes, rebuild with `cd app/client && npm run build`.
 - **TLS / CDN**: Production typically sits behind Cloudflare (see past 502 incident).
   Ensure origin health checks hit `/health` and point to the Nginx service/port.
 
@@ -259,10 +255,10 @@ Always validate backups before destroying the running stack. Suggested sequence:
 
 2. **Restore application files**
 
-   ```bash
-   # replace working tree with the archived tarball
-   tar -xzf /home/fmis/archive/ron-stack-rev-YYYYMMDD-HHMMSS.tar.gz -C /home/fmis
-   ```
+  ```bash
+  # replace working tree with the archived tarball
+  tar -xzf archive/aba-stack-YYYYMMDD-HHMMSS.tar.gz -C /path/to/restore
+  ```
 
    If you maintain a Git remote, consider re-cloning instead of restoring the tarball.
 
@@ -271,19 +267,19 @@ Always validate backups before destroying the running stack. Suggested sequence:
    - *Option A – volume snapshot* (preferred when `pgdata` archive exists):
 
      ```bash
-     docker volume rm ron-aba-generator_pgdata          # remove damaged volume (ensure compose is down)
-     docker volume create ron-aba-generator_pgdata
-     docker run --rm -v ron-aba-generator_pgdata:/data \
-         -v /home/fmis/archive:/backup \
-         alpine sh -c "cd /data && tar xzf /backup/ron-aba-generator_pgdata-pgdata-YYYYMMDD-HHMMSS.tar.gz"
+     docker volume rm ron-stack_pgdata          # remove damaged volume (ensure compose is down)
+     docker volume create ron-stack_pgdata
+     docker run --rm -v ron-stack_pgdata:/data \
+       -v "$(pwd)/archive":/backup \
+       alpine sh -c "cd /data && tar xzf /backup/ron-stack_pgdata-pgdata-YYYYMMDD-HHMMSS.tar.gz"
      ```
 
    - *Option B – logical SQL dump*:
 
      ```bash
      docker compose up -d postgres
-     cat /home/fmis/archive/aba-db-YYYYMMDD-HHMMSS.sql | \
-         docker exec -i ron-aba-postgres psql -U postgres aba
+     cat archive/aba-db-YYYYMMDD-HHMMSS.sql | \
+       docker exec -i ron-aba-postgres-prod psql -U postgres aba
      ```
 
 4. **Restart services**
@@ -294,7 +290,7 @@ Always validate backups before destroying the running stack. Suggested sequence:
    ```
 
 5. **Verification**
-   - Hit `http://<host>:9000/health` (Nginx) and `http://<host>:4000/health` (API).
+  - Hit `http://<host>/health` (via Nginx).
    - Confirm latest batches exist via Reviewer tab or `SELECT COUNT(*) FROM batch_archives;`.
    - Send a test email (if SMTP configured) and trigger a test SFTP sync if needed.
 
@@ -324,8 +320,8 @@ docker compose logs -f api
 docker compose exec postgres psql -U postgres -d aba
 
 # Check health endpoints
-curl http://localhost:9000/health          # via nginx
-curl http://localhost:4000/health          # direct API
+curl http://localhost/health               # via nginx
+docker compose exec api node -e "require('http').get('http://127.0.0.1:4000/health', r => { console.log(r.statusCode); process.exit(r.statusCode===200?0:1); }).on('error', () => process.exit(1));"
 ```
 
 ---

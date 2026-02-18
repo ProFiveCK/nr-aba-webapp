@@ -263,9 +263,6 @@ DB_NAME=aba
 # Web Server Port (8080 for macOS dev, 80 for production)
 WEB_PORT=$WEB_PORT
 
-# Production Web Port
-PROD_WEB_PORT=9000
-
 # Authentication
 JWT_SECRET=$JWT_SECRET
 REVIEWER_SESSION_MINUTES=480
@@ -285,12 +282,11 @@ EOF
         # Add SFTP Sync Config
         cat >> "$ENV_FILE" << EOF
 # SFTP Sync Configuration
-SFTP_SYNC_METHOD=direct
-WINDOWS_SYNC_URL=http://192.168.1.7:8088/sync-trigger
+        SFTP_SYNC_METHOD=database
+        WINDOWS_SYNC_URL=http://host.docker.internal:8088/sync-trigger
 SYNC_TIMEOUT=30000
 
-# NOTE: AI Helper settings will be configured via Admin UI
-# Coming soon - Settings → AI Configuration
+        # AI Helper settings (optional)
 AI_HELPER_ENABLED=false
 
 EOF

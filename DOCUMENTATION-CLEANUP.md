@@ -53,14 +53,11 @@ The documentation has been cleaned up and consolidated to eliminate confusion an
 ### [setup-dev.sh](setup-dev.sh) - Interactive Deployment
 
 **New Features:**
-- ✅ **Interactive credential prompts** during deployment:
-  - Database password (auto-generate or manual)
-  - JWT secret (auto-generated)
-  - Admin email, name, and password
-  - Frontend URL
-  - SMTP configuration (optional)
-  - AI Helper configuration (optional)
-  
+- ✅ **Interactive core configuration** during deployment:
+   - Database password (auto-generate or manual)
+   - JWT secret (auto-generated)
+   - Front-end base URL / port defaults (macOS uses `WEB_PORT=8080`)
+
 - ✅ **Automatic .env.prod creation** with all credentials
 - ✅ **Smart defaults** for quick setup
 - ✅ **Security-first** approach (generates strong random secrets)
@@ -76,12 +73,8 @@ The documentation has been cleaned up and consolidated to eliminate confusion an
 2. Prompt: "Generate random database password? (y/n)"
    → Generates: Strong 32-char password
 3. Auto-generate JWT secret ✅
-4. Prompt: "Admin email [admin@example.com]:"
-5. Prompt: "Admin password:"
-6. Prompt: "Configure SMTP? (y/n)"
-   → If yes: Asks for SMTP details
-7. Prompt: "Enable AI Helper? (y/n)"
-   → If yes: Choose GitHub or Ollama
+4. Writes a bootstrap admin account to `.env.prod` (default: `admin@example.com` / `Admin123!`)
+5. Builds the front-end and starts services
 8. Creates .env.prod with all settings ✅
 9. Sets up Docker network & volumes ✅
 10. Builds and starts services ✅

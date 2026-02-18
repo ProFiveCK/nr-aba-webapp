@@ -27,8 +27,8 @@ Complete guide for deploying the ABA Stack in development or production environm
 
 ### Network Requirements
 
-- **Development:** Port 80 available
-- **Production:** Port 80 (HTTP) + Port 9001 (Portainer Agent)
+- **Development:** Port `WEB_PORT` available (default is `8080` on macOS when using `./setup-dev.sh`)
+- **Production:** Port `WEB_PORT` available (default `80`). Optional: Port `9001` if you enable the Portainer agent service.
 - Outbound SMTP access (port 587) for email notifications
 
 ---
@@ -55,7 +55,10 @@ The script will:
 - ✅ Create Docker network and volumes
 - ✅ Build and start all services
 
-**Access:** http://localhost
+**Access:**
+
+- Linux: <http://localhost>
+- macOS (default): <http://localhost:8080>
 
 ---
 
@@ -109,7 +112,7 @@ DEFAULT_ADMIN_NAME=Admin User
 #### Application Settings
 ```bash
 FRONTEND_BASE_URL=http://localhost  # Or your production domain
-PROD_WEB_PORT=9000                  # Internal port (don't change)
+WEB_PORT=80                         # Host port mapped to the Nginx container (change if needed)
 ```
 
 #### Email/SMTP (Optional - for notifications)
@@ -161,7 +164,7 @@ docker compose logs -f
 
 ```bash
 # Check health endpoint
-curl http://localhost/api/health
+curl http://localhost/health
 
 # Should return: {"status":"ok"}
 ```
@@ -223,7 +226,7 @@ sudo usermod -aG docker $USER
 
 3. **Clone repository:**
 ```bash
-cd /home/fmis/Stacks
+cd /path/to/stacks
 git clone https://github.com/YOUR-USERNAME/aba-stack.git
 cd aba-stack
 ```
@@ -288,7 +291,7 @@ docker run --rm -v ron-stack_pgdata:/data -v $(pwd)/backups:/backup \
 
 Add to crontab:
 ```bash
-0 2 * * * /home/fmis/Stacks/aba-stack/scripts/backup-and-monitor.sh
+0 2 * * * /path/to/aba-stack/scripts/backup-and-monitor.sh
 ```
 
 ---
@@ -385,7 +388,7 @@ docker compose exec web ls -la /usr/share/nginx/html
 
 ```bash
 # Check API health
-curl http://localhost/api/health
+curl http://localhost/health
 
 # Check API logs
 docker compose logs api | tail -100
@@ -415,7 +418,7 @@ docker compose logs api | grep -i smtp
 
 ```bash
 # API health
-curl http://localhost/api/health
+curl http://localhost/health
 
 # Database health
 docker compose exec postgres pg_isready -U postgres

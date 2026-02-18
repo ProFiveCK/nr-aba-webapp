@@ -1,13 +1,27 @@
 #!/bin/bash
 
 # Production Backup and Monitoring Script
-# Runs database backups and checks for backend crashes
+# Runs database backups and checks for backend crashes.
+#
+# Defaults:
+# - Backups are written to: <repo>/archive
+# - Log file: <repo>/backup-monitor.log
+#
+# Override via env vars:
+# - BACKUP_DIR
+# - LOG_FILE
+# - MAX_BACKUPS
 
 set -e
 
-BACKUP_DIR="/home/fmis/Stacks/aba-stack/archive"
-LOG_FILE="/home/fmis/Stacks/aba-stack/backup-monitor.log"
-MAX_BACKUPS=14  # Keep 2 weeks of daily backups
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+
+BACKUP_DIR=${BACKUP_DIR:-"$PROJECT_ROOT/archive"}
+LOG_FILE=${LOG_FILE:-"$PROJECT_ROOT/backup-monitor.log"}
+MAX_BACKUPS=${MAX_BACKUPS:-14}  # Keep 2 weeks of daily backups
+
+mkdir -p "$BACKUP_DIR"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"

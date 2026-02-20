@@ -71,6 +71,14 @@ interface BaiAccountState {
     transactions: number;
 }
 
+interface WbcFjBuildResult {
+    content: string;
+    transactionCount: number;
+    debitCount: number;
+    creditCount: number;
+    skippedRows: number;
+}
+
 const DEFAULT_METADATA = {
     senderId: 'CBA',
     receiverId: 'BANK',
@@ -89,6 +97,7 @@ const PREVIEW_LIMIT = 250;
 const TOOL_TABS = [
     { id: 'generator', label: 'BAI2 Generator' },
     { id: 'validator', label: 'BAI2 Validator' },
+    { id: 'wbcfj', label: 'WBCFJ Generator' },
 ] as const;
 
 export function Banking() {
@@ -100,6 +109,13 @@ export function Banking() {
     const [generatorSummary, setGeneratorSummary] = useState('');
     const [baiOutput, setBaiOutput] = useState('');
     const [isGenerating, setIsGenerating] = useState(false);
+
+    const [wbcRaw, setWbcRaw] = useState('');
+    const [wbcFileName, setWbcFileName] = useState('');
+    const [wbcError, setWbcError] = useState('');
+    const [wbcSummary, setWbcSummary] = useState('');
+    const [wbcOutput, setWbcOutput] = useState('');
+    const [isWbcGenerating, setIsWbcGenerating] = useState(false);
 
     const [checkRaw, setCheckRaw] = useState('');
     const [checkFileName, setCheckFileName] = useState('');
@@ -114,6 +130,7 @@ export function Banking() {
 
     const csvInputRef = useRef<HTMLInputElement>(null);
     const baiInputRef = useRef<HTMLInputElement>(null);
+    const wbcInputRef = useRef<HTMLInputElement>(null);
 
     const issueLineSet = useMemo(() => {
         const set = new Set<number>();
@@ -230,6 +247,77 @@ export function Banking() {
         setBaiOutput('');
         setGeneratorSummary('');
         setGeneratorError('');
+    };
+
+    const handleSelectWbc = () => wbcInputRef.current?.click();
+
+    const handleWbcFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        readFile(file)
+            .then((text) => {
+                setWbcRaw(text);
+                setWbcFileName(file.name);
+                setWbcError('');
+                setWbcSummary('');
+                setWbcOutput('');
+            })
+            .catch(() => setWbcError('Failed to read WBC Fiji CSV file.'))
+            .finally(() => {
+                event.target.value = '';
+            });
+    };
+
+    const handleGenerateWbc = () => {
+        setWbcError('');
+        setWbcSummary('');
+        setIsWbcGenerating(true);
+        try {
+            if (!wbcRaw.trim()) throw new Error('Select a WBC Fiji CSV file before generating output.');
+            const result = convertWbcFjCsvToFmis(wbcRaw);
+            setWbcOutput(result.content);
+            const pieces = [
+                `${result.transactionCount} transactions`,
+                `${result.debitCount} debits (CHQ)`,
+                `${result.creditCount} credits (DEP)`,
+            ];
+            if (result.skippedRows) pieces.push(`${result.skippedRows} rows skipped`);
+            setWbcSummary(pieces.join(' • '));
+        } catch (err) {
+            setWbcOutput('');
+            setWbcError((err as Error)?.message || 'Unable to convert WBC Fiji statement.');
+        } finally {
+            setIsWbcGenerating(false);
+        }
+    };
+
+    const handleDownloadWbc = () => {
+        if (!wbcOutput.trim()) return;
+        const blob = new Blob([wbcOutput], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const base = wbcFileName.replace(/\.csv$/i, '') || 'wbc-fiji-statement';
+        link.href = url;
+        link.download = `${base}.txt`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
+    const handleCopyWbc = async () => {
+        if (!wbcOutput.trim() || !navigator?.clipboard?.writeText) return;
+        await navigator.clipboard.writeText(wbcOutput);
+        setWbcSummary((prev) => (prev ? `${prev} • Output copied to clipboard` : 'Output copied to clipboard'));
+        setTimeout(() => setWbcSummary((prev) => prev?.replace(/ • Output copied to clipboard$/, '') || ''), 2500);
+    };
+
+    const handleClearWbc = () => {
+        setWbcRaw('');
+        setWbcFileName('');
+        setWbcError('');
+        setWbcSummary('');
+        setWbcOutput('');
     };
 
     const handleSelectBai = () => baiInputRef.current?.click();
@@ -620,6 +708,75 @@ export function Banking() {
         </section>
     );
 
+    const renderWbcGenerator = () => (
+        <section className="rounded-2xl bg-white p-6 shadow space-y-6">
+            <div className="flex flex-col gap-1">
+                <h2 className="text-xl font-semibold text-gray-900">WBCFJ Generator</h2>
+                <p className="text-sm text-gray-600">
+                    Convert Westpac Fiji bank statement CSV files into TechnologyOne FMIS bank-reconciliation import format.
+                </p>
+            </div>
+
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700">
+                <input ref={wbcInputRef} type="file" accept=".csv" className="hidden" onChange={handleWbcFileChange} />
+                <div className="flex flex-wrap items-center gap-3">
+                    <button
+                        type="button"
+                        onClick={handleSelectWbc}
+                        className="rounded-md bg-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300"
+                    >
+                        Select WBC Fiji CSV
+                    </button>
+                    <span className="text-xs text-gray-500">{wbcFileName || 'No file selected.'}</span>
+                </div>
+                {wbcError && <p className="mt-2 text-xs text-red-600">{wbcError}</p>}
+            </div>
+
+            <textarea
+                value={wbcOutput}
+                readOnly
+                rows={12}
+                className="w-full rounded-xl border border-gray-200 bg-white font-mono text-xs text-gray-800 shadow-inner"
+                placeholder="Generated FMIS statement output will appear here"
+            />
+            {wbcSummary && <p className="text-sm text-gray-600">{wbcSummary}</p>}
+
+            <div className="flex flex-wrap gap-2">
+                <button
+                    type="button"
+                    onClick={handleGenerateWbc}
+                    disabled={isWbcGenerating}
+                    className="rounded-full bg-green-600 px-5 py-2 text-sm font-semibold text-white hover:bg-green-500 disabled:opacity-60"
+                >
+                    {isWbcGenerating ? 'Generating…' : 'Generate WBCFJ Output'}
+                </button>
+                <button
+                    type="button"
+                    onClick={handleDownloadWbc}
+                    disabled={!wbcOutput}
+                    className="rounded-full bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-60"
+                >
+                    Download TXT
+                </button>
+                <button
+                    type="button"
+                    onClick={handleCopyWbc}
+                    disabled={!wbcOutput}
+                    className="rounded-full border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                >
+                    Copy output
+                </button>
+                <button
+                    type="button"
+                    onClick={handleClearWbc}
+                    className="rounded-full border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                    Clear
+                </button>
+            </div>
+        </section>
+    );
+
     return (
         <div className="space-y-6">
             <section className="rounded-2xl bg-white p-6 shadow space-y-3">
@@ -647,9 +804,116 @@ export function Banking() {
                 </div>
             </div>
 
-            {activeTool === 'generator' ? renderGenerator() : renderValidator()}
+            {activeTool === 'generator' ? renderGenerator() : activeTool === 'validator' ? renderValidator() : renderWbcGenerator()}
         </div>
     );
+}
+
+const WBC_FJ_SKIP_PREFIXES = ['total value', 'number of'];
+
+function convertWbcFjCsvToFmis(text: string): WbcFjBuildResult {
+    const rows = parseCsvText(text);
+    if (!rows.length) throw new Error('CSV is empty.');
+
+    const outputLines: string[] = [];
+    let transactionCount = 0;
+    let debitCount = 0;
+    let creditCount = 0;
+    let skippedRows = 0;
+
+    rows.forEach((row) => {
+        if (!row || !row.length) {
+            skippedRows += 1;
+            return;
+        }
+
+        const first = cleanWbcText(row[0] ?? '');
+        const firstLower = first.toLowerCase();
+
+        if (!first && row.every((field) => !String(field || '').trim())) {
+            skippedRows += 1;
+            return;
+        }
+        if (first === 'Account description') {
+            skippedRows += 1;
+            return;
+        }
+        if (WBC_FJ_SKIP_PREFIXES.some((prefix) => firstLower.startsWith(prefix))) {
+            skippedRows += 1;
+            return;
+        }
+        if (row.length < 7) {
+            skippedRows += 1;
+            return;
+        }
+
+        const accountNumber = cleanWbcText(row[1] ?? '');
+        const dateFormatted = convertWbcFjDate(row[3] ?? '');
+        const narration = cleanWbcText(row[4] ?? '');
+        const debitRaw = cleanWbcText(row[5] ?? '');
+        const creditRaw = cleanWbcText(row[6] ?? '');
+
+        let tcd = '';
+        let amount = '';
+        if (debitRaw) {
+            tcd = 'CHQ';
+            amount = normalizeWbcAmount(debitRaw, false);
+            debitCount += 1;
+        } else if (creditRaw) {
+            tcd = 'DEP';
+            amount = normalizeWbcAmount(creditRaw, true);
+            creditCount += 1;
+        } else {
+            skippedRows += 1;
+            return;
+        }
+
+        const narr1 = narration.slice(0, 40);
+        const narr2 = narration.slice(40, 80);
+        outputLines.push([accountNumber, tcd, dateFormatted, '', amount, '', '', '', narr1, narr2, ''].join(','));
+        transactionCount += 1;
+    });
+
+    if (!transactionCount) throw new Error('No transactions with debit or credit amounts were found in the file.');
+
+    const headerLines = ['FORMAT REC STATEMENT STD', 'ANBR,TCD,DDT1,DRF1,DAMT1,DDT2,DRF2,DAMT2,TCOM1,TCOM2,TCOM3'];
+    const content = [...headerLines, ...outputLines].join('\r\n') + '\r\n';
+
+    return {
+        content,
+        transactionCount,
+        debitCount,
+        creditCount,
+        skippedRows,
+    };
+}
+
+function convertWbcFjDate(value: unknown): string {
+    const raw = cleanWbcText(value);
+    if (raw.length === 8 && /^\d{8}$/.test(raw)) {
+        return `${raw.slice(0, 2)}/${raw.slice(2, 4)}/${raw.slice(4, 8)}`;
+    }
+    return raw;
+}
+
+function cleanWbcText(value: unknown): string {
+    return String(value || '')
+        .trim()
+        .replace(/"/g, '')
+        .replace(/,/g, '');
+}
+
+function normalizeWbcAmount(value: unknown, negate: boolean): string {
+    const raw = String(value || '')
+        .trim()
+        .replace(/"/g, '')
+        .replace(/,/g, '');
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric)) {
+        const adjusted = negate ? numeric * -1 : numeric;
+        return adjusted.toFixed(2);
+    }
+    return raw;
 }
 
 function parseStatementCsv(text: string): ParsedStatement {

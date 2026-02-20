@@ -93,6 +93,7 @@ services:
       TZ: Pacific/Nauru
       WATCHTOWER_CLEANUP: "true"
       WATCHTOWER_LABEL_ENABLE: "true"
+      DOCKER_API_VERSION: "1.44"
     networks:
       - ron-net
 

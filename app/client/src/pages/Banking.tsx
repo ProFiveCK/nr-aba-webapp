@@ -278,8 +278,8 @@ export function Banking() {
             setWbcOutput(result.content);
             const pieces = [
                 `${result.transactionCount} transactions`,
-                `${result.debitCount} debits (CHQ)`,
-                `${result.creditCount} credits (DEP)`,
+                `${result.debitCount} debits (C001)`,
+                `${result.creditCount} credits (D001)`,
             ];
             if (result.skippedRows) pieces.push(`${result.skippedRows} rows skipped`);
             setWbcSummary(pieces.join(' • '));
@@ -856,11 +856,11 @@ function convertWbcFjCsvToFmis(text: string): WbcFjBuildResult {
         let tcd = '';
         let amount = '';
         if (debitRaw) {
-            tcd = 'CHQ';
+            tcd = 'C001';
             amount = normalizeWbcAmount(debitRaw, false);
             debitCount += 1;
         } else if (creditRaw) {
-            tcd = 'DEP';
+            tcd = 'D001';
             amount = normalizeWbcAmount(creditRaw, true);
             creditCount += 1;
         } else {

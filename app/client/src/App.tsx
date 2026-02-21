@@ -1,16 +1,23 @@
-import { useState, useEffect } from 'react';
+import { lazy, Suspense, useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { Login } from './pages/Login';
 import { Layout } from './components/Layout';
-import { Generator } from './pages/Generator';
-import { MyBatches } from './pages/MyBatches';
-import { Reader } from './pages/Reader';
-import { Banking } from './pages/Banking';
-import { Saas } from './pages/Saas';
-import { Reviewer } from './pages/Reviewer';
-import { Admin } from './pages/Admin';
 import { ResetPasswordModal } from './components/ResetPasswordModal';
+
+const Generator = lazy(() => import('./pages/Generator').then((module) => ({ default: module.Generator })));
+const MyBatches = lazy(() => import('./pages/MyBatches').then((module) => ({ default: module.MyBatches })));
+const Reader = lazy(() => import('./pages/Reader').then((module) => ({ default: module.Reader })));
+const Banking = lazy(() => import('./pages/Banking').then((module) => ({ default: module.Banking })));
+const Saas = lazy(() => import('./pages/Saas').then((module) => ({ default: module.Saas })));
+const Reviewer = lazy(() => import('./pages/Reviewer').then((module) => ({ default: module.Reviewer })));
+const Admin = lazy(() => import('./pages/Admin').then((module) => ({ default: module.Admin })));
+
+declare global {
+  interface Window {
+    handleAuthExpired?: () => void;
+  }
+}
 
 function AppContent() {
   const { isAuthenticated, isLoading, logout } = useAuth();
@@ -32,14 +39,14 @@ function AppContent() {
 
   // Set up global auth expiration handler
   useEffect(() => {
-    (window as any).handleAuthExpired = () => {
+    window.handleAuthExpired = () => {
       logout();
       // Optional: show a toast or notification
       console.log('Session expired. Please log in again.');
     };
 
     return () => {
-      delete (window as any).handleAuthExpired;
+      delete window.handleAuthExpired;
     };
   }, [logout]);
 
@@ -96,13 +103,21 @@ function AppContent() {
   return (
     <>
       <Layout activeTab={activeTab} onTabChange={setActiveTab}>
-        {activeTab === 'generator' && <Generator />}
-        {activeTab === 'my-batches' && <MyBatches />}
-        {activeTab === 'reader' && <Reader onTabChange={setActiveTab} />}
-        {activeTab === 'banking' && <Banking />}
-        {activeTab === 'saas' && <Saas />}
-        {activeTab === 'reviewer' && <Reviewer onTabChange={setActiveTab} />}
-        {activeTab === 'admin' && <Admin />}
+        <Suspense
+          fallback={
+            <div className="flex h-full min-h-96 items-center justify-center">
+              <div className="inline-block h-8 w-8 animate-spin rounded-full border-b-2 border-indigo-600"></div>
+            </div>
+          }
+        >
+          {activeTab === 'generator' && <Generator />}
+          {activeTab === 'my-batches' && <MyBatches />}
+          {activeTab === 'reader' && <Reader onTabChange={setActiveTab} />}
+          {activeTab === 'banking' && <Banking />}
+          {activeTab === 'saas' && <Saas />}
+          {activeTab === 'reviewer' && <Reviewer onTabChange={setActiveTab} />}
+          {activeTab === 'admin' && <Admin />}
+        </Suspense>
       </Layout>
       {resetToken && (
         <ResetPasswordModal

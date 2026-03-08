@@ -672,12 +672,23 @@ start_services() {
       sleep 2
     done
 
+    # Drop and recreate the database so the dump restores into a clean slate.
+    # Without this, the backend's auto-bootstrap creates the schema first and
+    # the dump errors on every "already exists" object.
+    info "Resetting database to clean state before restore..."
+    docker exec ron-aba-postgres-prod psql -U postgres -c "DROP DATABASE aba;" 2>/dev/null || true
+    docker exec ron-aba-postgres-prod psql -U postgres -c "CREATE DATABASE aba;"
+    ok "Clean database ready"
+
     info "Restoring $RESTORE_FILE ..."
     if docker exec -i ron-aba-postgres-prod psql -U postgres -d aba < "$RESTORE_FILE"; then
       ok "Database restored from $RESTORE_FILE"
     else
-      warn "Restore had errors — check above. Retry with:"
-      warn "  docker exec -i ron-aba-postgres-prod psql -U postgres -d aba < $RESTORE_FILE"
+      warn "Restore completed with warnings — check output above."
+      warn "To retry manually:"
+      warn "  sudo docker exec ron-aba-postgres-prod psql -U postgres -c 'DROP DATABASE aba;'"
+      warn "  sudo docker exec ron-aba-postgres-prod psql -U postgres -c 'CREATE DATABASE aba;'"
+      warn "  sudo docker exec -i ron-aba-postgres-prod psql -U postgres -d aba < $RESTORE_FILE"
     fi
   fi
 

@@ -66,6 +66,8 @@ sudo docker exec -i ron-aba-postgres-prod psql -U postgres -d aba < backup/yourf
 sudo docker compose --env-file .env.prod start api
 ```
 
+> **Fallback access:** after every restart the API bootstraps the `DEFAULT_ADMIN_EMAIL` account from `.env.prod` if needed. So even if you don't know the admin credentials in the restored dump, you can always log in with `admin@example.com` / `Admin123!` as a fallback.
+
 Backup files live in `./backup/`. See [`scripts/backup-ron-stack.sh`](scripts/backup-ron-stack.sh) for the automated backup script.
 
 ---

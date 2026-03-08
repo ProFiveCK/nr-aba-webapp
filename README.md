@@ -49,15 +49,18 @@ scp /path/to/your-backup.sql user@<server-ip>:~/nr-aba-webapp/backup/
 
 Then when the installer wizard asks about a restore, it will find the file automatically. Or choose `c` to enter any path.
 
+To restore manually **after** the initial install (the stack is already running and the schema exists — you must drop/recreate first or you'll get "already exists" errors):
+
 ```bash
-# 1. Make sure the stack is running
-docker compose --env-file .env.prod up -d
+# 1. Drop and recreate the database to clear the existing schema
+sudo docker exec ron-aba-postgres-prod psql -U postgres -c "DROP DATABASE aba;"
+sudo docker exec ron-aba-postgres-prod psql -U postgres -c "CREATE DATABASE aba;"
 
-# 2. Wait for PostgreSQL to be ready
-docker exec ron-aba-postgres-prod pg_isready -U postgres
+# 2. Restore from a .sql dump
+sudo docker exec -i ron-aba-postgres-prod psql -U postgres -d aba < backup/yourfile.sql
 
-# 3. Restore from a .sql dump
-docker exec -i ron-aba-postgres-prod psql -U postgres -d aba < backup/yourfile.sql
+# 3. Restart the API so it re-validates the schema
+sudo docker compose --env-file .env.prod restart api
 ```
 
 Backup files live in `./backup/`. See [`scripts/backup-ron-stack.sh`](scripts/backup-ron-stack.sh) for the automated backup script.

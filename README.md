@@ -52,15 +52,18 @@ Then when the installer wizard asks about a restore, it will find the file autom
 To restore manually **after** the initial install (the stack is already running and the schema exists — you must drop/recreate first or you'll get "already exists" errors):
 
 ```bash
-# 1. Drop and recreate the database to clear the existing schema
-sudo docker exec ron-aba-postgres-prod psql -U postgres -c "DROP DATABASE aba;"
+# 1. Stop the API (PostgreSQL won't drop a db with active connections)
+sudo docker compose --env-file .env.prod stop api
+
+# 2. Drop and recreate the database
+sudo docker exec ron-aba-postgres-prod psql -U postgres -c "DROP DATABASE IF EXISTS aba;"
 sudo docker exec ron-aba-postgres-prod psql -U postgres -c "CREATE DATABASE aba;"
 
-# 2. Restore from a .sql dump
+# 3. Restore from a .sql dump
 sudo docker exec -i ron-aba-postgres-prod psql -U postgres -d aba < backup/yourfile.sql
 
-# 3. Restart the API so it re-validates the schema
-sudo docker compose --env-file .env.prod restart api
+# 4. Restart the API so it reconnects and re-validates the schema
+sudo docker compose --env-file .env.prod start api
 ```
 
 Backup files live in `./backup/`. See [`scripts/backup-ron-stack.sh`](scripts/backup-ron-stack.sh) for the automated backup script.

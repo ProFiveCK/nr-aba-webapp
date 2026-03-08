@@ -672,11 +672,17 @@ start_services() {
       sleep 2
     done
 
-    # Drop and recreate the database so the dump restores into a clean slate.
-    # Without this, the backend's auto-bootstrap creates the schema first and
-    # the dump errors on every "already exists" object.
+    # Stop the API first — PostgreSQL refuses to DROP a database with active connections.
+    info "Stopping API container to release database connections..."
+    $COMPOSE_CMD --env-file "$ENV_FILE" stop api 2>/dev/null || true
+
+    # Terminate any remaining connections to aba just in case
+    docker exec ron-aba-postgres-prod psql -U postgres \
+      -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='aba' AND pid <> pg_backend_pid();" \
+      >/dev/null 2>&1 || true
+
     info "Resetting database to clean state before restore..."
-    docker exec ron-aba-postgres-prod psql -U postgres -c "DROP DATABASE aba;" 2>/dev/null || true
+    docker exec ron-aba-postgres-prod psql -U postgres -c "DROP DATABASE IF EXISTS aba;"
     docker exec ron-aba-postgres-prod psql -U postgres -c "CREATE DATABASE aba;"
     ok "Clean database ready"
 
@@ -686,10 +692,16 @@ start_services() {
     else
       warn "Restore completed with warnings — check output above."
       warn "To retry manually:"
-      warn "  sudo docker exec ron-aba-postgres-prod psql -U postgres -c 'DROP DATABASE aba;'"
+      warn "  sudo docker compose --env-file .env.prod stop api"
+      warn "  sudo docker exec ron-aba-postgres-prod psql -U postgres -c 'DROP DATABASE IF EXISTS aba;'"
       warn "  sudo docker exec ron-aba-postgres-prod psql -U postgres -c 'CREATE DATABASE aba;'"
       warn "  sudo docker exec -i ron-aba-postgres-prod psql -U postgres -d aba < $RESTORE_FILE"
+      warn "  sudo docker compose --env-file .env.prod start api"
     fi
+
+    # Restart the API so it reconnects to the restored database
+    info "Restarting API..."
+    $COMPOSE_CMD --env-file "$ENV_FILE" start api 2>/dev/null || true
   fi
 
   info "Waiting for health checks..."
@@ -725,8 +737,12 @@ print_summary() {
   echo "    $COMPOSE_CMD --env-file $ENV_FILE restart         # restart all"
   echo "    $COMPOSE_CMD --env-file $ENV_FILE down            # stop all"
   echo ""
-  echo "  To restore a DB backup later:"
-  echo "    docker exec -i ron-aba-postgres-prod psql -U postgres -d aba < backup/yourfile.sql"
+  echo "  To restore a DB backup later (re-run ./install.sh, or manually):"
+  echo "    sudo docker compose --env-file .env.prod stop api"
+  echo "    sudo docker exec ron-aba-postgres-prod psql -U postgres -c 'DROP DATABASE IF EXISTS aba;'"
+  echo "    sudo docker exec ron-aba-postgres-prod psql -U postgres -c 'CREATE DATABASE aba;'"
+  echo "    sudo docker exec -i ron-aba-postgres-prod psql -U postgres -d aba < backup/yourfile.sql"
+  echo "    sudo docker compose --env-file .env.prod start api"
   echo ""
 }
 

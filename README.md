@@ -10,7 +10,7 @@ Runs as a Docker Compose stack: React/Vite front-end · Node.js/Express API · P
 One script handles prerequisites, configuration, and startup on **macOS, Ubuntu/Debian, WSL, and other Linux**:
 
 ```bash
-git clone https://github.com/YOUR-ORG/nr-aba-webapp.git
+git clone https://github.com/ProFiveCK/nr-aba-webapp.git
 cd nr-aba-webapp
 chmod +x install.sh
 ./install.sh

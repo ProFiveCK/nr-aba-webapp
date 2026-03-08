@@ -41,6 +41,15 @@ SUDO=""
 
 run_sudo() { $SUDO "$@"; }
 
+# docker wrapper: uses sudo when current session isn't in the docker group yet
+docker() {
+  if [[ "$(id -u)" -eq 0 ]] || id -Gn 2>/dev/null | grep -qw docker; then
+    command docker "$@"
+  else
+    sudo docker "$@"
+  fi
+}
+
 ask_yn() {
   local prompt="$1"
   local yn
@@ -184,11 +193,12 @@ install_docker() {
       run_sudo apt-get install -y curl ca-certificates gnupg lsb-release
       info "Installing Docker Engine via official install script..."
       curl -fsSL https://get.docker.com | run_sudo sh
-      run_sudo systemctl enable docker --now 2>/dev/null || true
+      run_sudo systemctl enable docker 2>/dev/null || true
+      run_sudo systemctl start docker 2>/dev/null || true
       if [[ -n "${SUDO}" ]] && getent group docker >/dev/null 2>&1; then
         run_sudo usermod -aG docker "$USER"
         warn "Added $USER to the 'docker' group."
-        warn "If 'docker ps' fails after install, run: newgrp docker  or log out and back in."
+        warn "NOTE: group membership applies to new shells — this session uses 'sudo docker'."
       fi
       ;;
     rhel)
@@ -234,9 +244,15 @@ check_docker() {
         docker info >/dev/null 2>&1 || die "Docker daemon still not reachable."
         ;;
       *)
-        err "Docker daemon is not running."
-        info "Try: sudo systemctl start docker"
-        die "Start Docker then re-run ./install.sh"
+        info "Docker daemon is not running — attempting to start it..."
+        run_sudo systemctl start docker 2>/dev/null || true
+        local count=0
+        until docker info >/dev/null 2>&1; do
+          count=$((count+1))
+          [[ $count -ge 15 ]] && die "Docker daemon did not start in time. Run: sudo systemctl start docker  then re-run ./install.sh"
+          sleep 2
+        done
+        ok "Docker daemon started"
         ;;
     esac
   fi

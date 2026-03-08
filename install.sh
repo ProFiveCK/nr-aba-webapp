@@ -27,7 +27,7 @@ banner() {
   echo -e "${CYAN}${BOLD}"
   echo "╔══════════════════════════════════════════════════════════════╗"
   echo "║        RON ABA Stack  —  Installer & Setup Wizard           ║"
-  echo "║        github.com/YOUR-ORG/nr-aba-webapp                    ║"
+  echo "║        github.com/ProFiveCK/nr-aba-webapp                   ║"
   echo "╚══════════════════════════════════════════════════════════════╝"
   echo -e "${NC}"
 }
@@ -179,10 +179,13 @@ install_docker() {
         info "  3. Restart this terminal, then re-run: ./install.sh"
         exit 1
       fi
+      info "Installing curl and dependencies first..."
+      run_sudo apt-get update -qq
+      run_sudo apt-get install -y curl ca-certificates gnupg lsb-release
       info "Installing Docker Engine via official install script..."
       curl -fsSL https://get.docker.com | run_sudo sh
       run_sudo systemctl enable docker --now 2>/dev/null || true
-      if [[ -n "${SUDO}" ]]; then
+      if [[ -n "${SUDO}" ]] && getent group docker >/dev/null 2>&1; then
         run_sudo usermod -aG docker "$USER"
         warn "Added $USER to the 'docker' group."
         warn "If 'docker ps' fails after install, run: newgrp docker  or log out and back in."
@@ -190,15 +193,17 @@ install_docker() {
       ;;
     rhel)
       info "Installing Docker Engine (RHEL/Fedora)..."
+      run_sudo dnf install -y curl ca-certificates
+      run_sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo 2>/dev/null || true
       run_sudo dnf install -y docker-ce docker-ce-cli containerd.io
       run_sudo systemctl enable docker --now
-      [[ -n "${SUDO}" ]] && run_sudo usermod -aG docker "$USER" || true
+      if [[ -n "${SUDO}" ]] && getent group docker >/dev/null 2>&1; then run_sudo usermod -aG docker "$USER"; fi
       ;;
     arch)
       info "Installing Docker (Arch)..."
-      run_sudo pacman -Sy --noconfirm docker
+      run_sudo pacman -Sy --noconfirm docker curl
       run_sudo systemctl enable docker --now
-      [[ -n "${SUDO}" ]] && run_sudo usermod -aG docker "$USER" || true
+      if [[ -n "${SUDO}" ]] && getent group docker >/dev/null 2>&1; then run_sudo usermod -aG docker "$USER"; fi
       ;;
     *)
       err "Cannot auto-install Docker on $PLATFORM_NAME."

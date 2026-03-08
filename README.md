@@ -41,7 +41,13 @@ Default ports: **Linux** → `http://localhost` (port 80) · **macOS** → `http
 
 The installer wizard offers restore during first run — it auto-detects `.sql` files in `./backup/` and the repo root, and also lets you enter any custom path.
 
-To restore manually at any time:
+**Copying a backup to the server first (from your local machine):**
+
+```bash
+scp /path/to/your-backup.sql parallels@<server-ip>:~/nr-aba-webapp/backup/
+```
+
+Then when the installer wizard asks about a restore, it will find the file automatically. Or choose `c` to enter any path.
 
 ```bash
 # 1. Make sure the stack is running

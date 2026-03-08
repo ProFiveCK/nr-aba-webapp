@@ -44,7 +44,7 @@ The installer wizard offers restore during first run — it auto-detects `.sql` 
 **Copying a backup to the server first (from your local machine):**
 
 ```bash
-scp /path/to/your-backup.sql parallels@<server-ip>:~/nr-aba-webapp/backup/
+scp /path/to/your-backup.sql user@<server-ip>:~/nr-aba-webapp/backup/
 ```
 
 Then when the installer wizard asks about a restore, it will find the file automatically. Or choose `c` to enter any path.

@@ -39,7 +39,8 @@ Default ports: **Linux** → `http://localhost` (port 80) · **macOS** → `http
 
 ## Restore a Database Backup
 
-The installer wizard offers restore during first run.  
+The installer wizard offers restore during first run — it auto-detects `.sql` files in `./backup/` and the repo root, and also lets you enter any custom path.
+
 To restore manually at any time:
 
 ```bash

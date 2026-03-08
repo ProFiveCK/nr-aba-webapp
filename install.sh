@@ -558,22 +558,22 @@ pick_restore_file() {
     [[ -f "$f" ]] && candidates+=("$f")
   done < <(ls -t ./backup/*.sql 2>/dev/null; ls -t ./*.sql 2>/dev/null | grep -v "schema" || true)
 
-  if [[ ${#candidates[@]} -eq 0 ]]; then
-    info "No SQL backup files found in ./backup/ or current directory"
-    RESTORE_FILE=""
-    return
-  fi
-
   echo ""
-  echo "  Available backups:"
-  local i=0
-  for f in "${candidates[@]}"; do
-    local size
-    size="$(du -sh "$f" 2>/dev/null | awk '{print $1}')"
-    echo "    $((i+1)).  $(basename "$f")  (${size})"
-    i=$((i+1))
-  done
-  echo "    0.  Skip (empty database)"
+  if [[ ${#candidates[@]} -eq 0 ]]; then
+    info "No SQL backup files found in ./backup/ or the current directory."
+    info "Copy your .sql dump to ./backup/ first, or choose 'c' to enter a custom path."
+  else
+    echo "  Available backups:"
+    local i=0
+    for f in "${candidates[@]}"; do
+      local size
+      size="$(du -sh "$f" 2>/dev/null | awk '{print $1}')"
+      echo "    $((i+1)).  $(basename "$f")  (${size})  —  $f"
+      i=$((i+1))
+    done
+  fi
+  echo "    c.  Enter a custom path to a .sql file"
+  echo "    0.  Skip (start with empty database)"
   echo ""
 
   local sel
@@ -583,11 +583,19 @@ pick_restore_file() {
     if [[ "$sel" == "0" ]]; then
       RESTORE_FILE=""
       break
-    elif [[ "$sel" -ge 1 && "$sel" -le "${#candidates[@]}" ]]; then
+    elif [[ "$sel" == "c" || "$sel" == "C" ]]; then
+      read -rp "  Path to .sql file: " RESTORE_FILE
+      if [[ -f "$RESTORE_FILE" ]]; then
+        ok "Using: $RESTORE_FILE"
+        break
+      else
+        err "File not found: $RESTORE_FILE"
+      fi
+    elif [[ "$sel" =~ ^[0-9]+$ ]] && [[ "$sel" -ge 1 && "$sel" -le "${#candidates[@]}" ]]; then
       RESTORE_FILE="${candidates[$((sel-1))]}"
       break
     else
-      warn "Invalid selection — enter a number between 0 and ${#candidates[@]}"
+      warn "Invalid selection"
     fi
   done
 }

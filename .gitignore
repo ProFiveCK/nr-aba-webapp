@@ -103,3 +103,5 @@ cloudflare/secret/
 
 # Cache directories
 .cache/
+__pycache__/
+*.py[cod]

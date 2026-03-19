@@ -34,7 +34,7 @@ interface AdminAccount {
     id: string;
     email: string;
     display_name: string | null;
-    role: 'user' | 'banking' | 'reviewer' | 'admin';
+    role: 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll';
     status: 'active' | 'inactive';
     must_change_password: boolean;
     department_code: string | null;
@@ -549,7 +549,7 @@ function UserManagementPanel() {
                     <p className="text-sm text-gray-500">
                         {isEditing
                             ? "Update a user's role, department, and notification preferences."
-                            : 'Create a new account for a submitter, banking officer, reviewer, or admin.'}
+                            : 'Create a new account for a submitter, banking officer, payroll user, reviewer, or admin.'}
                     </p>
                 </div>
                 <form ref={formRef} onSubmit={handleFormSubmit} className="space-y-4">
@@ -595,6 +595,7 @@ function UserManagementPanel() {
                             >
                                 <option value="user">User</option>
                                 <option value="banking">Banking</option>
+                                <option value="payroll">Payroll</option>
                                 <option value="reviewer">Reviewer</option>
                                 <option value="admin">Admin</option>
                             </select>
@@ -673,6 +674,7 @@ function UserManagementPanel() {
                             <option value="all">All roles</option>
                             <option value="user">User</option>
                             <option value="banking">Banking</option>
+                            <option value="payroll">Payroll</option>
                             <option value="reviewer">Reviewer</option>
                             <option value="admin">Admin</option>
                         </select>

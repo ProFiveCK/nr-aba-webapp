@@ -100,7 +100,7 @@ export async function initSchema() {
     await client.query('ALTER TABLE reviewers DROP CONSTRAINT IF EXISTS reviewers_role_check');
     await client.query(`
       ALTER TABLE reviewers
-      ADD CONSTRAINT reviewers_role_check CHECK (role IN ('user','banking','reviewer','admin'))
+      ADD CONSTRAINT reviewers_role_check CHECK (role IN ('user','banking','reviewer','admin','payroll'))
     `);
 
     await client.query(`

@@ -55,6 +55,7 @@ export const STAGE_TRANSITIONS = {
 export const USER_ROLES = {
     USER: 'user',
     BANKING: 'banking',
+    PAYROLL: 'payroll',
     REVIEWER: 'reviewer',
     ADMIN: 'admin',
 } as const;
@@ -63,16 +64,18 @@ export const USER_ROLES = {
 export const ROLE_ORDER = {
     user: 1,
     banking: 2,
-    reviewer: 3,
-    admin: 4,
+    payroll: 3,
+    reviewer: 4,
+    admin: 5,
 } as const;
 
 // Role display labels
 export const ROLE_LABELS = {
     user: 'Level 1 User',
     banking: 'Level 2 Banking',
-    reviewer: 'Level 3 Reviewer',
-    admin: 'Level 4 Administrator',
+    payroll: 'Level 3 Payroll',
+    reviewer: 'Level 4 Reviewer',
+    admin: 'Level 5 Administrator',
 } as const;
 
 export const REVIEW_ACCESS_ROLES = [USER_ROLES.REVIEWER, USER_ROLES.ADMIN] as const;

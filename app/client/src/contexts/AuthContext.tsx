@@ -6,7 +6,7 @@ export interface User {
     id: number;
     email: string;
     display_name: string;
-    role: 'user' | 'banking' | 'reviewer' | 'admin';
+    role: 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll';
     department_code?: string;
     notify_on_submission?: boolean;
 }

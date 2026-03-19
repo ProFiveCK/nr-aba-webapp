@@ -29,14 +29,15 @@ services:
     # === API ===
   api:
     build:
-      context: ./app/backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: app/backend/Dockerfile
     container_name: ron-aba-backend-prod
     restart: unless-stopped
     env_file:
       - .env.prod
     environment:
       DB_HOST: postgres
+      PAYROLL_SCRIPT_PATH: /app/scripts/reformat_payroll.py
     depends_on:
       postgres:
         condition: service_healthy

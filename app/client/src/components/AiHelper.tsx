@@ -54,6 +54,10 @@ export function AiHelper() {
         }
     }, [isOpen]);
 
+    if (user?.role === 'payroll') {
+        return null;
+    }
+
     const handleSend = async () => {
         const text = input.trim();
         if (!text) return;
@@ -74,6 +78,7 @@ export function AiHelper() {
         if (['user', 'banking', 'reviewer', 'admin'].includes(role)) accessibleFeatures.push('Generator', 'My Batches');
         if (['user', 'banking', 'reviewer', 'admin'].includes(role)) accessibleFeatures.push('Reader');
         if (['banking', 'reviewer', 'admin'].includes(role)) accessibleFeatures.push('Banking');
+        if (['payroll', 'admin'].includes(role)) accessibleFeatures.push('Payroll');
         if (['reviewer', 'admin'].includes(role)) accessibleFeatures.push('SaaS', 'Reviewer');
         if (['admin'].includes(role)) accessibleFeatures.push('Admin');
 
@@ -221,4 +226,3 @@ export function AiHelper() {
         </div>
     );
 }
-

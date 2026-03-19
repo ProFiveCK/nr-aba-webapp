@@ -9,9 +9,22 @@ const Generator = lazy(() => import('./pages/Generator').then((module) => ({ def
 const MyBatches = lazy(() => import('./pages/MyBatches').then((module) => ({ default: module.MyBatches })));
 const Reader = lazy(() => import('./pages/Reader').then((module) => ({ default: module.Reader })));
 const Banking = lazy(() => import('./pages/Banking').then((module) => ({ default: module.Banking })));
+const Payroll = lazy(() => import('./pages/Payroll').then((module) => ({ default: module.Payroll })));
 const Saas = lazy(() => import('./pages/Saas').then((module) => ({ default: module.Saas })));
 const Reviewer = lazy(() => import('./pages/Reviewer').then((module) => ({ default: module.Reviewer })));
 const Admin = lazy(() => import('./pages/Admin').then((module) => ({ default: module.Admin })));
+
+const ROLE_TABS: Record<string, string[]> = {
+  user: ['generator', 'my-batches', 'reader'],
+  banking: ['generator', 'my-batches', 'reader', 'banking'],
+  reviewer: ['generator', 'my-batches', 'reader', 'banking', 'saas', 'reviewer'],
+  admin: ['generator', 'my-batches', 'reader', 'banking', 'payroll', 'saas', 'reviewer', 'admin'],
+  payroll: ['payroll'],
+};
+
+function getDefaultTab(role?: string | null) {
+  return ROLE_TABS[role || '']?.[0] || 'generator';
+}
 
 declare global {
   interface Window {
@@ -20,7 +33,7 @@ declare global {
 }
 
 function AppContent() {
-  const { isAuthenticated, isLoading, logout } = useAuth();
+  const { isAuthenticated, isLoading, logout, user } = useAuth();
   const [activeTab, setActiveTab] = useState('generator');
   const [resetToken, setResetToken] = useState<string | null>(null);
 
@@ -49,6 +62,14 @@ function AppContent() {
       delete window.handleAuthExpired;
     };
   }, [logout]);
+
+  useEffect(() => {
+    if (!user?.role) return;
+    const allowedTabs = ROLE_TABS[user.role] || [];
+    if (!allowedTabs.includes(activeTab)) {
+      setActiveTab(getDefaultTab(user.role));
+    }
+  }, [activeTab, user?.role]);
 
   const handleResetPasswordClose = () => {
     setResetToken(null);
@@ -114,6 +135,7 @@ function AppContent() {
           {activeTab === 'my-batches' && <MyBatches />}
           {activeTab === 'reader' && <Reader onTabChange={setActiveTab} />}
           {activeTab === 'banking' && <Banking />}
+          {activeTab === 'payroll' && <Payroll />}
           {activeTab === 'saas' && <Saas />}
           {activeTab === 'reviewer' && <Reviewer onTabChange={setActiveTab} />}
           {activeTab === 'admin' && <Admin />}

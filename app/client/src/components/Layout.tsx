@@ -14,6 +14,7 @@ const TABS = [
     { id: 'my-batches', label: 'My Batches', roles: ['user', 'banking', 'reviewer', 'admin'] },
     { id: 'reader', label: 'Reader', roles: ['user', 'banking', 'reviewer', 'admin'] },
     { id: 'banking', label: 'Banking', roles: ['banking', 'reviewer', 'admin'] },
+    { id: 'payroll', label: 'Payroll', roles: ['payroll', 'admin'] },
     { id: 'saas', label: 'SaaS', roles: ['reviewer', 'admin'] },
     { id: 'reviewer', label: 'Reviewer', roles: ['reviewer', 'admin'] },
     { id: 'admin', label: 'Admin', roles: ['admin'] },

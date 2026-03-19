@@ -8,6 +8,11 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
 import OpenAI from 'openai';
+import { spawn } from 'child_process';
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
 
@@ -23,12 +28,24 @@ const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASS = process.env.SMTP_PASS;
 const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER || 'no-reply@example.com';
 const REPLY_TO = process.env.REPLY_TO_EMAIL;
-const ACCOUNT_ROLES = ['user', 'banking', 'reviewer', 'admin'];
+const ACCOUNT_ROLES = ['user', 'banking', 'reviewer', 'admin', 'payroll'];
 const REVIEW_ACCESS_ROLES = ['reviewer', 'admin'];
 const ACCOUNT_STATUSES = ['active', 'inactive'];
 const BSB_REGEX = /^[0-9]{3}-[0-9]{3}$/;
 const ADMIN_ARCHIVE_LIMIT_DEFAULT = 100;
 const REVIEWER_ARCHIVE_LIMIT_DEFAULT = 50;
+const PAYROLL_ACCESS_ROLES = ['payroll', 'admin'];
+const PAYROLL_PYTHON_BIN = process.env.PAYROLL_PYTHON_BIN || process.env.PYTHON_BIN || 'python3';
+const PAYROLL_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const EXCEL_MIME_TYPES = new Set([
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/octet-stream'
+]);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const REPO_ROOT = path.resolve(__dirname, '../../..');
+const PAYROLL_SCRIPT_PATH = process.env.PAYROLL_SCRIPT_PATH || path.join(REPO_ROOT, 'scripts', 'reformat_payroll.py');
 
 // AI Helper Configuration
 const AI_HELPER_ENABLED = process.env.AI_HELPER_ENABLED === 'true';
@@ -613,7 +630,7 @@ app.put(
       res.status(400).json({ message: 'Department Head is required for user accounts.' });
       return;
     }
-    if (finalRole === 'user') {
+    if (!['reviewer', 'admin'].includes(finalRole)) {
       patch.notify_on_submission = false;
     }
 
@@ -735,6 +752,137 @@ app.delete(
     }
   }
 );
+
+app.post(
+  '/api/payroll/reformat',
+  requireAuth(PAYROLL_ACCESS_ROLES),
+  [
+    body('file_name').isString().trim().isLength({ min: 1, max: 255 }),
+    body('file_data').isString().trim().notEmpty(),
+    body('mime_type').optional({ nullable: true }).isString().isLength({ min: 1, max: 255 })
+  ],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+
+    const fileName = sanitizePayrollFileName(req.body.file_name);
+    const mimeType = req.body.mime_type || null;
+    const extension = path.extname(fileName).toLowerCase();
+
+    if (!['.xlsx', '.xls'].includes(extension)) {
+      res.status(400).json({ message: 'Unsupported file type. Upload an Excel workbook (.xls or .xlsx).' });
+      return;
+    }
+
+    if (mimeType && !EXCEL_MIME_TYPES.has(mimeType)) {
+      res.status(400).json({ message: 'Unsupported file type. Upload an Excel workbook.' });
+      return;
+    }
+
+    let inputBuffer;
+    try {
+      inputBuffer = decodeBase64File(req.body.file_data);
+    } catch (_err) {
+      res.status(400).json({ message: 'Invalid file upload payload.' });
+      return;
+    }
+
+    if (!inputBuffer.length) {
+      res.status(400).json({ message: 'Please upload a non-empty Excel file.' });
+      return;
+    }
+
+    if (inputBuffer.length > PAYROLL_MAX_FILE_BYTES) {
+      res.status(400).json({ message: 'The uploaded file is too large. Maximum size is 10 MB.' });
+      return;
+    }
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'payroll-reformat-'));
+    const inputPath = path.join(tempDir, fileName);
+    const outputPath = path.join(tempDir, buildPayrollOutputName(fileName));
+
+    try {
+      await fs.writeFile(inputPath, inputBuffer);
+      await runPayrollScript(inputPath, outputPath);
+
+      let outputBuffer;
+      try {
+        outputBuffer = await fs.readFile(outputPath);
+      } catch (_err) {
+        res.status(500).json({ message: 'Payroll processing did not produce an output file.' });
+        return;
+      }
+
+      res.json({
+        file_name: path.basename(outputPath),
+        mime_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        file_data: outputBuffer.toString('base64')
+      });
+    } catch (err) {
+      console.error('Payroll reformat failed', err);
+      res.status(500).json({
+        message: err instanceof Error && err.message
+          ? err.message
+          : 'Payroll processing failed.'
+      });
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  }
+);
+
+function sanitizePayrollFileName(name) {
+  return path.basename(String(name).trim() || 'payroll.xlsx');
+}
+
+function buildPayrollOutputName(fileName) {
+  const ext = path.extname(fileName) || '.xlsx';
+  const stem = path.basename(fileName, ext);
+  return `${stem} - Reformatted.xlsx`;
+}
+
+function decodeBase64File(fileData) {
+  const normalized = String(fileData).includes(',')
+    ? String(fileData).split(',').pop()
+    : String(fileData);
+  return Buffer.from(normalized, 'base64');
+}
+
+async function runPayrollScript(inputPath, outputPath) {
+  try {
+    await fs.access(PAYROLL_SCRIPT_PATH);
+  } catch (_err) {
+    throw new Error('Payroll script is not available on the server.');
+  }
+
+  await new Promise((resolve, reject) => {
+    const child = spawn(
+      PAYROLL_PYTHON_BIN,
+      [PAYROLL_SCRIPT_PATH, '--input', inputPath, '--output', outputPath],
+      { cwd: REPO_ROOT }
+    );
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', (err) => {
+      reject(new Error(`Unable to start payroll processor: ${err.message}`));
+    });
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const details = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n');
+      reject(new Error(details || `Payroll processor exited with code ${code}.`));
+    });
+  });
+}
 
 function handleValidation(req, res) {
   const errors = validationResult(req);

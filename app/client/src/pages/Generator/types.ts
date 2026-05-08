@@ -28,7 +28,7 @@ export interface HeaderData {
     balance_title: string;
 }
 
-export interface DuplicateGroup extends Array<number> { }
+export type DuplicateGroup = number[];
 
 export interface BatchMetrics {
     creditsCents: number;

@@ -10,6 +10,21 @@ interface ApiError extends Error {
     details?: unknown;
 }
 
+interface ApiErrorPayload {
+    message?: string;
+    error?: string;
+}
+
+declare global {
+    interface Window {
+        handleAuthExpired?: () => void;
+    }
+}
+
+function asErrorPayload(value: unknown): ApiErrorPayload {
+    return value && typeof value === 'object' ? (value as ApiErrorPayload) : {};
+}
+
 class ApiClient {
     private baseURL: string;
     private authToken: string | null = null;
@@ -92,16 +107,17 @@ class ApiClient {
         if (response.status === 401) {
             this.clearAuthToken();
             // Trigger auth expiration handler
-            if (typeof window !== 'undefined' && (window as any).handleAuthExpired) {
-                (window as any).handleAuthExpired();
+            if (typeof window !== 'undefined' && window.handleAuthExpired) {
+                window.handleAuthExpired();
             }
         }
 
         // Handle error responses
         if (!response.ok) {
+            const errorPayload = asErrorPayload(parsed);
             const apiError = new Error(
-                (parsed as any)?.message ||
-                (parsed as any)?.error ||
+                errorPayload.message ||
+                errorPayload.error ||
                 text ||
                 response.statusText ||
                 'API request failed'

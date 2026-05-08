@@ -15,7 +15,7 @@ const fmtAU = new Intl.NumberFormat('en-AU', {
  * Format a value as Australian currency
  */
 export function formatCurrency(value: number | string): string {
-    const n = parseFloat(String(value).replace(/[^0-9.\-]/g, ''));
+    const n = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
     return isNaN(n) ? String(value) : fmtAU.format(n);
 }
 
@@ -216,7 +216,7 @@ export interface BlacklistCsvParseResult {
 }
 
 export function parseBlacklistCsv(text: string): BlacklistCsvParseResult {
-    const normalizedContent = text.includes(',') ? text : text.replace(/	/g, ',');
+    const normalizedContent = text.includes(',') ? text : text.split('\t').join(',');
     const rawRows = parseCsvRows(normalizedContent);
     const trimmedRows = rawRows
         .map((row) => row.map((cell) => String(cell ?? '').trim()))

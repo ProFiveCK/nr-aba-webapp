@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { EmptyState, Icon } from '../../components/Ui';
 import type { Transaction, SortState } from './types';
+import { getVisibleTransactionRows } from './transaction-rows';
 
 interface TransactionTableProps {
     transactions: Transaction[];
@@ -14,6 +16,7 @@ interface TransactionTableProps {
 
 export function TransactionTable({
     transactions,
+    searchTerm,
     sortState,
     onTransactionUpdate,
     onDeleteRow,
@@ -22,8 +25,10 @@ export function TransactionTable({
     blockedIndexSet,
 }: TransactionTableProps) {
     const [amountDrafts, setAmountDrafts] = useState<Record<number, string>>({});
-    // Filter and sort logic would go here (simplified for now)
-    const filteredTransactions = transactions;
+    const visibleRows = useMemo(
+        () => getVisibleTransactionRows(transactions, searchTerm, sortState),
+        [transactions, searchTerm, sortState]
+    );
 
     const renderSortIndicator = (key: SortState['key']) => {
         if (sortState.key !== key) return null;
@@ -64,80 +69,84 @@ export function TransactionTable({
     };
 
     return (
-        <div className="overflow-x-auto overflow-y-scroll relative shadow-sm sm:rounded-lg max-h-[60vh]">
-            <table className="w-full text-sm text-left text-gray-600 border border-gray-300">
-                <thead className="text-xs text-gray-700 uppercase bg-gray-200 border-b border-gray-300 sticky top-0 z-10">
+        <div className="data-table-wrap">
+            <div className="data-table-scroll max-h-[60vh]">
+            <table className="data-table">
+                <thead>
                     <tr>
-                        <th className="py-2 px-2 border-r border-gray-300 w-12 text-center">Row</th>
-                        <th className="py-2 px-2 border-r border-gray-300 w-24">
+                        <th className="w-12 text-center">Row</th>
+                        <th className="w-24">
                             <button
                                 type="button"
-                                className="font-bold hover:text-indigo-600"
+                                className="inline-flex items-center font-bold hover:text-indigo-600"
                                 onClick={() => onSortChange('bsb')}
                             >
                                 BSB{renderSortIndicator('bsb')}
                             </button>
                         </th>
-                        <th className="py-2 px-2 border-r border-gray-300 w-32">
+                        <th className="w-32">
                             <button
                                 type="button"
-                                className="font-bold hover:text-indigo-600"
+                                className="inline-flex items-center font-bold hover:text-indigo-600"
                                 onClick={() => onSortChange('account')}
                             >
                                 Account{renderSortIndicator('account')}
                             </button>
                         </th>
-                        <th className="text-right py-2 px-2 border-r border-gray-300 w-28">
+                        <th className="w-28 text-right">
                             <button
                                 type="button"
-                                className="font-bold hover:text-indigo-600"
+                                className="inline-flex items-center font-bold hover:text-indigo-600"
                                 onClick={() => onSortChange('amount')}
                             >
                                 Amount{renderSortIndicator('amount')}
                             </button>
                         </th>
-                        <th className="py-2 px-2 border-r border-gray-300 min-w-[16rem]">
+                        <th className="min-w-[16rem]">
                             <button
                                 type="button"
-                                className="font-bold hover:text-indigo-600"
+                                className="inline-flex items-center font-bold hover:text-indigo-600"
                                 onClick={() => onSortChange('accountTitle')}
                             >
                                 Account Title{renderSortIndicator('accountTitle')}
                             </button>
                         </th>
-                        <th className="py-2 px-2 border-r border-gray-300 min-w-[14rem]">
+                        <th className="min-w-[14rem]">
                             <button
                                 type="button"
-                                className="font-bold hover:text-indigo-600"
+                                className="inline-flex items-center font-bold hover:text-indigo-600"
                                 onClick={() => onSortChange('lodgementRef')}
                             >
                                 Lodgement Ref{renderSortIndicator('lodgementRef')}
                             </button>
                         </th>
-                        <th className="py-2 px-2 border-r border-gray-300 text-center">Txn Code</th>
-                        <th className="py-2 px-2 text-center border-r border-gray-300">Actions</th>
+                        <th className="text-center">Txn Code</th>
+                        <th className="text-center">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {filteredTransactions.length === 0 ? (
+                    {visibleRows.length === 0 ? (
                         <tr>
-                            <td colSpan={8} className="text-center py-3 text-gray-500">
-                                No transactions added yet.
+                            <td colSpan={8}>
+                                <EmptyState
+                                    title={transactions.length === 0 ? 'No transactions added yet.' : 'No transactions match your search.'}
+                                    detail={transactions.length === 0 ? 'Add rows manually or import from Reader.' : 'Try a different BSB, account, title, or reference.'}
+                                />
                             </td>
                         </tr>
                     ) : (
-                        filteredTransactions.map((tx, index) => {
-                            const isDuplicate = duplicateIndexSet.has(index);
-                            const isBlocked = blockedIndexSet.has(index);
+                        visibleRows.map(({ transaction: tx, originalIndex }) => {
+                            const isDuplicate = duplicateIndexSet.has(originalIndex);
+                            const isBlocked = blockedIndexSet.has(originalIndex);
 
                             return (
                                 <tr
-                                    key={index}
-                                    className={`border-b hover:bg-gray-50 ${isBlocked ? 'bg-red-50 border-red-200' : 'bg-white'} ${isDuplicate ? 'border-l-4 border-l-amber-400' : ''
+                                    key={originalIndex}
+                                    className={`${isBlocked ? 'bg-red-50 border-red-200' : 'bg-white'} ${isDuplicate ? 'border-l-4 border-l-amber-400' : ''
                                         }`}
                                 >
-                                    <td className="p-2 whitespace-nowrap border-r border-gray-300 text-center text-gray-500">
-                                        {index + 1}
+                                    <td className="text-center text-gray-500">
+                                        {originalIndex + 1}
                                         {isDuplicate && (
                                             <span className="ml-1 text-[10px] bg-amber-100 text-amber-700 px-1 rounded">dup</span>
                                         )}
@@ -145,54 +154,54 @@ export function TransactionTable({
                                             <span className="ml-1 text-[10px] bg-red-100 text-red-700 px-1 rounded">blocked</span>
                                         )}
                                     </td>
-                                    <td className="p-2 whitespace-nowrap border-r border-gray-300">
+                                    <td>
                                         <input
                                             type="text"
                                             inputMode="numeric"
                                             value={formatBsbValue(tx.bsb || '')}
-                                            onChange={(e) => onTransactionUpdate(index, 'bsb', formatBsbValue(e.target.value))}
+                                            onChange={(e) => onTransactionUpdate(originalIndex, 'bsb', formatBsbValue(e.target.value))}
                                             className="w-full max-w-[6rem] bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-indigo-300 px-1 rounded uppercase"
                                             placeholder="123-456"
                                         />
                                     </td>
-                                    <td className="p-2 whitespace-nowrap border-r border-gray-300">
+                                    <td>
                                         <input
                                             type="text"
                                             value={tx.account}
-                                            onChange={(e) => onTransactionUpdate(index, 'account', e.target.value)}
+                                            onChange={(e) => onTransactionUpdate(originalIndex, 'account', e.target.value)}
                                             className="w-full max-w-[8rem] bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-indigo-300 px-1 rounded"
                                         />
                                     </td>
-                                    <td className="p-2 whitespace-nowrap border-r border-gray-300">
+                                    <td>
                                         <input
                                             type="text"
                                             inputMode="decimal"
-                                            value={formatAmountDisplay(index, Number(tx.amount || 0))}
-                                            onChange={(e) => handleAmountChange(index, e.target.value)}
-                                            onBlur={() => handleAmountBlur(index)}
+                                            value={formatAmountDisplay(originalIndex, Number(tx.amount || 0))}
+                                            onChange={(e) => handleAmountChange(originalIndex, e.target.value)}
+                                            onBlur={() => handleAmountBlur(originalIndex)}
                                             className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-indigo-300 text-right px-1 rounded"
                                         />
                                     </td>
-                                    <td className="p-2 whitespace-nowrap border-r border-gray-300">
+                                    <td>
                                         <input
                                             type="text"
                                             value={tx.accountTitle}
-                                            onChange={(e) => onTransactionUpdate(index, 'accountTitle', e.target.value)}
+                                            onChange={(e) => onTransactionUpdate(originalIndex, 'accountTitle', e.target.value)}
                                             className="w-full min-w-[16rem] bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-indigo-300 px-1 rounded"
                                         />
                                     </td>
-                                    <td className="p-2 whitespace-nowrap border-r border-gray-300">
+                                    <td>
                                         <input
                                             type="text"
                                             required
                                             maxLength={18}
                                             value={tx.lodgementRef}
-                                            onChange={(e) => onTransactionUpdate(index, 'lodgementRef', e.target.value)}
+                                            onChange={(e) => onTransactionUpdate(originalIndex, 'lodgementRef', e.target.value)}
                                             placeholder="Required"
                                             className="w-full min-w-[14rem] bg-transparent border border-transparent focus:border-gray-300 focus:outline-none px-1 rounded"
                                         />
                                     </td>
-                                    <td className="p-2 whitespace-nowrap border-r border-gray-300 text-center">
+                                    <td className="text-center">
                                         <input
                                             type="text"
                                             value="53"
@@ -201,12 +210,14 @@ export function TransactionTable({
                                             tabIndex={-1}
                                         />
                                     </td>
-                                    <td className="p-2 text-center whitespace-nowrap border-r border-gray-300">
+                                    <td className="text-center">
                                         <button
-                                            onClick={() => onDeleteRow(index)}
-                                            className="px-2 py-1 text-sm text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors"
+                                            onClick={() => onDeleteRow(originalIndex)}
+                                            className="icon-button mx-auto text-red-600 hover:border-red-200 hover:bg-red-50 hover:text-red-800"
+                                            title="Delete row"
+                                            aria-label={`Delete row ${originalIndex + 1}`}
                                         >
-                                            Delete
+                                            <Icon name="trash" />
                                         </button>
                                     </td>
                                 </tr>
@@ -215,6 +226,7 @@ export function TransactionTable({
                     )}
                 </tbody>
             </table>
+            </div>
         </div>
     );
 }

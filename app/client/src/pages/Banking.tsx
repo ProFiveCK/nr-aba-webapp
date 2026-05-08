@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/useAuth';
 
 interface StatementEntry {
     rowNumber: number;
@@ -127,6 +127,7 @@ export function Banking() {
     const [sanitizedOutput, setSanitizedOutput] = useState('');
     const [checkMessage, setCheckMessage] = useState('');
     const [isChecking, setIsChecking] = useState(false);
+    const [activeTool, setActiveTool] = useState<typeof TOOL_TABS[number]['id']>('generator');
 
     const csvInputRef = useRef<HTMLInputElement>(null);
     const baiInputRef = useRef<HTMLInputElement>(null);
@@ -137,6 +138,7 @@ export function Banking() {
         checkIssues.forEach((issue) => issue.lines?.forEach((line) => Number.isFinite(line) && set.add(line)));
         return set;
     }, [checkIssues]);
+    const previewRecords = useMemo(() => checkRecords.slice(0, PREVIEW_LIMIT), [checkRecords]);
 
     if (!user || (user.role !== 'banking' && user.role !== 'reviewer' && user.role !== 'admin')) {
         return (
@@ -410,9 +412,6 @@ export function Banking() {
         setCheckMessage('');
         setCheckError('');
     };
-
-    const previewRecords = useMemo(() => checkRecords.slice(0, PREVIEW_LIMIT), [checkRecords]);
-    const [activeTool, setActiveTool] = useState<typeof TOOL_TABS[number]['id']>('generator');
 
     const renderGenerator = () => (
         <section className="rounded-2xl bg-white p-6 shadow space-y-6">
@@ -1044,13 +1043,13 @@ function parseCsvDate(value: unknown): Date | null {
     let year: number | undefined;
     let month: number | undefined;
     let day: number | undefined;
-    let match = raw.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+    let match = raw.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
     if (match) {
         year = Number(match[1]);
         month = Number(match[2]);
         day = Number(match[3]);
     } else {
-        match = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+        match = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
         if (match) {
             day = Number(match[1]);
             month = Number(match[2]);
@@ -1073,7 +1072,7 @@ function parseCsvDate(value: unknown): Date | null {
 }
 
 function parseAmountField(value: unknown): number {
-    const cleaned = String(value || '').replace(/[^0-9.\-]/g, '');
+    const cleaned = String(value || '').replace(/[^0-9.-]/g, '');
     if (!cleaned) return 0;
     const num = Number(cleaned);
     return Number.isNaN(num) ? 0 : num;
@@ -1202,7 +1201,7 @@ function analyzeBaiContent(text: string) {
                 if (fileHeader) addIssue('Duplicate file header (01) record.', lineNumber);
                 fileHeader = record;
                 break;
-            case '02':
+            case '02': {
                 if (!fileHeader) addIssue('Group header (02) appears before file header.', lineNumber);
                 const previousGroup = getGroupState();
                 if (previousGroup) {
@@ -1213,7 +1212,8 @@ function analyzeBaiContent(text: string) {
                 groupCount += 1;
                 if (fields[6]) fileCurrency = fileCurrency || fields[6];
                 break;
-            case '03':
+            }
+            case '03': {
                 if (!currentGroup) {
                     addIssue('Account header (03) found outside of a group.', lineNumber);
                     break;
@@ -1225,6 +1225,7 @@ function analyzeBaiContent(text: string) {
                 currentAccount = { id: fields[1] || '', line: lineNumber, transactions: 0 };
                 accountCount += 1;
                 break;
+            }
             case '16':
                 if (!currentAccount) addIssue('Transaction detail (16) without a preceding account (03).', lineNumber);
                 else currentAccount.transactions += 1;
@@ -1250,7 +1251,7 @@ function analyzeBaiContent(text: string) {
                 currentAccount = null;
                 break;
             }
-            case '98':
+            case '98': {
                 if (!currentGroup) {
                     addIssue('Group trailer (98) without an open group.', lineNumber);
                     break;
@@ -1273,6 +1274,7 @@ function analyzeBaiContent(text: string) {
                 currentGroup = null;
                 currentAccount = null;
                 break;
+            }
             case '99':
                 if (fileTrailer) addIssue('Duplicate file trailer (99) record.', lineNumber);
                 fileTrailer = record;

@@ -1,5 +1,6 @@
-import { lazy, Suspense, useState, useEffect } from 'react';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { AuthProvider } from './contexts/AuthContext';
+import { useAuth } from './contexts/useAuth';
 import { ToastProvider } from './contexts/ToastContext';
 import { Login } from './pages/Login';
 import { Layout } from './components/Layout';
@@ -35,26 +36,21 @@ declare global {
 function AppContent() {
   const { isAuthenticated, isLoading, logout, user } = useAuth();
   const [activeTab, setActiveTab] = useState('generator');
-  const [resetToken, setResetToken] = useState<string | null>(null);
-
-  // Check for password reset token in URL hash
-  useEffect(() => {
+  const [resetToken, setResetToken] = useState<string | null>(() => {
     const hash = window.location.hash;
     if (hash.startsWith('#reset-password=')) {
       const token = hash.substring('#reset-password='.length);
       if (token) {
-        setResetToken(token);
-        // Clear the hash from URL
         window.location.hash = '';
+        return token;
       }
     }
-  }, []);
+    return null;
+  });
 
-  // Set up global auth expiration handler
   useEffect(() => {
     window.handleAuthExpired = () => {
       logout();
-      // Optional: show a toast or notification
       console.log('Session expired. Please log in again.');
     };
 
@@ -63,13 +59,8 @@ function AppContent() {
     };
   }, [logout]);
 
-  useEffect(() => {
-    if (!user?.role) return;
-    const allowedTabs = ROLE_TABS[user.role] || [];
-    if (!allowedTabs.includes(activeTab)) {
-      setActiveTab(getDefaultTab(user.role));
-    }
-  }, [activeTab, user?.role]);
+  const allowedTabs = ROLE_TABS[user?.role || ''] || [];
+  const resolvedActiveTab = allowedTabs.includes(activeTab) ? activeTab : getDefaultTab(user?.role);
 
   const handleResetPasswordClose = () => {
     setResetToken(null);
@@ -123,7 +114,7 @@ function AppContent() {
   // Show main app if authenticated
   return (
     <>
-      <Layout activeTab={activeTab} onTabChange={setActiveTab}>
+      <Layout activeTab={resolvedActiveTab} onTabChange={setActiveTab}>
         <Suspense
           fallback={
             <div className="flex h-full min-h-96 items-center justify-center">
@@ -131,14 +122,14 @@ function AppContent() {
             </div>
           }
         >
-          {activeTab === 'generator' && <Generator />}
-          {activeTab === 'my-batches' && <MyBatches />}
-          {activeTab === 'reader' && <Reader onTabChange={setActiveTab} />}
-          {activeTab === 'banking' && <Banking />}
-          {activeTab === 'payroll' && <Payroll />}
-          {activeTab === 'saas' && <Saas />}
-          {activeTab === 'reviewer' && <Reviewer onTabChange={setActiveTab} />}
-          {activeTab === 'admin' && <Admin />}
+          {resolvedActiveTab === 'generator' && <Generator />}
+          {resolvedActiveTab === 'my-batches' && <MyBatches />}
+          {resolvedActiveTab === 'reader' && <Reader onTabChange={setActiveTab} />}
+          {resolvedActiveTab === 'banking' && <Banking />}
+          {resolvedActiveTab === 'payroll' && <Payroll />}
+          {resolvedActiveTab === 'saas' && <Saas />}
+          {resolvedActiveTab === 'reviewer' && <Reviewer onTabChange={setActiveTab} />}
+          {resolvedActiveTab === 'admin' && <Admin />}
         </Suspense>
       </Layout>
       {resetToken && (

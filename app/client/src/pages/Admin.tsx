@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
-import { useAuth } from '../contexts/AuthContext';
-import { useToast } from '../contexts/ToastContext';
+import { useAuth } from '../contexts/useAuth';
+import { useToast } from '../contexts/useToast';
+import { EmptyState, Icon, LoadingState } from '../components/Ui';
 import { apiClient } from '../lib/api';
 import {
     formatIsoDateTime,
@@ -54,6 +55,14 @@ interface AdminArchiveEntry {
     transactions?: {
         prepared_by?: string;
     } | null;
+}
+
+interface AdminArchivePage {
+    items: AdminArchiveEntry[];
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
 }
 
 interface BlacklistEntry {
@@ -650,7 +659,7 @@ function UserManagementPanel() {
                 </form>
             </div>
 
-            <div className="rounded-2xl bg-white p-6 shadow space-y-4">
+            <div className="app-panel space-y-4 p-6">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                         <h3 className="text-xl font-semibold text-gray-900">User list</h3>
@@ -799,50 +808,51 @@ function AdminArchivesPanel() {
     const [error, setError] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const [showFullArchive, setShowFullArchive] = useState(false);
+    const [archiveOffset, setArchiveOffset] = useState(0);
+    const [archiveTotal, setArchiveTotal] = useState(0);
+    const [archiveHasMore, setArchiveHasMore] = useState(false);
     const { addToast } = useToast();
     const [deleteTarget, setDeleteTarget] = useState<AdminArchiveEntry | null>(null);
     const [deleteLoading, setDeleteLoading] = useState(false);
     const [deleteError, setDeleteError] = useState('');
 
-    const fetchArchives = useCallback(async (full: boolean) => {
+    const fetchArchives = useCallback(async (full: boolean, offset = 0, search = '') => {
         setLoading(true);
         setError('');
         try {
-            const query = full ? '/archives?scope=all' : `/archives?limit=${ADMIN_ARCHIVE_LIMIT}`;
-            const data = await apiClient.get<AdminArchiveEntry[]>(query);
-            setArchives(Array.isArray(data) ? data : []);
+            const params = new URLSearchParams({
+                meta: '1',
+                limit: String(ADMIN_ARCHIVE_LIMIT),
+                offset: String(offset),
+            });
+            if (full) params.set('scope', 'all');
+            if (search.trim()) params.set('search', search.trim());
+            const data = await apiClient.get<AdminArchivePage>(`/archives?${params.toString()}`);
+            setArchives(Array.isArray(data.items) ? data.items : []);
+            setArchiveTotal(data.total || 0);
+            setArchiveHasMore(Boolean(data.hasMore));
         } catch (err) {
             setError((err as Error)?.message || 'Unable to load archives.');
             setArchives([]);
+            setArchiveTotal(0);
+            setArchiveHasMore(false);
         } finally {
             setLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        fetchArchives(showFullArchive);
-    }, [fetchArchives, showFullArchive]);
+        const timeout = window.setTimeout(() => {
+            fetchArchives(showFullArchive, archiveOffset, searchTerm);
+        }, 250);
+        return () => window.clearTimeout(timeout);
+    }, [archiveOffset, fetchArchives, searchTerm, showFullArchive]);
 
-    const filteredArchives = useMemo(() => {
-        const term = searchTerm.trim().toLowerCase();
-        if (!term) return archives;
-        return archives.filter((archive) => {
-            const haystack = [
-                archive.code,
-                archive.pd_number,
-                archive.department_code,
-                archive.submitted_email,
-                archive.stage,
-                archive.transactions?.prepared_by,
-            ]
-                .filter(Boolean)
-                .join(' ')
-                .toLowerCase();
-            const compactTerm = term.replace(/[^a-z0-9]/g, '');
-            const compactHaystack = haystack.replace(/[^a-z0-9]/g, '');
-            return haystack.includes(term) || (compactTerm && compactHaystack.includes(compactTerm));
-        });
-    }, [archives, searchTerm]);
+    useEffect(() => {
+        setArchiveOffset(0);
+    }, [searchTerm, showFullArchive]);
+
+    const filteredArchives = archives;
 
     const archiveStats = useMemo(() => {
         const stats = {
@@ -863,8 +873,8 @@ function AdminArchivesPanel() {
     const scopeHint = useMemo(() => {
         const scope = showFullArchive ? 'Scope: full archive' : 'Scope: recent';
         const filterSuffix = searchTerm.trim() ? ' • filters applied' : '';
-        return `${scope}${filterSuffix}`;
-    }, [showFullArchive, searchTerm]);
+        return `${scope}${filterSuffix} • ${archiveTotal.toLocaleString()} total`;
+    }, [archiveTotal, showFullArchive, searchTerm]);
 
     const startDelete = (entry: AdminArchiveEntry) => {
         setDeleteTarget(entry);
@@ -885,7 +895,7 @@ function AdminArchivesPanel() {
             await apiClient.delete(`/batches/${encodeURIComponent(deleteTarget.code)}`);
             addToast(`Batch ${formatBatchCode(deleteTarget.code)} deleted.`, 'success');
             setDeleteTarget(null);
-            await fetchArchives(showFullArchive);
+            await fetchArchives(showFullArchive, archiveOffset, searchTerm);
         } catch (err) {
             setDeleteError((err as Error)?.message || 'Unable to delete batch.');
         } finally {
@@ -904,25 +914,29 @@ function AdminArchivesPanel() {
                     </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                    <input
-                        type="search"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        placeholder="Search code or PD#"
-                        className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    />
+                    <label className="relative">
+                        <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                        <input
+                            type="search"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            placeholder="Search code or PD#"
+                            className="rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                    </label>
                     <button
                         type="button"
                         onClick={() => setShowFullArchive((prev) => !prev)}
-                        className="rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        className="toolbar-button"
                     >
                         {showFullArchive ? 'Show recent only' : 'Load full archive'}
                     </button>
                     <button
                         type="button"
-                        onClick={() => fetchArchives(showFullArchive)}
-                        className="rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        onClick={() => fetchArchives(showFullArchive, archiveOffset, searchTerm)}
+                        className="toolbar-button"
                     >
+                        <Icon name="refresh" />
                         Refresh
                     </button>
                 </div>
@@ -949,10 +963,10 @@ function AdminArchivesPanel() {
                     </div>
                 </div>
                 {error && <p className="text-sm text-red-600">{error}</p>}
-                <div className="overflow-hidden rounded-xl border border-gray-100">
-                    <div className="max-h-[520px] overflow-y-auto">
-                        <table className="min-w-full divide-y divide-gray-200 text-sm">
-                            <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
+                <div className="data-table-wrap">
+                    <div className="data-table-scroll max-h-[520px]">
+                        <table className="data-table">
+                            <thead>
                                 <tr>
                                     <th className="px-3 py-2">Code</th>
                                     <th className="px-3 py-2">Stage</th>
@@ -963,14 +977,21 @@ function AdminArchivesPanel() {
                                     <th className="px-3 py-2 text-right">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-gray-100">
+                            <tbody>
                                 {loading ? (
                                     <tr>
-                                        <td colSpan={7} className="px-3 py-6 text-center text-gray-500">Loading archives…</td>
+                                        <td colSpan={7}>
+                                            <LoadingState label="Loading archives…" />
+                                        </td>
                                     </tr>
                                 ) : filteredArchives.length === 0 ? (
                                     <tr>
-                                        <td colSpan={7} className="px-3 py-6 text-center text-gray-500">No archives match your search.</td>
+                                        <td colSpan={7}>
+                                            <EmptyState
+                                                title="No archives match your search."
+                                                detail="Try a different code, PD number, department, or submitter."
+                                            />
+                                        </td>
                                     </tr>
                                 ) : (
                                     filteredArchives.map((archive) => {
@@ -991,9 +1012,11 @@ function AdminArchivesPanel() {
                                                     <button
                                                         type="button"
                                                         onClick={() => startDelete(archive)}
-                                                        className="rounded-full border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50"
+                                                        className="icon-button ml-auto text-rose-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
+                                                        title="Delete archive"
+                                                        aria-label={`Delete ${formatBatchCode(archive.code)}`}
                                                     >
-                                                        Delete
+                                                        <Icon name="trash" />
                                                     </button>
                                                 </td>
                                             </tr>
@@ -1002,6 +1025,31 @@ function AdminArchivesPanel() {
                                 )}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+                <div className="flex flex-col gap-2 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between">
+                    <span>
+                        Showing {archiveTotal === 0 ? 0 : archiveOffset + 1}-{archiveOffset + archives.length} of {archiveTotal}
+                    </span>
+                    <div className="flex gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setArchiveOffset((prev) => Math.max(0, prev - ADMIN_ARCHIVE_LIMIT))}
+                            disabled={archiveOffset === 0 || loading}
+                            className="toolbar-button"
+                        >
+                            <Icon name="chevronLeft" />
+                            Previous
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setArchiveOffset((prev) => prev + ADMIN_ARCHIVE_LIMIT)}
+                            disabled={!archiveHasMore || loading}
+                            className="toolbar-button"
+                        >
+                            Next
+                            <Icon name="chevronRight" />
+                        </button>
                     </div>
                 </div>
             </div>
@@ -1631,6 +1679,18 @@ function TestingModePanel() {
     );
 }
 
+interface SmtpSettingsResponse {
+    smtp_host?: string;
+    smtp_port?: number;
+    smtp_secure?: boolean;
+    smtp_user?: string;
+    from_email?: string;
+    reply_to_email?: string;
+    support_email?: string;
+    configured?: boolean;
+    source?: 'database' | 'environment';
+}
+
 function SmtpSettingsPanel() {
     const { addToast } = useToast();
     const { user } = useAuth();
@@ -1651,7 +1711,7 @@ function SmtpSettingsPanel() {
 
     const loadSettings = useCallback(async () => {
         try {
-            const data = await apiClient.get<any>('/admin/smtp-settings');
+            const data = await apiClient.get<SmtpSettingsResponse>('/admin/smtp-settings');
             setSettings({
                 smtp_host: data.smtp_host || '',
                 smtp_port: data.smtp_port || 587,

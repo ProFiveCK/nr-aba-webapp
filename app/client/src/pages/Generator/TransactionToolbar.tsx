@@ -8,6 +8,7 @@ interface TransactionToolbarProps {
     onApplyBulkLodgement: (ref: string) => void;
     onSearchChange: (term: string) => void;
     searchTerm: string;
+    exportCount: number;
 }
 
 export function TransactionToolbar({
@@ -18,6 +19,7 @@ export function TransactionToolbar({
     onApplyBulkLodgement,
     onSearchChange,
     searchTerm,
+    exportCount,
 }: TransactionToolbarProps) {
     const [bulkRef, setBulkRef] = React.useState('');
 
@@ -39,7 +41,8 @@ export function TransactionToolbar({
                 </button>
                 <button
                     onClick={onExportCSV}
-                    className="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm"
+                    disabled={exportCount === 0}
+                    className="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:cursor-not-allowed disabled:opacity-50 text-sm"
                 >
                     Export Filtered CSV
                 </button>

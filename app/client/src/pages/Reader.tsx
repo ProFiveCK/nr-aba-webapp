@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import type { ChangeEvent } from 'react';
 import { parseAba } from '../lib/abaParser';
 import type { ParsedAbaResult } from '../lib/abaParser';
@@ -12,25 +12,10 @@ interface ReaderProps {
 }
 
 export function Reader({ onTabChange }: ReaderProps) {
-    const [parsedData, setParsedData] = useState<ParsedAbaResult | null>(null);
-    const [error, setError] = useState<string | null>(null);
+    const [initialImport] = useState(() => loadSharedAbaImport());
+    const [parsedData, setParsedData] = useState<ParsedAbaResult | null>(initialImport.parsedData);
+    const [error, setError] = useState<string | null>(initialImport.error);
     const fileInputRef = useRef<HTMLInputElement>(null);
-
-    // Allow other tabs to hand off ABA content via localStorage
-    useEffect(() => {
-        const stored = localStorage.getItem('aba_reader_import');
-        if (!stored) return;
-        localStorage.removeItem('aba_reader_import');
-        try {
-            const text = fromBase64(stored);
-            const result = parseAba(text);
-            setParsedData(result);
-            setError(null);
-        } catch {
-            setError('Failed to load shared ABA file.');
-            setParsedData(null);
-        }
-    }, []);
 
     const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -187,4 +172,15 @@ export function Reader({ onTabChange }: ReaderProps) {
         </div>
     );
 
+}
+
+function loadSharedAbaImport(): { parsedData: ParsedAbaResult | null; error: string | null } {
+    const stored = localStorage.getItem('aba_reader_import');
+    if (!stored) return { parsedData: null, error: null };
+    localStorage.removeItem('aba_reader_import');
+    try {
+        return { parsedData: parseAba(fromBase64(stored)), error: null };
+    } catch {
+        return { parsedData: null, error: 'Failed to load shared ABA file.' };
+    }
 }

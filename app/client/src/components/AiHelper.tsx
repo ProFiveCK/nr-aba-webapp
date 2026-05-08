@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/useAuth';
 import { apiClient } from '../lib/api';
 
 interface Message {
@@ -26,7 +26,7 @@ function parseMarkdown(text: string) {
         // Numbered lists
         .replace(/^\d+\.\s+(.*)$/gim, '<li class="ml-4 list-decimal">$1</li>')
         // Bullet lists
-        .replace(/^[\-\*]\s+(.*)$/gim, '<li class="ml-4 list-disc">$1</li>')
+        .replace(/^[-*]\s+(.*)$/gim, '<li class="ml-4 list-disc">$1</li>')
         // Line breaks
         .replace(/\n/g, '<br>');
 }
@@ -119,14 +119,14 @@ export function AiHelper() {
     };
 
     return (
-        <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end space-y-4">
+        <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end space-y-3">
             {/* Chat Window */}
             {isOpen && (
-                <div className="w-80 sm:w-96 h-[500px] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-gray-200 animate-in slide-in-from-bottom-10 fade-in duration-200">
+                <div className="flex h-[500px] w-80 flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl sm:w-96">
                     {/* Header */}
-                    <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-4 flex items-center justify-between shrink-0">
+                    <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 bg-zinc-900 p-4">
                         <div className="flex items-center gap-2 text-white">
-                            <span className="text-xl">🤖</span>
+                            <span className="inline-flex h-7 w-7 items-center justify-center rounded bg-white/10 text-xs font-semibold">AI</span>
                             <h3 className="font-semibold">AI Helper</h3>
                         </div>
                         <button 
@@ -211,16 +211,17 @@ export function AiHelper() {
             {/* Toggle Button */}
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className={`h-14 w-14 rounded-full shadow-lg flex items-center justify-center transition-all duration-300 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-indigo-200 ${
-                    isOpen 
-                        ? 'bg-gray-800 text-white rotate-90' 
-                        : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white'
+                aria-label={isOpen ? 'Close AI helper' : 'Open AI helper'}
+                className={`flex h-12 w-12 items-center justify-center rounded-md shadow-lg transition-colors focus:outline-none focus:ring-4 focus:ring-indigo-200 ${
+                    isOpen
+                        ? 'bg-zinc-900 text-white'
+                        : 'bg-indigo-600 text-white hover:bg-indigo-500'
                 }`}
             >
                 {isOpen ? (
                     <span className="text-2xl font-light leading-none">✕</span>
                 ) : (
-                    <span className="text-3xl">🤖</span>
+                    <span className="text-sm font-semibold">AI</span>
                 )}
             </button>
         </div>

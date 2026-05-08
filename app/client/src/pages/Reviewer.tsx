@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { apiClient } from '../lib/api';
-import { useAuth } from '../contexts/AuthContext';
-import { useToast } from '../contexts/ToastContext';
+import { EmptyState, Icon, LoadingState } from '../components/Ui';
+import { useAuth } from '../contexts/useAuth';
+import { useToast } from '../contexts/useToast';
 import type { BatchDetail, BatchStage } from './MyBatches/types';
 import type { HeaderData, Transaction as GeneratorTransaction } from './Generator/types';
 import {
@@ -45,6 +46,14 @@ interface ReviewEvent {
     metadata?: Record<string, unknown> | null;
 }
 
+interface ArchivePage {
+    items: ArchiveEntry[];
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+}
+
 const ARCHIVE_LIMIT = 40;
 type DecisionType = 'approved' | 'rejected';
 
@@ -66,6 +75,9 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
     const [archivesLoading, setArchivesLoading] = useState(true);
     const [archivesError, setArchivesError] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
+    const [archiveOffset, setArchiveOffset] = useState(0);
+    const [archiveTotal, setArchiveTotal] = useState(0);
+    const [archiveHasMore, setArchiveHasMore] = useState(false);
 
     const [selectedBatch, setSelectedBatch] = useState<BatchDetail | null>(null);
     const [reviewHistory, setReviewHistory] = useState<ReviewEvent[]>([]);
@@ -82,49 +94,44 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
     const [valueDateRemitter, setValueDateRemitter] = useState('');
     const [valueDateLoading, setValueDateLoading] = useState(false);
     const [valueDateError, setValueDateError] = useState('');
+    const [readerNoticeOpen, setReaderNoticeOpen] = useState(false);
 
-    const fetchArchives = useCallback(async (full: boolean) => {
+    const fetchArchives = useCallback(async (full: boolean, offset = 0, search = '') => {
         setArchivesLoading(true);
         setArchivesError('');
         try {
-            const query = full ? '/archives?scope=all' : `/archives?limit=${ARCHIVE_LIMIT}`;
-            const data = await apiClient.get<ArchiveEntry[]>(query);
-            setArchives(Array.isArray(data) ? data : []);
+            const params = new URLSearchParams({
+                meta: '1',
+                limit: String(ARCHIVE_LIMIT),
+                offset: String(offset),
+            });
+            if (full) params.set('scope', 'all');
+            if (search.trim()) params.set('search', search.trim());
+            const data = await apiClient.get<ArchivePage>(`/archives?${params.toString()}`);
+            setArchives(Array.isArray(data.items) ? data.items : []);
+            setArchiveTotal(data.total || 0);
+            setArchiveHasMore(Boolean(data.hasMore));
         } catch (err) {
             const message = (err as Error)?.message || 'Failed to load archives.';
             setArchivesError(message);
             setArchives([]);
+            setArchiveTotal(0);
+            setArchiveHasMore(false);
         } finally {
             setArchivesLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        fetchArchives(showFullArchive);
-    }, [fetchArchives, showFullArchive]);
+        const timeout = window.setTimeout(() => {
+            fetchArchives(showFullArchive, archiveOffset, searchTerm);
+        }, 250);
+        return () => window.clearTimeout(timeout);
+    }, [archiveOffset, fetchArchives, searchTerm, showFullArchive]);
 
-    const filteredArchives = useMemo(() => {
-        const term = searchTerm.trim().toLowerCase();
-        if (!term) return archives;
-        return archives.filter((archive) => {
-            const meta = archive.transactions as Record<string, unknown> | undefined;
-            const preparedBy = (meta?.prepared_by as string) || '';
-            const haystack = [
-                archive.code,
-                archive.pd_number,
-                archive.department_code,
-                archive.submitted_email,
-                archive.stage,
-                preparedBy,
-            ]
-                .filter(Boolean)
-                .join(' ')
-                .toLowerCase();
-            const compactTerm = term.replace(/[^a-z0-9]/g, '');
-            const compactHaystack = haystack.replace(/[^a-z0-9]/g, '');
-            return haystack.includes(term) || compactHaystack.includes(compactTerm);
-        });
-    }, [archives, searchTerm]);
+    useEffect(() => {
+        setArchiveOffset(0);
+    }, [searchTerm, showFullArchive]);
 
     const loadBatch = useCallback(
         async (rawCode: string, silent = false) => {
@@ -183,7 +190,7 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                 comments: trimmedComments || undefined,
                 notify: next === 'rejected' ? notifySubmitter : undefined,
             });
-            await fetchArchives(showFullArchive);
+            await fetchArchives(showFullArchive, archiveOffset, searchTerm);
             await loadBatch(selectedBatch.code, true);
             setComments('');
         } catch (err) {
@@ -195,7 +202,7 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
 
     const handleDownloadAba = () => {
         if (!selectedBatch?.file_base64) {
-            setDetailError('ABA file becomes available once the batch is approved.');
+            setReaderNoticeOpen(true);
             return;
         }
         const filename = selectedBatch.file_name || `${formatBatchCode(selectedBatch.code)}.aba`;
@@ -204,7 +211,7 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
 
     const handleOpenInReader = () => {
         if (!selectedBatch?.file_base64) {
-            setDetailError('ABA file becomes available once the batch is approved.');
+            setReaderNoticeOpen(true);
             return;
         }
         localStorage.setItem('aba_reader_import', selectedBatch.file_base64);
@@ -321,7 +328,7 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
     return (
         <>
         <div className="space-y-6">
-            <section className="bg-white shadow rounded-2xl p-6">
+            <section className="app-panel p-6">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
                         <h1 className="text-2xl font-bold text-gray-900">Reviewer Tools</h1>
@@ -332,14 +339,14 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
 
             <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
                 <div className="space-y-6">
-                    <section className="bg-white shadow rounded-2xl p-6 min-h-[360px]">
+                    <section className="app-panel min-h-[360px] p-6">
                         <div className="space-y-1">
                             <h2 className="text-lg font-semibold text-gray-900">Batch Details</h2>
                             <p className="text-sm text-gray-500">Select a batch from the archive to populate the details below.</p>
                         </div>
                         {detailError && <p className="mt-2 text-sm text-red-600">{detailError}</p>}
                         {detailLoading ? (
-                            <div className="mt-6 flex h-40 items-center justify-center text-gray-500">Loading batch…</div>
+                            <LoadingState label="Loading batch…" />
                         ) : !selectedBatch ? (
                             <p className="mt-6 text-sm text-gray-500">No batch selected yet. Use the archive below to load one.</p>
                         ) : (
@@ -367,20 +374,22 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                                 <div className="flex flex-wrap gap-2">
                                     <button
                                         onClick={handleDownloadAba}
-                                        className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-amber-400"
+                                        className="toolbar-button bg-amber-500 text-white hover:bg-amber-400"
                                     >
+                                        <Icon name="download" />
                                         Download ABA
                                     </button>
                                     <button
                                         onClick={handleOpenInReader}
-                                        className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                                        className="toolbar-button"
                                     >
+                                        <Icon name="external" />
                                         Open in Reader
                                     </button>
                                     {payloadHeader && isReviewerRole && (
                                         <button
                                             onClick={openValueDateModal}
-                                            className="rounded-md border border-amber-300 px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50"
+                                            className="toolbar-button border-amber-300 text-amber-700 hover:bg-amber-50"
                                         >
                                             Adjust processing date
                                         </button>
@@ -390,7 +399,7 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                         )}
                     </section>
 
-                    <section className="bg-white shadow rounded-2xl p-6">
+                    <section className="app-panel p-6">
                         <h3 className="text-lg font-semibold text-gray-900">Reviewer History</h3>
                         {reviewHistory.length === 0 ? (
                             <p className="mt-2 text-sm text-gray-500">No reviewer activity recorded yet.</p>
@@ -483,43 +492,47 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                 </section>
             </div>
 
-            <section className="bg-white shadow rounded-2xl p-6">
+            <section className="app-panel p-6">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                         <h2 className="text-lg font-semibold text-gray-900">Recent Archives</h2>
                         <p className="text-sm text-gray-500">
-                            {showFullArchive ? 'Full archive view' : 'Showing latest entries'} · {filteredArchives.length} of {archives.length}
+                            {showFullArchive ? 'Full archive view' : 'Showing latest entries'} · {archiveTotal.toLocaleString()} total
                         </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                        <input
-                            type="search"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            placeholder="Search code or PD#"
-                            className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                        />
+                        <label className="relative">
+                            <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                            <input
+                                type="search"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                placeholder="Search code or PD#"
+                                className="rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            />
+                        </label>
                         <button
                             type="button"
                             onClick={() => setShowFullArchive((prev) => !prev)}
-                            className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                            className="toolbar-button"
                         >
                             {showFullArchive ? 'Show recent only' : 'Load full archive'}
                         </button>
                         <button
                             type="button"
-                            onClick={() => fetchArchives(showFullArchive)}
-                            className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                            onClick={() => fetchArchives(showFullArchive, archiveOffset, searchTerm)}
+                            className="toolbar-button"
                         >
+                            <Icon name="refresh" />
                             Refresh
                         </button>
                     </div>
                 </div>
                 {archivesError && <p className="mt-3 text-sm text-red-600">{archivesError}</p>}
-                <div className="mt-4 overflow-hidden rounded-xl border border-gray-100">
-                    <div className="max-h-[420px] overflow-y-auto">
-                        <table className="min-w-full divide-y divide-gray-200 text-sm">
-                            <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
+                <div className="data-table-wrap mt-4">
+                    <div className="data-table-scroll max-h-[420px]">
+                        <table className="data-table">
+                            <thead>
                                 <tr>
                                     <th className="px-3 py-2">Code</th>
                                     <th className="px-3 py-2">Stage</th>
@@ -530,28 +543,31 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                                     <th className="px-3 py-2 text-right">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-gray-100">
+                            <tbody>
                                 {archivesLoading ? (
                                     <tr>
-                                        <td colSpan={7} className="px-3 py-6 text-center text-gray-500">
-                                            Loading archives…
+                                        <td colSpan={7}>
+                                            <LoadingState label="Loading archives…" />
                                         </td>
                                     </tr>
-                                ) : filteredArchives.length === 0 ? (
+                                ) : archives.length === 0 ? (
                                     <tr>
-                                        <td colSpan={7} className="px-3 py-6 text-center text-gray-500">
-                                            {searchTerm ? 'No archives match your search.' : 'No archives available yet.'}
+                                        <td colSpan={7}>
+                                            <EmptyState
+                                                title={searchTerm ? 'No archives match your search.' : 'No archives available yet.'}
+                                                detail={searchTerm ? 'Try a different code, PD number, department, or submitter.' : undefined}
+                                            />
                                         </td>
                                     </tr>
                                 ) : (
-                                    filteredArchives.map((archive) => {
+                                    archives.map((archive) => {
                                         const formattedCode = formatBatchCode(archive.code);
                                         const badge = getBatchStageBadgeClasses(archive.stage);
                                         const isSelected = selectedBatch?.code === archive.code;
                                         const meta = archive.transactions as Record<string, unknown> | undefined;
                                         const preparedBy = (meta?.prepared_by as string) || '—';
                                         return (
-                                            <tr key={archive.code} className={isSelected ? 'bg-indigo-50/60' : undefined}>
+                                            <tr key={archive.code} className={isSelected ? 'bg-indigo-50/70 ring-1 ring-inset ring-indigo-100' : undefined}>
                                                 <td className="px-3 py-2 font-mono text-indigo-600">{formattedCode}</td>
                                                 <td className="px-3 py-2">
                                                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${badge}`}>
@@ -565,9 +581,11 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                                                 <td className="px-3 py-2 text-right">
                                                     <button
                                                         onClick={() => handleArchiveSelect(archive.code)}
-                                                        className="rounded-md bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-500"
+                                                        className="icon-button ml-auto"
+                                                        title="View batch details"
+                                                        aria-label={`View ${formattedCode}`}
                                                     >
-                                                        View
+                                                        <Icon name="eye" />
                                                     </button>
                                                 </td>
                                             </tr>
@@ -578,8 +596,74 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                         </table>
                     </div>
                 </div>
+                <div className="mt-3 flex flex-col gap-2 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between">
+                    <span>
+                        Showing {archiveTotal === 0 ? 0 : archiveOffset + 1}-{archiveOffset + archives.length} of {archiveTotal}
+                    </span>
+                    <div className="flex gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setArchiveOffset((prev) => Math.max(0, prev - ARCHIVE_LIMIT))}
+                            disabled={archiveOffset === 0 || archivesLoading}
+                            className="toolbar-button py-1.5"
+                        >
+                            <Icon name="chevronLeft" />
+                            Previous
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setArchiveOffset((prev) => prev + ARCHIVE_LIMIT)}
+                            disabled={!archiveHasMore || archivesLoading}
+                            className="toolbar-button py-1.5"
+                        >
+                            Next
+                            <Icon name="chevronRight" />
+                        </button>
+                    </div>
+                </div>
             </section>
         </div>
+
+        {readerNoticeOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setReaderNoticeOpen(false)}>
+                <div
+                    className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+                    onClick={(e) => e.stopPropagation()}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="reader-notice-title"
+                >
+                    <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+                            <Icon name="alert" />
+                        </div>
+                        <div className="min-w-0">
+                            <h3 id="reader-notice-title" className="text-lg font-semibold text-gray-900">ABA file not ready</h3>
+                            <p className="mt-1 text-sm text-gray-600">
+                                ABA file becomes available once the batch is approved. Approve the batch first, then open it in Reader.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setReaderNoticeOpen(false)}
+                            className="icon-button -mr-2 -mt-2 shrink-0"
+                            aria-label="Close"
+                        >
+                            <Icon name="x" />
+                        </button>
+                    </div>
+                    <div className="mt-6 flex justify-end">
+                        <button
+                            type="button"
+                            onClick={() => setReaderNoticeOpen(false)}
+                            className="toolbar-button toolbar-button-primary"
+                        >
+                            OK
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
 
         {valueDateModalOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setValueDateModalOpen(false)}>

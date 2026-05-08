@@ -1,1 +1,55 @@
 @import "tailwindcss";
+
+@layer components {
+  .app-panel {
+    @apply rounded-xl border border-zinc-200 bg-white shadow-sm;
+  }
+
+  .data-table-wrap {
+    @apply overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm;
+  }
+
+  .data-table-scroll {
+    @apply overflow-auto;
+  }
+
+  .data-table {
+    @apply min-w-full divide-y divide-zinc-200 text-left text-[13px] text-zinc-700;
+  }
+
+  .data-table thead {
+    @apply sticky top-0 z-10 bg-zinc-50/95 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 backdrop-blur;
+  }
+
+  .data-table th {
+    @apply whitespace-nowrap px-3 py-2;
+  }
+
+  .data-table tbody {
+    @apply divide-y divide-zinc-100 bg-white;
+  }
+
+  .data-table td {
+    @apply whitespace-nowrap px-3 py-1.5 align-middle;
+  }
+
+  .data-table tbody tr {
+    @apply transition-colors hover:bg-indigo-50/35;
+  }
+
+  .toolbar-button {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .toolbar-button-primary {
+    @apply border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-500;
+  }
+
+  .icon-button {
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .state-surface {
+    @apply flex min-h-32 flex-col items-center justify-center gap-2 px-4 py-8 text-center text-sm text-zinc-500;
+  }
+}

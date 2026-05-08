@@ -1308,6 +1308,56 @@ async function fetchRecentArchives(limit) {
   return rows;
 }
 
+async function fetchArchivesPage({ includeHistory = false, limit, offset = 0, search = '' }) {
+  const requested = Number.isFinite(limit) ? limit : REVIEWER_ARCHIVE_LIMIT_DEFAULT;
+  const clampedLimit = Math.max(1, Math.min(requested, ADMIN_ARCHIVE_LIMIT_MAX));
+  const clampedOffset = Math.max(0, Number.isFinite(offset) ? offset : 0);
+  const trimmedSearch = String(search || '').trim();
+  const params = [clampedLimit, clampedOffset];
+  const where = ['deleted_at IS NULL'];
+  if (!includeHistory) {
+    where.push('from_history = FALSE');
+  }
+  if (trimmedSearch) {
+    params.push(`%${trimmedSearch.toLowerCase()}%`);
+    const searchParam = `$${params.length}`;
+    where.push(`
+      LOWER(CONCAT_WS(' ',
+        code,
+        pd_number,
+        department_code,
+        submitted_email,
+        stage,
+        transactions->>'prepared_by'
+      )) LIKE ${searchParam}
+    `);
+  }
+  const whereSql = where.join(' AND ');
+  const countWhereSql = trimmedSearch ? whereSql.replace(/\$3/g, '$1') : whereSql;
+  const countParams = trimmedSearch ? [params[2]] : [];
+  const baseFrom = `FROM combined_batch_archives WHERE ${whereSql}`;
+  const [{ rows }, countResult] = await Promise.all([
+    pool.query(
+      `SELECT code, root_batch_id, department_code, file_name, checksum, transactions, created_at,
+              stage, stage_updated_at, pd_number, submitted_email, submitted_by, is_draft,
+              archived_at, from_history
+         ${baseFrom}
+        ORDER BY created_at DESC
+        LIMIT $1 OFFSET $2`,
+      params
+    ),
+    pool.query(`SELECT COUNT(*)::int AS total FROM combined_batch_archives WHERE ${countWhereSql}`, countParams)
+  ]);
+  const total = Number(countResult.rows[0]?.total || 0);
+  return {
+    items: rows,
+    total,
+    limit: clampedLimit,
+    offset: clampedOffset,
+    hasMore: clampedOffset + rows.length < total,
+  };
+}
+
 async function fetchAllArchives() {
   const { rows } = await pool.query(
     `SELECT code, root_batch_id, department_code, file_name, checksum, transactions, created_at,
@@ -2376,7 +2426,10 @@ app.get('/api/archives', requireAuth(REVIEW_ACCESS_ROLES), async (req, res) => {
   const isAdmin = req.user?.role === 'admin';
   const scope = String(req.query.scope || '').toLowerCase();
   const wantAllArchives = scope === 'all';
+  const wantsMeta = req.query.meta === '1' || req.query.meta === 'true';
   const limitParam = Number.parseInt(req.query.limit, 10);
+  const offsetParam = Number.parseInt(req.query.offset, 10);
+  const search = typeof req.query.search === 'string' ? req.query.search : '';
   let limit = isAdmin ? ADMIN_ARCHIVE_LIMIT_DEFAULT : REVIEWER_ARCHIVE_LIMIT_DEFAULT;
   if (!wantAllArchives) {
     if (!Number.isNaN(limitParam)) {
@@ -2387,6 +2440,22 @@ app.get('/api/archives', requireAuth(REVIEW_ACCESS_ROLES), async (req, res) => {
     }
   }
   try {
+    if (wantsMeta) {
+      const pageLimit = Number.isNaN(limitParam)
+        ? limit
+        : Math.max(1, Math.min(limitParam, isAdmin ? ADMIN_ARCHIVE_LIMIT_MAX : REVIEWER_ARCHIVE_LIMIT_MAX));
+      const page = await fetchArchivesPage({
+        includeHistory: wantAllArchives,
+        limit: pageLimit,
+        offset: Number.isNaN(offsetParam) ? 0 : offsetParam,
+        search,
+      });
+      res.json({
+        ...page,
+        items: maskArchivesForRole(page.items, isAdmin),
+      });
+      return;
+    }
     const rows = wantAllArchives ? await fetchAllArchives() : await fetchRecentArchives(limit);
     res.json(maskArchivesForRole(rows, isAdmin));
   } catch (err) {

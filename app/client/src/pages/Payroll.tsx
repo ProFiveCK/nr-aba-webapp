@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { useAuth } from '../contexts/AuthContext';
-import { useToast } from '../contexts/ToastContext';
+import { useAuth } from '../contexts/useAuth';
+import { useToast } from '../contexts/useToast';
+import { Icon } from '../components/Ui';
 import { apiClient } from '../lib/api';
 
 interface PayrollResponse {
@@ -113,7 +114,7 @@ export function Payroll() {
 
     return (
         <section className="space-y-6">
-            <div className="rounded-2xl bg-white p-6 shadow">
+            <div className="app-panel p-6">
                 <div className="max-w-3xl">
                     <h2 className="text-2xl font-semibold text-gray-900">NSF File Format</h2>
                     <p className="mt-2 text-sm text-gray-600">
@@ -146,32 +147,30 @@ export function Payroll() {
                         {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
                     </div>
 
-                    <div className="rounded-2xl bg-slate-900 p-6 text-white shadow-sm">
-                        <h3 className="text-lg font-semibold">Process</h3>
-                        <p className="mt-2 text-sm text-slate-200">
-                            The backend runs `scripts/reformat_payroll.py` and returns the NSF-formatted workbook for download.
-                        </p>
+                    <div className="app-panel flex flex-col justify-between p-6">
                         <button
                             type="button"
                             onClick={handleProcess}
                             disabled={processing || !selectedFile}
-                            className="mt-6 w-full rounded-full bg-emerald-400 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
+                            className="toolbar-button toolbar-button-primary w-full py-3"
                         >
+                            {processing && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />}
                             {processing ? 'Processing…' : 'Create NSF file format'}
                         </button>
                         <button
                             type="button"
                             onClick={handleDownload}
                             disabled={!result}
-                            className="mt-3 w-full rounded-full border border-white/20 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:text-slate-400"
+                            className="toolbar-button mt-3 w-full py-3"
                         >
+                            <Icon name="download" />
                             Download NSF file
                         </button>
                     </div>
                 </div>
             </div>
 
-            <div className="rounded-2xl bg-white p-6 shadow">
+            <div className="app-panel p-6">
                 <h3 className="text-lg font-semibold text-gray-900">Result</h3>
                 {!result ? (
                     <p className="mt-2 text-sm text-gray-500">No processed file yet.</p>

@@ -17,7 +17,7 @@ export function HeaderForm({ headerData, onHeaderChange }: HeaderFormProps) {
         if (!headerData.proc) {
             onHeaderChange({ ...headerData, proc: todayDDMMYY() });
         }
-    }, []);
+    }, [headerData, onHeaderChange]);
 
     const handlePresetChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const presetKey = e.target.value as HeaderPresetKey;

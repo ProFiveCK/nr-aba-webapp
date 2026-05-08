@@ -1,8 +1,9 @@
 import React from 'react';
-import { useAuth } from '../contexts/AuthContext';
-import { useToast } from '../contexts/ToastContext';
+import { useAuth } from '../contexts/useAuth';
+import { useToast } from '../contexts/useToast';
 import { HeaderForm } from './Generator/HeaderForm';
 import { TransactionTable } from './Generator/TransactionTable';
+import { getVisibleTransactionRows } from './Generator/transaction-rows';
 import { TransactionToolbar } from './Generator/TransactionToolbar';
 import { ValidationAlerts } from './Generator/ValidationAlerts';
 import type { Transaction, HeaderData, SortState, BatchMetrics } from './Generator/types';
@@ -181,7 +182,7 @@ export function Generator() {
             console.warn('Failed to load imported data', err);
             localStorage.removeItem('aba_generator_import');
         }
-    }, []);
+    }, [transactions.length]);
 
     // Save header data to localStorage whenever it changes
     React.useEffect(() => {
@@ -196,13 +197,17 @@ export function Generator() {
         }
     }, [headerData]);
 
-    // Save transactions to localStorage whenever they change
+    // Save transactions to localStorage after edits settle; large imports make synchronous writes noticeable.
     React.useEffect(() => {
-        try {
-            localStorage.setItem('aba-transactions', JSON.stringify(transactions));
-        } catch (err) {
-            console.warn('Failed to save transactions to localStorage', err);
-        }
+        const timeout = window.setTimeout(() => {
+            try {
+                localStorage.setItem('aba-transactions', JSON.stringify(transactions));
+            } catch (err) {
+                console.warn('Failed to save transactions to localStorage', err);
+            }
+        }, 250);
+
+        return () => window.clearTimeout(timeout);
     }, [transactions]);
 
     // Load blacklist on component mount
@@ -225,8 +230,8 @@ export function Generator() {
 
     // Placeholder handlers
     const handleAddRow = () => {
-        setTransactions([
-            ...transactions,
+        setTransactions((prev) => [
+            ...prev,
             { bsb: '', account: '', amount: 0, accountTitle: '', lodgementRef: '', txnCode: '53' },
         ]);
     };
@@ -246,13 +251,16 @@ export function Generator() {
     };
 
     const handleTransactionUpdate = (index: number, field: keyof Transaction, value: string | number) => {
-        const updated = [...transactions];
-        updated[index] = { ...updated[index], [field]: value };
-        setTransactions(updated);
+        setTransactions((prev) => {
+            const updated = [...prev];
+            if (!updated[index]) return prev;
+            updated[index] = { ...updated[index], [field]: value };
+            return updated;
+        });
     };
 
     const handleDeleteRow = (index: number) => {
-        setTransactions(transactions.filter((_, i) => i !== index));
+        setTransactions((prev) => prev.filter((_, i) => i !== index));
     };
 
     const handleSortChange = (key: SortState['key']) => {
@@ -278,14 +286,19 @@ export function Generator() {
             }
 
             if (imported.length > 0) {
-                setTransactions([...transactions, ...imported]);
+                setTransactions((prev) => [...prev, ...imported]);
             }
         };
         input.click();
     };
 
+    const visibleRows = React.useMemo(
+        () => getVisibleTransactionRows(transactions, searchTerm, sortState),
+        [transactions, searchTerm, sortState]
+    );
+
     const handleExportCSV = () => {
-        const csv = exportTransactionsToCSV(transactions);
+        const csv = exportTransactionsToCSV(visibleRows.map((row) => row.transaction));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -296,7 +309,7 @@ export function Generator() {
     };
 
     const handleApplyBulkLodgement = (ref: string) => {
-        setTransactions(transactions.map((tx) => ({ ...tx, lodgementRef: ref })));
+        setTransactions((prev) => prev.map((tx) => ({ ...tx, lodgementRef: ref })));
     };
 
     const handleGenerateABA = async () => {
@@ -375,7 +388,10 @@ export function Generator() {
         [transactions]
     );
 
-    const missingLodgementRefs = transactions.filter((tx) => !tx.lodgementRef || !tx.lodgementRef.trim());
+    const missingLodgementRefs = React.useMemo(
+        () => transactions.filter((tx) => !tx.lodgementRef || !tx.lodgementRef.trim()),
+        [transactions]
+    );
 
     const canUseManualReference = user?.role === 'admin' || user?.role === 'reviewer';
     const autoDeptCode = (user?.department_code || '').slice(0, 2);
@@ -523,6 +539,7 @@ export function Generator() {
                 <TransactionToolbar
                     onImportCSV={handleImportCSV}
                     onExportCSV={handleExportCSV}
+                    exportCount={visibleRows.length}
                     onAddRow={handleAddRow}
                     onClearAll={handleClearAll}
                     onApplyBulkLodgement={handleApplyBulkLodgement}
@@ -540,7 +557,7 @@ export function Generator() {
                     blockedIndexSet={blockedIndexSet}
                 />
                 <p className="text-sm font-semibold text-gray-700">
-                    Transactions: {metrics.transactionCount} · Credits: {formatMoney(metrics.creditsCents)} · Debits: {formatMoney(metrics.debitsCents)}
+                    Transactions: {metrics.transactionCount} · Showing: {visibleRows.length} · Credits: {formatMoney(metrics.creditsCents)} · Debits: {formatMoney(metrics.debitsCents)}
                 </p>
                 <ValidationAlerts
                     blockedAccounts={blockedAccounts}

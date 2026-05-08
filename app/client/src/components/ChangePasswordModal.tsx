@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { apiClient } from '../lib/api';
-import { useToast } from '../contexts/ToastContext';
-import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/useToast';
+import { useAuth } from '../contexts/useAuth';
+import type { User } from '../contexts/auth-types';
 
 interface ChangePasswordModalProps {
     onClose: () => void;
@@ -35,7 +36,7 @@ export function ChangePasswordModal({ onClose }: ChangePasswordModalProps) {
 
         setLoading(true);
         try {
-            const response = await apiClient.post<{ token: string; expires_at: string; reviewer: any }>(
+            const response = await apiClient.post<{ token: string; expires_at: string; reviewer: User }>(
                 '/auth/change-password',
                 {
                     current_password: currentPassword,
@@ -138,4 +139,3 @@ export function ChangePasswordModal({ onClose }: ChangePasswordModalProps) {
         </div>
     );
 }
-

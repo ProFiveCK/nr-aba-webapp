@@ -1,6 +1,6 @@
 import type { BatchDetail } from './types';
 import { formatIsoDateTime, formatPdNumber, getBatchStageBadgeClasses, getBatchStageMetadata } from '../../lib/utils';
-import { useToast } from '../../contexts/ToastContext';
+import { useToast } from '../../contexts/useToast';
 
 interface BatchDetailModalProps {
     batch: BatchDetail | null;
@@ -8,9 +8,10 @@ interface BatchDetailModalProps {
 }
 
 export function BatchDetailModal({ batch, onClose }: BatchDetailModalProps) {
+    const { addToast } = useToast();
+
     if (!batch) return null;
 
-    const { addToast } = useToast();
     const stageMetadata = getBatchStageMetadata(batch.stage);
     const badgeClasses = getBatchStageBadgeClasses(batch.stage);
     const canLoadInGenerator =

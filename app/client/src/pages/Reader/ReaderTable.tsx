@@ -1,4 +1,5 @@
 import type { AbaTransaction } from '../../lib/abaParser';
+import { EmptyState } from '../../components/Ui';
 
 interface ReaderTableProps {
     transactions: AbaTransaction[];
@@ -7,33 +8,33 @@ interface ReaderTableProps {
 export function ReaderTable({ transactions }: ReaderTableProps) {
     if (transactions.length === 0) {
         return (
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center text-gray-500">
-                No transactions found.
+            <div className="data-table-wrap">
+                <EmptyState title="No transactions found." detail="Upload or paste an ABA file to inspect records." />
             </div>
         );
     }
 
     return (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-            <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
+        <div className="data-table-wrap">
+            <div className="data-table-scroll">
+                <table className="data-table">
+                    <thead>
                         <tr>
-                            <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Line</th>
-                            <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">BSB</th>
-                            <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Account</th>
-                            <th scope="col" className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
-                            <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
-                            <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reference</th>
-                            <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Code</th>
-                            <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trace BSB</th>
-                            <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trace Acct</th>
+                            <th scope="col">Line</th>
+                            <th scope="col">BSB</th>
+                            <th scope="col">Account</th>
+                            <th scope="col" className="text-right">Amount</th>
+                            <th scope="col">Title</th>
+                            <th scope="col">Reference</th>
+                            <th scope="col">Code</th>
+                            <th scope="col">Trace BSB</th>
+                            <th scope="col">Trace Acct</th>
                         </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
+                    <tbody>
                         {transactions.map((tx, idx) => (
                             <tr key={idx} className={`hover:bg-gray-50 ${tx.isDuplicate ? 'bg-yellow-50' : ''}`}>
-                                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500 border-r border-gray-100">
+                                <td className="text-gray-500">
                                     {tx.line}
                                     {tx.isDuplicate && (
                                         <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
@@ -41,14 +42,14 @@ export function ReaderTable({ transactions }: ReaderTableProps) {
                                         </span>
                                     )}
                                 </td>
-                                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 border-r border-gray-100 font-mono">{tx.bsb}</td>
-                                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 border-r border-gray-100 font-mono">{tx.account}</td>
-                                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 border-r border-gray-100 text-right font-mono">{tx.amount}</td>
-                                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 border-r border-gray-100">{tx.accountTitle}</td>
-                                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 border-r border-gray-100">{tx.lodgementRef}</td>
-                                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500 border-r border-gray-100 text-center">{tx.txnCode}</td>
-                                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500 border-r border-gray-100 font-mono">{tx.trace_bsb}</td>
-                                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500 font-mono">{tx.trace_acct}</td>
+                                <td className="font-mono text-gray-900">{tx.bsb}</td>
+                                <td className="font-mono text-gray-900">{tx.account}</td>
+                                <td className="text-right font-mono text-gray-900">{tx.amount}</td>
+                                <td className="text-gray-900">{tx.accountTitle}</td>
+                                <td className="text-gray-900">{tx.lodgementRef}</td>
+                                <td className="text-center text-gray-500">{tx.txnCode}</td>
+                                <td className="font-mono text-gray-500">{tx.trace_bsb}</td>
+                                <td className="font-mono text-gray-500">{tx.trace_acct}</td>
                             </tr>
                         ))}
                     </tbody>

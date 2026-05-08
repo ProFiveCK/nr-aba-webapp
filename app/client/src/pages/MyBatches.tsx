@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../lib/api';
 import { formatIsoDateTime, formatPdNumber, getBatchStageBadgeClasses, getBatchStageMetadata } from '../lib/utils';
 import { BatchDetailModal } from './MyBatches/BatchDetailModal';
@@ -13,9 +13,7 @@ export function MyBatches() {
     const [selectedBatch, setSelectedBatch] = useState<BatchDetail | null>(null);
 
     // Load batches from API
-    const loadBatches = async () => {
-        if (loading) return;
-
+    const loadBatches = useCallback(async () => {
         setLoading(true);
         setError(null);
 
@@ -30,7 +28,7 @@ export function MyBatches() {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
     // Load batch detail
     const loadBatchDetail = async (code: string) => {
@@ -63,7 +61,7 @@ export function MyBatches() {
     // Load batches on mount
     useEffect(() => {
         loadBatches();
-    }, []);
+    }, [loadBatches]);
 
     return (
         <div className="space-y-6">

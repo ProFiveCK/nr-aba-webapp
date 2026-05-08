@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/useAuth';
 import { ChangePasswordModal } from './ChangePasswordModal';
 import { AiHelper } from './AiHelper';
 
@@ -46,15 +46,15 @@ export function Layout({ children, activeTab, onTabChange }: LayoutProps) {
 
     return (
         <>
-        <div className="min-h-screen bg-gray-100 p-4 sm:p-6 lg:p-8">
-            <div className="max-w-7xl mx-auto bg-white p-5 sm:p-6 rounded-2xl shadow-xl">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-6">
+        <div className="min-h-screen bg-zinc-100 px-3 py-4 sm:px-6 lg:px-8">
+            <div className="mx-auto max-w-7xl">
+                <div className="mb-4 flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-4 shadow-sm sm:flex-row sm:items-start sm:justify-between sm:px-5">
                     <div>
-                        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">ABA Workflow Tools</h1>
+                        <h1 className="text-2xl sm:text-3xl font-bold text-gray-950">ABA Workflow Tools</h1>
                         <p className="text-sm text-gray-600 mt-1">
                             Welcome back, <span className="font-medium">{displayName}</span>
                             {user?.role && (
-                                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800">
+                                <span className="ml-2 inline-flex items-center rounded border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
                                     {user.role}
                                 </span>
                             )}
@@ -63,13 +63,13 @@ export function Layout({ children, activeTab, onTabChange }: LayoutProps) {
                     <div className="flex items-center gap-2">
                         <button
                             onClick={handleChangePassword}
-                            className="px-3 py-2 bg-indigo-500 text-white rounded-md hover:bg-indigo-600 text-sm font-medium transition-colors"
+                            className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
                         >
                             Change Password
                         </button>
                         <button
                             onClick={handleSignOut}
-                            className="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm font-medium transition-colors"
+                            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
                         >
                             Sign Out
                         </button>
@@ -77,14 +77,14 @@ export function Layout({ children, activeTab, onTabChange }: LayoutProps) {
                 </div>
 
                 {/* Tabs */}
-                <div className="flex gap-6 mb-6 border-b border-gray-200 overflow-x-auto">
+                <div className="mb-4 flex gap-1 overflow-x-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-sm">
                     {visibleTabs.map((tab) => (
                         <button
                             key={tab.id}
                             onClick={() => onTabChange(tab.id)}
-                            className={`pb-3 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === tab.id
-                                    ? 'text-indigo-600 border-b-2 border-indigo-600'
-                                    : 'text-gray-500 hover:text-gray-700'
+                            className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors ${activeTab === tab.id
+                                    ? 'bg-indigo-50 text-indigo-700'
+                                    : 'text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800'
                                 }`}
                         >
                             {tab.label}

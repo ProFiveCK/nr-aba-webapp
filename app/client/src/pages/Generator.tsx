@@ -10,7 +10,14 @@ import type { Transaction, HeaderData, SortState, BatchMetrics } from './Generat
 import { HEADER_PRESETS } from '../lib/constants';
 import { formatMoney, toBase64, downloadBase64File, formatBatchCode } from '../lib/utils';
 import { parseTransactionsFromCSV, exportTransactionsToCSV, buildAbaFile, recomputeDuplicates } from '../lib/generator-utils';
-import { refreshActiveBlacklist, findBlockedTransactions, getBlockedIndexSet } from '../lib/blacklist';
+import {
+    refreshActiveBlacklist,
+    findBlockedTransactions,
+    getBlockedIndexSet,
+    findProhibitedBsbTransactions,
+    getProhibitedBsbIndexSet,
+    PROHIBITED_BSB,
+} from '../lib/blacklist';
 import { apiClient } from '../lib/api';
 
 const generateRootBatchId = () => {
@@ -326,6 +333,14 @@ export function Generator() {
             return;
         }
 
+        if (prohibitedBsbAccounts.length > 0) {
+            addToast(
+                `Black listed BSB ${PROHIBITED_BSB}: remove ${prohibitedBsbAccounts.length} transaction${prohibitedBsbAccounts.length === 1 ? '' : 's'} before continuing.`,
+                'error'
+            );
+            return;
+        }
+
         if (missingLodgementRefs.length > 0) {
             addToast(
                 `Cannot proceed: ${missingLodgementRefs.length} transaction${missingLodgementRefs.length === 1 ? '' : 's'} missing lodgement references.`,
@@ -383,8 +398,18 @@ export function Generator() {
         [transactions]
     );
 
+    const prohibitedBsbAccounts = React.useMemo(
+        () => findProhibitedBsbTransactions(transactions),
+        [transactions]
+    );
+
     const blockedIndexSet = React.useMemo(
         () => getBlockedIndexSet(transactions),
+        [transactions]
+    );
+
+    const prohibitedBsbIndexSet = React.useMemo(
+        () => getProhibitedBsbIndexSet(transactions),
         [transactions]
     );
 
@@ -555,12 +580,14 @@ export function Generator() {
                     onSortChange={handleSortChange}
                     duplicateIndexSet={duplicateIndexSet}
                     blockedIndexSet={blockedIndexSet}
+                    prohibitedBsbIndexSet={prohibitedBsbIndexSet}
                 />
                 <p className="text-sm font-semibold text-gray-700">
                     Transactions: {metrics.transactionCount} · Showing: {visibleRows.length} · Credits: {formatMoney(metrics.creditsCents)} · Debits: {formatMoney(metrics.debitsCents)}
                 </p>
                 <ValidationAlerts
                     blockedAccounts={blockedAccounts}
+                    prohibitedBsbAccounts={prohibitedBsbAccounts}
                     missingLodgementRefs={missingLodgementRefs}
                     duplicateCount={duplicateIndexSet.size}
                     onDownloadDuplicates={handleDownloadDuplicates}

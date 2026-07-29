@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
 import { body, param, query, validationResult } from 'express-validator';
 import { pool, initSchema } from './db.js';
 import dotenv from 'dotenv';
@@ -16,7 +18,11 @@ import { fileURLToPath } from 'url';
 
 dotenv.config();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is not set. Refusing to start.');
+  process.exit(1);
+}
 const SESSION_MINUTES = Number(process.env.REVIEWER_SESSION_MINUTES || 480);
 const PASS_HASH_ROUNDS = Number(process.env.BCRYPT_ROUNDS || 12);
 const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || 'http://localhost:8080';
@@ -105,9 +111,59 @@ if (SMTP_HOST) {
 }
 
 const app = express();
-app.use(cors());
+
+// Trust the nginx reverse proxy so X-Forwarded-For is used safely by express-rate-limit
+app.set('trust proxy', 1);
+
+// Security headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+    },
+  },
+}));
+
+// CORS: restrict to configured frontend origin
+const corsOrigin = process.env.FRONTEND_BASE_URL || 'http://localhost:8080';
+app.use(cors({ origin: corsOrigin, credentials: true }));
+
 // Allow larger payloads for ABA uploads (base64 inflates size by ~33%)
 app.use(express.json({ limit: '10mb' }));
+
+// Rate limiting: general API
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many requests. Please try again later.' },
+});
+app.use('/api', generalLimiter);
+
+// Rate limiting: authentication endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many authentication attempts. Please try again later.' },
+  skipSuccessfulRequests: false,
+});
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/signup', authLimiter);
+app.use('/api/auth/forgot-password', authLimiter);
+app.use('/api/auth/reset-password', authLimiter);
 
 app.get('/health', async (_req, res) => {
   try {
@@ -914,6 +970,8 @@ function normalizeAccountNumber(value) {
   return String(value || '').replace(/[^0-9]/g, '').trim();
 }
 
+const PROHIBITED_BSB = '633-000';
+
 const buildBlacklistKey = (bsb, account) => {
   const normalizedBsb = normalizeBsb(bsb);
   const normalizedAccount = normalizeAccountNumber(account);
@@ -1417,6 +1475,16 @@ async function bootstrapDefaultAdmin() {
   const email = lowerEmail(process.env.DEFAULT_ADMIN_EMAIL);
   const password = process.env.DEFAULT_ADMIN_PASSWORD;
   if (!email || !password) return;
+
+  const isWeakDefaultPassword =
+    password === 'change_me_on_first_login' ||
+    password === 'Admin123!' ||
+    password.length < 12;
+
+  if (isWeakDefaultPassword) {
+    console.warn('SECURITY WARNING: DEFAULT_ADMIN_PASSWORD appears weak or unchanged. The default admin account will be created with must_change_password=true, but you should set a strong password and remove DEFAULT_ADMIN_PASSWORD from .env.prod after first provisioning.');
+  }
+
   const displayName = process.env.DEFAULT_ADMIN_NAME || 'Admin';
   const { rows } = await pool.query('SELECT id FROM reviewers WHERE email = $1', [email]);
   if (rows.length) return;
@@ -1427,6 +1495,9 @@ async function bootstrapDefaultAdmin() {
     [email, displayName, hash]
   );
   console.log(`Created default admin account for ${email}`);
+  if (isWeakDefaultPassword) {
+    console.warn('ACTION REQUIRED: Change the default admin password immediately and remove/comment out DEFAULT_ADMIN_PASSWORD in your environment file.');
+  }
 }
 
 // ===== Sanity thresholds =====
@@ -2028,6 +2099,16 @@ app.post(
           };
         })
         .filter(Boolean);
+      const prohibitedBsb = normalizedTransactions.find(
+        (tx) => tx.bsb === PROHIBITED_BSB
+      );
+      if (prohibitedBsb) {
+        res.status(400).json({
+          message: `Transactions to BSB ${PROHIBITED_BSB} are not permitted.`
+        });
+        return;
+      }
+
       if (normalizedTransactions.length) {
         const { rows: blacklistRows } = await pool.query(
           `SELECT bsb, account, label FROM blacklist_entries WHERE active = TRUE`

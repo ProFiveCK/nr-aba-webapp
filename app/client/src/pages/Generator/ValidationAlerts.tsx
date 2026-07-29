@@ -2,6 +2,7 @@ import type { Transaction } from './types';
 
 interface ValidationAlertsProps {
     blockedAccounts: Transaction[];
+    prohibitedBsbAccounts: Transaction[];
     missingLodgementRefs: Transaction[];
     duplicateCount: number;
     onDownloadDuplicates?: () => void;
@@ -9,11 +10,12 @@ interface ValidationAlertsProps {
 
 export function ValidationAlerts({
     blockedAccounts,
+    prohibitedBsbAccounts,
     missingLodgementRefs,
     duplicateCount,
     onDownloadDuplicates,
 }: ValidationAlertsProps) {
-    if (blockedAccounts.length === 0 && missingLodgementRefs.length === 0 && duplicateCount === 0) {
+    if (blockedAccounts.length === 0 && prohibitedBsbAccounts.length === 0 && missingLodgementRefs.length === 0 && duplicateCount === 0) {
         return null;
     }
 
@@ -32,6 +34,28 @@ export function ValidationAlerts({
                         {blockedAccounts.length > 5 && (
                             <div className="text-red-600 font-medium">
                                 ...and {blockedAccounts.length - 5} more blocked accounts
+                            </div>
+                        )}
+                    </div>
+                    <p className="text-xs text-red-600 mt-2">
+                        Remove or correct these accounts before generating the ABA file.
+                    </p>
+                </div>
+            )}
+
+            {/* Prohibited BSB Warning */}
+            {prohibitedBsbAccounts.length > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-md p-3">
+                    <h4 className="text-sm font-semibold text-red-800 mb-1">⚠️ Black Listed BSB Detected</h4>
+                    <div className="text-xs text-red-700 space-y-1">
+                        {prohibitedBsbAccounts.slice(0, 5).map((tx, i) => (
+                            <div key={i}>
+                                • {tx.bsb} / {tx.account} - {tx.accountTitle || 'No title'}
+                            </div>
+                        ))}
+                        {prohibitedBsbAccounts.length > 5 && (
+                            <div className="text-red-600 font-medium">
+                                ...and {prohibitedBsbAccounts.length - 5} more transactions
                             </div>
                         )}
                     </div>

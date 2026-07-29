@@ -1,14 +1,15 @@
 """
 reformat_payroll.py
 -------------------
-Reformats the TechOne payroll deduction export into a clean summary workbook.
+Reformats the TechOne / FMIS SuperPaymentFile payroll deduction export into a
+clean summary workbook.
 
 Sheets produced:
   - One sheet per Pay Period End Date (pure data rows, import-safe)
   - "Summary" sheet with per-period and grand totals
 
 Columns per data sheet:
-  ID Number | Family Name | Given Name | Title |
+  ID Number | Family Name | Given Name | Title | Date of Birth |
   Pay Period End Date | Employee Contribution | Employer Contribution
 """
 
@@ -20,8 +21,8 @@ from openpyxl.utils import get_column_letter
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
-INPUT_FILE  = os.path.join(SCRIPT_DIR, "TOTAL Payroll Deduction - February 2026.xlsx")
-OUTPUT_FILE = os.path.join(SCRIPT_DIR, "Payroll Deduction Summary - February 2026.xlsx")
+INPUT_FILE  = os.path.join(SCRIPT_DIR, "SuperPaymentFile export_20260630122329.xlsx")
+OUTPUT_FILE = os.path.join(SCRIPT_DIR, "Payroll Deduction Summary - June 2026.xlsx")
 
 # ── style constants ───────────────────────────────────────────────────────────
 HDR_FILL     = PatternFill("solid", fgColor="1F4E79")
@@ -36,7 +37,8 @@ RIGHT        = Alignment(horizontal="right")
 
 COL_WIDTHS = {
     "ID Number": 12, "Family Name": 25, "Given Name": 20,
-    "Title": 8, "Pay Period End Date": 20,
+    "Title": 8, "Date of Birth": 14,
+    "Pay Period End Date": 20,
     "Employee Contribution": 22, "Employer Contribution": 22,
 }
 
@@ -52,28 +54,29 @@ def style_data_sheet(ws, df_period):
     for idx, col_name in enumerate(df_period.columns, start=1):
         ws.column_dimensions[get_column_letter(idx)].width = COL_WIDTHS.get(col_name, 15)
 
-    # Data rows — date format on col 5, currency format on cols 6 & 7
+    # Data rows — date format on cols 5 (Date of Birth) & 6 (Pay Period End Date),
+    # currency format on cols 7 & 8
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
         for cell in row:
-            if cell.column == 5 and cell.value is not None:
+            if cell.column in (5, 6) and cell.value not in (None, ""):
                 cell.number_format = "DD-MM-YYYY"
-            if cell.column in (6, 7):
+            if cell.column in (7, 8):
                 cell.alignment = RIGHT
                 if cell.value is not None:
                     cell.number_format = CURRENCY_FMT
 
     # Total row
     total_row = ws.max_row + 1
-    for col in range(1, 8):
+    for col in range(1, 9):
         ws.cell(row=total_row, column=col).fill = TOTAL_FILL
 
-    label = ws.cell(row=total_row, column=5, value="TOTAL")
+    label = ws.cell(row=total_row, column=6, value="TOTAL")
     label.font = TOTAL_FONT
     label.fill = TOTAL_FILL
     label.alignment = RIGHT
 
     last_data = total_row - 1
-    for col in (6, 7):
+    for col in (7, 8):
         col_letter = get_column_letter(col)
         tc = ws.cell(row=total_row, column=col,
                      value=f"=SUM({col_letter}2:{col_letter}{last_data})")
@@ -81,6 +84,7 @@ def style_data_sheet(ws, df_period):
         tc.fill = TOTAL_FILL
         tc.alignment = RIGHT
         tc.number_format = CURRENCY_FMT
+
 
 def derive_output_path(input_path):
     input_dir = os.path.dirname(os.path.abspath(input_path))
@@ -94,23 +98,33 @@ def derive_output_path(input_path):
 
 def reformat_payroll(input_path, output_path, sheet_name="Sheet1"):
     # ── 1. load & transform ───────────────────────────────────────────────────
-    df = pd.read_excel(input_path, sheet_name=sheet_name, header=3)
+    # FMIS SuperPaymentFile export has 5 preamble rows (title, parameters,
+    # criteria, blank, then the column headers) so the header is on row 6 (header=5).
+    # If the requested sheet does not exist, fall back to the first available sheet.
+    xl = pd.ExcelFile(input_path)
+    if sheet_name not in xl.sheet_names:
+        sheet_name = xl.sheet_names[0]
+
+    df = pd.read_excel(input_path, sheet_name=sheet_name, header=5)
     df.columns = df.columns.str.strip()
 
-    df["Pay Comp Code"] = pd.to_numeric(df["Pay Comp Code"], errors="coerce")
-    df = df[df["Pay Comp Code"].isin([825.0, 1000.0])].copy()
+    df["Pay Component - Code"] = pd.to_numeric(df["Pay Component - Code"], errors="coerce")
+    df = df[df["Pay Component - Code"].isin([825.0, 1000.0])].copy()
 
     df["Pay Period End Date"] = pd.to_datetime(df["Pay Period End Date"]).dt.date
+    df["Date of Birth"] = pd.to_datetime(df["Date of Birth"], errors="coerce").dt.date
     df["Title"] = df["Title"].fillna("")
+    df["Date of Birth"] = df["Date of Birth"].where(df["Date of Birth"].notna(), "")
 
     code_map = {825.0: "Employee Contribution", 1000.0: "Employer Contribution"}
-    df["Pay Comp Code"] = df["Pay Comp Code"].map(code_map)
+    df["Pay Component - Code"] = df["Pay Component - Code"].map(code_map)
 
-    group_cols = ["Id Number", "Family Name", "Given Name", "Title", "Pay Period End Date"]
+    group_cols = ["Employee Id", "Last Name", "First Name", "Title",
+                  "Date of Birth", "Pay Period End Date"]
 
     pivoted = df.pivot_table(
         index=group_cols,
-        columns="Pay Comp Code",
+        columns="Pay Component - Code",
         values="Amount",
         aggfunc="sum"
     ).reset_index()
@@ -120,9 +134,12 @@ def reformat_payroll(input_path, output_path, sheet_name="Sheet1"):
         if col not in pivoted.columns:
             pivoted[col] = None
 
-    final = pivoted[["Id Number", "Family Name", "Given Name", "Title",
+    final = pivoted[["Employee Id", "Last Name", "First Name", "Title",
+                     "Date of Birth",
                      "Pay Period End Date", "Employee Contribution", "Employer Contribution"]]
-    final = final.rename(columns={"Id Number": "ID Number"})
+    final = final.rename(columns={"Employee Id": "ID Number",
+                                  "Last Name": "Family Name",
+                                  "First Name": "Given Name"})
     final = final.sort_values(["Pay Period End Date", "ID Number"]).reset_index(drop=True)
 
     periods = sorted(final["Pay Period End Date"].unique())
@@ -203,7 +220,7 @@ def reformat_payroll(input_path, output_path, sheet_name="Sheet1"):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Reformat a payroll deduction workbook.")
+    parser = argparse.ArgumentParser(description="Reformat a TechOne/FMIS payroll deduction workbook.")
     parser.add_argument("--input", default=INPUT_FILE, help="Path to the source Excel workbook.")
     parser.add_argument("--output", default=None, help="Path to write the reformatted workbook.")
     parser.add_argument("--sheet", default="Sheet1", help="Source sheet name to read.")
@@ -216,7 +233,7 @@ def main():
     output_path = os.path.abspath(args.output) if args.output else derive_output_path(input_path)
     periods, summary_data = reformat_payroll(input_path, output_path, args.sheet)
 
-    print(f"Done - {len(periods)} pay period sheet(s) + Summary sheet written to:\n  {output_path}")
+    print(f"Done — {len(periods)} pay period sheet(s) + Summary sheet written to:\n  {output_path}")
     for row in summary_data:
         print(f"  {row['Pay Period End Date']}  |  {row['Employees']:>4} employees  "
               f"|  Emp: {row['Employee Contribution']:>10,.2f}  "

@@ -7,6 +7,8 @@ import type { Transaction } from '../pages/Generator/types';
 import { normalizeBSBStrict, normalizeAccountStrict } from './utils';
 import { apiClient } from './api';
 
+export const PROHIBITED_BSB = '633-000';
+
 export interface BlacklistEntry {
     id: number;
     bsb: string;
@@ -93,6 +95,33 @@ export function getBlockedIndexSet(transactions: Transaction[]): Set<number> {
     const blocked = new Set<number>();
     transactions.forEach((tx, index) => {
         if (tx.bsb && tx.account && isBlacklistedCombo(tx.bsb, tx.account)) {
+            blocked.add(index);
+        }
+    });
+    return blocked;
+}
+
+/**
+ * Check if a transaction targets the prohibited BSB
+ */
+export function isProhibitedBsb(bsb: string): boolean {
+    return normalizeBSBStrict(bsb) === PROHIBITED_BSB;
+}
+
+/**
+ * Return transactions whose BSB is on the prohibited list
+ */
+export function findProhibitedBsbTransactions(transactions: Transaction[]): Transaction[] {
+    return transactions.filter((tx) => tx.bsb && isProhibitedBsb(tx.bsb));
+}
+
+/**
+ * Create a Set of indices for transactions whose BSB is prohibited
+ */
+export function getProhibitedBsbIndexSet(transactions: Transaction[]): Set<number> {
+    const blocked = new Set<number>();
+    transactions.forEach((tx, index) => {
+        if (tx.bsb && isProhibitedBsb(tx.bsb)) {
             blocked.add(index);
         }
     });

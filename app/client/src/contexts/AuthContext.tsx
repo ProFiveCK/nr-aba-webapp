@@ -1,96 +1,229 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { apiClient } from '../lib/api';
 import { AuthContext } from './auth-context';
-import type { User } from './auth-types';
+import type { LoginResponse, User } from './auth-types';
+
+const SESSION_STORAGE_KEY = 'auth_token';
+const USER_STORAGE_KEY = 'auth_user';
+const EXPIRES_STORAGE_KEY = 'auth_expires_at';
+
+// Refresh when 75% of the session lifetime has elapsed (e.g. 8h session = refresh at 6h)
+const SESSION_REFRESH_FRACTION = 0.75;
+// Poll interval to check if we need to refresh or expire (every minute)
+const SESSION_POLL_MS = 60_000;
+
+function parseSession(raw: string | null): { token: string | null; user: User | null; expiresAt: string | null } {
+    if (!raw) return { token: null, user: null, expiresAt: null };
+    try {
+        const parsed = JSON.parse(raw) as { token: string; user: User; expiresAt: string } | null;
+        if (parsed && typeof parsed === 'object' && parsed.token && parsed.user && parsed.expiresAt) {
+            return { token: parsed.token, user: parsed.user, expiresAt: parsed.expiresAt };
+        }
+    } catch {
+        // Legacy: auth_token used to be stored as a bare JWT string.
+    }
+    return { token: null, user: null, expiresAt: null };
+}
+
+function isExpired(expiresAt: string | null): boolean {
+    if (!expiresAt) return true;
+    return new Date(expiresAt).getTime() <= Date.now();
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-    const [initialSession] = useState(() => loadSavedSession());
-    const [user, setUser] = useState<User | null>(initialSession.user);
-    const [token, setToken] = useState<string | null>(initialSession.token);
-    const [isLoading] = useState(false);
+    const [user, setUser] = useState<User | null>(null);
+    const [token, setToken] = useState<string | null>(null);
+    const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const saveSession = (tokenValue: string, reviewer: User) => {
+    const clearRefreshTimer = useCallback(() => {
+        if (refreshTimerRef.current) {
+            clearTimeout(refreshTimerRef.current);
+            refreshTimerRef.current = null;
+        }
+    }, []);
+
+    const logout = useCallback(() => {
+        clearRefreshTimer();
+        // Best-effort server-side logout; ignore errors.
+        if (apiClient.getAuthToken()) {
+            apiClient.post('/auth/logout').catch(() => undefined);
+        }
+        setToken(null);
+        setUser(null);
+        setSessionExpiresAt(null);
+        apiClient.clearAuthToken();
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        localStorage.removeItem(USER_STORAGE_KEY);
+        localStorage.removeItem(EXPIRES_STORAGE_KEY);
+        localStorage.removeItem('aba-header');
+        localStorage.removeItem('aba-transactions');
+        localStorage.removeItem('user_name');
+    }, [clearRefreshTimer]);
+
+    const saveSession = useCallback((tokenValue: string, reviewer: User, expiresAt: string) => {
         setToken(tokenValue);
         setUser(reviewer);
+        setSessionExpiresAt(expiresAt);
         apiClient.setAuthToken(tokenValue);
-        localStorage.setItem('auth_token', tokenValue);
-        localStorage.setItem('auth_user', JSON.stringify(reviewer));
-    };
+        const payload = { token: tokenValue, user: reviewer, expiresAt };
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
+        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(reviewer));
+        localStorage.setItem(EXPIRES_STORAGE_KEY, expiresAt);
+    }, []);
 
-    const login = async (email: string, password: string) => {
-        // Backend returns { token, expires_at, reviewer }
-        const response = await apiClient.post<{ token: string; reviewer: User }>('/auth/login', {
+    const scheduleSessionMaintenance = useCallback(() => {
+        clearRefreshTimer();
+        const expiresAt = localStorage.getItem(EXPIRES_STORAGE_KEY);
+        if (!expiresAt) return;
+
+        const expiresMs = new Date(expiresAt).getTime();
+        const totalMs = expiresMs - Date.now();
+        if (totalMs <= 0) {
+            logout();
+            return;
+        }
+
+        const refreshAtMs = expiresMs - Math.floor(totalMs * (1 - SESSION_REFRESH_FRACTION));
+        const delayMs = Math.max(0, refreshAtMs - Date.now());
+
+        refreshTimerRef.current = setTimeout(() => {
+            // Refresh session
+            apiClient
+                .post<LoginResponse>('/auth/refresh')
+                .then((response) => {
+                    if (response?.token && response?.reviewer && response?.expires_at) {
+                        saveSession(response.token, response.reviewer, response.expires_at);
+                    } else {
+                        throw new Error('Invalid refresh response');
+                    }
+                })
+                .catch(() => {
+                    logout();
+                });
+        }, delayMs);
+    }, [clearRefreshTimer, logout, saveSession]);
+
+    const login = useCallback(async (email: string, password: string) => {
+        const response = await apiClient.post<LoginResponse>('/auth/login', {
             email,
             password,
         });
 
-        if (!response.token || !response.reviewer) {
+        if (!response.token || !response.reviewer || !response.expires_at) {
             throw new Error('Invalid login response');
         }
 
-        saveSession(response.token, response.reviewer);
-    };
+        saveSession(response.token, response.reviewer, response.expires_at);
+    }, [saveSession]);
 
-    const logout = () => {
-        setToken(null);
-        setUser(null);
-        apiClient.clearAuthToken();
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('auth_user');
-        // Clear any other app data
-        localStorage.removeItem('aba-header');
-        localStorage.removeItem('aba-transactions');
-        localStorage.removeItem('user_name');
-    };
-
-    const updateUser = (updates: Partial<User>) => {
+    const updateUser = useCallback((updates: Partial<User>) => {
         setUser((prev) => {
             if (!prev) return prev;
             const nextUser = { ...prev, ...updates };
-            localStorage.setItem('auth_user', JSON.stringify(nextUser));
+            localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(nextUser));
+            // Also update the bundled session storage object so it stays consistent on reload.
+            const rawSession = localStorage.getItem(SESSION_STORAGE_KEY);
+            if (rawSession) {
+                try {
+                    const parsed = JSON.parse(rawSession) as { token: string; user: User; expiresAt: string };
+                    parsed.user = nextUser;
+                    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(parsed));
+                } catch {
+                    // ignore corrupt storage
+                }
+            }
             return nextUser;
         });
-    };
+    }, []);
 
-    const replaceSession = (tokenValue: string, reviewer: User) => {
-        saveSession(tokenValue, reviewer);
-    };
+    const replaceSession = useCallback((tokenValue: string, reviewer: User) => {
+        // When replaceSession is called (e.g. after change password) we don't always get an expiry.
+        // Derive one from the JWT payload to keep the timer consistent.
+        let expiresAt = sessionExpiresAt;
+        try {
+            const payload = JSON.parse(atob(tokenValue.split('.')[1])) as { exp?: number };
+            if (payload.exp) {
+                expiresAt = new Date(payload.exp * 1000).toISOString();
+            }
+        } catch {
+            // ignore
+        }
+        if (!expiresAt) {
+            expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
+        }
+        saveSession(tokenValue, reviewer, expiresAt);
+    }, [saveSession, sessionExpiresAt]);
+
+    // Load saved session on mount and start expiry/refresh timers.
+    useEffect(() => {
+        const rawSession = localStorage.getItem(SESSION_STORAGE_KEY);
+        const { token: savedToken, user: savedUser, expiresAt: savedExpiresAt } = rawSession
+            ? parseSession(rawSession)
+            : { token: null, user: null, expiresAt: null };
+
+        if (savedToken && savedUser && savedExpiresAt && !isExpired(savedExpiresAt)) {
+            setToken(savedToken);
+            setUser(savedUser);
+            setSessionExpiresAt(savedExpiresAt);
+            apiClient.setAuthToken(savedToken);
+            scheduleSessionMaintenance();
+        } else {
+            // Clean up stale or corrupt saved session
+            logout();
+        }
+        setIsLoading(false);
+
+        return () => {
+            clearRefreshTimer();
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Re-schedule maintenance whenever the session expiry changes.
+    useEffect(() => {
+        if (token && sessionExpiresAt) {
+            scheduleSessionMaintenance();
+        }
+        return () => {
+            clearRefreshTimer();
+        };
+    }, [token, sessionExpiresAt, scheduleSessionMaintenance, clearRefreshTimer]);
+
+    // Poll for hard expiry in case the refresh timer misfires (tab backgrounded, clock changes, etc.)
+    useEffect(() => {
+        if (!token || !sessionExpiresAt) return;
+        const interval = setInterval(() => {
+            if (isExpired(sessionExpiresAt)) {
+                logout();
+            }
+        }, SESSION_POLL_MS);
+        return () => clearInterval(interval);
+    }, [token, sessionExpiresAt, logout]);
+
+    const requiresPasswordChange = useMemo(() => !!user?.must_change_password, [user]);
+
+    const value = useMemo(
+        () => ({
+            user,
+            token,
+            login,
+            logout,
+            updateUser,
+            replaceSession,
+            isAuthenticated: !!token && !!user,
+            isLoading,
+            sessionExpiresAt,
+            requiresPasswordChange,
+        }),
+        [user, token, login, logout, updateUser, replaceSession, isLoading, sessionExpiresAt, requiresPasswordChange]
+    );
 
     return (
-        <AuthContext.Provider
-            value={{
-                user,
-                token,
-                login,
-                logout,
-                updateUser,
-                replaceSession,
-                isAuthenticated: !!token && !!user,
-                isLoading,
-            }}
-        >
+        <AuthContext.Provider value={value}>
             {children}
         </AuthContext.Provider>
     );
-}
-
-function loadSavedSession(): { token: string | null; user: User | null } {
-    const savedToken = localStorage.getItem('auth_token');
-    const savedUser = localStorage.getItem('auth_user');
-
-    if (!savedToken || !savedUser) {
-        return { token: null, user: null };
-    }
-
-    try {
-        const parsedUser = JSON.parse(savedUser) as User;
-        apiClient.setAuthToken(savedToken);
-        return { token: savedToken, user: parsedUser };
-    } catch (error) {
-        console.error('Failed to parse saved user data:', error);
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('auth_user');
-        return { token: null, user: null };
-    }
 }

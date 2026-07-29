@@ -5,6 +5,7 @@ import { ToastProvider } from './contexts/ToastContext';
 import { Login } from './pages/Login';
 import { Layout } from './components/Layout';
 import { ResetPasswordModal } from './components/ResetPasswordModal';
+import { ChangePasswordModal } from './components/ChangePasswordModal';
 
 const Generator = lazy(() => import('./pages/Generator').then((module) => ({ default: module.Generator })));
 const MyBatches = lazy(() => import('./pages/MyBatches').then((module) => ({ default: module.MyBatches })));
@@ -34,7 +35,7 @@ declare global {
 }
 
 function AppContent() {
-  const { isAuthenticated, isLoading, logout, user } = useAuth();
+  const { isAuthenticated, isLoading, logout, user, requiresPasswordChange } = useAuth();
   const [activeTab, setActiveTab] = useState('generator');
   const [resetToken, setResetToken] = useState<string | null>(() => {
     const hash = window.location.hash;
@@ -137,6 +138,14 @@ function AppContent() {
           token={resetToken}
           onClose={handleResetPasswordClose}
           onSuccess={handleResetPasswordSuccess}
+        />
+      )}
+      {requiresPasswordChange && (
+        <ChangePasswordModal
+          onClose={() => {
+            // Forced password change cannot be dismissed; logout instead.
+            logout();
+          }}
         />
       )}
     </>

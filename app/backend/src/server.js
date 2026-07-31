@@ -1895,6 +1895,174 @@ app.delete('/api/blacklist/:id', [requireAuth(['admin']), param('id').isInt({ gt
   }
 });
 
+// ===== Suppliers =====
+const SUPPLIER_MANAGE_ROLES = ['banking', 'reviewer', 'admin'];
+const SUPPLIER_STATUS_VALUES = ['blocked', 'enabled', 'removed'];
+
+function normalizeSupplierBsb(value) {
+  const digits = String(value || '').replace(/\D/g, '').slice(0, 6);
+  if (digits.length !== 6) return null;
+  return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+}
+
+function normalizeSupplierAccount(value) {
+  return String(value || '').replace(/[^0-9]/g, '').trim();
+}
+
+function supplierNeedsCbaBankAccount(row) {
+  return row.status !== 'enabled';
+}
+
+function mapSupplierRow(row) {
+  return {
+    ...row,
+    need_cba_bank_account: supplierNeedsCbaBankAccount(row),
+  };
+}
+
+app.get('/api/suppliers', requireAuth(), async (req, res) => {
+  try {
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+    const conditions = [];
+    const values = [];
+
+    if (search) {
+      values.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      conditions.push(`(supplier_id ILIKE $${values.length - 2} OR description ILIKE $${values.length - 1} OR email ILIKE $${values.length})`);
+    }
+
+    if (SUPPLIER_STATUS_VALUES.includes(status)) {
+      values.push(status);
+      conditions.push(`status = $${values.length}`);
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const countValues = values.slice();
+    const countQuery = `SELECT COUNT(*)::int AS total FROM suppliers ${whereClause}`;
+    const dataQuery = `
+      SELECT id, supplier_id, description, email, bsb, account, account_name, need_cba_bank_account, status, notes, created_at, updated_at
+      FROM suppliers
+      ${whereClause}
+      ORDER BY description ASC
+      LIMIT $${values.length + 1} OFFSET $${values.length + 2}
+    `;
+
+    const dataValues = [...values, limit, offset];
+    const [countResult, dataResult] = await Promise.all([
+      pool.query(countQuery, countValues),
+      pool.query(dataQuery, dataValues),
+    ]);
+
+    res.json({
+      items: (dataResult.rows || []).map(mapSupplierRow),
+      total: countResult.rows[0]?.total || 0,
+      limit,
+      offset,
+      hasMore: offset + dataResult.rows.length < (countResult.rows[0]?.total || 0),
+    });
+  } catch (err) {
+    console.error('Failed to load suppliers', err);
+    res.status(500).json({ message: 'Unable to load suppliers.' });
+  }
+});
+
+app.get('/api/suppliers/:id', [requireAuth(), param('id').isInt({ gt: 0 })], async (req, res) => {
+  if (!handleValidation(req, res)) return;
+  const id = Number(req.params.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, supplier_id, description, email, bsb, account, account_name, need_cba_bank_account, status, notes, created_at, updated_at
+       FROM suppliers WHERE id = $1`,
+      [id]
+    );
+    if (!rows.length) {
+      res.status(404).json({ message: 'Supplier not found.' });
+      return;
+    }
+    res.json(mapSupplierRow(rows[0]));
+  } catch (err) {
+    console.error('Failed to load supplier', err);
+    res.status(500).json({ message: 'Unable to load supplier.' });
+  }
+});
+
+app.patch(
+  '/api/suppliers/:id',
+  [
+    requireAuth(SUPPLIER_MANAGE_ROLES),
+    param('id').isInt({ gt: 0 }),
+    body('status').optional().isIn(SUPPLIER_STATUS_VALUES),
+    body('notes').optional().isString().isLength({ max: 1000 }),
+    body('need_cba_bank_account').optional().isBoolean(),
+    body('bsb').optional().isString().trim().isLength({ min: 6, max: 7 }),
+    body('account').optional().isString().trim().isLength({ min: 5, max: 16 }),
+    body('account_name').optional().isString().trim().isLength({ min: 1, max: 200 }),
+  ],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const id = Number(req.params.id);
+    const updates = {};
+    const allowedFields = ['status', 'notes', 'need_cba_bank_account', 'account_name'];
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+
+    if (req.body.bsb !== undefined) {
+      const normalized = normalizeSupplierBsb(req.body.bsb);
+      if (!normalized) {
+        res.status(400).json({ message: 'BSB must be 6 digits (e.g. 062-000).' });
+        return;
+      }
+      updates.bsb = normalized;
+    }
+    if (req.body.account !== undefined) {
+      const normalized = normalizeSupplierAccount(req.body.account);
+      if (!normalized || normalized.length < 5 || normalized.length > 16) {
+        res.status(400).json({ message: 'Account number must be 5-16 digits.' });
+        return;
+      }
+      updates.account = normalized;
+    }
+
+    if (!Object.keys(updates).length) {
+      res.status(400).json({ message: 'No fields provided to update.' });
+      return;
+    }
+
+    // When a supplier is enabled we treat the CBA bank account requirement as resolved.
+    if (updates.status === 'enabled') {
+      updates.need_cba_bank_account = false;
+    } else if (updates.status === 'blocked') {
+      updates.need_cba_bank_account = true;
+    }
+
+    updates.updated_at = new Date().toISOString();
+    const fields = Object.keys(updates).map((key, index) => `${key} = $${index + 2}`);
+    const values = [id, ...Object.values(updates)];
+
+    try {
+      const { rows } = await pool.query(
+        `UPDATE suppliers SET ${fields.join(', ')} WHERE id = $1 RETURNING *`,
+        values
+      );
+      if (!rows.length) {
+        res.status(404).json({ message: 'Supplier not found.' });
+        return;
+      }
+      res.json(mapSupplierRow(rows[0]));
+    } catch (err) {
+      console.error('Failed to update supplier', err);
+      res.status(500).json({ message: 'Unable to update supplier.' });
+    }
+  }
+);
+
 // ===== Reviews =====
 app.post(
   '/api/reviews',

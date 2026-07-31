@@ -15,13 +15,14 @@ const Payroll = lazy(() => import('./pages/Payroll').then((module) => ({ default
 const Saas = lazy(() => import('./pages/Saas').then((module) => ({ default: module.Saas })));
 const Reviewer = lazy(() => import('./pages/Reviewer').then((module) => ({ default: module.Reviewer })));
 const Admin = lazy(() => import('./pages/Admin').then((module) => ({ default: module.Admin })));
+const Suppliers = lazy(() => import('./pages/Suppliers').then((module) => ({ default: module.Suppliers })));
 
 const ROLE_TABS: Record<string, string[]> = {
-  user: ['generator', 'my-batches', 'reader'],
-  banking: ['generator', 'my-batches', 'reader', 'banking'],
-  reviewer: ['generator', 'my-batches', 'reader', 'banking', 'saas', 'reviewer'],
-  admin: ['generator', 'my-batches', 'reader', 'banking', 'payroll', 'saas', 'reviewer', 'admin'],
-  payroll: ['payroll'],
+  user: ['generator', 'my-batches', 'reader', 'suppliers'],
+  banking: ['generator', 'my-batches', 'reader', 'banking', 'suppliers'],
+  reviewer: ['generator', 'my-batches', 'reader', 'banking', 'suppliers', 'saas', 'reviewer'],
+  admin: ['generator', 'my-batches', 'reader', 'banking', 'suppliers', 'payroll', 'saas', 'reviewer', 'admin'],
+  payroll: ['payroll', 'suppliers'],
 };
 
 function getDefaultTab(role?: string | null) {
@@ -131,6 +132,7 @@ function AppContent() {
           {resolvedActiveTab === 'saas' && <Saas />}
           {resolvedActiveTab === 'reviewer' && <Reviewer onTabChange={setActiveTab} />}
           {resolvedActiveTab === 'admin' && <Admin />}
+          {resolvedActiveTab === 'suppliers' && <Suppliers />}
         </Suspense>
       </Layout>
       {resetToken && (

@@ -79,6 +79,37 @@ export async function initSchema() {
     await client.query('UPDATE blacklist_entries SET active = COALESCE(active, TRUE)');
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS suppliers (
+        id SERIAL PRIMARY KEY,
+        supplier_id TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL,
+        email TEXT,
+        bsb VARCHAR(7),
+        account VARCHAR(16),
+        account_name TEXT,
+        need_cba_bank_account BOOLEAN NOT NULL DEFAULT TRUE,
+        status TEXT NOT NULL DEFAULT 'blocked' CHECK (status IN ('blocked','enabled','removed')),
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query('ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS bsb VARCHAR(7)');
+    await client.query('ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS account VARCHAR(16)');
+    await client.query('ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS account_name TEXT');
+    await client.query('ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS status TEXT DEFAULT \'blocked\'');
+    await client.query('ALTER TABLE suppliers DROP CONSTRAINT IF EXISTS suppliers_status_check');
+    await client.query(`
+      ALTER TABLE suppliers
+      ADD CONSTRAINT suppliers_status_check CHECK (status IN ('blocked','enabled','removed'))
+    `);
+    await client.query('ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS need_cba_bank_account BOOLEAN DEFAULT TRUE');
+    await client.query('UPDATE suppliers SET need_cba_bank_account = COALESCE(need_cba_bank_account, TRUE)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_suppliers_supplier_id ON suppliers(supplier_id)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_suppliers_description ON suppliers(description)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_suppliers_status ON suppliers(status)');
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS reviewers (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         email TEXT NOT NULL UNIQUE,

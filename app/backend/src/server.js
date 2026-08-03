@@ -38,6 +38,8 @@ const ACCOUNT_ROLES = ['user', 'banking', 'reviewer', 'admin', 'payroll'];
 const REVIEW_ACCESS_ROLES = ['reviewer', 'admin'];
 const ACCOUNT_STATUSES = ['active', 'inactive'];
 const BSB_REGEX = /^[0-9]{3}-[0-9]{3}$/;
+const BANK_PRESET_KEYS = ['CBA-RON', 'CBA-Agent', 'CBA-DFAT', 'CBA-NSUDP', 'CBA-NZAID', 'CBA-DEV.FUND', 'CBA-Seabed.Account', 'CBA-Tank Farm'];
+const DEFAULT_BANK_PRESETS = ['CBA-RON'];
 const ADMIN_ARCHIVE_LIMIT_DEFAULT = 100;
 const REVIEWER_ARCHIVE_LIMIT_DEFAULT = 50;
 const PAYROLL_ACCESS_ROLES = ['payroll', 'admin'];
@@ -339,7 +341,7 @@ app.post(
     const password = req.body.password;
     const { rows } = await pool.query(
       `SELECT id, email, display_name, role, status, password_hash, must_change_password,
-              last_login_at, created_at, updated_at, department_code, notify_on_submission
+              last_login_at, created_at, updated_at, department_code, division_code, notify_on_submission
          FROM reviewers WHERE email = $1`,
       [email]
     );
@@ -361,7 +363,8 @@ app.post(
     await pool.query('UPDATE reviewers SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [reviewer.id]);
     const token = buildTokenPayload(reviewer, tokenId, expiresAt);
     const expiresIso = expiresAt.toISOString();
-    const payload = { ...reviewerSummary(reviewer), session_expires_at: expiresIso };
+    const allowedPresets = await reviewerAllowedPresets(reviewer.id);
+    const payload = { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso };
     res.json({ token, expires_at: expiresIso, reviewer: payload });
   }
 );
@@ -375,12 +378,50 @@ app.get('/api/auth/me', requireAuth(), async (req, res) => {
   res.json({ reviewer: req.user });
 });
 
+app.patch(
+  '/api/auth/me',
+  requireAuth(),
+  [
+    body('display_name').optional({ nullable: true }).isString().isLength({ min: 0, max: 200 })
+  ],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const reviewerId = req.user.id;
+    const patch = {};
+    if (req.body.display_name !== undefined) {
+      patch.display_name = req.body.display_name === null ? null : (req.body.display_name?.trim() || null);
+    }
+
+    const fields = [];
+    const values = [];
+    Object.entries(patch).forEach(([key, value]) => {
+      if (value === undefined) return;
+      values.push(value);
+      fields.push(`${key} = $${values.length}`);
+    });
+    if (!fields.length) {
+      res.status(400).json({ message: 'No fields to update.' });
+      return;
+    }
+    fields.push('updated_at = NOW()');
+    values.push(reviewerId);
+    const { rows } = await pool.query(
+      `UPDATE reviewers SET ${fields.join(', ')} WHERE id = $${values.length}
+       RETURNING id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
+                 department_code, division_code, notify_on_submission`,
+      values
+    );
+    const allowedPresets = await reviewerAllowedPresets(rows[0].id);
+    res.json({ reviewer: reviewerSummary(rows[0], allowedPresets) });
+  }
+);
+
 app.post('/api/auth/refresh', requireAuth(), async (req, res) => {
   const reviewerId = req.user.id;
   await invalidateSession(req.user.tokenId);
   const { rows } = await pool.query(
     `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-            department_code, notify_on_submission
+            department_code, division_code, notify_on_submission
        FROM reviewers WHERE id = $1`,
     [reviewerId]
   );
@@ -396,7 +437,8 @@ app.post('/api/auth/refresh', requireAuth(), async (req, res) => {
   const { tokenId, expiresAt } = await createSession(reviewer.id);
   const token = buildTokenPayload(reviewer, tokenId, expiresAt);
   const expiresIso = expiresAt.toISOString();
-  res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer), session_expires_at: expiresIso } });
+  const allowedPresets = await reviewerAllowedPresets(reviewer.id);
+  res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso } });
 });
 
 app.post(
@@ -435,7 +477,7 @@ app.post(
     );
     const { rows: reviewerRows } = await pool.query(
       `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-              department_code, notify_on_submission
+              department_code, division_code, notify_on_submission
          FROM reviewers WHERE id = $1`,
       [reviewerId]
     );
@@ -443,7 +485,8 @@ app.post(
     const { tokenId, expiresAt } = await createSession(reviewerId);
     const token = buildTokenPayload(reviewer, tokenId, expiresAt);
     const expiresIso = expiresAt.toISOString();
-    res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer), session_expires_at: expiresIso } });
+    const allowedPresets = await reviewerAllowedPresets(reviewer.id);
+    res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso } });
   }
 );
 
@@ -554,14 +597,156 @@ app.post(
 );
 
 // ===== Account management (admin) =====
+
+// ===== Department Profiles =====
+app.get('/api/department-profiles/active', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, department_code, division_code, name
+         FROM department_profiles
+        ORDER BY department_code, division_code`
+    );
+    res.json(rows.map((row) => ({
+      ...row,
+      division_code: row.division_code || '00',
+    })));
+  } catch (err) {
+    console.error('Failed to load active department profiles', err);
+    res.status(500).json({ message: 'Unable to load department profiles.' });
+  }
+});
+
+app.get('/api/department-profiles', requireAuth(['admin']), async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, department_code, division_code, name, allowed_bank_presets, created_at, updated_at
+         FROM department_profiles
+        ORDER BY department_code, division_code`
+    );
+    res.json(rows.map((row) => ({
+      ...row,
+      division_code: row.division_code || '00',
+      allowed_bank_presets: Array.isArray(row.allowed_bank_presets) ? row.allowed_bank_presets : [],
+    })));
+  } catch (err) {
+    console.error('Failed to load department profiles', err);
+    res.status(500).json({ message: 'Unable to load department profiles.' });
+  }
+});
+
+app.post(
+  '/api/department-profiles',
+  requireAuth(['admin']),
+  [
+    body('department_code').isString().trim().matches(/^\d{2}$/),
+    body('division_code').optional({ nullable: true }).isString().trim().matches(/^\d{2}$/),
+    body('name').isString().trim().isLength({ min: 1, max: 200 }),
+    body('allowed_bank_presets').isArray({ min: 1, max: BANK_PRESET_KEYS.length }),
+    body('allowed_bank_presets.*').isString().isIn(BANK_PRESET_KEYS),
+  ],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const departmentCode = String(req.body.department_code).trim();
+    const divisionCode = String(req.body.division_code || '00').trim() || '00';
+    const name = String(req.body.name).trim();
+    const presets = Array.from(new Set(req.body.allowed_bank_presets.filter((k) => BANK_PRESET_KEYS.includes(k))));
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO department_profiles (department_code, division_code, name, allowed_bank_presets)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (department_code, division_code)
+         DO UPDATE SET name = EXCLUDED.name,
+                       allowed_bank_presets = EXCLUDED.allowed_bank_presets,
+                       updated_at = NOW()
+         RETURNING id, department_code, division_code, name, allowed_bank_presets, created_at, updated_at`,
+        [departmentCode, divisionCode, name, presets]
+      );
+      res.status(201).json({ profile: rows[0] });
+    } catch (err) {
+      console.error('Failed to save department profile', err);
+      res.status(500).json({ message: 'Unable to save department profile.' });
+    }
+  }
+);
+
+app.put(
+  '/api/department-profiles/:id',
+  requireAuth(['admin']),
+  [
+    param('id').isUUID(),
+    body('department_code').optional().isString().trim().matches(/^\d{2}$/),
+    body('division_code').optional({ nullable: true }).isString().trim().matches(/^\d{2}$/),
+    body('name').optional().isString().trim().isLength({ min: 1, max: 200 }),
+    body('allowed_bank_presets').optional().isArray({ min: 1, max: BANK_PRESET_KEYS.length }),
+    body('allowed_bank_presets.*').optional().isString().isIn(BANK_PRESET_KEYS),
+  ],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const id = req.params.id;
+    const patch = {};
+    if (req.body.department_code !== undefined) patch.department_code = String(req.body.department_code).trim();
+    if (req.body.division_code !== undefined) patch.division_code = String(req.body.division_code || '00').trim() || '00';
+    if (req.body.name !== undefined) patch.name = String(req.body.name).trim();
+    if (req.body.allowed_bank_presets !== undefined) {
+      patch.allowed_bank_presets = Array.from(new Set(req.body.allowed_bank_presets.filter((k) => BANK_PRESET_KEYS.includes(k))));
+    }
+    if (!Object.keys(patch).length) {
+      res.status(400).json({ message: 'No fields to update.' });
+      return;
+    }
+    const fields = [];
+    const values = [];
+    Object.entries(patch).forEach(([key, value]) => {
+      values.push(value);
+      fields.push(`${key} = $${values.length}`);
+    });
+    fields.push('updated_at = NOW()');
+    values.push(id);
+    try {
+      const { rows } = await pool.query(
+        `UPDATE department_profiles SET ${fields.join(', ')} WHERE id = $${values.length}
+         RETURNING id, department_code, division_code, name, allowed_bank_presets, created_at, updated_at`,
+        values
+      );
+      if (!rows.length) {
+        res.status(404).json({ message: 'Department profile not found.' });
+        return;
+      }
+      res.json({ profile: rows[0] });
+    } catch (err) {
+      if (err.code === '23505') {
+        res.status(409).json({ message: 'A profile already exists for this department and division.' });
+        return;
+      }
+      console.error('Failed to update department profile', err);
+      res.status(500).json({ message: 'Unable to update department profile.' });
+    }
+  }
+);
+
+app.delete(
+  '/api/department-profiles/:id',
+  [requireAuth(['admin']), param('id').isUUID()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const { rowCount } = await pool.query('DELETE FROM department_profiles WHERE id = $1', [req.params.id]);
+    if (!rowCount) {
+      res.status(404).json({ message: 'Department profile not found.' });
+      return;
+    }
+    res.status(204).send();
+  }
+);
+
+// ===== Account management (admin) =====
 app.get('/api/reviewers', requireAuth(['admin']), async (_req, res) => {
   const { rows } = await pool.query(
     `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-            department_code, notify_on_submission
+            department_code, division_code, notify_on_submission
        FROM reviewers
       ORDER BY LOWER(COALESCE(NULLIF(display_name, ''), email)) ASC`
   );
-  res.json(rows.map(reviewerSummary));
+  res.json(await Promise.all(rows.map(async (row) => reviewerSummary(row, await reviewerAllowedPresets(row.id)))));
 });
 
 app.post(
@@ -574,6 +759,7 @@ app.post(
     body('status').optional().isIn(ACCOUNT_STATUSES),
     body('password').optional().isString().isLength({ min: 6, max: 128 }),
     body('department_code').optional({ nullable: true }).matches(/^\d{2}$/),
+    body('division_code').optional({ nullable: true }).matches(/^\d{2}$/),
     body('notify_on_submission').optional().isBoolean(),
     body('send_email').optional().isBoolean()
   ],
@@ -583,8 +769,9 @@ app.post(
     const displayName = req.body.display_name?.trim() || null;
     const role = req.body.role || 'reviewer';
     const status = req.body.status || 'active';
-    const departmentCodeRaw = req.body.department_code ? String(req.body.department_code).trim() : null;
-    const departmentCode = departmentCodeRaw || null;
+    const departmentCode = req.body.department_code ? String(req.body.department_code).trim() : null;
+    const divisionCodeRaw = req.body.division_code ? String(req.body.division_code).trim() : null;
+    const divisionCode = divisionCodeRaw || '00';
     if (role === 'user' && !departmentCode) {
       res.status(400).json({ message: 'Department Head is required for user accounts.' });
       return;
@@ -610,11 +797,11 @@ app.post(
     const passwordHash = await bcrypt.hash(password, PASS_HASH_ROUNDS);
     try {
       const { rows } = await pool.query(
-        `INSERT INTO reviewers (email, display_name, role, status, password_hash, must_change_password, department_code, notify_on_submission)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO reviewers (email, display_name, role, status, password_hash, must_change_password, department_code, division_code, notify_on_submission)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-                   department_code, notify_on_submission`,
-        [email, displayName, role, status, passwordHash, true, departmentCode, notifyOnSubmission]
+                   department_code, division_code, notify_on_submission`,
+        [email, displayName, role, status, passwordHash, true, departmentCode, divisionCode, notifyOnSubmission]
       );
       const reviewer = rows[0];
       const sendEmail = req.body.send_email === true;
@@ -625,7 +812,8 @@ app.post(
           console.error('Failed to send reviewer welcome email', err);
         }
       }
-      res.status(201).json({ reviewer: reviewerSummary(reviewer), temporary_password: generated ? password : undefined });
+      const allowedPresets = await reviewerAllowedPresets(reviewer.id);
+      res.status(201).json({ reviewer: reviewerSummary(reviewer, allowedPresets), temporary_password: generated ? password : undefined });
     } catch (err) {
       if (err.code === '23505') {
         res.status(409).json({ message: 'Account with this email already exists.' });
@@ -646,13 +834,14 @@ app.put(
     body('role').optional().isIn(ACCOUNT_ROLES),
     body('status').optional().isIn(ACCOUNT_STATUSES),
     body('department_code').optional({ nullable: true }).matches(/^\d{2}$/),
+    body('division_code').optional({ nullable: true }).matches(/^\d{2}$/),
     body('notify_on_submission').optional().isBoolean()
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const reviewerId = req.params.id;
     const { rows: existingRows } = await pool.query(
-      `SELECT id, role, department_code, notify_on_submission FROM reviewers WHERE id = $1`,
+      `SELECT id, role, department_code, division_code, notify_on_submission FROM reviewers WHERE id = $1`,
       [reviewerId]
     );
     if (!existingRows.length) {
@@ -674,6 +863,9 @@ app.put(
       const dept = req.body.department_code ? String(req.body.department_code).trim() : null;
       patch.department_code = dept || null;
     }
+    if (req.body.division_code !== undefined) {
+      patch.division_code = req.body.division_code ? String(req.body.division_code).trim() : '00';
+    }
     if (req.body.notify_on_submission !== undefined) {
       patch.notify_on_submission = req.body.notify_on_submission === true;
     }
@@ -690,6 +882,11 @@ app.put(
       patch.notify_on_submission = false;
     }
 
+    const finalDivision = Object.prototype.hasOwnProperty.call(patch, 'division_code')
+      ? patch.division_code
+      : (existing.division_code || '00');
+    patch.division_code = finalDivision;
+
     const fields = [];
     const values = [];
     Object.entries(patch).forEach(([key, value]) => {
@@ -705,10 +902,11 @@ app.put(
     values.push(reviewerId);
     const { rows } = await pool.query(
       `UPDATE reviewers SET ${fields.join(', ')} WHERE id = $${values.length} RETURNING id, email, display_name, role, status, last_login_at, created_at, updated_at,
-        must_change_password, department_code, notify_on_submission`,
+        must_change_password, department_code, division_code, notify_on_submission`,
       values
     );
-    res.json({ reviewer: reviewerSummary(rows[0]) });
+    const allowedPresets = await reviewerAllowedPresets(rows[0].id);
+    res.json({ reviewer: reviewerSummary(rows[0], allowedPresets) });
   }
 );
 
@@ -725,7 +923,7 @@ app.post(
     const reviewerId = req.params.id;
     const { rows } = await pool.query(
       `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-              department_code, notify_on_submission
+              department_code, division_code, notify_on_submission
          FROM reviewers WHERE id = $1`,
       [reviewerId]
     );
@@ -752,7 +950,8 @@ app.post(
         console.error('Failed to send reset email', err);
       }
     }
-    res.json({ reviewer: reviewerSummary(reviewer), temporary_password: generated ? password : undefined });
+    const allowedPresets = await reviewerAllowedPresets(reviewer.id);
+    res.json({ reviewer: reviewerSummary(reviewer, allowedPresets), temporary_password: generated ? password : undefined });
   }
 );
 
@@ -1098,7 +1297,7 @@ async function lookupSession(tokenId) {
   if (!tokenId) return null;
   const { rows } = await pool.query(
     `SELECT r.id, r.email, r.display_name, r.role, r.status, r.must_change_password, r.last_login_at,
-            r.created_at, r.updated_at, r.department_code, r.notify_on_submission, s.expires_at
+            r.created_at, r.updated_at, r.department_code, r.division_code, r.notify_on_submission, s.expires_at
        FROM reviewer_sessions s
        JOIN reviewers r ON r.id = s.reviewer_id
       WHERE s.token_id = $1`,
@@ -1121,7 +1320,31 @@ function buildTokenPayload(reviewer, tokenId, expiresAt) {
   );
 }
 
-function reviewerSummary(row) {
+async function resolveAllowedBankPresets(departmentCode, divisionCode) {
+  if (!departmentCode) return DEFAULT_BANK_PRESETS;
+  const dept = String(departmentCode).trim();
+  const div = String(divisionCode ?? '00').trim() || '00';
+  const { rows } = await pool.query(
+    'SELECT allowed_bank_presets FROM department_profiles WHERE department_code = $1 AND division_code = $2',
+    [dept, div]
+  );
+  if (rows.length) {
+    const presets = (rows[0].allowed_bank_presets || []).filter((k) => BANK_PRESET_KEYS.includes(k));
+    if (presets.length) return presets;
+  }
+  return DEFAULT_BANK_PRESETS;
+}
+
+async function reviewerAllowedPresets(reviewerId) {
+  const { rows } = await pool.query(
+    'SELECT department_code, division_code FROM reviewers WHERE id = $1',
+    [reviewerId]
+  );
+  if (!rows.length) return DEFAULT_BANK_PRESETS;
+  return resolveAllowedBankPresets(rows[0].department_code, rows[0].division_code);
+}
+
+function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS) {
   return {
     id: row.id,
     email: row.email,
@@ -1133,7 +1356,9 @@ function reviewerSummary(row) {
     created_at: row.created_at,
     updated_at: row.updated_at,
     department_code: row.department_code || null,
-    notify_on_submission: row.notify_on_submission !== false
+    division_code: row.division_code || '00',
+    notify_on_submission: row.notify_on_submission !== false,
+    allowed_bank_presets: Array.from(new Set(allowedBankPresets))
   };
 }
 
@@ -1174,6 +1399,7 @@ function requireAuth(roles = []) {
         res.status(403).json({ message: 'Forbidden.' });
         return;
       }
+      const allowedPresets = await reviewerAllowedPresets(session.id);
       req.user = {
         id: session.id,
         email: session.email,
@@ -1183,7 +1409,9 @@ function requireAuth(roles = []) {
         tokenId: payload.tokenId,
         session_expires_at: session.expires_at,
         department_code: session.department_code || null,
-        notify_on_submission: session.notify_on_submission !== false
+        division_code: session.division_code || '00',
+        notify_on_submission: session.notify_on_submission !== false,
+        allowed_bank_presets: allowedPresets
       };
       next();
     } catch (err) {

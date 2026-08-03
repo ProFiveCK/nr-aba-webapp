@@ -1,7 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useAuth } from '../contexts/useAuth';
 import { apiClient } from '../lib/api';
+
+interface DepartmentOption {
+    id: string;
+    department_code: string;
+    division_code: string;
+    name: string | null;
+}
 
 export function Login() {
     const { login } = useAuth();
@@ -23,6 +30,30 @@ export function Login() {
     const [signupEmail, setSignupEmail] = useState('');
     const [signupPassword, setSignupPassword] = useState('');
     const [signupDept, setSignupDept] = useState('');
+    const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+    const [departmentsLoading, setDepartmentsLoading] = useState(false);
+
+    // Load available departments for the signup dropdown
+    useEffect(() => {
+        if (!isLogin) {
+            let cancelled = false;
+            setDepartmentsLoading(true);
+            apiClient
+                .get<DepartmentOption[]>('/department-profiles/active')
+                .then((data) => {
+                    if (!cancelled) setDepartments(data || []);
+                })
+                .catch((err) => {
+                    console.error('Failed to load departments for signup', err);
+                })
+                .finally(() => {
+                    if (!cancelled) setDepartmentsLoading(false);
+                });
+            return () => {
+                cancelled = true;
+            };
+        }
+    }, [isLogin]);
 
     const handleLogin = async (e: FormEvent) => {
         e.preventDefault();
@@ -49,7 +80,7 @@ export function Login() {
         const trimmedDept = signupDept.trim();
         if (!/^\d{2}$/.test(trimmedDept)) {
             setIsLoading(false);
-            setError('Enter your two-digit Department Head code.');
+            setError('Please select a Department from the list.');
             return;
         }
 
@@ -235,21 +266,23 @@ export function Login() {
 
                             <div>
                                 <label htmlFor="signup-dept" className="block text-sm font-medium text-gray-700">
-                                    Department Head (2-digit FMIS)
+                                    Department
                                 </label>
-                                <input
+                                <select
                                     id="signup-dept"
-                                    type="text"
                                     required
-                                    maxLength={2}
-                                    pattern="\d{2}"
-                                    title="Enter the two-digit Department Head code"
                                     value={signupDept}
                                     onChange={(e) => setSignupDept(e.target.value)}
-                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                    placeholder="e.g. 12"
-                                    disabled={isLoading}
-                                />
+                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
+                                    disabled={isLoading || departmentsLoading}
+                                >
+                                    <option value="">{departmentsLoading ? 'Loading departments...' : 'Select a department'}</option>
+                                    {departments.map((dept) => (
+                                        <option key={dept.id} value={dept.department_code}>
+                                            {dept.name ? `${dept.name} (${dept.department_code})` : `Department ${dept.department_code}`}
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
 
                             <button

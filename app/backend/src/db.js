@@ -123,9 +123,11 @@ export async function initSchema() {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    await client.query('ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE');
     await client.query('ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS department_code TEXT');
+    await client.query('ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS division_code TEXT DEFAULT \'00\'');
+    await client.query('UPDATE reviewers SET division_code = COALESCE(division_code, \'00\')');
     await client.query('ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS notify_on_submission BOOLEAN DEFAULT TRUE');
+    await client.query('ALTER TABLE reviewers DROP COLUMN IF EXISTS default_bank_preset');
     await client.query('ALTER TABLE reviewers ALTER COLUMN notify_on_submission SET DEFAULT TRUE');
     await client.query('UPDATE reviewers SET notify_on_submission = TRUE WHERE notify_on_submission IS NULL');
     await client.query('ALTER TABLE reviewers DROP CONSTRAINT IF EXISTS reviewers_role_check');
@@ -370,6 +372,36 @@ export async function initSchema() {
       );
     `);
     await client.query('ALTER TABLE smtp_settings ADD COLUMN IF NOT EXISTS support_email TEXT');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS department_profiles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        department_code TEXT NOT NULL,
+        division_code TEXT NOT NULL DEFAULT '00',
+        name TEXT,
+        allowed_bank_presets TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (department_code, division_code)
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_department_profiles_code ON department_profiles(department_code, division_code)');
+
+    // Seed department profiles from existing reviewers so every known department has a profile.
+    // Default division is '00' and default allowed preset is CBA-RON; admins can edit later.
+    await client.query(`
+      INSERT INTO department_profiles (department_code, division_code, name, allowed_bank_presets)
+      SELECT DISTINCT r.department_code, '00', 'Department ' || r.department_code, ARRAY['CBA-RON']::TEXT[]
+        FROM reviewers r
+       WHERE r.department_code IS NOT NULL
+         AND r.department_code <> ''
+         AND NOT EXISTS (
+           SELECT 1 FROM department_profiles dp
+            WHERE dp.department_code = r.department_code
+              AND dp.division_code = '00'
+         )
+      ON CONFLICT (department_code, division_code) DO NOTHING
+    `);
 
     await client.query('COMMIT');
   } catch (error) {

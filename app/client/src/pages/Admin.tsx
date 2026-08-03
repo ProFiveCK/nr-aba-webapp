@@ -14,9 +14,11 @@ import {
     normalizeAccountStrict,
     parseBlacklistCsv,
 } from '../lib/utils';
-import { STAGE_META, BLACKLIST_IMPORT_LIMIT } from '../lib/constants';
+import { STAGE_META, BLACKLIST_IMPORT_LIMIT, HEADER_PRESETS } from '../lib/constants';
 
-type AdminSection = 'signups' | 'accounts' | 'blacklist' | 'archives' | 'testing' | 'smtp';
+const HEADER_PRESET_KEYS = Object.keys(HEADER_PRESETS);
+
+type AdminSection = 'signups' | 'accounts' | 'profiles' | 'blacklist' | 'archives' | 'testing' | 'smtp';
 
 interface SignupRequest {
     id: number;
@@ -39,7 +41,9 @@ interface AdminAccount {
     status: 'active' | 'inactive';
     must_change_password: boolean;
     department_code: string | null;
+    division_code: string | null;
     notify_on_submission: boolean | null;
+    allowed_bank_presets: string[] | null;
     last_login_at: string | null;
     created_at: string;
     updated_at: string;
@@ -98,6 +102,7 @@ interface AccountFormState {
     display_name: string;
     role: AdminAccount['role'];
     department_code: string;
+    division_code: string;
     notify_on_submission: boolean;
 }
 
@@ -107,6 +112,7 @@ const EMPTY_FORM: AccountFormState = {
     display_name: '',
     role: 'reviewer',
     department_code: '',
+    division_code: '00',
     notify_on_submission: true,
 };
 
@@ -149,6 +155,7 @@ export function Admin() {
                     {[
                         { id: 'signups', label: 'Signup Requests' },
                         { id: 'accounts', label: 'User Management' },
+                        { id: 'profiles', label: 'Department Profiles' },
                         { id: 'blacklist', label: 'Blacklist' },
                         { id: 'archives', label: 'Archives' },
                         { id: 'testing', label: 'Testing Mode' },
@@ -169,6 +176,7 @@ export function Admin() {
 
             {section === 'signups' && <SignupRequestsPanel />}
             {section === 'accounts' && <UserManagementPanel />}
+            {section === 'profiles' && <DepartmentProfilesPanel />}
             {section === 'blacklist' && <BlacklistPanel />}
             {section === 'archives' && <AdminArchivesPanel />}
             {section === 'testing' && <TestingModePanel />}
@@ -436,6 +444,7 @@ function UserManagementPanel() {
             display_name: account.display_name || '',
             role: account.role,
             department_code: account.department_code || '',
+            division_code: account.division_code || '00',
             notify_on_submission: account.notify_on_submission ?? (account.role === 'reviewer'),
         });
         setIsEditing(true);
@@ -496,6 +505,7 @@ function UserManagementPanel() {
             return;
         }
         const trimmedDept = (form.department_code || '').trim();
+        const trimmedDiv = (form.division_code || '').trim() || '00';
         if (form.role === 'user') {
             if (!/^\d{2}$/.test(trimmedDept)) {
                 setFormError('Users must have a two-digit Department Head code.');
@@ -505,6 +515,10 @@ function UserManagementPanel() {
             setFormError('Department codes must be two digits.');
             return;
         }
+        if (trimmedDiv && !/^\d{2}$/.test(trimmedDiv)) {
+            setFormError('Division code must be two digits or blank for 00.');
+            return;
+        }
 
         const body: Record<string, unknown> = {
             display_name: form.display_name?.trim() || null,
@@ -512,6 +526,7 @@ function UserManagementPanel() {
         };
 
         body.department_code = trimmedDept || null;
+        body.division_code = trimmedDiv;
 
         if (form.role === 'reviewer' || form.role === 'admin') {
             body.notify_on_submission = form.notify_on_submission === true;
@@ -529,6 +544,7 @@ function UserManagementPanel() {
                         display_name: (body.display_name as string | null) || undefined,
                         role: body.role as AdminAccount['role'],
                         department_code: (body.department_code as string | null) || undefined,
+                        division_code: (body.division_code as string) || undefined,
                     });
                 }
             } else {
@@ -623,9 +639,24 @@ function UserManagementPanel() {
                                 Used to auto-fill batch submissions and audit metadata.
                             </p>
                         </label>
+                        <label className="text-sm font-medium text-gray-700">
+                            Division code (optional)
+                            <input
+                                type="text"
+                                value={form.division_code || ''}
+                                onChange={(e) => setForm({ ...form, division_code: e.target.value })}
+                                maxLength={2}
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100"
+                                placeholder="e.g. 01, blank = 00"
+                            />
+                            <p className="mt-1 text-xs text-gray-500">
+                                Defaults to 00. Determines bank account presets via Department Profiles.
+                            </p>
+                        </label>
                     </div>
 
-                    <label className={`inline-flex items-center gap-2 text-sm font-medium text-gray-700 ${!canReceiveNotifications ? 'opacity-60' : ''}`}>
+                    <label className={`inline-flex items-center gap-2 text-sm font-medium text-gray-700 ${!canReceiveNotifications ? 'opacity-60' : ''}`}
+                    >
                         <input
                             type="checkbox"
                             checked={Boolean(form.notify_on_submission)}
@@ -704,7 +735,8 @@ function UserManagementPanel() {
                                 <tr>
                                     <th className="px-3 py-2">User</th>
                                     <th className="px-3 py-2">Role</th>
-                                    <th className="px-3 py-2">Department</th>
+                                    <th className="px-3 py-2">Department / Division</th>
+                                    <th className="px-3 py-2">Allowed banks</th>
                                     <th className="px-3 py-2">Status</th>
                                     <th className="px-3 py-2">Notify</th>
                                     <th className="px-3 py-2">Last Login</th>
@@ -714,13 +746,13 @@ function UserManagementPanel() {
                             <tbody className="divide-y divide-gray-100 bg-white">
                                 {loading ? (
                                     <tr>
-                                        <td colSpan={7} className="px-3 py-6 text-center text-gray-500">
+                                        <td colSpan={8} className="px-3 py-6 text-center text-gray-500">
                                             Loading…
                                         </td>
                                     </tr>
                                 ) : filteredAccounts.length === 0 ? (
                                     <tr>
-                                        <td colSpan={7} className="px-3 py-6 text-center text-gray-500">
+                                        <td colSpan={8} className="px-3 py-6 text-center text-gray-500">
                                             No accounts match the current filters.
                                         </td>
                                     </tr>
@@ -732,7 +764,8 @@ function UserManagementPanel() {
                                                 <div className="text-xs text-gray-500">{account.email}</div>
                                             </td>
                                             <td className="px-3 py-2 capitalize">{account.role}</td>
-                                            <td className="px-3 py-2 font-mono text-gray-600">{account.department_code || '—'}</td>
+                                            <td className="px-3 py-2 font-mono text-gray-600">{account.department_code || '—'} / {account.division_code || '00'}</td>
+                                            <td className="px-3 py-2 text-gray-700">{(account.allowed_bank_presets || []).join(', ') || 'CBA-RON (default)'}</td>
                                             <td className="px-3 py-2">
                                                 <span
                                                     className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
@@ -785,6 +818,290 @@ function UserManagementPanel() {
                                                 <button
                                                     type="button"
                                                     onClick={() => handleDelete(account)}
+                                                    className="text-xs text-red-600 hover:text-red-800"
+                                                >
+                                                    Delete
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
+}
+
+interface DepartmentProfile {
+    id: string;
+    department_code: string;
+    division_code: string;
+    name: string;
+    allowed_bank_presets: string[];
+    created_at: string;
+    updated_at: string;
+}
+
+const EMPTY_PROFILE: Omit<DepartmentProfile, 'id' | 'created_at' | 'updated_at'> = {
+    department_code: '',
+    division_code: '00',
+    name: '',
+    allowed_bank_presets: ['CBA-RON'],
+};
+
+function DepartmentProfilesPanel() {
+    const [profiles, setProfiles] = useState<DepartmentProfile[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [form, setForm] = useState({ ...EMPTY_PROFILE });
+    const [editingId, setEditingId] = useState<string | null>(null);
+    const [formError, setFormError] = useState('');
+    const [formSuccess, setFormSuccess] = useState('');
+    const [saving, setSaving] = useState(false);
+    const { addToast } = useToast();
+
+    const refresh = useCallback(async () => {
+        setLoading(true);
+        setError('');
+        try {
+            const data = await apiClient.get<DepartmentProfile[]>('/department-profiles');
+            setProfiles(Array.isArray(data) ? data : []);
+        } catch (err) {
+            setError((err as Error)?.message || 'Unable to load department profiles.');
+            setProfiles([]);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        refresh();
+    }, [refresh]);
+
+    const resetForm = () => {
+        setForm({ ...EMPTY_PROFILE });
+        setEditingId(null);
+        setFormError('');
+        setFormSuccess('');
+    };
+
+    const startEdit = (profile: DepartmentProfile) => {
+        setForm({
+            department_code: profile.department_code,
+            division_code: profile.division_code || '00',
+            name: profile.name,
+            allowed_bank_presets: [...(profile.allowed_bank_presets || [])],
+        });
+        setEditingId(profile.id);
+        setFormError('');
+        setFormSuccess('');
+    };
+
+    const togglePreset = (key: string) => {
+        setForm((prev) => {
+            const current = new Set(prev.allowed_bank_presets);
+            if (current.has(key)) {
+                if (current.size > 1) current.delete(key);
+            } else {
+                current.add(key);
+            }
+            return { ...prev, allowed_bank_presets: Array.from(current) };
+        });
+    };
+
+    const handleSubmit = async (event: FormEvent) => {
+        event.preventDefault();
+        setFormError('');
+        setFormSuccess('');
+        const dept = (form.department_code || '').trim();
+        const div = (form.division_code || '').trim() || '00';
+        const name = (form.name || '').trim();
+        if (!/^\d{2}$/.test(dept)) {
+            setFormError('Department code must be two digits.');
+            return;
+        }
+        if (!/^\d{2}$/.test(div)) {
+            setFormError('Division code must be two digits.');
+            return;
+        }
+        if (!name) {
+            setFormError('Profile name is required.');
+            return;
+        }
+        if (!form.allowed_bank_presets.length) {
+            setFormError('Select at least one allowed bank account preset.');
+            return;
+        }
+        const payload = {
+            department_code: dept,
+            division_code: div,
+            name,
+            allowed_bank_presets: form.allowed_bank_presets,
+        };
+        setSaving(true);
+        try {
+            if (editingId) {
+                await apiClient.put(`/department-profiles/${editingId}`, payload);
+                setFormSuccess('Department profile updated.');
+            } else {
+                await apiClient.post('/department-profiles', payload);
+                setFormSuccess('Department profile created.');
+            }
+            resetForm();
+            await refresh();
+        } catch (err) {
+            setFormError((err as Error)?.message || 'Unable to save profile.');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleDelete = async (profile: DepartmentProfile) => {
+        const confirmed = window.confirm(
+            `Delete profile for department ${profile.department_code} / division ${profile.division_code || '00'}?`
+        );
+        if (!confirmed) return;
+        try {
+            await apiClient.delete(`/department-profiles/${profile.id}`);
+            if (editingId === profile.id) resetForm();
+            await refresh();
+            addToast('Department profile deleted.', 'success');
+        } catch (err) {
+            addToast((err as Error)?.message || 'Unable to delete profile.', 'error');
+        }
+    };
+
+    return (
+        <section className="space-y-6">
+            <div className="rounded-2xl bg-white p-6 shadow space-y-4">
+                <div>
+                    <h2 className="text-xl font-semibold text-gray-900">Department Profiles</h2>
+                    <p className="text-sm text-gray-500">
+                        Map each department (and optional division) to the bank account presets its users may select.
+                        Unconfigured dept/div pairs fall back to CBA-RON.
+                    </p>
+                </div>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div className="grid gap-4 md:grid-cols-3">
+                        <label className="text-sm font-medium text-gray-700">
+                            Department code
+                            <input
+                                type="text"
+                                value={form.department_code}
+                                onChange={(e) => setForm({ ...form, department_code: e.target.value })}
+                                maxLength={2}
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                                placeholder="e.g. 12"
+                            />
+                        </label>
+                        <label className="text-sm font-medium text-gray-700">
+                            Division code
+                            <input
+                                type="text"
+                                value={form.division_code}
+                                onChange={(e) => setForm({ ...form, division_code: e.target.value })}
+                                maxLength={2}
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                                placeholder="blank = 00"
+                            />
+                        </label>
+                        <label className="text-sm font-medium text-gray-700">
+                            Profile name
+                            <input
+                                type="text"
+                                value={form.name}
+                                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                                maxLength={200}
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                                placeholder="e.g. Treasury - Revenue"
+                            />
+                        </label>
+                    </div>
+                    <div>
+                        <span className="text-sm font-medium text-gray-700">Allowed bank account presets</span>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+                            {HEADER_PRESET_KEYS.map((key) => (
+                                <label key={key} className="inline-flex items-center gap-2 text-sm text-gray-700">
+                                    <input
+                                        type="checkbox"
+                                        checked={form.allowed_bank_presets.includes(key)}
+                                        onChange={() => togglePreset(key)}
+                                    />
+                                    {key}
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+                    {formError && <p className="text-sm text-red-600">{formError}</p>}
+                    {formSuccess && <p className="text-sm text-green-600">{formSuccess}</p>}
+                    <div className="flex flex-wrap gap-3">
+                        <button
+                            type="submit"
+                            disabled={saving}
+                            className="rounded-full bg-indigo-600 px-6 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-60"
+                        >
+                            {saving ? 'Saving…' : editingId ? 'Update profile' : 'Create profile'}
+                        </button>
+                        {editingId && (
+                            <button
+                                type="button"
+                                onClick={resetForm}
+                                className="rounded-full border border-gray-300 px-6 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                            >
+                                Cancel
+                            </button>
+                        )}
+                    </div>
+                </form>
+            </div>
+
+            <div className="rounded-2xl bg-white p-6 shadow space-y-4">
+                <h3 className="text-xl font-semibold text-gray-900">Configured profiles</h3>
+                {error && <p className="text-sm text-red-600">{error}</p>}
+                <div className="overflow-hidden rounded-xl border border-gray-100">
+                    <div className="max-h-[520px] overflow-y-auto">
+                        <table className="min-w-full divide-y divide-gray-200 text-sm">
+                            <thead className="bg-gray-50 text-left text-xs font-semibold uppercase text-gray-600">
+                                <tr>
+                                    <th className="px-3 py-2">Dept / Div</th>
+                                    <th className="px-3 py-2">Name</th>
+                                    <th className="px-3 py-2">Allowed presets</th>
+                                    <th className="px-3 py-2 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 bg-white">
+                                {loading ? (
+                                    <tr>
+                                        <td colSpan={4} className="px-3 py-6 text-center text-gray-500">Loading profiles…</td>
+                                    </tr>
+                                ) : profiles.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={4} className="px-3 py-6 text-center text-gray-500">
+                                            No department profiles configured. All users will fall back to CBA-RON.
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    profiles.map((profile) => (
+                                        <tr key={profile.id}>
+                                            <td className="px-3 py-2 font-mono text-gray-700">
+                                                {profile.department_code} / {profile.division_code || '00'}
+                                            </td>
+                                            <td className="px-3 py-2">{profile.name}</td>
+                                            <td className="px-3 py-2 text-gray-700">{(profile.allowed_bank_presets || []).join(', ')}</td>
+                                            <td className="px-3 py-2 text-right space-x-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => startEdit(profile)}
+                                                    className="text-xs text-indigo-600 hover:text-indigo-800"
+                                                >
+                                                    Edit
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDelete(profile)}
                                                     className="text-xs text-red-600 hover:text-red-800"
                                                 >
                                                     Delete

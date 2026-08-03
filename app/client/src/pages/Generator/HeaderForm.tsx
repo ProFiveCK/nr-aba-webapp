@@ -1,6 +1,7 @@
 import React from 'react';
 import type { HeaderData } from './types';
 import { HEADER_PRESETS, type HeaderPresetKey } from '../../lib/constants';
+import { useAuth } from '../../contexts/useAuth';
 
 import { todayDDMMYY } from '../../lib/utils';
 
@@ -11,6 +12,9 @@ interface HeaderFormProps {
 
 export function HeaderForm({ headerData, onHeaderChange }: HeaderFormProps) {
     const [showBalancing, setShowBalancing] = React.useState(false);
+    const { user } = useAuth();
+    const allowedPresets = user?.allowed_bank_presets?.length ? user.allowed_bank_presets : ['CBA-RON'];
+    const presetOptions = Object.keys(HEADER_PRESETS).filter((k) => allowedPresets.includes(k));
 
     // Pre-fill processing date if empty
     React.useEffect(() => {
@@ -58,9 +62,10 @@ export function HeaderForm({ headerData, onHeaderChange }: HeaderFormProps) {
                             <select
                                 id="header-preset"
                                 onChange={handlePresetChange}
+                                value={allowedPresets.find((p) => HEADER_PRESETS[p as HeaderPresetKey]?.user === headerData.user) || allowedPresets[0] || ''}
                                 className="mt-1 w-full rounded-md border border-gray-300 bg-yellow-50 px-2 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                             >
-                                {Object.keys(HEADER_PRESETS).map((key) => (
+                                {presetOptions.map((key) => (
                                     <option key={key} value={key}>
                                         {key}
                                     </option>

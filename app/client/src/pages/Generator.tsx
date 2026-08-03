@@ -90,8 +90,15 @@ export function Generator() {
             const stored = localStorage.getItem('aba-header');
             if (stored) {
                 const savedHeader = JSON.parse(stored);
-                // Merge with preset to ensure all fields are present
-                const presetKey = (savedHeader.__preset || 'CBA-RON') as keyof typeof HEADER_PRESETS;
+                // Merge with preset to ensure all fields are present.
+                // Unknown or missing preset keys fall back to the user's allowed bank presets,
+                // then CBA-RON, so a saved draft never silently switches to the wrong account.
+                const savedPreset = savedHeader.__preset as string | undefined;
+                const allowedPresets = user?.allowed_bank_presets || ['CBA-RON'];
+                const fallbackPreset = allowedPresets[0];
+                const presetKey = (savedPreset && allowedPresets.includes(savedPreset)
+                    ? savedPreset
+                    : fallbackPreset) as keyof typeof HEADER_PRESETS;
                 const preset = HEADER_PRESETS[presetKey];
                 return {
                     fi: preset.fi,
@@ -114,8 +121,10 @@ export function Generator() {
             console.warn('Failed to load header from localStorage', err);
         }
 
-        // Default to CBA-RON preset
-        const preset = HEADER_PRESETS['CBA-RON'];
+        // Default to the user's first allowed bank preset, falling back to CBA-RON.
+        const allowedPresets = user?.allowed_bank_presets || ['CBA-RON'];
+        const fallbackKey = allowedPresets[0];
+        const preset = HEADER_PRESETS[fallbackKey as keyof typeof HEADER_PRESETS];
         return {
             fi: preset.fi,
             reel: preset.reel,
@@ -196,7 +205,7 @@ export function Generator() {
         try {
             const toSave = {
                 ...headerData,
-                __preset: 'CBA-RON', // Track which preset was used
+                __preset: Object.keys(HEADER_PRESETS).find((k) => HEADER_PRESETS[k as keyof typeof HEADER_PRESETS].user === headerData.user) || user?.allowed_bank_presets?.[0] || 'CBA-RON',
             };
             localStorage.setItem('aba-header', JSON.stringify(toSave));
         } catch (err) {

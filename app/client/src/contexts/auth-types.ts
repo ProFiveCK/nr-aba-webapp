@@ -4,8 +4,10 @@ export interface User {
     display_name: string;
     role: 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll';
     department_code?: string;
+    division_code?: string;
     notify_on_submission?: boolean;
     must_change_password?: boolean;
+    allowed_bank_presets?: string[];
 }
 
 export interface LoginResponse {

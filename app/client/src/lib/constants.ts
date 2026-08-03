@@ -118,6 +118,9 @@ export const COMMON_HEADER = {
     remitter: 'RON Government',
 } as const;
 
+// Default bank preset key when the user has no saved default or an unknown key
+export const DEFAULT_BANK_PRESET = 'CBA-RON';
+
 // Header Presets for Bank Accounts
 export const HEADER_PRESETS = {
     'CBA-RON': {

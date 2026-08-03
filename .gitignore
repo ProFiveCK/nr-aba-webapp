@@ -79,6 +79,9 @@ attachments/
 # OS - Linux
 .Trash-*
 
+# Local development reference data
+DEV/
+
 # OS - Windows  
 Thumbs.db
 

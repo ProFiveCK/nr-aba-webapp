@@ -3968,6 +3968,15 @@ initSchema()
     } catch (err) {
       console.error('Failed to initialize testing mode state', err);
     }
+    // Override env-based mailTransport with DB settings if they exist.
+    try {
+      const smtpSettings = await reloadMailTransport();
+      if (smtpSettings) {
+        console.log(`SMTP transport loaded from DB: ${smtpSettings.smtp_host}:${smtpSettings.smtp_port}`);
+      }
+    } catch (err) {
+      console.error('Failed to load SMTP settings from DB:', err.message);
+    }
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`RON ABA backend listening on port ${PORT}`);
     });

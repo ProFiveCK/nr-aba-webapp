@@ -161,26 +161,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Load saved session on mount and start expiry/refresh timers.
     useEffect(() => {
-        const rawSession = localStorage.getItem(SESSION_STORAGE_KEY);
-        const { token: savedToken, user: savedUser, expiresAt: savedExpiresAt } = rawSession
-            ? parseSession(rawSession)
-            : { token: null, user: null, expiresAt: null };
+        let cancelled = false;
 
-        // The JWT token lives in an httpOnly cookie — we don't need it in localStorage.
-        // Restore the user profile + expiry for the UI; the cookie keeps the session alive.
-        if (savedUser && savedExpiresAt && !isExpired(savedExpiresAt)) {
-            setToken(savedToken); // may be null — cookie handles auth
-            setUser(savedUser);
-            setSessionExpiresAt(savedExpiresAt);
-            if (savedToken) apiClient.setAuthToken(savedToken);
-            scheduleSessionMaintenance();
-        } else {
-            // Clean up stale or corrupt saved session
-            logout();
+        async function restoreSession() {
+            // The JWT token lives in an httpOnly cookie set by the backend.
+            // We call /api/auth/me to verify the cookie is still valid.
+            // If it succeeds, the user is authenticated via the cookie.
+            const rawSession = localStorage.getItem(SESSION_STORAGE_KEY);
+            const { user: savedUser, expiresAt: savedExpiresAt } = rawSession
+                ? parseSession(rawSession)
+                : { user: null, expiresAt: null };
+
+            if (savedUser && savedExpiresAt && !isExpired(savedExpiresAt)) {
+                // Optimistically restore the UI from localStorage, then verify with the server.
+                setUser(savedUser);
+                setSessionExpiresAt(savedExpiresAt);
+                scheduleSessionMaintenance();
+
+                try {
+                    const me = await apiClient.get<{ reviewer: User }>('/auth/me');
+                    if (cancelled) return;
+                    if (me?.reviewer) {
+                        setUser(me.reviewer);
+                    }
+                } catch {
+                    if (cancelled) return;
+                    // Cookie is invalid/expired — log out.
+                    logout();
+                    return;
+                }
+            } else {
+                // No saved session in localStorage — check if the cookie is still valid.
+                try {
+                    const me = await apiClient.get<{ reviewer: User }>('/auth/me');
+                    if (cancelled) return;
+                    if (me?.reviewer) {
+                        setUser(me.reviewer);
+                        // We don't have expiresAt from /auth/me; derive from session_expires_at if present.
+                        const expiresAt = (me.reviewer as User & { session_expires_at?: string }).session_expires_at
+                            || new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
+                        setSessionExpiresAt(expiresAt);
+                        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ user: me.reviewer, expiresAt }));
+                        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(me.reviewer));
+                        localStorage.setItem(EXPIRES_STORAGE_KEY, expiresAt);
+                        scheduleSessionMaintenance();
+                    } else {
+                        logout();
+                    }
+                } catch {
+                    if (cancelled) return;
+                    // No valid cookie — clean up any stale storage.
+                    logout();
+                }
+            }
+            if (!cancelled) setIsLoading(false);
         }
-        setIsLoading(false);
+
+        restoreSession();
 
         return () => {
+            cancelled = true;
             clearRefreshTimer();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -188,24 +228,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Re-schedule maintenance whenever the session expiry changes.
     useEffect(() => {
-        if (token && sessionExpiresAt) {
+        if (user && sessionExpiresAt) {
             scheduleSessionMaintenance();
         }
         return () => {
             clearRefreshTimer();
         };
-    }, [token, sessionExpiresAt, scheduleSessionMaintenance, clearRefreshTimer]);
+    }, [user, sessionExpiresAt, scheduleSessionMaintenance, clearRefreshTimer]);
 
     // Poll for hard expiry in case the refresh timer misfires (tab backgrounded, clock changes, etc.)
     useEffect(() => {
-        if (!token || !sessionExpiresAt) return;
+        if (!user || !sessionExpiresAt) return;
         const interval = setInterval(() => {
             if (isExpired(sessionExpiresAt)) {
                 logout();
             }
         }, SESSION_POLL_MS);
         return () => clearInterval(interval);
-    }, [token, sessionExpiresAt, logout]);
+    }, [user, sessionExpiresAt, logout]);
 
     const requiresPasswordChange = useMemo(() => !!user?.must_change_password, [user]);
 
@@ -217,7 +257,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             logout,
             updateUser,
             replaceSession,
-            isAuthenticated: !!token && !!user,
+            // Token lives in httpOnly cookie; isAuthenticated is based on user presence.
+            // The cookie is sent automatically with credentials: 'include'.
+            isAuthenticated: !!user,
             isLoading,
             sessionExpiresAt,
             requiresPasswordChange,

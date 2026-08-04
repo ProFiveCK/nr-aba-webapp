@@ -26,6 +26,8 @@ export interface HeaderData {
     balance_bsb: string;
     balance_acct: string;
     balance_title: string;
+    /** Internal selected preset key (not sent to ABA file) */
+    __preset?: string;
 }
 
 export type DuplicateGroup = number[];

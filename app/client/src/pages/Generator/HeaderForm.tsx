@@ -43,6 +43,7 @@ export function HeaderForm({ headerData, onHeaderChange }: HeaderFormProps) {
                 balance_bsb: preset.balance_bsb,
                 balance_acct: preset.balance_acct,
                 balance_title: preset.balance_title,
+                __preset: presetKey,
             });
         }
     };
@@ -62,7 +63,7 @@ export function HeaderForm({ headerData, onHeaderChange }: HeaderFormProps) {
                             <select
                                 id="header-preset"
                                 onChange={handlePresetChange}
-                                value={allowedPresets.find((p) => HEADER_PRESETS[p as HeaderPresetKey]?.user === headerData.user) || allowedPresets[0] || ''}
+                                value={headerData.__preset && allowedPresets.includes(headerData.__preset) ? headerData.__preset : allowedPresets[0] || ''}
                                 className="mt-1 w-full rounded-md border border-gray-300 bg-yellow-50 px-2 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                             >
                                 {presetOptions.map((key) => (

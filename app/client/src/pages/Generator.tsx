@@ -115,6 +115,7 @@ export function Generator() {
                     balance_bsb: preset.balance_bsb,
                     balance_acct: preset.balance_acct,
                     balance_title: preset.balance_title,
+                    __preset: presetKey,
                 };
             }
         } catch (err) {
@@ -140,6 +141,7 @@ export function Generator() {
             balance_bsb: preset.balance_bsb,
             balance_acct: preset.balance_acct,
             balance_title: preset.balance_title,
+            __preset: fallbackKey,
         };
     });
 
@@ -203,11 +205,7 @@ export function Generator() {
     // Save header data to localStorage whenever it changes
     React.useEffect(() => {
         try {
-            const toSave = {
-                ...headerData,
-                __preset: Object.keys(HEADER_PRESETS).find((k) => HEADER_PRESETS[k as keyof typeof HEADER_PRESETS].user === headerData.user) || user?.allowed_bank_presets?.[0] || 'CBA-RON',
-            };
-            localStorage.setItem('aba-header', JSON.stringify(toSave));
+            localStorage.setItem('aba-header', JSON.stringify(headerData));
         } catch (err) {
             console.warn('Failed to save header to localStorage', err);
         }

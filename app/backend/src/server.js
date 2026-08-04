@@ -3581,7 +3581,7 @@ TABS AVAILABLE:
 - Generator: Build ABA files from credit transactions. Choose preset, add transactions, fix validations, submit (All users)
 - My Batches: View YOUR batches (Draft, Submitted, Rejected, Approved). Can delete drafts, load rejected batches into Generator to fix and resubmit (All users)
 - Reader: Open EXTERNAL ABA files from your computer to view details (header, transactions, duplicates, totals). Can load transactions into Generator to edit and submit as new batch (All users)
-- Banking: Convert CSV to BAI2, validate BAI2 files. "BAI2 File Check" menu for troubleshooting bank statement files (Level 2+)
+- Banking: Convert CSV to BAI2, validate BAI2 files, convert WBC Fiji and NY USD statements to FMIS import format. "BAI2 File Check" menu for troubleshooting bank statement files (Level 2+)
 - SaaS: SFTP file sync - automatic every 15 minutes, manual "Sync Now" button, view sync history (Level 3+)
 - Reviewer: Retrieve batches by code/PD, inspect details, approve or reject. Download ABA ONLY works after approving (Level 3+)
 - Archives: Search ALL batches (any status). Level 4 Administrators can DELETE any batch regardless of status (Draft, Submitted, Rejected, Approved). Level 3 can view/download approved files only (Level 3+ view/download, Level 4 delete any)
@@ -3623,6 +3623,8 @@ Archives (Level 3+ view/download, Level 4 delete ANY status):
 Banking & BAI2 (Level 2+):
 - CSV to BAI2: Convert bank statement CSV to BAI2 format with sender/receiver IDs, account config
 - BAI2 File Check: Upload BAI2 file downloaded from internet banking to check for errors and validate format
+- WBC Fiji Generator: Convert Westpac Fiji CSV statements to TechnologyOne FMIS import format
+- NY Statement Generator: Convert New York USD bank statement CSV files to TechnologyOne FMIS import format (users must export from Numbers/Apple to CSV first)
 
 Admin Functions (Level 4 only):
 - User Accounts: Create users/reviewers/admins, assign departments (2-digit FMIS code), toggle notifications, reset passwords

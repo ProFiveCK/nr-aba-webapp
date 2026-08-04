@@ -7,25 +7,22 @@ const { Pool } = pg;
 
 const useSSL = process.env.DB_SSL === 'true';
 
-// Never default credentials to postgres/postgres in production — require explicit config.
-function requiredEnv(name) {
-  const value = process.env[name];
-  if (!value || value === 'postgres') {
-    // Allow the literal default only when explicitly opted in via DB_ALLOW_DEFAULT_CREDS=true.
-    if (value === 'postgres' && process.env.DB_ALLOW_DEFAULT_CREDS === 'true') {
-      return value;
-    }
-    return undefined;
+// Block the postgres/postgres both-default combo in production — require explicit config.
+// DB_USER=postgres with a real password is fine (it's the standard superuser name).
+// Only block when BOTH user and password are the literal default "postgres".
+const dbUser = process.env.DB_USER;
+const dbPassword = process.env.DB_PASSWORD;
+
+if (!process.env.DATABASE_URL) {
+  if (!dbUser || !dbPassword) {
+    console.error('FATAL: DB_USER and DB_PASSWORD must be set explicitly (or provide DATABASE_URL). Refusing to start without credentials.');
+    process.exit(1);
   }
-  return value;
-}
-
-const dbUser = requiredEnv('DB_USER');
-const dbPassword = requiredEnv('DB_PASSWORD');
-
-if (!process.env.DATABASE_URL && (!dbUser || !dbPassword)) {
-  console.error('FATAL: DB_USER and DB_PASSWORD must be set explicitly (or provide DATABASE_URL). Refusing to start with default credentials.');
-  process.exit(1);
+  // Block the well-known default combo unless explicitly opted in for dev.
+  if (dbUser === 'postgres' && dbPassword === 'postgres' && process.env.DB_ALLOW_DEFAULT_CREDS !== 'true') {
+    console.error('FATAL: DB_USER=postgres with DB_PASSWORD=postgres is the default combo. Set DB_ALLOW_DEFAULT_CREDS=true for dev or use a real password.');
+    process.exit(1);
+  }
 }
 
 const connectionConfig = process.env.DATABASE_URL

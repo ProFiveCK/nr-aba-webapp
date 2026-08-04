@@ -166,6 +166,7 @@ app.set('trust proxy', 1);
 // Security headers
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
+  strictTransportSecurity: { maxAge: 31536000, includeSubDomains: true },
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
@@ -184,6 +185,22 @@ app.use(helmet({
 
 // CORS: restrict to configured frontend origin
 const corsOrigin = process.env.FRONTEND_BASE_URL || 'http://localhost:8080';
+// Cookie-based auth: JWT is set as an httpOnly cookie so JavaScript (XSS) cannot read it.
+// The cookie name is 'auth_token' and is shared across login/refresh/change-password/logout.
+const COOKIE_NAME = 'auth_token';
+const isProd = process.env.NODE_ENV === 'production' || corsOrigin.startsWith('https://');
+function setAuthCookie(res, token, expiresAt) {
+  res.cookie(COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: 'strict',
+    expires: expiresAt,
+    path: '/',
+  });
+}
+function clearAuthCookie(res) {
+  res.clearCookie(COOKIE_NAME, { path: '/', httpOnly: true, secure: isProd, sameSite: 'strict' });
+}
 // Authenticated CSRF defense: reject cross-origin state-changing requests.
 // Bearer tokens in Authorization header are not sent by browsers cross-site,
 // but this adds defense-in-depth if tokens ever move to cookies.
@@ -197,6 +214,24 @@ function csrfGuard(req, res, next) {
   res.status(403).json({ message: 'Cross-origin request blocked.' });
 }
 app.use(cors({ origin: corsOrigin, credentials: true }));
+
+// Lightweight cookie parser — populates req.cookies from the Cookie header.
+// Avoids adding a cookie-parser dependency for a single auth cookie.
+app.use((req, _res, next) => {
+  req.cookies = {};
+  const cookieHeader = req.headers.cookie;
+  if (cookieHeader) {
+    for (const pair of cookieHeader.split(';')) {
+      const idx = pair.indexOf('=');
+      if (idx > 0) {
+        const key = pair.slice(0, idx).trim();
+        const val = pair.slice(idx + 1).trim();
+        if (key) req.cookies[key] = decodeURIComponent(val);
+      }
+    }
+  }
+  next();
+});
 
 // Allow larger payloads for ABA uploads (base64 inflates size by ~33%)
 app.use(express.json({ limit: '10mb' }));
@@ -424,12 +459,14 @@ app.post(
     const expiresIso = expiresAt.toISOString();
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
     const payload = { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso };
+    setAuthCookie(res, token, expiresAt);
     res.json({ token, expires_at: expiresIso, reviewer: payload });
   }
 );
 
 app.post('/api/auth/logout', requireAuth(), async (req, res) => {
   await invalidateSession(req.user?.tokenId);
+  clearAuthCookie(res);
   res.status(204).send();
 });
 
@@ -497,6 +534,7 @@ app.post('/api/auth/refresh', requireAuth(), async (req, res) => {
   const token = buildTokenPayload(reviewer, tokenId, expiresAt);
   const expiresIso = expiresAt.toISOString();
   const allowedPresets = await reviewerAllowedPresets(reviewer.id);
+  setAuthCookie(res, token, expiresAt);
   res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso } });
 });
 
@@ -545,6 +583,7 @@ app.post(
     const token = buildTokenPayload(reviewer, tokenId, expiresAt);
     const expiresIso = expiresAt.toISOString();
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
+    setAuthCookie(res, token, expiresAt);
     res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso } });
   }
 );
@@ -1445,12 +1484,14 @@ function requireAuth(roles = []) {
   const allowedRoles = Array.isArray(roles) && roles.length ? roles : null;
   return async (req, res, next) => {
     try {
+      // Read token from httpOnly cookie first, fall back to Authorization header (backward compat).
       const header = req.headers.authorization || '';
-      if (!header.startsWith('Bearer ')) {
+      const cookieToken = req.cookies?.[COOKIE_NAME];
+      const token = cookieToken || (header.startsWith('Bearer ') ? header.slice(7) : '');
+      if (!token) {
         res.status(401).json({ message: 'Authentication required.' });
         return;
       }
-      const token = header.slice(7);
       let payload;
       try {
         // Explicit algorithm whitelist prevents alg:none and algorithm-confusion attacks.

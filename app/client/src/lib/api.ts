@@ -69,7 +69,8 @@ class ApiClient {
             headers['Content-Type'] = 'application/json';
         }
 
-        // Add authentication token
+        // Add authentication token (cookie-based auth uses credentials: 'include' below).
+        // The Authorization header is kept as a fallback for backward compatibility.
         if (this.authToken && !skipAuth) {
             headers.Authorization = `Bearer ${this.authToken}`;
         }
@@ -81,6 +82,7 @@ class ApiClient {
             response = await fetch(url, {
                 ...options,
                 headers,
+                credentials: 'include',
             });
         } catch (err) {
             const error = new Error((err as Error)?.message || 'Network request failed') as ApiError;

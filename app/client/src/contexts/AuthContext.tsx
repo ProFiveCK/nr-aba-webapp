@@ -17,8 +17,10 @@ function parseSession(raw: string | null): { token: string | null; user: User | 
     if (!raw) return { token: null, user: null, expiresAt: null };
     try {
         const parsed = JSON.parse(raw) as { token: string; user: User; expiresAt: string } | null;
-        if (parsed && typeof parsed === 'object' && parsed.token && parsed.user && parsed.expiresAt) {
-            return { token: parsed.token, user: parsed.user, expiresAt: parsed.expiresAt };
+        if (parsed && typeof parsed === 'object' && parsed.user && parsed.expiresAt) {
+            // Token is no longer stored in localStorage — it's in an httpOnly cookie.
+            // We keep user/expiry for session restoration UI only.
+            return { token: parsed.token ?? null, user: parsed.user, expiresAt: parsed.expiresAt };
         }
     } catch {
         // Legacy: auth_token used to be stored as a bare JWT string.
@@ -47,10 +49,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const logout = useCallback(() => {
         clearRefreshTimer();
-        // Best-effort server-side logout; ignore errors.
-        if (apiClient.getAuthToken()) {
-            apiClient.post('/auth/logout').catch(() => undefined);
-        }
+        // Best-effort server-side logout; cookie will be cleared by the backend.
+        apiClient.post('/auth/logout').catch(() => undefined);
         setToken(null);
         setUser(null);
         setSessionExpiresAt(null);
@@ -68,7 +68,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(reviewer);
         setSessionExpiresAt(expiresAt);
         apiClient.setAuthToken(tokenValue);
-        const payload = { token: tokenValue, user: reviewer, expiresAt };
+        // Only persist user profile + expiry to localStorage for session restoration UI.
+        // The JWT token is NOT stored in localStorage — it lives in an httpOnly cookie set by the backend.
+        const payload = { user: reviewer, expiresAt };
         localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
         localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(reviewer));
         localStorage.setItem(EXPIRES_STORAGE_KEY, expiresAt);
@@ -128,7 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const rawSession = localStorage.getItem(SESSION_STORAGE_KEY);
             if (rawSession) {
                 try {
-                    const parsed = JSON.parse(rawSession) as { token: string; user: User; expiresAt: string };
+                    const parsed = JSON.parse(rawSession) as { user: User; expiresAt: string };
                     parsed.user = nextUser;
                     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(parsed));
                 } catch {
@@ -164,11 +166,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             ? parseSession(rawSession)
             : { token: null, user: null, expiresAt: null };
 
-        if (savedToken && savedUser && savedExpiresAt && !isExpired(savedExpiresAt)) {
-            setToken(savedToken);
+        // The JWT token lives in an httpOnly cookie — we don't need it in localStorage.
+        // Restore the user profile + expiry for the UI; the cookie keeps the session alive.
+        if (savedUser && savedExpiresAt && !isExpired(savedExpiresAt)) {
+            setToken(savedToken); // may be null — cookie handles auth
             setUser(savedUser);
             setSessionExpiresAt(savedExpiresAt);
-            apiClient.setAuthToken(savedToken);
+            if (savedToken) apiClient.setAuthToken(savedToken);
             scheduleSessionMaintenance();
         } else {
             // Clean up stale or corrupt saved session

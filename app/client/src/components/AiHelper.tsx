@@ -9,8 +9,19 @@ interface Message {
     timestamp: Date;
 }
 
-function parseMarkdown(text: string) {
+function escapeHtml(text: string) {
     return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function parseMarkdown(text: string) {
+    // Escape HTML first to prevent XSS; markdown replacements then add safe tags.
+    const escaped = escapeHtml(String(text ?? ''));
+    return escaped
         // Headers
         .replace(/^### (.*$)/gim, '<h3 class="font-bold text-base mt-3 mb-1">$1</h3>')
         .replace(/^## (.*$)/gim, '<h2 class="font-bold text-lg mt-3 mb-1">$1</h2>')

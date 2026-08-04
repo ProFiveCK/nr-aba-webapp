@@ -94,6 +94,52 @@ const WINDOWS_SYNC_URL = process.env.WINDOWS_SYNC_URL || 'http://host.docker.int
 const SYNC_TRIGGER_PATH = process.env.SYNC_TRIGGER_PATH || null; // For file-based approach
 const SYNC_TIMEOUT = Number(process.env.SYNC_TIMEOUT || 30000); // 30 seconds
 
+// SSRF protection for the Windows sync service. The URL is env-configured (admin-gated endpoint),
+// but we validate the resolved host against an allowlist before issuing any request to prevent
+// the server being used to reach internal metadata/loopback endpoints.
+// Allowed hosts come from SYNC_ALLOWED_HOSTS (comma-separated). Defaults to the sync host itself.
+const SYNC_ALLOWED_HOSTS = String(process.env.SYNC_ALLOWED_HOSTS || '')
+  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+// Private/loopback IPv4 ranges and cloud metadata endpoints we always block.
+const BLOCKED_IP_PATTERNS = [
+  /^127\./,                        // loopback
+  /^10\./,                         // private
+  /^192\.168\./,                   // private
+  /^172\.(1[6-9]|2[0-9]|3[01])\./, // private
+  /^169\.254\./,                   // link-local / metadata (AWS/GCP/Azure)
+  /^0\./,                          // 0.0.0.0/8
+];
+
+function isBlockedHost(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  // IPv6 loopback and metadata
+  if (host === '::1' || host === '::' || host === '[::1]' || host === 'metadata.google.internal') return true;
+  // Allowlist takes precedence if configured
+  if (SYNC_ALLOWED_HOSTS.length && SYNC_ALLOWED_HOSTS.includes(host)) return false;
+  // Block RFC1918 / loopback / metadata by default
+  if (BLOCKED_IP_PATTERNS.some((re) => re.test(host))) return true;
+  // host.docker.internal is a Docker alias to the host — allow it only when explicitly allowlisted
+  if (host === 'host.docker.internal') return SYNC_ALLOWED_HOSTS.includes(host) ? false : true;
+  return false;
+}
+
+async function safeFetchSyncUrl(url, init) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('WINDOWS_SYNC_URL is not a valid URL.');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('WINDOWS_SYNC_URL must use http or https.');
+  }
+  if (isBlockedHost(parsed.hostname)) {
+    throw new Error(`WINDOWS_SYNC_URL host "${parsed.hostname}" is blocked by SSRF protection. Add it to SYNC_ALLOWED_HOSTS if it is legitimate.`);
+  }
+  return fetch(url, init);
+}
+
 let testingModeEnabled = false;
 let testingModeState = {
   updatedAt: null,
@@ -123,7 +169,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "blob:"],
       connectSrc: ["'self'"],
@@ -138,10 +184,23 @@ app.use(helmet({
 
 // CORS: restrict to configured frontend origin
 const corsOrigin = process.env.FRONTEND_BASE_URL || 'http://localhost:8080';
+// Authenticated CSRF defense: reject cross-origin state-changing requests.
+// Bearer tokens in Authorization header are not sent by browsers cross-site,
+// but this adds defense-in-depth if tokens ever move to cookies.
+function csrfGuard(req, res, next) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  const origin = req.headers.origin;
+  const allowedOrigins = String(corsOrigin || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+    return next();
+  }
+  res.status(403).json({ message: 'Cross-origin request blocked.' });
+}
 app.use(cors({ origin: corsOrigin, credentials: true }));
 
 // Allow larger payloads for ABA uploads (base64 inflates size by ~33%)
 app.use(express.json({ limit: '10mb' }));
+app.use(csrfGuard);
 
 // Rate limiting: general API
 const generalLimiter = rateLimit({
@@ -1051,6 +1110,26 @@ app.post(
       return;
     }
 
+    // Validate file magic bytes — do not trust the client-supplied extension/MIME alone.
+    // .xlsx/.xlsb/.xlsm are ZIP-based (PK\x03\x04); .xls is OLE2 (D0 CF 11 E0 A1 B1 1A E1).
+    const magic = inputBuffer.subarray(0, 8);
+    const isZip = magic[0] === 0x50 && magic[1] === 0x4b && magic[2] === 0x03 && magic[3] === 0x04;
+    const isOle =
+      magic[0] === 0xd0 && magic[1] === 0xcf && magic[2] === 0x11 && magic[3] === 0xe0 &&
+      magic[4] === 0xa1 && magic[5] === 0xb1 && magic[6] === 0x1a && magic[7] === 0xe1;
+    if (extension === '.xlsx' && !isZip) {
+      res.status(400).json({ message: 'File content does not match a .xlsx workbook (expected ZIP container).' });
+      return;
+    }
+    if (extension === '.xls' && !isOle && !isZip) {
+      res.status(400).json({ message: 'File content does not match a .xls workbook (expected OLE2 or ZIP container).' });
+      return;
+    }
+    if (!isZip && !isOle) {
+      res.status(400).json({ message: 'Unrecognized file format. Upload a valid Excel workbook.' });
+      return;
+    }
+
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'payroll-reformat-'));
     const inputPath = path.join(tempDir, fileName);
     const outputPath = path.join(tempDir, buildPayrollOutputName(fileName));
@@ -1374,7 +1453,8 @@ function requireAuth(roles = []) {
       const token = header.slice(7);
       let payload;
       try {
-        payload = jwt.verify(token, JWT_SECRET);
+        // Explicit algorithm whitelist prevents alg:none and algorithm-confusion attacks.
+        payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
       } catch (err) {
         res.status(401).json({ message: 'Invalid or expired token.' });
         return;
@@ -1773,7 +1853,14 @@ app.put(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const id = Number(req.params.id);
-    const patch = { ...req.body };
+    // Explicit allowlist prevents mass assignment of columns like id/created_at.
+    const patch = {};
+    const allowedFields = ['name', 'description', 'currency', 'amount_limit', 'per_account_daily_limit', 'active'];
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        patch[field] = req.body[field];
+      }
+    }
     if (patch.active !== undefined) patch.active = !!patch.active;
     const fields = [];
     const values = [];
@@ -1851,7 +1938,14 @@ app.put(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const id = Number(req.params.id);
-    const patch = { ...req.body };
+    // Explicit allowlist prevents mass assignment of columns like id/created_at.
+    const patch = {};
+    const allowedFields = ['alias', 'notes', 'active'];
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        patch[field] = req.body[field];
+      }
+    }
     if (patch.active !== undefined) patch.active = !!patch.active;
     const fields = [];
     const values = [];
@@ -2057,7 +2151,14 @@ app.put(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const id = Number(req.params.id);
-    const patch = { ...req.body };
+    // Explicit allowlist prevents mass assignment of columns like id/created_at.
+    const patch = {};
+    const allowedFields = ['bsb', 'account', 'label', 'notes', 'active'];
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        patch[field] = req.body[field];
+      }
+    }
     if (patch.bsb !== undefined) {
       const normalized = normalizeBsb(patch.bsb);
       if (!normalized) {
@@ -2957,7 +3058,66 @@ app.get('/api/archives/recent', requireAuth(REVIEW_ACCESS_ROLES), async (req, re
 
 const PORT = Number(process.env.PORT || 4000);
 
-function hashPassphrase(passphrase) {
+// SMTP password encryption (AES-256-GCM). Requires SMTP_ENC_KEY (64 hex chars = 32 bytes).
+// If unset, SMTP passwords stored in the DB remain plaintext (legacy) and a warning is logged.
+const SMTP_ENC_KEY_HEX = process.env.SMTP_ENC_KEY || null;
+function smtpEncryptionKey() {
+  if (!SMTP_ENC_KEY_HEX) return null;
+  try {
+    return Buffer.from(SMTP_ENC_KEY_HEX, 'hex');
+  } catch {
+    return null;
+  }
+}
+
+// Encrypt a plaintext string to a base64 "v1:<iv>:<ciphertext>" token.
+function encryptSmtpPass(plain) {
+  if (!plain) return null;
+  const key = smtpEncryptionKey();
+  if (!key) return plain; // encryption disabled — store as-is (legacy)
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const enc = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v1:${iv.toString('base64')}:${tag.toString('base64')}:${enc.toString('base64')}`;
+}
+
+// Decrypt a value produced by encryptSmtpPass. Returns null on any failure.
+function decryptSmtpPass(stored) {
+  if (!stored) return null;
+  const key = smtpEncryptionKey();
+  if (!key) return stored; // encryption disabled — value is plaintext (legacy)
+  const parts = String(stored).split(':');
+  if (parts.length !== 4 || parts[0] !== 'v1') return null; // not our format / tampered
+  try {
+    const iv = Buffer.from(parts[1], 'base64');
+    const tag = Buffer.from(parts[2], 'base64');
+    const enc = Buffer.from(parts[3], 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    const dec = Buffer.concat([decipher.update(enc), decipher.final()]);
+    return dec.toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+if (!SMTP_ENC_KEY_HEX) {
+  console.warn('SECURITY WARNING: SMTP_ENC_KEY is not set. SMTP passwords will be stored without at-rest encryption.');
+}
+
+// Passphrases are now hashed with bcrypt (salted, slow) instead of unsalted SHA-256.
+// Legacy SHA-256 hashes are still accepted for verification during migration.
+async function hashPassphrase(passphrase) {
+  return bcrypt.hash(passphrase, PASS_HASH_ROUNDS);
+}
+
+function isLegacyPassphraseHash(hash) {
+  // SHA-256 hex digest is 64 chars; bcrypt hashes start with $2.
+  return typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash);
+}
+
+function legacyHashPassphrase(passphrase) {
   return crypto.createHash('sha256').update(passphrase).digest('hex');
 }
 
@@ -2972,10 +3132,10 @@ app.get('/api/reviewer/passphrase', async (_req, res) => {
 
 app.post(
   '/api/reviewer/passphrase',
-  [body('passphrase').isString().isLength({ min: 4, max: 128 })],
+  [requireAuth(['admin']), body('passphrase').isString().isLength({ min: 4, max: 128 })],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
-    const passphraseHash = hashPassphrase(req.body.passphrase);
+    const passphraseHash = await hashPassphrase(req.body.passphrase);
     const { rows } = await pool.query(
       `INSERT INTO reviewer_settings (id, passphrase_hash, updated_at)
        VALUES (TRUE, $1, NOW())
@@ -2987,9 +3147,17 @@ app.post(
   }
 );
 
+const passphraseLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many passphrase attempts. Please try again later.' },
+});
+
 app.post(
   '/api/reviewer/passphrase/verify',
-  [body('passphrase').isString().isLength({ min: 1, max: 128 })],
+  [passphraseLimiter, body('passphrase').isString().isLength({ min: 1, max: 128 })],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const { rows } = await pool.query('SELECT passphrase_hash FROM reviewer_settings WHERE id = TRUE');
@@ -2997,13 +3165,18 @@ app.post(
       res.status(404).json({ message: 'Reviewer passphrase not configured.' });
       return;
     }
-    const incoming = hashPassphrase(req.body.passphrase);
+    const incoming = req.body.passphrase;
     const stored = rows[0].passphrase_hash;
-    if (incoming.length !== stored.length) {
-      res.status(401).json({ valid: false, message: 'Invalid passphrase.' });
-      return;
+    let valid = false;
+    if (isLegacyPassphraseHash(stored)) {
+      // Legacy SHA-256 path — compare in constant time, then offer no upgrade hook here.
+      const incomingHash = legacyHashPassphrase(incoming);
+      if (incomingHash.length === stored.length) {
+        valid = crypto.timingSafeEqual(Buffer.from(incomingHash, 'hex'), Buffer.from(stored, 'hex'));
+      }
+    } else {
+      valid = await bcrypt.compare(incoming, stored);
     }
-    const valid = crypto.timingSafeEqual(Buffer.from(incoming, 'hex'), Buffer.from(stored, 'hex'));
     if (valid) res.json({ valid: true });
     else res.status(401).json({ valid: false, message: 'Invalid passphrase.' });
   }
@@ -3059,13 +3232,12 @@ async function reloadMailTransport() {
       const settings = rows[0];
       let smtpPass = null;
       if (settings.smtp_pass_encrypted) {
-        // Decrypt password
-        try {
-          smtpPass = await bcrypt.compare('verify', settings.smtp_pass_encrypted) 
-            ? null 
-            : settings.smtp_pass_encrypted;
-        } catch {
-          smtpPass = settings.smtp_pass_encrypted;
+        // Decrypt password (AES-256-GCM). Falls back to legacy plaintext if key unset.
+        const decrypted = decryptSmtpPass(settings.smtp_pass_encrypted);
+        if (decrypted === null) {
+          console.error('Failed to decrypt SMTP password (SMTP_ENC_KEY changed or corrupt ciphertext).');
+        } else {
+          smtpPass = decrypted;
         }
       }
       
@@ -3146,9 +3318,9 @@ app.post(
       const { smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass, from_email, reply_to_email, support_email } = req.body;
       const actorId = req.user?.id || null;
       
-      // Store password as-is (it's already transmitted over HTTPS)
-      // In production, consider additional encryption
-      const passEncrypted = smtp_pass || null;
+      // Encrypt the SMTP password at rest with AES-256-GCM (requires SMTP_ENC_KEY).
+      // If SMTP_ENC_KEY is unset this degrades to legacy plaintext storage with a startup warning.
+      const passEncrypted = smtp_pass ? encryptSmtpPass(smtp_pass) : null;
       
       await pool.query(`
         INSERT INTO smtp_settings (id, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass_encrypted, from_email, reply_to_email, support_email, updated_at, updated_by)
@@ -3261,7 +3433,7 @@ app.post('/api/saas/sync-trigger', requireAuth(['admin']), async (req, res) => {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), SYNC_TIMEOUT);
           
-          const windowsResponse = await fetch(WINDOWS_SYNC_URL, {
+          const windowsResponse = await safeFetchSyncUrl(WINDOWS_SYNC_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
@@ -3434,21 +3606,22 @@ app.get('/api/saas/sync-history', requireAuth(), async (req, res) => {
 
 // === AI Helper Chat ===
 // Note: No auth required so users can get help even before logging in
-app.post('/api/ai-helper/chat', async (req, res) => {
+app.post('/api/ai-helper/chat', requireAuth(), async (req, res) => {
   if (!AI_HELPER_ENABLED || !aiClient) {
     return res.status(503).json({ message: 'AI Helper is not enabled' });
   }
 
   try {
-    const { message, userRole, userName, conversationHistory } = req.body;
+    const { message, conversationHistory } = req.body;
     if (!message) {
       return res.status(400).json({ message: 'Message is required' });
     }
 
-    console.log('[AI Helper] Request body:', { message: message.substring(0, 50), userRole, userName });
-
+    // Use the authenticated user's role rather than trusting a client-supplied value.
+    const role = req.user?.role || 'user';
+    const userName = req.user?.display_name || req.user?.email || 'User';
+    console.log('[AI Helper] Request body:', { message: message.substring(0, 50), userRole: role, userName });
     // Determine user level for context
-    const role = userRole || 'user';
     const isAdmin = role === 'admin';
     const isBanking = role === 'banking' || isAdmin;
     const isReviewer = role === 'reviewer' || isAdmin;

@@ -14,6 +14,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-aba}
     volumes:
       - ron-stack_pgdata:/var/lib/postgresql/data
+    dns:
+      - 10.10.10.11
+      - 10.10.10.118
+      - 8.8.8.8
     networks:
       - ron-net
     labels:
@@ -45,6 +49,10 @@ services:
     # On Linux, this enables host.docker.internal to work
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    dns:
+      - 10.10.10.11
+      - 10.10.10.118
+      - 8.8.8.8
     networks:
       ron-net:
         aliases:

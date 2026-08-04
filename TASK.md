@@ -18,6 +18,16 @@ The following vulnerabilities were fixed in code (see the commit history on this
 
 None of these changes require a database migration. The schema is unchanged.
 
+Additional hardening in this round (commit 2 on the branch):
+- SSRF allowlist for the Windows sync service (`SYNC_ALLOWED_HOSTS`). The sync URL host is validated before any request; RFC1918/loopback/metadata IPs are blocked unless explicitly allowlisted.
+- Payroll upload now validates file magic bytes (ZIP for `.xlsx`, OLE2/ZIP for `.xls`) — no longer trusts only the client-supplied extension/MIME.
+- DB SSL now validates the server certificate by default (`DB_SSL_CA` path/PEM, `DB_SSL_REJECT_UNAUTHORIZED`). `rejectUnauthorized:false` must be opted into via `DB_SSL_REJECT_UNAUTHORIZED=false` (dev only).
+- Removed the `postgres/postgres` default DB credentials fallback — the server now refuses to start unless `DB_USER`/`DB_PASSWORD` (or `DATABASE_URL`) are set explicitly. Set `DB_ALLOW_DEFAULT_CREDS=true` only for dev.
+
+## Not yet done (follow-up)
+
+- **Session token in `localStorage`** — tokens are still stored in `localStorage` (client-side), which any XSS can exfiltrate. The robust fix is to move session tokens to httpOnly, Secure, SameSite=Strict cookies set by the backend, plus full token-based CSRF protection. This is an architectural change across login/logout/refresh and the client `apiClient`; track it as a separate task.
+
 ## Pre-deployment (on the production host, before pulling the new code)
 
 ### 1. Back up the current state
@@ -80,6 +90,14 @@ POSTGRES_PASSWORD=<value from step 4>
 DB_PASSWORD=<same value as POSTGRES_PASSWORD>
 SMTP_ENC_KEY=<value from step 3>
 ```
+
+If you use the direct SFTP sync method (`SFTP_SYNC_METHOD=direct`), you must also allowlist the Windows sync host so the new SSRF guard does not block it:
+```
+SYNC_ALLOWED_HOSTS=host.docker.internal,192.168.1.7
+```
+Replace `192.168.1.7` with your actual Windows server host/IP (or `host.docker.internal` for Docker host access).
+
+If you use `DB_SSL=true`, provide a CA bundle via `DB_SSL_CA` (path or inline PEM). Do NOT set `DB_SSL_REJECT_UNAUTHORIZED=false` in production.
 
 Also remove or comment out `DEFAULT_ADMIN_EMAIL` / `DEFAULT_ADMIN_PASSWORD` / `DEFAULT_ADMIN_NAME` if they are still present — the default admin should already exist and you don't want it re-created or re-flagged.
 

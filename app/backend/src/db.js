@@ -7,18 +7,60 @@ const { Pool } = pg;
 
 const useSSL = process.env.DB_SSL === 'true';
 
+// Never default credentials to postgres/postgres in production — require explicit config.
+function requiredEnv(name) {
+  const value = process.env[name];
+  if (!value || value === 'postgres') {
+    // Allow the literal default only when explicitly opted in via DB_ALLOW_DEFAULT_CREDS=true.
+    if (value === 'postgres' && process.env.DB_ALLOW_DEFAULT_CREDS === 'true') {
+      return value;
+    }
+    return undefined;
+  }
+  return value;
+}
+
+const dbUser = requiredEnv('DB_USER');
+const dbPassword = requiredEnv('DB_PASSWORD');
+
+if (!process.env.DATABASE_URL && (!dbUser || !dbPassword)) {
+  console.error('FATAL: DB_USER and DB_PASSWORD must be set explicitly (or provide DATABASE_URL). Refusing to start with default credentials.');
+  process.exit(1);
+}
+
 const connectionConfig = process.env.DATABASE_URL
   ? { connectionString: process.env.DATABASE_URL }
   : {
       host: process.env.DB_HOST || 'localhost',
       port: Number(process.env.DB_PORT) || 5432,
-      user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASSWORD || 'postgres',
+      user: dbUser,
+      password: dbPassword,
       database: process.env.DB_NAME || 'aba',
     };
 
 if (useSSL) {
-  connectionConfig.ssl = { rejectUnauthorized: false };
+  // Validate the server certificate. Provide the CA via DB_SSL_CA (path or inline PEM),
+  // or set DB_SSL_REJECT_UNAUTHORIZED=false only for development to opt into insecure mode.
+  const rejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false';
+  const sslOpts = { rejectUnauthorized };
+  if (rejectUnauthorized) {
+    const ca = process.env.DB_SSL_CA;
+    if (ca) {
+      // Treat as a filesystem path if it doesn't look like a PEM block, otherwise inline PEM.
+      sslOpts.ca = /-----BEGIN/.test(ca) ? ca : undefined;
+      if (!sslOpts.ca) {
+        try {
+          sslOpts.ca = require('fs').readFileSync(ca, 'utf8');
+        } catch (err) {
+          console.error('FATAL: DB_SSL_CA path could not be read:', err.message);
+          process.exit(1);
+        }
+      }
+    } else {
+      // Fall back to the well-known CA bundle if available, otherwise rely on Node's defaults.
+    }
+  }
+  connectionConfig.ssl = sslOpts;
 }
 
 export const pool = new Pool(connectionConfig);

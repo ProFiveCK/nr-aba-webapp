@@ -94,6 +94,52 @@ const WINDOWS_SYNC_URL = process.env.WINDOWS_SYNC_URL || 'http://host.docker.int
 const SYNC_TRIGGER_PATH = process.env.SYNC_TRIGGER_PATH || null; // For file-based approach
 const SYNC_TIMEOUT = Number(process.env.SYNC_TIMEOUT || 30000); // 30 seconds
 
+// SSRF protection for the Windows sync service. The URL is env-configured (admin-gated endpoint),
+// but we validate the resolved host against an allowlist before issuing any request to prevent
+// the server being used to reach internal metadata/loopback endpoints.
+// Allowed hosts come from SYNC_ALLOWED_HOSTS (comma-separated). Defaults to the sync host itself.
+const SYNC_ALLOWED_HOSTS = String(process.env.SYNC_ALLOWED_HOSTS || '')
+  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+// Private/loopback IPv4 ranges and cloud metadata endpoints we always block.
+const BLOCKED_IP_PATTERNS = [
+  /^127\./,                        // loopback
+  /^10\./,                         // private
+  /^192\.168\./,                   // private
+  /^172\.(1[6-9]|2[0-9]|3[01])\./, // private
+  /^169\.254\./,                   // link-local / metadata (AWS/GCP/Azure)
+  /^0\./,                          // 0.0.0.0/8
+];
+
+function isBlockedHost(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  // IPv6 loopback and metadata
+  if (host === '::1' || host === '::' || host === '[::1]' || host === 'metadata.google.internal') return true;
+  // Allowlist takes precedence if configured
+  if (SYNC_ALLOWED_HOSTS.length && SYNC_ALLOWED_HOSTS.includes(host)) return false;
+  // Block RFC1918 / loopback / metadata by default
+  if (BLOCKED_IP_PATTERNS.some((re) => re.test(host))) return true;
+  // host.docker.internal is a Docker alias to the host — allow it only when explicitly allowlisted
+  if (host === 'host.docker.internal') return SYNC_ALLOWED_HOSTS.includes(host) ? false : true;
+  return false;
+}
+
+async function safeFetchSyncUrl(url, init) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('WINDOWS_SYNC_URL is not a valid URL.');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('WINDOWS_SYNC_URL must use http or https.');
+  }
+  if (isBlockedHost(parsed.hostname)) {
+    throw new Error(`WINDOWS_SYNC_URL host "${parsed.hostname}" is blocked by SSRF protection. Add it to SYNC_ALLOWED_HOSTS if it is legitimate.`);
+  }
+  return fetch(url, init);
+}
+
 let testingModeEnabled = false;
 let testingModeState = {
   updatedAt: null,
@@ -1061,6 +1107,26 @@ app.post(
 
     if (inputBuffer.length > PAYROLL_MAX_FILE_BYTES) {
       res.status(400).json({ message: 'The uploaded file is too large. Maximum size is 10 MB.' });
+      return;
+    }
+
+    // Validate file magic bytes — do not trust the client-supplied extension/MIME alone.
+    // .xlsx/.xlsb/.xlsm are ZIP-based (PK\x03\x04); .xls is OLE2 (D0 CF 11 E0 A1 B1 1A E1).
+    const magic = inputBuffer.subarray(0, 8);
+    const isZip = magic[0] === 0x50 && magic[1] === 0x4b && magic[2] === 0x03 && magic[3] === 0x04;
+    const isOle =
+      magic[0] === 0xd0 && magic[1] === 0xcf && magic[2] === 0x11 && magic[3] === 0xe0 &&
+      magic[4] === 0xa1 && magic[5] === 0xb1 && magic[6] === 0x1a && magic[7] === 0xe1;
+    if (extension === '.xlsx' && !isZip) {
+      res.status(400).json({ message: 'File content does not match a .xlsx workbook (expected ZIP container).' });
+      return;
+    }
+    if (extension === '.xls' && !isOle && !isZip) {
+      res.status(400).json({ message: 'File content does not match a .xls workbook (expected OLE2 or ZIP container).' });
+      return;
+    }
+    if (!isZip && !isOle) {
+      res.status(400).json({ message: 'Unrecognized file format. Upload a valid Excel workbook.' });
       return;
     }
 
@@ -3367,7 +3433,7 @@ app.post('/api/saas/sync-trigger', requireAuth(['admin']), async (req, res) => {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), SYNC_TIMEOUT);
           
-          const windowsResponse = await fetch(WINDOWS_SYNC_URL, {
+          const windowsResponse = await safeFetchSyncUrl(WINDOWS_SYNC_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 

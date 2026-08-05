@@ -442,6 +442,18 @@ export async function initSchema() {
       ON CONFLICT (department_code, division_code) DO NOTHING
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS login_attempts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email TEXT NOT NULL,
+        ip TEXT,
+        successful BOOLEAN NOT NULL DEFAULT FALSE,
+        attempted_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_email_attempted ON login_attempts(email, attempted_at)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_attempted_at ON login_attempts(attempted_at)');
+
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');

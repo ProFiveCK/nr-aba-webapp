@@ -45,6 +45,8 @@ const REVIEWER_ARCHIVE_LIMIT_DEFAULT = 50;
 const PAYROLL_ACCESS_ROLES = ['payroll', 'admin'];
 const PAYROLL_PYTHON_BIN = process.env.PAYROLL_PYTHON_BIN || process.env.PYTHON_BIN || 'python3';
 const PAYROLL_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const AUTH_LOCKOUT_WINDOW_MS = Number(process.env.AUTH_LOCKOUT_WINDOW_MS || 15 * 60 * 1000);
+const AUTH_MAX_FAILED_ATTEMPTS = Number(process.env.AUTH_MAX_FAILED_ATTEMPTS || 5);
 const EXCEL_MIME_TYPES = new Set([
   'application/vnd.ms-excel',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -248,13 +250,20 @@ const generalLimiter = rateLimit({
 app.use('/api', generalLimiter);
 
 // Rate limiting: authentication endpoints
+// Key by account email rather than IP so a single mis-typed password or
+// brute-force attempt against one account does not block all staff who
+// share a corporate gateway / reverse proxy / NAT IP.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Too many authentication attempts. Please try again later.' },
-  skipSuccessfulRequests: false,
+  message: { message: 'Too many authentication attempts for this account. Please try again later.' },
+  skipSuccessfulRequests: true, // successful logins reset the in-memory attempt budget
+  keyGenerator: (req) => {
+    const email = String(req.body?.email || '').toLowerCase().trim();
+    return email || req.ip;
+  },
 });
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/signup', authLimiter);
@@ -433,6 +442,15 @@ app.post(
     if (!handleValidation(req, res)) return;
     const email = lowerEmail(req.body.email);
     const password = req.body.password;
+    const clientIp = req.ip;
+
+    // Per-account database lockout: survives container restarts and keys by
+    // email rather than IP, so shared gateways do not lock out other staff.
+    if (await isAccountLocked(email)) {
+      res.status(429).json({ message: 'Too many failed login attempts for this account. Please try again later.' });
+      return;
+    }
+
     const { rows } = await pool.query(
       `SELECT id, email, display_name, role, status, password_hash, must_change_password,
               last_login_at, created_at, updated_at, department_code, division_code, notify_on_submission
@@ -440,6 +458,7 @@ app.post(
       [email]
     );
     if (!rows.length) {
+      await recordLoginAttempt(email, clientIp, false);
       res.status(401).json({ message: 'Invalid credentials.' });
       return;
     }
@@ -450,9 +469,12 @@ app.post(
     }
     const valid = await bcrypt.compare(password, reviewer.password_hash);
     if (!valid) {
+      await recordLoginAttempt(email, clientIp, false);
       res.status(401).json({ message: 'Invalid credentials.' });
       return;
     }
+
+    await clearLoginAttempts(email);
     const { tokenId, expiresAt } = await createSession(reviewer.id);
     await pool.query('UPDATE reviewers SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [reviewer.id]);
     const token = buildTokenPayload(reviewer, tokenId, expiresAt);
@@ -1276,6 +1298,42 @@ function formatBatchCode(code) {
 }
 
 const lowerEmail = (email) => String(email || '').trim().toLowerCase();
+
+async function recordLoginAttempt(email, ip, successful) {
+  const normalizedEmail = lowerEmail(email);
+  if (!normalizedEmail) return;
+  const windowStart = new Date(Date.now() - AUTH_LOCKOUT_WINDOW_MS).toISOString();
+  await pool.query(
+    `DELETE FROM login_attempts WHERE email = $1 AND attempted_at < $2`,
+    [normalizedEmail, windowStart]
+  );
+  await pool.query(
+    `INSERT INTO login_attempts (email, ip, successful, attempted_at)
+     VALUES ($1, $2, $3, NOW())`,
+    [normalizedEmail, ip || null, successful]
+  );
+}
+
+async function isAccountLocked(email) {
+  const normalizedEmail = lowerEmail(email);
+  if (!normalizedEmail) return false;
+  const windowStart = new Date(Date.now() - AUTH_LOCKOUT_WINDOW_MS).toISOString();
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS failed
+       FROM login_attempts
+      WHERE email = $1
+        AND successful = FALSE
+        AND attempted_at >= $2`,
+    [normalizedEmail, windowStart]
+  );
+  return rows[0].failed >= AUTH_MAX_FAILED_ATTEMPTS;
+}
+
+async function clearLoginAttempts(email) {
+  const normalizedEmail = lowerEmail(email);
+  if (!normalizedEmail) return;
+  await pool.query('DELETE FROM login_attempts WHERE email = $1', [normalizedEmail]);
+}
 
 function normalizeBsb(value) {
   const digits = String(value || '').replace(/\D/g, '').slice(0, 6);

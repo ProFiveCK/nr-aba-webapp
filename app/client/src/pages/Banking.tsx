@@ -2,6 +2,8 @@ import { useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { useAuth } from '../contexts/useAuth';
 import { parseCsvText } from '../features/banking/converters/csvUtils';
+import { GvaChfGenerator } from '../features/banking/components/GvaChfGenerator';
+import { GvaUsdGenerator } from '../features/banking/components/GvaUsdGenerator';
 import { NyStatementGenerator } from '../features/banking/components/NyStatementGenerator';
 import { WbcFjGenerator } from '../features/banking/components/WbcFjGenerator';
 
@@ -90,10 +92,12 @@ const DEFAULT_METADATA = {
 const PREVIEW_LIMIT = 250;
 
 const TOOL_TABS = [
-    { id: 'generator', label: 'BAI2 Generator' },
+    { id: 'generator', label: 'BAI2' },
     { id: 'validator', label: 'BAI2 Validator' },
-    { id: 'wbcfj', label: 'WBCFJ Generator' },
-    { id: 'ny', label: 'NY Statement Generator' },
+    { id: 'wbcfj', label: 'FIJ-FJD' },
+    { id: 'ny', label: 'NYC-USD' },
+    { id: 'gva-chf', label: 'GVA-CHF' },
+    { id: 'gva-usd', label: 'GVA-USD' },
 ] as const;
 
 export function Banking() {
@@ -627,6 +631,8 @@ export function Banking() {
     const renderFmisTool = () => {
         if (activeTool === 'wbcfj') return <WbcFjGenerator />;
         if (activeTool === 'ny') return <NyStatementGenerator />;
+        if (activeTool === 'gva-chf') return <GvaChfGenerator />;
+        if (activeTool === 'gva-usd') return <GvaUsdGenerator />;
         return null;
     };
 

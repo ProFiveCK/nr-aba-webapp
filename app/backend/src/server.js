@@ -240,12 +240,16 @@ app.use(express.json({ limit: '10mb' }));
 app.use(csrfGuard);
 
 // Rate limiting: general API
+// Skip /api/auth/* so authentication endpoints are governed only by the
+// per-account authLimiter. This prevents a busy shared office IP from
+// blocking staff login/signon/password-reset requests.
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Too many requests. Please try again later.' },
+  skip: (req) => req.path.startsWith('/auth/'),
 });
 app.use('/api', generalLimiter);
 

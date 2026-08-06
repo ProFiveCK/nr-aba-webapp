@@ -39,6 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const sessionVersionRef = useRef(0);
 
     const clearRefreshTimer = useCallback(() => {
         if (refreshTimerRef.current) {
@@ -50,7 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const logout = useCallback(() => {
         clearRefreshTimer();
         // Best-effort server-side logout; cookie will be cleared by the backend.
-        apiClient.post('/auth/logout').catch(() => undefined);
+        apiClient.post('/auth/logout', undefined, { suppressAuthExpired: true }).catch(() => undefined);
         setToken(null);
         setUser(null);
         setSessionExpiresAt(null);
@@ -64,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, [clearRefreshTimer]);
 
     const saveSession = useCallback((tokenValue: string, reviewer: User, expiresAt: string) => {
+        sessionVersionRef.current += 1;
         setToken(tokenValue);
         setUser(reviewer);
         setSessionExpiresAt(expiresAt);
@@ -159,19 +161,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         saveSession(tokenValue, reviewer, expiresAt);
     }, [saveSession, sessionExpiresAt]);
 
-    // Ref that tracks the latest user value so the async restoreSession flow
-    // doesn't accidentally log out a user who logged in while the initial
-    // /auth/me check was still pending.
-    const latestUserRef = useRef<User | null>(null);
-    useEffect(() => {
-        latestUserRef.current = user;
-    }, [user]);
-
     // Load saved session on mount and start expiry/refresh timers.
     useEffect(() => {
         let cancelled = false;
 
         async function restoreSession() {
+            const restoreSessionVersion = sessionVersionRef.current;
             // The JWT token lives in an httpOnly cookie set by the backend.
             // We call /api/auth/me to verify the cookie is still valid.
             // If it succeeds, the user is authenticated via the cookie.
@@ -187,24 +182,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 scheduleSessionMaintenance();
 
                 try {
-                    const me = await apiClient.get<{ reviewer: User }>('/auth/me');
+                    const me = await apiClient.get<{ reviewer: User }>('/auth/me', { suppressAuthExpired: true });
                     if (cancelled) return;
+                    if (sessionVersionRef.current !== restoreSessionVersion) return;
                     if (me?.reviewer) {
                         setUser(me.reviewer);
                     }
                 } catch {
                     if (cancelled) return;
-                    // If the user logged in while this check was pending, do not log them out.
-                    if (latestUserRef.current) return;
+                    if (sessionVersionRef.current !== restoreSessionVersion) return;
                     // Cookie is invalid/expired — log out.
                     logout();
                     return;
+                } finally {
+                    if (!cancelled) setIsLoading(false);
                 }
             } else {
                 // No saved session in localStorage — check if the cookie is still valid.
                 try {
-                    const me = await apiClient.get<{ reviewer: User }>('/auth/me');
+                    const me = await apiClient.get<{ reviewer: User }>('/auth/me', { suppressAuthExpired: true });
                     if (cancelled) return;
+                    if (sessionVersionRef.current !== restoreSessionVersion) return;
                     if (me?.reviewer) {
                         setUser(me.reviewer);
                         // We don't have expiresAt from /auth/me; derive from session_expires_at if present.
@@ -216,18 +214,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                         localStorage.setItem(EXPIRES_STORAGE_KEY, expiresAt);
                         scheduleSessionMaintenance();
                     } else {
-                        if (latestUserRef.current) return;
+                        if (sessionVersionRef.current !== restoreSessionVersion) return;
                         logout();
                     }
                 } catch {
                     if (cancelled) return;
-                    // If the user logged in while this check was pending, do not log them out.
-                    if (latestUserRef.current) return;
+                    if (sessionVersionRef.current !== restoreSessionVersion) return;
                     // No valid cookie — clean up any stale storage.
                     logout();
+                } finally {
+                    if (!cancelled) setIsLoading(false);
                 }
             }
-            if (!cancelled) setIsLoading(false);
         }
 
         restoreSession();

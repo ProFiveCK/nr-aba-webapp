@@ -15,6 +15,10 @@ interface ApiErrorPayload {
     error?: string;
 }
 
+interface ApiRequestOptions extends RequestInit {
+    suppressAuthExpired?: boolean;
+}
+
 declare global {
     interface Window {
         handleAuthExpired?: () => void;
@@ -59,9 +63,10 @@ class ApiClient {
      */
     private async request<T = unknown>(
         path: string,
-        options: RequestInit = {},
+        options: ApiRequestOptions = {},
         skipAuth = false
     ): Promise<T> {
+        const { suppressAuthExpired = false, ...fetchOptions } = options;
         const headers: Record<string, string> = { ...(options.headers as Record<string, string> || {}) };
 
         // Set Content-Type for JSON requests
@@ -80,7 +85,7 @@ class ApiClient {
 
         try {
             response = await fetch(url, {
-                ...options,
+                ...fetchOptions,
                 headers,
                 credentials: 'include',
             });
@@ -107,10 +112,12 @@ class ApiClient {
 
         // Handle 401 Unauthorized (session expired)
         if (response.status === 401) {
-            this.clearAuthToken();
-            // Trigger auth expiration handler
-            if (typeof window !== 'undefined' && window.handleAuthExpired) {
-                window.handleAuthExpired();
+            if (!suppressAuthExpired) {
+                this.clearAuthToken();
+                // Trigger auth expiration handler.
+                if (typeof window !== 'undefined' && window.handleAuthExpired) {
+                    window.handleAuthExpired();
+                }
             }
         }
 
@@ -137,14 +144,14 @@ class ApiClient {
     /**
      * GET request
      */
-    async get<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
+    async get<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
         return this.request<T>(path, { ...options, method: 'GET' });
     }
 
     /**
      * POST request
      */
-    async post<T = unknown>(path: string, body?: unknown, options: RequestInit = {}): Promise<T> {
+    async post<T = unknown>(path: string, body?: unknown, options: ApiRequestOptions = {}): Promise<T> {
         return this.request<T>(path, {
             ...options,
             method: 'POST',

@@ -159,6 +159,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         saveSession(tokenValue, reviewer, expiresAt);
     }, [saveSession, sessionExpiresAt]);
 
+    // Ref that tracks the latest user value so the async restoreSession flow
+    // doesn't accidentally log out a user who logged in while the initial
+    // /auth/me check was still pending.
+    const latestUserRef = useRef<User | null>(null);
+    useEffect(() => {
+        latestUserRef.current = user;
+    }, [user]);
+
     // Load saved session on mount and start expiry/refresh timers.
     useEffect(() => {
         let cancelled = false;
@@ -186,6 +194,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     }
                 } catch {
                     if (cancelled) return;
+                    // If the user logged in while this check was pending, do not log them out.
+                    if (latestUserRef.current) return;
                     // Cookie is invalid/expired — log out.
                     logout();
                     return;
@@ -206,10 +216,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                         localStorage.setItem(EXPIRES_STORAGE_KEY, expiresAt);
                         scheduleSessionMaintenance();
                     } else {
+                        if (latestUserRef.current) return;
                         logout();
                     }
                 } catch {
                     if (cancelled) return;
+                    // If the user logged in while this check was pending, do not log them out.
+                    if (latestUserRef.current) return;
                     // No valid cookie — clean up any stale storage.
                     logout();
                 }

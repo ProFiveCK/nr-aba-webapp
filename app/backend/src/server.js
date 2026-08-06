@@ -195,13 +195,13 @@ function setAuthCookie(res, token, expiresAt) {
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
     secure: isProd,
-    sameSite: 'strict',
+    sameSite: 'lax',
     expires: expiresAt,
     path: '/',
   });
 }
 function clearAuthCookie(res) {
-  res.clearCookie(COOKIE_NAME, { path: '/', httpOnly: true, secure: isProd, sameSite: 'strict' });
+  res.clearCookie(COOKIE_NAME, { path: '/', httpOnly: true, secure: isProd, sameSite: 'lax' });
 }
 // Authenticated CSRF defense: reject cross-origin state-changing requests.
 // Bearer tokens in Authorization header are not sent by browsers cross-site,
@@ -454,9 +454,12 @@ app.post(
     // Per-account database lockout: survives container restarts and keys by
     // email rather than IP, so shared gateways do not lock out other staff.
     if (await isAccountLocked(email)) {
+      console.warn(`[login] account locked due to failed attempts: ${email} from ${clientIp}`);
       res.status(429).json({ message: 'Too many failed login attempts for this account. Please try again later.' });
       return;
     }
+
+    console.info(`[login] attempt for ${email} from ${clientIp}`);
 
     const { rows } = await pool.query(
       `SELECT id, email, display_name, role, status, password_hash, must_change_password,
@@ -466,17 +469,20 @@ app.post(
     );
     if (!rows.length) {
       await recordLoginAttempt(email, clientIp, false);
+      console.warn(`[login] unknown email: ${email} from ${clientIp}`);
       res.status(401).json({ message: 'Invalid credentials.' });
       return;
     }
     const reviewer = rows[0];
     if (reviewer.status !== 'active') {
+      console.warn(`[login] inactive account: ${email} from ${clientIp}`);
       res.status(403).json({ message: 'Account inactive.' });
       return;
     }
     const valid = await bcrypt.compare(password, reviewer.password_hash);
     if (!valid) {
       await recordLoginAttempt(email, clientIp, false);
+      console.warn(`[login] wrong password: ${email} from ${clientIp}`);
       res.status(401).json({ message: 'Invalid credentials.' });
       return;
     }
@@ -485,6 +491,7 @@ app.post(
     const { tokenId, expiresAt } = await createSession(reviewer.id);
     await pool.query('UPDATE reviewers SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [reviewer.id]);
     const token = buildTokenPayload(reviewer, tokenId, expiresAt);
+    console.info(`[login] success: ${email} (${reviewer.role}) from ${clientIp}, session expires ${expiresAt.toISOString()}`);
     const expiresIso = expiresAt.toISOString();
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
     const payload = { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso };
@@ -1553,7 +1560,10 @@ function requireAuth(roles = []) {
       const header = req.headers.authorization || '';
       const cookieToken = req.cookies?.[COOKIE_NAME];
       const token = cookieToken || (header.startsWith('Bearer ') ? header.slice(7) : '');
+      const requestPath = req.originalUrl || req.path;
+      const requestIp = req.ip;
       if (!token) {
+        console.warn(`[auth] no token for ${req.method} ${requestPath} from ${requestIp}`);
         res.status(401).json({ message: 'Authentication required.' });
         return;
       }
@@ -1562,11 +1572,13 @@ function requireAuth(roles = []) {
         // Explicit algorithm whitelist prevents alg:none and algorithm-confusion attacks.
         payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
       } catch (err) {
+        console.warn(`[auth] invalid/expired token for ${req.method} ${requestPath} from ${requestIp}: ${err.message}`);
         res.status(401).json({ message: 'Invalid or expired token.' });
         return;
       }
       const session = await lookupSession(payload.tokenId);
       if (!session) {
+        console.warn(`[auth] session not found for ${req.method} ${requestPath} from ${requestIp}, tokenId ${payload.tokenId}`);
         res.status(401).json({ message: 'Session not found.' });
         return;
       }

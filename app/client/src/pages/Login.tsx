@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useAuth } from '../contexts/useAuth';
 import { apiClient } from '../lib/api';
@@ -32,28 +32,39 @@ export function Login() {
     const [signupDept, setSignupDept] = useState('');
     const [departments, setDepartments] = useState<DepartmentOption[]>([]);
     const [departmentsLoading, setDepartmentsLoading] = useState(false);
+    const [departmentsError, setDepartmentsError] = useState('');
 
     // Load available departments for the signup dropdown
+    const loadDepartments = useCallback(async (signal?: AbortSignal) => {
+        setDepartmentsLoading(true);
+        setDepartmentsError('');
+        try {
+            const data = await apiClient.get<DepartmentOption[]>('/department-profiles/active', { signal });
+            if (!signal?.aborted) {
+                setDepartments(data || []);
+            }
+        } catch (err) {
+            if (!signal?.aborted) {
+                const message = (err as Error)?.message || 'Could not load departments.';
+                console.error('Failed to load departments for signup', err);
+                setDepartmentsError(message);
+            }
+        } finally {
+            if (!signal?.aborted) {
+                setDepartmentsLoading(false);
+            }
+        }
+    }, []);
+
     useEffect(() => {
         if (!isLogin) {
-            let cancelled = false;
-            setDepartmentsLoading(true);
-            apiClient
-                .get<DepartmentOption[]>('/department-profiles/active')
-                .then((data) => {
-                    if (!cancelled) setDepartments(data || []);
-                })
-                .catch((err) => {
-                    console.error('Failed to load departments for signup', err);
-                })
-                .finally(() => {
-                    if (!cancelled) setDepartmentsLoading(false);
-                });
+            const controller = new AbortController();
+            loadDepartments(controller.signal);
             return () => {
-                cancelled = true;
+                controller.abort();
             };
         }
-    }, [isLogin]);
+    }, [isLogin, loadDepartments]);
 
     const handleLogin = async (e: FormEvent) => {
         e.preventDefault();
@@ -283,6 +294,19 @@ export function Login() {
                                         </option>
                                     ))}
                                 </select>
+                                {departmentsError && (
+                                    <div className="mt-1 flex items-center gap-2 text-xs text-red-600">
+                                        <span>{departmentsError}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => loadDepartments()}
+                                            className="text-indigo-600 hover:text-indigo-500 font-medium underline"
+                                            disabled={departmentsLoading}
+                                        >
+                                            Retry
+                                        </button>
+                                    </div>
+                                )}
                             </div>
 
                             <button

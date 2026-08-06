@@ -262,7 +262,10 @@ const authLimiter = rateLimit({
   skipSuccessfulRequests: true, // successful logins reset the in-memory attempt budget
   keyGenerator: (req) => {
     const email = String(req.body?.email || '').toLowerCase().trim();
-    return email || req.ip;
+    // Do not fall back to req.ip here: express-rate-limit v8 treats a custom
+    // keyGenerator that returns an IP as a possible IPv6 bypass. Malformed
+    // requests without an email share a single 'unknown' bucket.
+    return email || 'unknown';
   },
 });
 app.use('/api/auth/login', authLimiter);

@@ -1,4 +1,5 @@
 import { useRef, useState, type ChangeEvent } from 'react';
+import { readStatementText } from '../converters/csvUtils';
 import type { FmisBuildResult } from '../converters/wbcFjConverter';
 
 interface FmisGeneratorProps {
@@ -36,19 +37,25 @@ export function FmisGenerator({
 
     const handleSelect = () => inputRef.current?.click();
 
-    const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-            setRawText(String(reader.result || ''));
+
+        try {
+            const text = await readStatementText(file);
+            setRawText(text);
             setFileName(file.name);
             setError('');
             setSummary('');
             setOutput('');
-        };
-        reader.onerror = () => setError('Failed to read file.');
-        reader.readAsText(file);
+        } catch (err) {
+            setError((err as Error)?.message || 'Failed to read file.');
+            setRawText('');
+            setFileName(file.name);
+            setSummary('');
+            setOutput('');
+        }
+
         event.target.value = '';
     };
 

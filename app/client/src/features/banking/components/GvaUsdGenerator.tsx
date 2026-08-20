@@ -15,7 +15,7 @@ export function GvaUsdGenerator() {
     return (
         <FmisGenerator
             title="GVA-USD Statement Generator"
-            description="Convert Geneva Mission USD bank statement CSV exports into TechnologyOne FMIS bank-reconciliation import format."
+            description="Convert Geneva Mission USD bank statement CSV or Apple Numbers exports into TechnologyOne FMIS bank-reconciliation import format."
             accept=".csv,.numbers"
             selectButtonLabel="Select GVA-USD Statement"
             generateButtonLabel="Generate GVA-USD Output"

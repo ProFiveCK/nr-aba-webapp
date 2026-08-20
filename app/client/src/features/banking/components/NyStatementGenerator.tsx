@@ -15,11 +15,11 @@ export function NyStatementGenerator() {
     return (
         <FmisGenerator
             title="NY Statement Generator"
-            description="Convert New York USD bank statement CSV files into TechnologyOne FMIS bank-reconciliation import format."
-            accept=".csv"
-            selectButtonLabel="Select NY Statement CSV"
+            description="Convert New York USD bank statement CSV or Apple Numbers exports into TechnologyOne FMIS bank-reconciliation import format."
+            accept=".csv,.numbers"
+            selectButtonLabel="Select NY Statement File"
             generateButtonLabel="Generate NY Statement Output"
-            emptyErrorMessage="Select an NY statement CSV file before generating output."
+            emptyErrorMessage="Select an NY statement CSV or Numbers file before generating output."
             generateErrorPrefix="Unable to convert NY statement."
             downloadBaseName="ny-statement"
             convert={convertNyStatementToFmis}

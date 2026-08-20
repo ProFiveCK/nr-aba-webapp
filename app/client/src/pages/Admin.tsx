@@ -73,6 +73,7 @@ interface BlacklistEntry {
     id: number;
     bsb: string;
     account: string;
+    all_accounts: boolean;
     label: string | null;
     notes: string | null;
     active: boolean;
@@ -84,6 +85,7 @@ interface BlacklistFormState {
     id: number | null;
     bsb: string;
     account: string;
+    allAccounts: boolean;
     label: string;
     notes: string;
     active: 'yes' | 'no';
@@ -122,6 +124,7 @@ const EMPTY_BLACKLIST_FORM: BlacklistFormState = {
     id: null,
     bsb: '',
     account: '',
+    allAccounts: false,
     label: '',
     notes: '',
     active: 'yes',
@@ -1488,6 +1491,7 @@ function BlacklistPanel() {
             id: entry.id,
             bsb: formatBSB(entry.bsb),
             account: entry.account || '',
+            allAccounts: entry.all_accounts === true,
             label: entry.label || '',
             notes: entry.notes || '',
             active: entry.active === false ? 'no' : 'yes',
@@ -1513,13 +1517,14 @@ function BlacklistPanel() {
             setFormError('Enter a valid BSB in NNN-NNN format.');
             return;
         }
-        if (!normalizedAccount || normalizedAccount.length < 5 || normalizedAccount.length > 16) {
+        if (!form.allAccounts && (!normalizedAccount || normalizedAccount.length < 5 || normalizedAccount.length > 16)) {
             setFormError('Account number must be 5-16 digits.');
             return;
         }
         const payload = {
             bsb: normalizedBsb,
-            account: normalizedAccount,
+            account: form.allAccounts ? null : normalizedAccount,
+            all_accounts: form.allAccounts,
             label: form.label.trim() || null,
             notes: form.notes.trim() || null,
             active: form.active === 'yes',
@@ -1692,10 +1697,19 @@ function BlacklistPanel() {
                                 value={form.account}
                                 onChange={(e) => handleFormChange('account')(e.target.value)}
                                 placeholder="8-16 digits"
+                                disabled={form.allAccounts}
                                 className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                             />
                         </label>
                     </div>
+                    <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                        <input
+                            type="checkbox"
+                            checked={form.allAccounts}
+                            onChange={(e) => setForm((prev) => ({ ...prev, allAccounts: e.target.checked }))}
+                        />
+                        Block all accounts at this BSB
+                    </label>
                     <div className="grid gap-4 md:grid-cols-2">
                         <label className="text-sm font-medium text-gray-700">
                             Label (optional)
@@ -1829,7 +1843,7 @@ function BlacklistPanel() {
                                         return (
                                             <tr key={entry.id}>
                                                 <td className="px-3 py-2 font-mono text-indigo-600">{formatBSB(entry.bsb)}</td>
-                                                <td className="px-3 py-2 font-mono text-gray-700">{entry.account}</td>
+                                                <td className="px-3 py-2 font-mono text-gray-700">{entry.all_accounts ? 'All accounts' : entry.account}</td>
                                                 <td className="px-3 py-2">{entry.label || '—'}</td>
                                                 <td className="px-3 py-2 text-sm text-gray-600">{entry.notes || '—'}</td>
                                                 <td className="px-3 py-2">

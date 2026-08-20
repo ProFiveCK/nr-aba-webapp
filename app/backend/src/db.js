@@ -103,7 +103,8 @@ export async function initSchema() {
       CREATE TABLE IF NOT EXISTS blacklist_entries (
         id SERIAL PRIMARY KEY,
         bsb VARCHAR(7) NOT NULL,
-        account VARCHAR(16) NOT NULL,
+        account VARCHAR(16),
+        all_accounts BOOLEAN NOT NULL DEFAULT FALSE,
         label TEXT,
         notes TEXT,
         active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -115,7 +116,20 @@ export async function initSchema() {
     await client.query('ALTER TABLE blacklist_entries ADD COLUMN IF NOT EXISTS label TEXT');
     await client.query('ALTER TABLE blacklist_entries ADD COLUMN IF NOT EXISTS notes TEXT');
     await client.query('ALTER TABLE blacklist_entries ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE');
+    await client.query('ALTER TABLE blacklist_entries ADD COLUMN IF NOT EXISTS all_accounts BOOLEAN DEFAULT FALSE');
+    await client.query('ALTER TABLE blacklist_entries ALTER COLUMN account DROP NOT NULL');
     await client.query('UPDATE blacklist_entries SET active = COALESCE(active, TRUE)');
+    await client.query('UPDATE blacklist_entries SET all_accounts = COALESCE(all_accounts, FALSE)');
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS blacklist_entries_all_accounts_bsb_idx
+        ON blacklist_entries (bsb)
+        WHERE all_accounts = TRUE
+    `);
+    await client.query(`
+      INSERT INTO blacklist_entries (bsb, account, all_accounts, label, notes, active)
+      VALUES ('633-000', NULL, TRUE, 'BSB-wide block', 'Migrated from the previous hard-coded BSB restriction.', TRUE)
+      ON CONFLICT DO NOTHING
+    `);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS suppliers (

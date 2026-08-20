@@ -1359,8 +1359,6 @@ function normalizeAccountNumber(value) {
   return String(value || '').replace(/[^0-9]/g, '').trim();
 }
 
-const PROHIBITED_BSB = '633-000';
-
 const buildBlacklistKey = (bsb, account) => {
   const normalizedBsb = normalizeBsb(bsb);
   const normalizedAccount = normalizeAccountNumber(account);
@@ -2107,7 +2105,7 @@ app.get('/api/blacklist', requireAuth(['admin']), async (_req, res) => {
 
 app.get('/api/blacklist/active', requireAuth(), async (_req, res) => {
   const { rows } = await pool.query(
-    `SELECT bsb, account, label FROM blacklist_entries
+    `SELECT bsb, account, all_accounts, label FROM blacklist_entries
       WHERE active = TRUE
       ORDER BY bsb ASC, account ASC`
   );
@@ -2119,7 +2117,12 @@ app.post(
   requireAuth(['admin']),
   [
     body('bsb').matches(BSB_REGEX),
-    body('account').matches(/^\d{5,16}$/),
+    body('account').custom((value, { req }) => {
+      if (req.body.all_accounts === true) return true;
+      if (/^\d{5,16}$/.test(String(value ?? ''))) return true;
+      throw new Error('Account number must be 5-16 digits.');
+    }),
+    body('all_accounts').optional({ nullable: true }).isBoolean(),
     body('label').optional({ nullable: true }).isString().trim().isLength({ max: 200 }),
     body('notes').optional({ nullable: true }).isString().isLength({ max: 2000 }),
     body('active').optional({ nullable: true }).isBoolean()
@@ -2127,22 +2130,30 @@ app.post(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const bsb = normalizeBsb(req.body.bsb);
-    const account = normalizeAccountNumber(req.body.account);
+    const allAccounts = !!req.body.all_accounts;
+    const account = allAccounts ? null : normalizeAccountNumber(req.body.account);
     const label = req.body.label ? String(req.body.label).trim() : null;
     const notes = req.body.notes ? String(req.body.notes).trim() : null;
     const active = req.body.active === undefined ? true : !!req.body.active;
-    if (!bsb || !account) {
-      res.status(400).json({ message: 'Provide a valid BSB and account number.' });
+    if (!bsb || (!allAccounts && !account)) {
+      res.status(400).json({ message: 'Provide a valid BSB and account number, or block all accounts at a BSB.' });
       return;
     }
     try {
+      const query = allAccounts
+        ? `INSERT INTO blacklist_entries (bsb, account, all_accounts, label, notes, active)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (bsb) WHERE all_accounts = TRUE
+           DO UPDATE SET label = EXCLUDED.label, notes = EXCLUDED.notes, active = EXCLUDED.active, updated_at = NOW()
+           RETURNING *`
+        : `INSERT INTO blacklist_entries (bsb, account, all_accounts, label, notes, active)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (bsb, account)
+           DO UPDATE SET all_accounts = EXCLUDED.all_accounts, label = EXCLUDED.label, notes = EXCLUDED.notes, active = EXCLUDED.active, updated_at = NOW()
+           RETURNING *`;
       const { rows } = await pool.query(
-        `INSERT INTO blacklist_entries (bsb, account, label, notes, active)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (bsb, account)
-         DO UPDATE SET label = EXCLUDED.label, notes = EXCLUDED.notes, active = EXCLUDED.active, updated_at = NOW()
-         RETURNING *`,
-        [bsb, account, label, notes, active]
+        query,
+        [bsb, account, allAccounts, label, notes, active]
       );
       res.status(201).json(rows[0]);
     } catch (err) {
@@ -2262,6 +2273,7 @@ app.put(
     param('id').isInt({ gt: 0 }),
     body('bsb').optional().matches(BSB_REGEX),
     body('account').optional().matches(/^\d{5,16}$/),
+    body('all_accounts').optional().isBoolean(),
     body('label').optional({ nullable: true }).isString().trim().isLength({ max: 200 }),
     body('notes').optional({ nullable: true }).isString().isLength({ max: 2000 }),
     body('active').optional({ nullable: true }).isBoolean()
@@ -2271,7 +2283,7 @@ app.put(
     const id = Number(req.params.id);
     // Explicit allowlist prevents mass assignment of columns like id/created_at.
     const patch = {};
-    const allowedFields = ['bsb', 'account', 'label', 'notes', 'active'];
+    const allowedFields = ['bsb', 'account', 'all_accounts', 'label', 'notes', 'active'];
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) {
         patch[field] = req.body[field];
@@ -2292,6 +2304,10 @@ app.put(
         return;
       }
       patch.account = normalized;
+    }
+    if (patch.all_accounts !== undefined) {
+      patch.all_accounts = !!patch.all_accounts;
+      if (patch.all_accounts) patch.account = null;
     }
     if (patch.label !== undefined) patch.label = patch.label === null ? null : String(patch.label).trim();
     if (patch.notes !== undefined) patch.notes = patch.notes === null ? null : String(patch.notes).trim();
@@ -2714,19 +2730,9 @@ app.post(
           };
         })
         .filter(Boolean);
-      const prohibitedBsb = normalizedTransactions.find(
-        (tx) => tx.bsb === PROHIBITED_BSB
-      );
-      if (prohibitedBsb) {
-        res.status(400).json({
-          message: `Transactions to BSB ${PROHIBITED_BSB} are not permitted.`
-        });
-        return;
-      }
-
       if (normalizedTransactions.length) {
         const { rows: blacklistRows } = await pool.query(
-          `SELECT bsb, account, label FROM blacklist_entries WHERE active = TRUE`
+          `SELECT bsb, account, all_accounts, label FROM blacklist_entries WHERE active = TRUE`
         );
         if (blacklistRows.length) {
           const blacklistSet = new Map(
@@ -2735,16 +2741,21 @@ app.post(
               return [key, row];
             })
           );
+          const blockedBsbs = new Map(
+            blacklistRows
+              .filter((row) => row.all_accounts)
+              .map((row) => [normalizeBsb(row.bsb), row])
+          );
           const blocked = normalizedTransactions.find((tx) => {
             const key = buildBlacklistKey(tx.bsb, tx.account);
-            return key && blacklistSet.has(key);
+            return blockedBsbs.has(tx.bsb) || (key && blacklistSet.has(key));
           });
           if (blocked) {
             const key = buildBlacklistKey(blocked.bsb, blocked.account);
-            const meta = key ? blacklistSet.get(key) : null;
+            const meta = blockedBsbs.get(blocked.bsb) || (key ? blacklistSet.get(key) : null);
             const labelText = meta?.label ? ` (${meta.label})` : '';
             res.status(400).json({
-              message: `Transactions to ${blocked.bsb} / ${blocked.account}${labelText} are not permitted.`
+              message: `Transactions to ${blocked.bsb}${meta?.all_accounts ? '' : ` / ${blocked.account}`}${labelText} are not permitted.`
             });
             return;
           }

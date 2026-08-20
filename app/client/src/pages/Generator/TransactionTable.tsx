@@ -12,7 +12,6 @@ interface TransactionTableProps {
     onSortChange: (key: SortState['key']) => void;
     duplicateIndexSet: Set<number>;
     blockedIndexSet: Set<number>;
-    prohibitedBsbIndexSet: Set<number>;
 }
 
 export function TransactionTable({
@@ -24,7 +23,6 @@ export function TransactionTable({
     onSortChange,
     duplicateIndexSet,
     blockedIndexSet,
-    prohibitedBsbIndexSet,
 }: TransactionTableProps) {
     const [amountDrafts, setAmountDrafts] = useState<Record<number, string>>({});
     const visibleRows = useMemo(
@@ -139,7 +137,7 @@ export function TransactionTable({
                     ) : (
                         visibleRows.map(({ transaction: tx, originalIndex }) => {
                             const isDuplicate = duplicateIndexSet.has(originalIndex);
-                            const isBlocked = blockedIndexSet.has(originalIndex) || prohibitedBsbIndexSet.has(originalIndex);
+                            const isBlocked = blockedIndexSet.has(originalIndex);
 
                             return (
                                 <tr

@@ -7,12 +7,11 @@ import type { Transaction } from '../pages/Generator/types';
 import { normalizeBSBStrict, normalizeAccountStrict } from './utils';
 import { apiClient } from './api';
 
-export const PROHIBITED_BSB = '633-000';
-
 export interface BlacklistEntry {
     id: number;
     bsb: string;
     account: string;
+    all_accounts?: boolean;
     label?: string;
     notes?: string;
     active: boolean;
@@ -21,6 +20,7 @@ export interface BlacklistEntry {
 // In-memory cache
 let activeBlacklistEntries: BlacklistEntry[] = [];
 let activeBlacklistSet = new Set<string>();
+let activeBlacklistBsbs = new Set<string>();
 
 /**
  * Build blacklist key from BSB and account
@@ -36,6 +36,8 @@ function buildBlacklistKey(bsb: string, account: string): string | null {
  * Check if a BSB/account combination is blacklisted
  */
 export function isBlacklistedCombo(bsb: string, account: string): boolean {
+    const normalizedBsb = normalizeBSBStrict(bsb);
+    if (normalizedBsb && activeBlacklistBsbs.has(normalizedBsb)) return true;
     const key = buildBlacklistKey(bsb, account);
     return key ? activeBlacklistSet.has(key) : false;
 }
@@ -67,6 +69,7 @@ export async function refreshActiveBlacklist(): Promise<void> {
 
         activeBlacklistSet = new Set(
             activeBlacklistEntries
+                .filter((entry) => !entry.all_accounts)
                 .map((entry) => {
                     const bsb = normalizeBSBStrict(entry.bsb);
                     const account = normalizeAccountStrict(entry.account);
@@ -75,6 +78,12 @@ export async function refreshActiveBlacklist(): Promise<void> {
                 })
                 .filter((key): key is string => key !== null)
         );
+            activeBlacklistBsbs = new Set(
+                activeBlacklistEntries
+                .filter((entry) => entry.all_accounts)
+                .map((entry) => normalizeBSBStrict(entry.bsb))
+                .filter((bsb): bsb is string => bsb !== null)
+            );
     } catch (err) {
         console.warn('Unable to refresh blacklist', err);
         // Keep existing cache on error
@@ -95,33 +104,6 @@ export function getBlockedIndexSet(transactions: Transaction[]): Set<number> {
     const blocked = new Set<number>();
     transactions.forEach((tx, index) => {
         if (tx.bsb && tx.account && isBlacklistedCombo(tx.bsb, tx.account)) {
-            blocked.add(index);
-        }
-    });
-    return blocked;
-}
-
-/**
- * Check if a transaction targets the prohibited BSB
- */
-export function isProhibitedBsb(bsb: string): boolean {
-    return normalizeBSBStrict(bsb) === PROHIBITED_BSB;
-}
-
-/**
- * Return transactions whose BSB is on the prohibited list
- */
-export function findProhibitedBsbTransactions(transactions: Transaction[]): Transaction[] {
-    return transactions.filter((tx) => tx.bsb && isProhibitedBsb(tx.bsb));
-}
-
-/**
- * Create a Set of indices for transactions whose BSB is prohibited
- */
-export function getProhibitedBsbIndexSet(transactions: Transaction[]): Set<number> {
-    const blocked = new Set<number>();
-    transactions.forEach((tx, index) => {
-        if (tx.bsb && isProhibitedBsb(tx.bsb)) {
             blocked.add(index);
         }
     });

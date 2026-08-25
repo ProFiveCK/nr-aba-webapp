@@ -1074,6 +1074,7 @@ app.post(
     }
     const hash = await bcrypt.hash(password, PASS_HASH_ROUNDS);
     await pool.query('UPDATE reviewers SET password_hash = $1, must_change_password = TRUE, updated_at = NOW() WHERE id = $2', [hash, reviewerId]);
+    await clearLoginAttempts(reviewer.email);
     await pool.query('DELETE FROM reviewer_sessions WHERE reviewer_id = $1', [reviewerId]);
     reviewer.must_change_password = true;
     const sendEmail = req.body.send_email === true;

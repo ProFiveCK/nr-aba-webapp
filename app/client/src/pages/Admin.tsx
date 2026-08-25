@@ -2027,6 +2027,10 @@ function SmtpSettingsPanel() {
     const { user } = useAuth();
     const [loading, setLoading] = useState(false);
     const [testLoading, setTestLoading] = useState(false);
+    const [testModalOpen, setTestModalOpen] = useState(false);
+    const [testEmail, setTestEmail] = useState('');
+    const [testError, setTestError] = useState('');
+    const [configuredFromEmail, setConfiguredFromEmail] = useState('');
     const [settings, setSettings] = useState({
         smtp_host: '',
         smtp_port: 587,
@@ -2053,6 +2057,7 @@ function SmtpSettingsPanel() {
                 reply_to_email: data.reply_to_email || '',
                 support_email: data.support_email || ''
             });
+            setConfiguredFromEmail(data.from_email || '');
             setConfigured(data.configured || false);
             setSource(data.source || 'environment');
         } catch (err) {
@@ -2078,15 +2083,29 @@ function SmtpSettingsPanel() {
         }
     };
 
-    const handleTest = async () => {
+    const openTestModal = () => {
+        setTestEmail(user?.email || '');
+        setTestError('');
+        setTestModalOpen(true);
+    };
+
+    const handleTest = async (e: FormEvent) => {
+        e.preventDefault();
+        const recipient = testEmail.trim();
+        if (!recipient) {
+            setTestError('Enter an email address for the test message.');
+            return;
+        }
         setTestLoading(true);
+        setTestError('');
         try {
             const result = await apiClient.post<{ success: boolean; message: string }>('/admin/smtp-settings/test', {
-                test_email: user?.email
+                test_email: recipient
             });
             addToast(result.message, result.success ? 'success' : 'error');
+            if (result.success) setTestModalOpen(false);
         } catch (err) {
-            addToast((err as Error).message || 'SMTP test failed', 'error');
+            setTestError((err as Error).message || 'SMTP test failed');
         } finally {
             setTestLoading(false);
         }
@@ -2239,7 +2258,7 @@ function SmtpSettingsPanel() {
                     </button>
                     <button
                         type="button"
-                        onClick={handleTest}
+                        onClick={openTestModal}
                         disabled={testLoading || !configured}
                         className="rounded-md border border-gray-300 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
                     >
@@ -2254,6 +2273,76 @@ function SmtpSettingsPanel() {
                     </button>
                 </div>
             </form>
+
+            {testModalOpen && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6"
+                    onClick={() => !testLoading && setTestModalOpen(false)}
+                >
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="smtp-test-title"
+                        className="w-full max-w-md rounded-lg bg-white p-6 shadow-2xl"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <h3 id="smtp-test-title" className="text-lg font-semibold text-gray-900">Send test email</h3>
+                                <p className="mt-1 text-sm text-gray-500">Verify delivery using the active SMTP settings.</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setTestModalOpen(false)}
+                                disabled={testLoading}
+                                className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                                aria-label="Close test email modal"
+                            >
+                                <Icon name="x" className="h-5 w-5" />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleTest} className="mt-6 space-y-4">
+                            <div className="rounded-md bg-gray-50 px-3 py-2">
+                                <p className="text-xs font-medium text-gray-500">From Email</p>
+                                <p className="mt-1 break-all text-sm text-gray-900">{configuredFromEmail || 'Not configured'}</p>
+                            </div>
+                            <label htmlFor="smtp_test_email" className="block text-sm font-medium text-gray-700">
+                                Send test to
+                                <input
+                                    type="email"
+                                    id="smtp_test_email"
+                                    required
+                                    autoFocus
+                                    autoComplete="email"
+                                    value={testEmail}
+                                    onChange={(e) => setTestEmail(e.target.value)}
+                                    placeholder="recipient@example.com"
+                                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                />
+                            </label>
+                            {testError && <p className="text-sm text-red-600">{testError}</p>}
+                            <div className="flex justify-end gap-3 border-t border-gray-200 pt-4">
+                                <button
+                                    type="button"
+                                    onClick={() => setTestModalOpen(false)}
+                                    disabled={testLoading}
+                                    className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={testLoading}
+                                    className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+                                >
+                                    {testLoading ? 'Sending...' : 'Send Test'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </section>
     );
 }

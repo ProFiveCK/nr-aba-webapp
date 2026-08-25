@@ -1449,7 +1449,7 @@ async function sendMail(options = {}) {
   }
   
   const payload = { from: fromEmail, ...options };
-  if (replyToEmail) payload.replyTo = replyToEmail;
+  if (!payload.replyTo && replyToEmail) payload.replyTo = replyToEmail;
   try {
     await mailTransport.sendMail(payload);
   } catch (err) {
@@ -1748,9 +1748,36 @@ Stage: submitted
 Review it here: ${reviewLink}
 `;
   const [primaryRecipient, ...bccRecipients] = recipients;
-  const mailOptions = { to: primaryRecipient, subject, text };
+  const mailOptions = {
+    to: primaryRecipient,
+    subject,
+    text,
+    replyTo: batch.submitted_email || metadata?.submitted_by_email
+  };
   if (bccRecipients.length) mailOptions.bcc = bccRecipients;
   await sendMail(mailOptions);
+}
+
+async function notifySubmitterOfApproval(batch, metadata, comments, actor) {
+  if (!mailTransport || testingModeEnabled) return;
+  const recipient = batch?.submitted_email || metadata?.submitted_by_email;
+  if (!recipient) return;
+  const formattedCode = formatBatchCode(batch.code);
+  const departmentCode = metadata?.department_code || batch.department_code || 'Unknown';
+  const pdNumber = metadata?.pd_number || batch.pd_number || 'N/A';
+  const actorName = actor?.display_name || actor?.email || 'Reviewer';
+  const submitterName = metadata?.prepared_by || metadata?.prepared_by_name || 'team';
+  const subject = `PD ${pdNumber} - Dept ${departmentCode} - ${formattedCode} approved`;
+  const commentsText = comments?.trim()
+    ? `\nReviewer comments:\n${comments.trim()}\n`
+    : '';
+  const text = `Hi ${submitterName},
+
+Your ABA batch ${formattedCode} for department ${departmentCode} (PD ${pdNumber}) was approved by ${actorName}.
+${commentsText}
+Sign in to the Nauru Treasury portal to view the approved batch.
+`;
+  await sendMail({ to: recipient, replyTo: actor?.email, subject, text });
 }
 
 async function notifySubmitterOfRejection(batch, metadata, comments, actor) {
@@ -1773,7 +1800,7 @@ ${reasonText}
 
 Sign in to the Nauru Treasury portal to review the notes and resubmit a corrected batch.
 `;
-  await sendMail({ to: recipient, subject, text });
+  await sendMail({ to: recipient, replyTo: actor?.email, subject, text });
 }
 
 async function fetchRecentArchives(limit) {
@@ -2915,6 +2942,11 @@ app.patch(
         console.error('Failed to notify submitter of rejection', err);
       });
     }
+    if (targetStage === 'approved') {
+      notifySubmitterOfApproval(updated, metadata, commentsRaw, actor).catch((err) => {
+        console.error('Failed to notify submitter of approval', err);
+      });
+    }
 
     res.json(updated);
   }
@@ -3479,7 +3511,11 @@ app.post(
 );
 
 // Test SMTP connection
-app.post('/api/admin/smtp-settings/test', requireAuth(['admin']), async (req, res) => {
+app.post('/api/admin/smtp-settings/test', [
+  requireAuth(['admin']),
+  body('test_email').isEmail().normalizeEmail()
+], async (req, res) => {
+  if (!handleValidation(req, res)) return;
   try {
     if (!mailTransport) {
       res.status(400).json({ success: false, message: 'SMTP not configured.' });
@@ -3489,18 +3525,13 @@ app.post('/api/admin/smtp-settings/test', requireAuth(['admin']), async (req, re
     // Verify connection
     await mailTransport.verify();
     
-    // Send test email if recipient provided
-    const testEmail = req.body.test_email || req.user?.email;
-    if (testEmail) {
-      await sendMail({
-        to: testEmail,
-        subject: 'ABA Stack - SMTP Test',
-        text: `This is a test email from the ABA Stack application.\n\nSent at: ${new Date().toISOString()}\n\nIf you receive this, your SMTP settings are working correctly.`
-      });
-      res.json({ success: true, message: `Test email sent to ${testEmail}` });
-    } else {
-      res.json({ success: true, message: 'SMTP connection verified successfully.' });
-    }
+    const testEmail = req.body.test_email;
+    await sendMail({
+      to: testEmail,
+      subject: 'ABA Stack - SMTP Test',
+      text: `This is a test email from the ABA Stack application.\n\nSent at: ${new Date().toISOString()}\n\nIf you receive this, your SMTP settings are working correctly.`
+    });
+    res.json({ success: true, message: `Test email sent to ${testEmail}` });
   } catch (err) {
     console.error('SMTP test failed:', err);
     res.status(400).json({ success: false, message: err.message || 'SMTP test failed.' });

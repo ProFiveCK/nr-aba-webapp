@@ -138,7 +138,7 @@ export function Saas() {
                         type="button"
                         onClick={handleManualSync}
                         disabled={!isAdmin || triggerLoading}
-                        className="rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="rounded-full bg-amber-500 px-5 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         {triggerLoading ? 'Triggering…' : 'Trigger manual sync'}
                     </button>

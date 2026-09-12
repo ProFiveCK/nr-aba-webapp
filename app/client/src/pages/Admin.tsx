@@ -47,6 +47,7 @@ interface AdminAccount {
     last_login_at: string | null;
     created_at: string;
     updated_at: string;
+    permissions?: Record<string, boolean>;
 }
 
 interface AdminArchiveEntry {
@@ -106,6 +107,7 @@ interface AccountFormState {
     department_code: string;
     division_code: string;
     notify_on_submission: boolean;
+    permissions: Record<string, boolean>;
 }
 
 const EMPTY_FORM: AccountFormState = {
@@ -116,6 +118,7 @@ const EMPTY_FORM: AccountFormState = {
     department_code: '',
     division_code: '00',
     notify_on_submission: true,
+    permissions: {},
 };
 
 const ADMIN_ARCHIVE_LIMIT = 200;
@@ -168,7 +171,7 @@ export function Admin() {
                             key={id}
                             onClick={() => setSection(id as AdminSection)}
                             className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                                section === id ? 'bg-indigo-600 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                section === id ? 'bg-amber-500 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                             }`}
                         >
                             {label}
@@ -449,6 +452,7 @@ function UserManagementPanel() {
             department_code: account.department_code || '',
             division_code: account.division_code || '00',
             notify_on_submission: account.notify_on_submission ?? (account.role === 'reviewer'),
+            permissions: account.permissions || {},
         });
         setIsEditing(true);
         setFormError('');
@@ -537,6 +541,14 @@ function UserManagementPanel() {
             body.notify_on_submission = false;
         }
 
+        // Explicit FOREX TT permissions
+        const nextPermissions: Record<string, boolean> = { ...form.permissions };
+        if (!['reviewer', 'admin'].includes(form.role)) {
+            delete nextPermissions.review_forex_tt;
+            delete nextPermissions.notify_forex_tt_submissions;
+        }
+        body.permissions = nextPermissions;
+
         setSaving(true);
         try {
             if (isEditing && form.id) {
@@ -589,7 +601,7 @@ function UserManagementPanel() {
                                 value={form.email}
                                 onChange={(e) => setForm({ ...form, email: e.target.value })}
                                 disabled={isEditing}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:bg-gray-100"
                             />
                         </label>
                         <label className="text-sm font-medium text-gray-700">
@@ -598,7 +610,7 @@ function UserManagementPanel() {
                                 type="text"
                                 value={form.display_name || ''}
                                 onChange={(e) => setForm({ ...form, display_name: e.target.value })}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                             />
                         </label>
                     </div>
@@ -619,7 +631,7 @@ function UserManagementPanel() {
                                                 : false,
                                     });
                                 }}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                             >
                                 <option value="user">User</option>
                                 <option value="banking">Banking</option>
@@ -635,7 +647,7 @@ function UserManagementPanel() {
                                 value={form.department_code || ''}
                                 onChange={(e) => setForm({ ...form, department_code: e.target.value })}
                                 maxLength={2}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:bg-gray-100"
                                 placeholder="e.g. 12"
                             />
                             <p className="mt-1 text-xs text-gray-500">
@@ -649,7 +661,7 @@ function UserManagementPanel() {
                                 value={form.division_code || ''}
                                 onChange={(e) => setForm({ ...form, division_code: e.target.value })}
                                 maxLength={2}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:bg-gray-100"
                                 placeholder="e.g. 01, blank = 00"
                             />
                             <p className="mt-1 text-xs text-gray-500">
@@ -666,8 +678,36 @@ function UserManagementPanel() {
                             onChange={(e) => setForm({ ...form, notify_on_submission: e.target.checked })}
                             disabled={!canReceiveNotifications}
                         />
-                        Receive submission notifications (reviewers & admins)
+                        Receive ABA submission notifications (reviewers & admins)
                     </label>
+
+                    <div className={`space-y-2 rounded-lg border p-3 ${canReceiveNotifications ? 'border-gray-200 bg-gray-50' : 'border-gray-100 bg-gray-50 opacity-60'}`}>
+                        <p className="text-sm font-medium text-gray-800">FOREX TT access</p>
+                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                            <input
+                                type="checkbox"
+                                checked={Boolean(form.permissions.review_forex_tt)}
+                                onChange={(e) => setForm({
+                                    ...form,
+                                    permissions: { ...form.permissions, review_forex_tt: e.target.checked },
+                                })}
+                                disabled={!canReceiveNotifications}
+                            />
+                            FOREX TT reviewer — can claim and approve TT requests
+                        </label>
+                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                            <input
+                                type="checkbox"
+                                checked={Boolean(form.permissions.notify_forex_tt_submissions)}
+                                onChange={(e) => setForm({
+                                    ...form,
+                                    permissions: { ...form.permissions, notify_forex_tt_submissions: e.target.checked },
+                                })}
+                                disabled={!canReceiveNotifications}
+                            />
+                            Notify me of new FOREX TT submissions
+                        </label>
+                    </div>
 
                     {formError && <p className="text-sm text-red-600">{formError}</p>}
                     {formSuccess && <p className="text-sm text-green-600">{formSuccess}</p>}
@@ -676,7 +716,7 @@ function UserManagementPanel() {
                         <button
                             type="submit"
                             disabled={saving}
-                            className="rounded-full bg-indigo-600 px-6 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-60"
+                            className="rounded-full bg-amber-500 px-6 py-2 text-sm font-semibold text-white shadow hover:bg-amber-600 disabled:opacity-60"
                         >
                             {saving ? 'Saving…' : isEditing ? 'Save changes' : 'Create user'}
                         </button>
@@ -707,12 +747,12 @@ function UserManagementPanel() {
                             placeholder="Search name or email"
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
-                            className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                         />
                         <select
                             value={roleFilter}
                             onChange={(e) => setRoleFilter(e.target.value as typeof roleFilter)}
-                            className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                         >
                             <option value="all">All roles</option>
                             <option value="user">User</option>
@@ -742,6 +782,7 @@ function UserManagementPanel() {
                                     <th className="px-3 py-2">Allowed banks</th>
                                     <th className="px-3 py-2">Status</th>
                                     <th className="px-3 py-2">Notify</th>
+                                    <th className="px-3 py-2">FOREX TT</th>
                                     <th className="px-3 py-2">Last Login</th>
                                     <th className="px-3 py-2 text-right">Actions</th>
                                 </tr>
@@ -749,13 +790,13 @@ function UserManagementPanel() {
                             <tbody className="divide-y divide-gray-100 bg-white">
                                 {loading ? (
                                     <tr>
-                                        <td colSpan={8} className="px-3 py-6 text-center text-gray-500">
+                                        <td colSpan={9} className="px-3 py-6 text-center text-gray-500">
                                             Loading…
                                         </td>
                                     </tr>
                                 ) : filteredAccounts.length === 0 ? (
                                     <tr>
-                                        <td colSpan={8} className="px-3 py-6 text-center text-gray-500">
+                                        <td colSpan={9} className="px-3 py-6 text-center text-gray-500">
                                             No accounts match the current filters.
                                         </td>
                                     </tr>
@@ -784,13 +825,22 @@ function UserManagementPanel() {
                                                 {account.role === 'reviewer' || account.role === 'admin' ? (
                                                     <span
                                                         className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                                            account.notify_on_submission ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-600'
+                                                            account.notify_on_submission ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600'
                                                         }`}
                                                     >
                                                         {account.notify_on_submission ? 'On' : 'Off'}
                                                     </span>
                                                 ) : (
                                                     <span className="rounded-full px-2 py-0.5 text-xs font-semibold bg-gray-100 text-gray-500">N/A</span>
+                                                )}
+                                            </td>
+                                            <td className="px-3 py-2">
+                                                {account.permissions?.review_forex_tt ? (
+                                                    <span className="rounded-full px-2 py-0.5 text-xs font-semibold bg-sky-100 text-sky-700">
+                                                        {account.permissions.notify_forex_tt_submissions ? 'Reviewer + notify' : 'Reviewer'}
+                                                    </span>
+                                                ) : (
+                                                    <span className="rounded-full px-2 py-0.5 text-xs font-semibold bg-gray-100 text-gray-500">Off</span>
                                                 )}
                                             </td>
                                             <td className="px-3 py-2 text-gray-600">
@@ -800,14 +850,14 @@ function UserManagementPanel() {
                                                 <button
                                                     type="button"
                                                     onClick={() => startEdit(account)}
-                                                    className="text-xs text-indigo-600 hover:text-indigo-800"
+                                                    className="text-xs text-amber-600 hover:text-amber-800"
                                                 >
                                                     Edit
                                                 </button>
                                                 <button
                                                     type="button"
                                                     onClick={() => handleResetPassword(account)}
-                                                    className="text-xs text-indigo-600 hover:text-indigo-800"
+                                                    className="text-xs text-amber-600 hover:text-amber-800"
                                                 >
                                                     Reset password
                                                 </button>
@@ -1044,7 +1094,7 @@ function DepartmentProfilesPanel() {
                         <button
                             type="submit"
                             disabled={saving}
-                            className="rounded-full bg-indigo-600 px-6 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-60"
+                            className="rounded-full bg-amber-500 px-6 py-2 text-sm font-semibold text-white shadow hover:bg-amber-600 disabled:opacity-60"
                         >
                             {saving ? 'Saving…' : editingId ? 'Update profile' : 'Create profile'}
                         </button>
@@ -1098,7 +1148,7 @@ function DepartmentProfilesPanel() {
                                                 <button
                                                     type="button"
                                                     onClick={() => startEdit(profile)}
-                                                    className="text-xs text-indigo-600 hover:text-indigo-800"
+                                                    className="text-xs text-amber-600 hover:text-amber-800"
                                                 >
                                                     Edit
                                                 </button>
@@ -1241,7 +1291,7 @@ function AdminArchivesPanel() {
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             placeholder="Search code or PD#"
-                            className="rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                         />
                     </label>
                     <button
@@ -1318,7 +1368,7 @@ function AdminArchivesPanel() {
                                         const badge = getBatchStageBadgeClasses(archive.stage);
                                         return (
                                             <tr key={archive.code}>
-                                                <td className="px-3 py-2 font-mono text-indigo-600">{formatBatchCode(archive.code)}</td>
+                                                <td className="px-3 py-2 font-mono text-amber-600">{formatBatchCode(archive.code)}</td>
                                                 <td className="px-3 py-2">
                                                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${badge}`}>
                                                         {STAGE_META[archive.stage as keyof typeof STAGE_META]?.label || archive.stage}
@@ -1751,7 +1801,7 @@ function BlacklistPanel() {
                         <button
                             type="submit"
                             disabled={saving}
-                            className="rounded-full bg-indigo-600 px-6 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-60"
+                            className="rounded-full bg-amber-500 px-6 py-2 text-sm font-semibold text-white shadow hover:bg-amber-600 disabled:opacity-60"
                         >
                             {saving ? 'Saving…' : form.id ? 'Save changes' : 'Add entry'}
                         </button>
@@ -1787,7 +1837,7 @@ function BlacklistPanel() {
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             placeholder="Search BSB, account, or label"
-                            className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                         />
                         <button
                             type="button"
@@ -1800,7 +1850,7 @@ function BlacklistPanel() {
                             type="button"
                             onClick={handleImportClick}
                             disabled={importing}
-                            className="rounded-full border border-dashed border-indigo-300 px-4 py-2 text-sm font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-60"
+                            className="rounded-full border border-dashed border-amber-300 px-4 py-2 text-sm font-medium text-amber-600 hover:bg-amber-50 disabled:opacity-60"
                         >
                             {importing ? 'Importing…' : 'Import CSV'}
                         </button>
@@ -1842,7 +1892,7 @@ function BlacklistPanel() {
                                         const active = entry.active !== false;
                                         return (
                                             <tr key={entry.id}>
-                                                <td className="px-3 py-2 font-mono text-indigo-600">{formatBSB(entry.bsb)}</td>
+                                                <td className="px-3 py-2 font-mono text-amber-600">{formatBSB(entry.bsb)}</td>
                                                 <td className="px-3 py-2 font-mono text-gray-700">{entry.all_accounts ? 'All accounts' : entry.account}</td>
                                                 <td className="px-3 py-2">{entry.label || '—'}</td>
                                                 <td className="px-3 py-2 text-sm text-gray-600">{entry.notes || '—'}</td>
@@ -1859,7 +1909,7 @@ function BlacklistPanel() {
                                                     <button
                                                         type="button"
                                                         onClick={() => handleEdit(entry)}
-                                                        className="text-xs text-indigo-600 hover:text-indigo-800"
+                                                        className="text-xs text-amber-600 hover:text-amber-800"
                                                     >
                                                         Edit
                                                     </button>
@@ -1978,7 +2028,7 @@ function TestingModePanel() {
                         className={`rounded-full px-6 py-2 text-sm font-semibold text-white shadow ${
                             state?.enabled
                                 ? 'bg-red-600 hover:bg-red-500'
-                                : 'bg-indigo-600 hover:bg-indigo-500'
+                                : 'bg-amber-500 hover:bg-amber-600'
                         } disabled:opacity-60`}
                     >
                         {saving ? 'Saving…' : state?.enabled ? 'Disable testing mode' : 'Enable testing mode'}
@@ -2136,7 +2186,7 @@ function SmtpSettingsPanel() {
                             value={settings.smtp_host}
                             onChange={(e) => setSettings({ ...settings, smtp_host: e.target.value })}
                             placeholder="smtp.example.com"
-                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                         />
                     </div>
 
@@ -2152,7 +2202,7 @@ function SmtpSettingsPanel() {
                             max="65535"
                             value={settings.smtp_port}
                             onChange={(e) => setSettings({ ...settings, smtp_port: parseInt(e.target.value) })}
-                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                         />
                     </div>
 
@@ -2162,7 +2212,7 @@ function SmtpSettingsPanel() {
                             id="smtp_secure"
                             checked={settings.smtp_secure}
                             onChange={(e) => setSettings({ ...settings, smtp_secure: e.target.checked })}
-                            className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
                         />
                         <label htmlFor="smtp_secure" className="ml-2 block text-sm text-gray-700">
                             Use SSL/TLS (port 465)
@@ -2181,7 +2231,7 @@ function SmtpSettingsPanel() {
                             value={settings.smtp_user}
                             onChange={(e) => setSettings({ ...settings, smtp_user: e.target.value })}
                             placeholder="username@example.com"
-                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                         />
                     </div>
 
@@ -2195,7 +2245,7 @@ function SmtpSettingsPanel() {
                             value={settings.smtp_pass}
                             onChange={(e) => setSettings({ ...settings, smtp_pass: e.target.value })}
                             placeholder="Leave blank to keep existing"
-                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                         />
                     </div>
                 </div>
@@ -2212,7 +2262,7 @@ function SmtpSettingsPanel() {
                             value={settings.from_email}
                             onChange={(e) => setSettings({ ...settings, from_email: e.target.value })}
                             placeholder="noreply@example.com"
-                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                         />
                     </div>
 
@@ -2226,7 +2276,7 @@ function SmtpSettingsPanel() {
                             value={settings.reply_to_email}
                             onChange={(e) => setSettings({ ...settings, reply_to_email: e.target.value })}
                             placeholder="support@example.com"
-                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                         />
                     </div>
                 </div>
@@ -2241,7 +2291,7 @@ function SmtpSettingsPanel() {
                         value={settings.support_email}
                         onChange={(e) => setSettings({ ...settings, support_email: e.target.value })}
                         placeholder="support@example.com"
-                        className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                     />
                     <p className="mt-1 text-xs text-gray-500">
                         If specified, all signup request notifications will be sent to this email instead of all admins.
@@ -2252,7 +2302,7 @@ function SmtpSettingsPanel() {
                     <button
                         type="submit"
                         disabled={loading}
-                        className="rounded-md bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+                        className="rounded-md bg-amber-500 px-5 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-60"
                     >
                         {loading ? 'Saving...' : 'Save Settings'}
                     </button>
@@ -2318,7 +2368,7 @@ function SmtpSettingsPanel() {
                                     value={testEmail}
                                     onChange={(e) => setTestEmail(e.target.value)}
                                     placeholder="recipient@example.com"
-                                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                                 />
                             </label>
                             {testError && <p className="text-sm text-red-600">{testError}</p>}
@@ -2334,7 +2384,7 @@ function SmtpSettingsPanel() {
                                 <button
                                     type="submit"
                                     disabled={testLoading}
-                                    className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+                                    className="rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-60"
                                 >
                                     {testLoading ? 'Sending...' : 'Send Test'}
                                 </button>

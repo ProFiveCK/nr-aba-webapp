@@ -104,7 +104,7 @@ export function Icon({ name, className = 'h-4 w-4', ...props }: IconProps) {
 export function LoadingState({ label = 'Loading…' }: { label?: string }) {
     return (
         <div className="state-surface">
-            <span className="h-7 w-7 animate-spin rounded-full border-2 border-zinc-200 border-t-indigo-600" />
+            <span className="h-7 w-7 animate-spin rounded-full border-2 border-zinc-200 border-t-amber-500" />
             <span>{label}</span>
         </div>
     );

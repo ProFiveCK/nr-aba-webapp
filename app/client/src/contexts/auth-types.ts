@@ -8,12 +8,14 @@ export interface User {
     notify_on_submission?: boolean;
     must_change_password?: boolean;
     allowed_bank_presets?: string[];
+    permissions?: Record<string, boolean>;
 }
 
 export interface LoginResponse {
     token: string;
     expires_at: string;
     reviewer: User;
+    permissions?: Record<string, boolean>;
 }
 
 export interface AuthContextType {

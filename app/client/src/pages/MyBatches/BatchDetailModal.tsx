@@ -78,7 +78,7 @@ export function BatchDetailModal({ batch, onClose }: BatchDetailModalProps) {
                                 {stageMetadata.label}
                             </span>
                             {batch.is_draft && (
-                                <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-indigo-100 text-indigo-800">
+                                <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800">
                                     Draft
                                 </span>
                             )}

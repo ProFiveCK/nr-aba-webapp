@@ -160,6 +160,17 @@ class ApiClient {
     }
 
     /**
+     * Multipart POST request (for file uploads)
+     */
+    async upload<T = unknown>(path: string, formData: FormData, options: ApiRequestOptions = {}): Promise<T> {
+        return this.request<T>(path, {
+            ...options,
+            method: 'POST',
+            body: formData,
+        });
+    }
+
+    /**
      * PUT request
      */
     async put<T = unknown>(path: string, body?: unknown, options: RequestInit = {}): Promise<T> {

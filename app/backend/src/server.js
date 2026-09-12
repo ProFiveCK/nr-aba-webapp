@@ -15,6 +15,9 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import forexTTRouter from './routes/forexTT.js';
+import healthRouter from './routes/health.js';
+import { setTestingMode } from './services/notificationService.js';
 
 dotenv.config();
 
@@ -89,6 +92,16 @@ const BLACKLIST_IMPORT_LIMIT = 1000;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const WORKFLOW_GUIDE_TEXT = `Workflow Guide:\n\n1. Level 1 users prepare an ABA file in the Generator, enter the PD#, add notes, and click Commit.\n2. Reviewers are notified by email, open the Reviewer tab, and approve or reject the batch.\n3. If rejected, the submitter fixes their copy (upload via Reader → Load) and resubmits.\n4. Once approved, reviewers/admins can download the ABA from the archive; admins can delete batches when finished.`;
 
+function parsePermissions(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
+}
+
 // SFTP Sync Configuration
 const SFTP_SYNC_METHOD = process.env.SFTP_SYNC_METHOD || 'database'; // 'direct', 'file', or 'database'
 // Default to host.docker.internal for Docker containers (Windows/Mac), fallback to localhost for Linux native
@@ -96,6 +109,7 @@ const WINDOWS_SYNC_URL = process.env.WINDOWS_SYNC_URL || 'http://host.docker.int
 const SYNC_TRIGGER_PATH = process.env.SYNC_TRIGGER_PATH || null; // For file-based approach
 const SYNC_TIMEOUT = Number(process.env.SYNC_TIMEOUT || 30000); // 30 seconds
 
+// File handling: ABA files are uploaded as base64 JSON payloads; FOREX TT uses multipart.
 // SSRF protection for the Windows sync service. The URL is env-configured (admin-gated endpoint),
 // but we validate the resolved host against an allowlist before issuing any request to prevent
 // the server being used to reach internal metadata/loopback endpoints.
@@ -261,14 +275,11 @@ const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   message: { message: 'Too many authentication attempts for this account. Please try again later.' },
   skipSuccessfulRequests: true, // successful logins reset the in-memory attempt budget
   keyGenerator: (req) => {
     const email = String(req.body?.email || '').toLowerCase().trim();
-    // Do not fall back to req.ip here: express-rate-limit v8 treats a custom
-    // keyGenerator that returns an IP as a possible IPv6 bypass. Malformed
-    // requests without an email share a single 'unknown' bucket.
     return email || 'unknown';
   },
 });
@@ -285,6 +296,9 @@ app.get('/health', async (_req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
+
+app.use('/api/forex-tt', forexTTRouter);
+app.use('/api', healthRouter);
 
 // ===== Authentication =====
 // ===== Signup Request =====
@@ -463,7 +477,8 @@ app.post(
 
     const { rows } = await pool.query(
       `SELECT id, email, display_name, role, status, password_hash, must_change_password,
-              last_login_at, created_at, updated_at, department_code, division_code, notify_on_submission
+              last_login_at, created_at, updated_at, department_code, division_code, notify_on_submission,
+              permissions
          FROM reviewers WHERE email = $1`,
       [email]
     );
@@ -553,7 +568,8 @@ app.post('/api/auth/refresh', requireAuth(), async (req, res) => {
   await invalidateSession(req.user.tokenId);
   const { rows } = await pool.query(
     `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-            department_code, division_code, notify_on_submission
+            department_code, division_code, notify_on_submission,
+            permissions
        FROM reviewers WHERE id = $1`,
     [reviewerId]
   );
@@ -610,7 +626,8 @@ app.post(
     );
     const { rows: reviewerRows } = await pool.query(
       `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-              department_code, division_code, notify_on_submission
+              department_code, division_code, notify_on_submission,
+              permissions
          FROM reviewers WHERE id = $1`,
       [reviewerId]
     );
@@ -876,7 +893,7 @@ app.delete(
 app.get('/api/reviewers', requireAuth(['admin']), async (_req, res) => {
   const { rows } = await pool.query(
     `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-            department_code, division_code, notify_on_submission
+            department_code, division_code, notify_on_submission, permissions
        FROM reviewers
       ORDER BY LOWER(COALESCE(NULLIF(display_name, ''), email)) ASC`
   );
@@ -922,6 +939,14 @@ app.post(
     } else {
       notifyOnSubmission = false;
     }
+    let permissions = {};
+    if (req.body.permissions !== undefined) {
+      if (req.body.permissions !== null && (typeof req.body.permissions !== 'object' || Array.isArray(req.body.permissions))) {
+        res.status(400).json({ message: 'permissions must be an object.' });
+        return;
+      }
+      permissions = req.body.permissions || {};
+    }
     let password = req.body.password || '';
     let generated = false;
     if (!password) {
@@ -931,11 +956,11 @@ app.post(
     const passwordHash = await bcrypt.hash(password, PASS_HASH_ROUNDS);
     try {
       const { rows } = await pool.query(
-        `INSERT INTO reviewers (email, display_name, role, status, password_hash, must_change_password, department_code, division_code, notify_on_submission)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO reviewers (email, display_name, role, status, password_hash, must_change_password, department_code, division_code, notify_on_submission, permissions)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
          RETURNING id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-                   department_code, division_code, notify_on_submission`,
-        [email, displayName, role, status, passwordHash, true, departmentCode, divisionCode, notifyOnSubmission]
+                   department_code, division_code, notify_on_submission, permissions`,
+        [email, displayName, role, status, passwordHash, true, departmentCode, divisionCode, notifyOnSubmission, permissions]
       );
       const reviewer = rows[0];
       const sendEmail = req.body.send_email === true;
@@ -969,13 +994,18 @@ app.put(
     body('status').optional().isIn(ACCOUNT_STATUSES),
     body('department_code').optional({ nullable: true }).matches(/^\d{2}$/),
     body('division_code').optional({ nullable: true }).matches(/^\d{2}$/),
-    body('notify_on_submission').optional().isBoolean()
+    body('notify_on_submission').optional().isBoolean(),
+    body('permissions').optional().custom((value) => {
+      if (value === null) return true;
+      if (value && typeof value === 'object' && !Array.isArray(value)) return true;
+      throw new Error('permissions must be an object.');
+    })
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const reviewerId = req.params.id;
     const { rows: existingRows } = await pool.query(
-      `SELECT id, role, department_code, division_code, notify_on_submission FROM reviewers WHERE id = $1`,
+      `SELECT id, role, department_code, division_code, notify_on_submission, permissions FROM reviewers WHERE id = $1`,
       [reviewerId]
     );
     if (!existingRows.length) {
@@ -1003,6 +1033,13 @@ app.put(
     if (req.body.notify_on_submission !== undefined) {
       patch.notify_on_submission = req.body.notify_on_submission === true;
     }
+    if (req.body.permissions !== undefined) {
+      if (req.body.permissions !== null && (typeof req.body.permissions !== 'object' || Array.isArray(req.body.permissions))) {
+        res.status(400).json({ message: 'permissions must be an object.' });
+        return;
+      }
+      patch.permissions = req.body.permissions === null ? null : req.body.permissions;
+    }
 
     const finalRole = patch.role ?? existing.role;
     const finalDept = Object.prototype.hasOwnProperty.call(patch, 'department_code')
@@ -1025,8 +1062,13 @@ app.put(
     const values = [];
     Object.entries(patch).forEach(([key, value]) => {
       if (value === undefined) return;
-      values.push(value);
-      fields.push(`${key} = $${values.length}`);
+      if (key === 'permissions') {
+        values.push(value === null ? null : JSON.stringify(value));
+        fields.push(`${key} = $${values.length}::jsonb`);
+      } else {
+        values.push(value);
+        fields.push(`${key} = $${values.length}`);
+      }
     });
     if (!fields.length) {
       res.status(400).json({ message: 'No fields to update.' });
@@ -1036,7 +1078,7 @@ app.put(
     values.push(reviewerId);
     const { rows } = await pool.query(
       `UPDATE reviewers SET ${fields.join(', ')} WHERE id = $${values.length} RETURNING id, email, display_name, role, status, last_login_at, created_at, updated_at,
-        must_change_password, department_code, division_code, notify_on_submission`,
+        must_change_password, department_code, division_code, notify_on_submission, permissions`,
       values
     );
     const allowedPresets = await reviewerAllowedPresets(rows[0].id);
@@ -1057,7 +1099,7 @@ app.post(
     const reviewerId = req.params.id;
     const { rows } = await pool.query(
       `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-              department_code, division_code, notify_on_submission
+              department_code, division_code, notify_on_submission, permissions
          FROM reviewers WHERE id = $1`,
       [reviewerId]
     );
@@ -1486,7 +1528,8 @@ async function lookupSession(tokenId) {
   if (!tokenId) return null;
   const { rows } = await pool.query(
     `SELECT r.id, r.email, r.display_name, r.role, r.status, r.must_change_password, r.last_login_at,
-            r.created_at, r.updated_at, r.department_code, r.division_code, r.notify_on_submission, s.expires_at
+            r.created_at, r.updated_at, r.department_code, r.division_code, r.notify_on_submission,
+            r.permissions, s.expires_at
        FROM reviewer_sessions s
        JOIN reviewers r ON r.id = s.reviewer_id
       WHERE s.token_id = $1`,
@@ -1534,6 +1577,23 @@ async function reviewerAllowedPresets(reviewerId) {
 }
 
 function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS) {
+  const permissions = parsePermissions(row.permissions);
+  // Legacy role-based defaults for backward compatibility
+  if (['reviewer', 'admin'].includes(row.role)) {
+    permissions.review_aba ??= true;
+    permissions.notify_aba_submissions ??= row.notify_on_submission !== false;
+    // FOREX TT defaults for reviewers/admins
+    permissions.review_forex_tt ??= true;
+    permissions.notify_forex_tt_submissions ??= row.notify_on_submission !== false;
+  }
+  if (row.status === 'active') {
+    // All active users may submit ABA batches and FOREX TT requests
+    permissions.submit_aba ??= true;
+    permissions.submit_forex_tt ??= true;
+  }
+  if (row.role === 'admin') {
+    permissions.admin ??= true;
+  }
   return {
     id: row.id,
     email: row.email,
@@ -1547,7 +1607,8 @@ function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS) {
     department_code: row.department_code || null,
     division_code: row.division_code || '00',
     notify_on_submission: row.notify_on_submission !== false,
-    allowed_bank_presets: Array.from(new Set(allowedBankPresets))
+    allowed_bank_presets: Array.from(new Set(allowedBankPresets)),
+    permissions
   };
 }
 
@@ -1597,6 +1658,7 @@ function requireAuth(roles = []) {
         return;
       }
       const allowedPresets = await reviewerAllowedPresets(session.id);
+      const permissions = reviewerSummary(session, allowedPresets).permissions;
       req.user = {
         id: session.id,
         email: session.email,
@@ -1608,7 +1670,8 @@ function requireAuth(roles = []) {
         department_code: session.department_code || null,
         division_code: session.division_code || '00',
         notify_on_submission: session.notify_on_submission !== false,
-        allowed_bank_presets: allowedPresets
+        allowed_bank_presets: allowedPresets,
+        permissions
       };
       next();
     } catch (err) {

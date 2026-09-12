@@ -18,7 +18,7 @@ import { CREDIT_CODE_SET, CREDIT_TXN_CODES, HEADER_PRESETS, STAGE_META, STAGE_TR
 import { buildAbaFile } from '../lib/generator-utils';
 
 interface ReviewerProps {
-    onTabChange?: (tab: string) => void;
+    onSwitchToReader?: () => void;
 }
 
 interface ArchiveEntry {
@@ -67,7 +67,7 @@ type PayloadTransaction = {
     txnCode?: string;
 };
 
-export function Reviewer({ onTabChange }: ReviewerProps) {
+export function Reviewer({ onSwitchToReader }: ReviewerProps) {
     const { user } = useAuth();
     const { addToast } = useToast();
     const [showFullArchive, setShowFullArchive] = useState(false);
@@ -215,7 +215,7 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
             return;
         }
         localStorage.setItem('aba_reader_import', selectedBatch.file_base64);
-        onTabChange?.('reader');
+        onSwitchToReader?.();
     };
 
     const metrics = selectedBatch?.transactions?.metrics;
@@ -420,15 +420,15 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                     </section>
                 </div>
 
-                <section className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-indigo-50 p-6 shadow">
+                <section className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-amber-50 p-6 shadow">
                     <div className="flex items-center justify-between">
-                        <h3 className="text-lg font-semibold text-indigo-900">Record Decision</h3>
+                        <h3 className="text-lg font-semibold text-amber-900">Record Decision</h3>
                         {selectedBatch && (
-                            <span className="text-xs font-semibold uppercase tracking-wide text-indigo-500">Action Required</span>
+                            <span className="text-xs font-semibold uppercase tracking-wide text-amber-500">Action Required</span>
                         )}
                     </div>
                     {!selectedBatch ? (
-                        <p className="mt-3 text-sm text-indigo-700">Select a batch to enable reviewer actions.</p>
+                        <p className="mt-3 text-sm text-amber-700">Select a batch to enable reviewer actions.</p>
                     ) : (
                         <div className="mt-4 space-y-4">
                             <div>
@@ -440,7 +440,7 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                                     rows={4}
                                     value={comments}
                                     onChange={(e) => setComments(e.target.value)}
-                                    className="mt-1 w-full rounded-md border border-indigo-200 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    className="mt-1 w-full rounded-md border border-amber-200 px-3 py-2 text-sm shadow-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                                     placeholder="Add context for your decision…"
                                 />
                             </div>
@@ -508,7 +508,7 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                                 placeholder="Search code or PD#"
-                                className="rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                             />
                         </label>
                         <button
@@ -567,8 +567,8 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                                         const meta = archive.transactions as Record<string, unknown> | undefined;
                                         const preparedBy = (meta?.prepared_by as string) || '—';
                                         return (
-                                            <tr key={archive.code} className={isSelected ? 'bg-indigo-50/70 ring-1 ring-inset ring-indigo-100' : undefined}>
-                                                <td className="px-3 py-2 font-mono text-indigo-600">{formattedCode}</td>
+                                            <tr key={archive.code} className={isSelected ? 'bg-amber-50/70 ring-1 ring-inset ring-amber-100' : undefined}>
+                                                <td className="px-3 py-2 font-mono text-amber-600">{formattedCode}</td>
                                                 <td className="px-3 py-2">
                                                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${badge}`}>
                                                         {STAGE_META[archive.stage]?.label || archive.stage}
@@ -696,7 +696,7 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                                 maxLength={6}
                                 value={valueDateProc}
                                 onChange={(e) => setValueDateProc(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                                 placeholder="e.g. 150325"
                             />
                         </label>
@@ -707,7 +707,7 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                                 maxLength={12}
                                 value={valueDateDesc}
                                 onChange={(e) => setValueDateDesc(e.target.value)}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                             />
                         </label>
                         <label className="text-sm font-medium text-gray-700">
@@ -717,7 +717,7 @@ export function Reviewer({ onTabChange }: ReviewerProps) {
                                 maxLength={16}
                                 value={valueDateRemitter}
                                 onChange={(e) => setValueDateRemitter(e.target.value)}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                             />
                         </label>
                         {valueDateError && <p className="text-sm text-rose-600">{valueDateError}</p>}

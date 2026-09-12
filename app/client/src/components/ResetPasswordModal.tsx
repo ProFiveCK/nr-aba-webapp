@@ -103,7 +103,7 @@ export function ResetPasswordModal({ token, onClose, onSuccess }: ResetPasswordM
                                 maxLength={128}
                                 value={newPassword}
                                 onChange={(e) => setNewPassword(e.target.value)}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                                 placeholder="Enter new password"
                                 disabled={loading}
                                 autoFocus
@@ -125,7 +125,7 @@ export function ResetPasswordModal({ token, onClose, onSuccess }: ResetPasswordM
                                 maxLength={128}
                                 value={confirmPassword}
                                 onChange={(e) => setConfirmPassword(e.target.value)}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                                 placeholder="Confirm new password"
                                 disabled={loading}
                             />
@@ -143,7 +143,7 @@ export function ResetPasswordModal({ token, onClose, onSuccess }: ResetPasswordM
                             <button
                                 type="submit"
                                 disabled={loading}
-                                className="rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-60"
+                            className="rounded-full bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-amber-600 disabled:opacity-60"
                             >
                                 {loading ? 'Resetting...' : 'Reset Password'}
                             </button>

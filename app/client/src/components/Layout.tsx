@@ -1,27 +1,15 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/useAuth';
 import { ChangePasswordModal } from './ChangePasswordModal';
-import { AiHelper } from './AiHelper';
+import { getAllowedApps, SYSTEM_PAGES, type AppId, findApp } from '../lib/apps';
 
 interface LayoutProps {
     children: React.ReactNode;
-    activeTab: string;
-    onTabChange: (tab: string) => void;
+    activeApp: AppId;
+    onAppChange: (appId: AppId) => void;
 }
 
-const TABS = [
-    { id: 'generator', label: 'Generator', roles: ['user', 'banking', 'reviewer', 'admin'] },
-    { id: 'my-batches', label: 'My Batches', roles: ['user', 'banking', 'reviewer', 'admin'] },
-    { id: 'reader', label: 'Reader', roles: ['user', 'banking', 'reviewer', 'admin'] },
-    { id: 'banking', label: 'Banking', roles: ['banking', 'reviewer', 'admin'] },
-    { id: 'suppliers', label: 'Suppliers', roles: ['user', 'banking', 'reviewer', 'admin', 'payroll'] },
-    { id: 'payroll', label: 'Payroll', roles: ['payroll', 'admin'] },
-    { id: 'saas', label: 'SaaS', roles: ['reviewer', 'admin'] },
-    { id: 'reviewer', label: 'Reviewer', roles: ['reviewer', 'admin'] },
-    { id: 'admin', label: 'Admin', roles: ['admin'] },
-];
-
-export function Layout({ children, activeTab, onTabChange }: LayoutProps) {
+export function Layout({ children, activeApp, onAppChange }: LayoutProps) {
     const { user, logout } = useAuth();
     const [showPasswordModal, setShowPasswordModal] = useState(false);
     const [showSignOutModal, setShowSignOutModal] = useState(false);
@@ -39,11 +27,19 @@ export function Layout({ children, activeTab, onTabChange }: LayoutProps) {
         setShowPasswordModal(true);
     };
 
-    // Filter tabs based on user role
-    const visibleTabs = user ? TABS.filter(tab => tab.roles.includes(user.role)) : TABS;
-
-    // Display name with fallback
+    const app = findApp(activeApp);
     const displayName = user?.display_name || user?.email || 'User';
+
+    const allowedApps = getAllowedApps(user);
+    const systemPages = SYSTEM_PAGES.filter(
+        (p) => p.id !== 'dashboard' && (p.id !== 'admin' || user?.role === 'admin')
+    );
+    const navItems = [
+        { id: 'dashboard' as AppId, label: 'Dashboard' },
+        ...allowedApps.map((a) => ({ id: a.id, label: a.shortLabel })),
+        ...systemPages.map((p) => ({ id: p.id, label: p.shortLabel })),
+    ];
+    const [navOpen, setNavOpen] = useState(false);
 
     return (
         <>
@@ -51,11 +47,25 @@ export function Layout({ children, activeTab, onTabChange }: LayoutProps) {
             <div className="mx-auto max-w-7xl">
                 <div className="mb-4 flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-4 shadow-sm sm:flex-row sm:items-start sm:justify-between sm:px-5">
                     <div>
-                        <h1 className="text-2xl sm:text-3xl font-bold text-gray-950">ABA Workflow Tools</h1>
+                        <div className="flex items-center gap-2">
+                            <h1 className="text-2xl sm:text-3xl font-bold text-gray-950">Treasury Portal</h1>
+                            <button
+                                type="button"
+                                onClick={() => setNavOpen((v) => !v)}
+                                className="ml-1 rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 sm:hidden"
+                                aria-label="Toggle navigation"
+                            >
+                                ☰
+                            </button>
+                        </div>
                         <p className="text-sm text-gray-600 mt-1">
+                            {activeApp === 'dashboard'
+                                ? 'Choose an app to get started'
+                                : app?.description || app?.label || 'App'}
+                            {' · '}
                             Welcome back, <span className="font-medium">{displayName}</span>
                             {user?.role && (
-                                <span className="ml-2 inline-flex items-center rounded border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                                <span className="ml-2 inline-flex items-center rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
                                     {user.role}
                                 </span>
                             )}
@@ -64,7 +74,7 @@ export function Layout({ children, activeTab, onTabChange }: LayoutProps) {
                     <div className="flex items-center gap-2 flex-wrap">
                         <button
                             onClick={handleChangePassword}
-                            className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+                            className="rounded-md bg-amber-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-600"
                         >
                             Change Password
                         </button>
@@ -77,21 +87,24 @@ export function Layout({ children, activeTab, onTabChange }: LayoutProps) {
                     </div>
                 </div>
 
-                {/* Tabs */}
-                <div className="mb-4 flex gap-1 overflow-x-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-sm">
-                    {visibleTabs.map((tab) => (
-                        <button
-                            key={tab.id}
-                            onClick={() => onTabChange(tab.id)}
-                            className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors ${activeTab === tab.id
-                                    ? 'bg-indigo-50 text-indigo-700'
-                                    : 'text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800'
+                {/* Persistent navigation menu */}
+                <nav className={`mb-4 ${navOpen ? 'block' : 'hidden sm:block'}`}>
+                    <div className="flex flex-wrap gap-1 rounded-lg border border-zinc-200 bg-white p-1 shadow-sm">
+                        {navItems.map((item) => (
+                            <button
+                                key={item.id}
+                                onClick={() => { onAppChange(item.id); setNavOpen(false); }}
+                                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                                    activeApp === item.id
+                                        ? 'bg-amber-500 text-white'
+                                        : 'text-zinc-600 hover:bg-zinc-100'
                                 }`}
-                        >
-                            {tab.label}
-                        </button>
-                    ))}
-                </div>
+                            >
+                                {item.label}
+                            </button>
+                        ))}
+                    </div>
+                </nav>
 
                 <main>{children}</main>
             </div>
@@ -135,7 +148,6 @@ export function Layout({ children, activeTab, onTabChange }: LayoutProps) {
                 </div>
             </div>
         )}
-        <AiHelper />
         </>
     );
 }

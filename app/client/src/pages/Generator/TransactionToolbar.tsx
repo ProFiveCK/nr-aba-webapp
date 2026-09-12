@@ -48,7 +48,7 @@ export function TransactionToolbar({
                 </button>
                 <button
                     onClick={onAddRow}
-                    className="px-3 py-2 bg-indigo-500 text-white rounded-md hover:bg-indigo-600 text-sm"
+                    className="px-3 py-2 bg-amber-500 text-white rounded-md hover:bg-amber-600 text-sm"
                 >
                     Add Row
                 </button>
@@ -66,7 +66,7 @@ export function TransactionToolbar({
                     onChange={(e) => setBulkRef(e.target.value)}
                     placeholder="Lodgement Ref"
                     title="Max 18 characters"
-                    className="px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
                 <button
                     onClick={handleApplyBulk}
@@ -86,7 +86,7 @@ export function TransactionToolbar({
                     placeholder="Search transactions"
                     value={searchTerm}
                     onChange={(e) => onSearchChange(e.target.value)}
-                    className="px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 w-48 sm:w-64"
+                    className="px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 w-48 sm:w-64"
                     autoComplete="off"
                 />
             </div>

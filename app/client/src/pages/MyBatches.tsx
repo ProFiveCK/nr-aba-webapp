@@ -77,7 +77,7 @@ export function MyBatches() {
                             placeholder="Search code or PD#"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="flex-1 rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="flex-1 rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                         />
                         <button
                             onClick={() => loadBatches()}
@@ -130,7 +130,7 @@ export function MyBatches() {
                                                     {stageMetadata.label}
                                                 </span>
                                                 {batch.is_draft && (
-                                                    <span className="ml-1 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-800">
+                                                    <span className="ml-1 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
                                                         Draft
                                                     </span>
                                                 )}
@@ -146,7 +146,7 @@ export function MyBatches() {
                                             <td className="px-4 py-3 text-right">
                                                 <button
                                                     onClick={() => loadBatchDetail(batch.code)}
-                                                    className="px-3 py-1.5 rounded-md bg-indigo-500 text-xs font-medium text-white hover:bg-indigo-600"
+                                                    className="px-3 py-1.5 rounded-md bg-amber-500 text-xs font-medium text-white hover:bg-amber-500"
                                                 >
                                                     View
                                                 </button>

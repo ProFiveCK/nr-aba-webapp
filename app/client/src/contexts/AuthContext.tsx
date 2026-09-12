@@ -120,7 +120,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             throw new Error('Invalid login response');
         }
 
-        saveSession(response.token, response.reviewer, response.expires_at);
+        const reviewer: User = {
+            ...response.reviewer,
+            permissions: response.permissions || response.reviewer.permissions || {},
+        };
+        saveSession(response.token, reviewer, response.expires_at);
     }, [saveSession]);
 
     const updateUser = useCallback((updates: Partial<User>) => {
@@ -182,11 +186,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 scheduleSessionMaintenance();
 
                 try {
-                    const me = await apiClient.get<{ reviewer: User }>('/auth/me', { suppressAuthExpired: true });
+                    const me = await apiClient.get<{ reviewer: User; permissions?: Record<string, boolean> }>('/auth/me', { suppressAuthExpired: true });
                     if (cancelled) return;
                     if (sessionVersionRef.current !== restoreSessionVersion) return;
                     if (me?.reviewer) {
-                        setUser(me.reviewer);
+                        setUser({ ...me.reviewer, permissions: me.permissions || me.reviewer.permissions || {} });
                     }
                 } catch {
                     if (cancelled) return;
@@ -200,17 +204,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             } else {
                 // No saved session in localStorage — check if the cookie is still valid.
                 try {
-                    const me = await apiClient.get<{ reviewer: User }>('/auth/me', { suppressAuthExpired: true });
+                    const me = await apiClient.get<{ reviewer: User; permissions?: Record<string, boolean> }>('/auth/me', { suppressAuthExpired: true });
                     if (cancelled) return;
                     if (sessionVersionRef.current !== restoreSessionVersion) return;
                     if (me?.reviewer) {
-                        setUser(me.reviewer);
+                        const reviewer: User = { ...me.reviewer, permissions: me.permissions || me.reviewer.permissions || {} };
+                        setUser(reviewer);
                         // We don't have expiresAt from /auth/me; derive from session_expires_at if present.
-                        const expiresAt = (me.reviewer as User & { session_expires_at?: string }).session_expires_at
+                        const expiresAt = (reviewer as User & { session_expires_at?: string }).session_expires_at
                             || new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
                         setSessionExpiresAt(expiresAt);
-                        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ user: me.reviewer, expiresAt }));
-                        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(me.reviewer));
+                        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ user: reviewer, expiresAt }));
+                        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(reviewer));
                         localStorage.setItem(EXPIRES_STORAGE_KEY, expiresAt);
                         scheduleSessionMaintenance();
                     } else {

@@ -78,7 +78,7 @@ export function TransactionTable({
                         <th className="w-24">
                             <button
                                 type="button"
-                                className="inline-flex items-center font-bold hover:text-indigo-600"
+                                className="inline-flex items-center font-bold hover:text-amber-600"
                                 onClick={() => onSortChange('bsb')}
                             >
                                 BSB{renderSortIndicator('bsb')}
@@ -87,7 +87,7 @@ export function TransactionTable({
                         <th className="w-32">
                             <button
                                 type="button"
-                                className="inline-flex items-center font-bold hover:text-indigo-600"
+                                className="inline-flex items-center font-bold hover:text-amber-600"
                                 onClick={() => onSortChange('account')}
                             >
                                 Account{renderSortIndicator('account')}
@@ -96,7 +96,7 @@ export function TransactionTable({
                         <th className="w-28 text-right">
                             <button
                                 type="button"
-                                className="inline-flex items-center font-bold hover:text-indigo-600"
+                                className="inline-flex items-center font-bold hover:text-amber-600"
                                 onClick={() => onSortChange('amount')}
                             >
                                 Amount{renderSortIndicator('amount')}
@@ -105,7 +105,7 @@ export function TransactionTable({
                         <th className="min-w-[16rem]">
                             <button
                                 type="button"
-                                className="inline-flex items-center font-bold hover:text-indigo-600"
+                                className="inline-flex items-center font-bold hover:text-amber-600"
                                 onClick={() => onSortChange('accountTitle')}
                             >
                                 Account Title{renderSortIndicator('accountTitle')}
@@ -114,7 +114,7 @@ export function TransactionTable({
                         <th className="min-w-[14rem]">
                             <button
                                 type="button"
-                                className="inline-flex items-center font-bold hover:text-indigo-600"
+                                className="inline-flex items-center font-bold hover:text-amber-600"
                                 onClick={() => onSortChange('lodgementRef')}
                             >
                                 Lodgement Ref{renderSortIndicator('lodgementRef')}
@@ -160,7 +160,7 @@ export function TransactionTable({
                                             inputMode="numeric"
                                             value={formatBsbValue(tx.bsb || '')}
                                             onChange={(e) => onTransactionUpdate(originalIndex, 'bsb', formatBsbValue(e.target.value))}
-                                            className="w-full max-w-[6rem] bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-indigo-300 px-1 rounded uppercase"
+                                            className="w-full max-w-[6rem] bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-amber-300 px-1 rounded uppercase"
                                             placeholder="123-456"
                                         />
                                     </td>
@@ -169,7 +169,7 @@ export function TransactionTable({
                                             type="text"
                                             value={tx.account}
                                             onChange={(e) => onTransactionUpdate(originalIndex, 'account', e.target.value)}
-                                            className="w-full max-w-[8rem] bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-indigo-300 px-1 rounded"
+                                            className="w-full max-w-[8rem] bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-amber-300 px-1 rounded"
                                         />
                                     </td>
                                     <td>
@@ -179,7 +179,7 @@ export function TransactionTable({
                                             value={formatAmountDisplay(originalIndex, Number(tx.amount || 0))}
                                             onChange={(e) => handleAmountChange(originalIndex, e.target.value)}
                                             onBlur={() => handleAmountBlur(originalIndex)}
-                                            className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-indigo-300 text-right px-1 rounded"
+                                            className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-amber-300 text-right px-1 rounded"
                                         />
                                     </td>
                                     <td>
@@ -187,7 +187,7 @@ export function TransactionTable({
                                             type="text"
                                             value={tx.accountTitle}
                                             onChange={(e) => onTransactionUpdate(originalIndex, 'accountTitle', e.target.value)}
-                                            className="w-full min-w-[16rem] bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-indigo-300 px-1 rounded"
+                                            className="w-full min-w-[16rem] bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-amber-300 px-1 rounded"
                                         />
                                     </td>
                                     <td>

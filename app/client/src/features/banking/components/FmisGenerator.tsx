@@ -149,7 +149,7 @@ export function FmisGenerator({
                     type="button"
                     onClick={handleDownload}
                     disabled={!output}
-                    className="rounded-full bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-60"
+                    className="rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-400 disabled:opacity-60"
                 >
                     Download TXT
                 </button>

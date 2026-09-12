@@ -130,7 +130,7 @@ export function Payroll() {
                                 type="file"
                                 accept={acceptedTypes}
                                 onChange={handleFileChange}
-                                className="mt-3 block w-full rounded-lg border border-gray-300 bg-white px-3 py-3 text-sm text-gray-700 file:mr-4 file:rounded-full file:border-0 file:bg-indigo-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-indigo-700 hover:file:bg-indigo-100"
+                                className="mt-3 block w-full rounded-lg border border-gray-300 bg-white px-3 py-3 text-sm text-gray-700 file:mr-4 file:rounded-full file:border-0 file:bg-amber-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-amber-700 hover:file:bg-amber-100"
                             />
                         </label>
                         <p className="mt-3 text-xs text-gray-500">

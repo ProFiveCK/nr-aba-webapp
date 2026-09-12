@@ -64,7 +64,7 @@ export function HeaderForm({ headerData, onHeaderChange }: HeaderFormProps) {
                                 id="header-preset"
                                 onChange={handlePresetChange}
                                 value={headerData.__preset && allowedPresets.includes(headerData.__preset) ? headerData.__preset : allowedPresets[0] || ''}
-                                className="mt-1 w-full rounded-md border border-gray-300 bg-yellow-50 px-2 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="mt-1 w-full rounded-md border border-gray-300 bg-yellow-50 px-2 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                             >
                                 {presetOptions.map((key) => (
                                     <option key={key} value={key}>
@@ -181,7 +181,7 @@ export function HeaderForm({ headerData, onHeaderChange }: HeaderFormProps) {
                             type="checkbox"
                             checked
                             disabled
-                            className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
                         />
                         <label htmlFor="balance_required" className="ml-2 text-xs font-medium text-gray-700">
                             Balancing entry always enabled

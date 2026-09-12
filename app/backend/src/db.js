@@ -183,6 +183,7 @@ export async function initSchema() {
     await client.query('ALTER TABLE reviewers DROP COLUMN IF EXISTS default_bank_preset');
     await client.query('ALTER TABLE reviewers ALTER COLUMN notify_on_submission SET DEFAULT TRUE');
     await client.query('UPDATE reviewers SET notify_on_submission = TRUE WHERE notify_on_submission IS NULL');
+    await client.query('ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT \'{}\'');
     await client.query('ALTER TABLE reviewers DROP CONSTRAINT IF EXISTS reviewers_role_check');
     await client.query(`
       ALTER TABLE reviewers
@@ -455,6 +456,66 @@ export async function initSchema() {
          )
       ON CONFLICT (department_code, division_code) DO NOTHING
     `);
+
+    // FOREX Telegraphic Transfer module
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS forex_tt_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        request_id TEXT NOT NULL UNIQUE,
+        root_request_id UUID NOT NULL DEFAULT gen_random_uuid(),
+        submitted_by UUID REFERENCES reviewers(id),
+        department_code TEXT,
+        division_code TEXT NOT NULL DEFAULT '00',
+        status TEXT NOT NULL DEFAULT 'draft'
+          CHECK (status IN ('draft','submitted','claimed','processing','needs_changes','approved','cancelled')),
+        version INTEGER NOT NULL DEFAULT 1,
+        form_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+        bank_confirmation TEXT,
+        claimed_by UUID REFERENCES reviewers(id),
+        claimed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        deleted_at TIMESTAMPTZ
+      );
+    `);
+    // Existing installations may predate the bank confirmation field.
+    await client.query('ALTER TABLE forex_tt_requests ADD COLUMN IF NOT EXISTS bank_confirmation TEXT');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_forex_tt_requests_root ON forex_tt_requests(root_request_id)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_forex_tt_requests_submitted_by ON forex_tt_requests(submitted_by)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_forex_tt_requests_status ON forex_tt_requests(status, updated_at DESC)');
+    // Ensure existing tables get the default and any orphaned rows are backfilled.
+    await client.query('ALTER TABLE forex_tt_requests ALTER COLUMN root_request_id SET DEFAULT gen_random_uuid()');
+    await client.query('UPDATE forex_tt_requests SET root_request_id = id WHERE root_request_id IS NULL');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS forex_tt_reviews (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        request_id UUID NOT NULL REFERENCES forex_tt_requests(id) ON DELETE CASCADE,
+        reviewer TEXT NOT NULL,
+        actor_id UUID REFERENCES reviewers(id),
+        status TEXT NOT NULL,
+        comments TEXT,
+        metadata JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_forex_tt_reviews_request_id ON forex_tt_reviews(request_id)');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS forex_tt_attachments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        request_id UUID NOT NULL REFERENCES forex_tt_requests(id) ON DELETE CASCADE,
+        category TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        file_data BYTEA NOT NULL,
+        checksum TEXT NOT NULL,
+        superseded_at TIMESTAMPTZ,
+        uploaded_by UUID REFERENCES reviewers(id),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_forex_tt_attachments_request_id ON forex_tt_attachments(request_id)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_forex_tt_attachments_category ON forex_tt_attachments(request_id, category) WHERE superseded_at IS NULL');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS login_attempts (

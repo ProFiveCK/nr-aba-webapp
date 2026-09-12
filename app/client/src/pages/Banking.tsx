@@ -132,11 +132,11 @@ export function Banking() {
     }, [checkIssues]);
     const previewRecords = useMemo(() => checkRecords.slice(0, PREVIEW_LIMIT), [checkRecords]);
 
-    if (!user || (user.role !== 'banking' && user.role !== 'reviewer' && user.role !== 'admin')) {
+    if (!user || (user.role !== 'banking' && user.role !== 'admin')) {
         return (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-900">
                 <h2 className="text-xl font-semibold">Banking access required</h2>
-                <p className="mt-2 text-sm text-amber-800">Sign in with a banking, reviewer, or admin account to use these tools.</p>
+                <p className="mt-2 text-sm text-amber-800">Sign in with a banking or admin account to use these tools.</p>
             </div>
         );
     }
@@ -482,7 +482,7 @@ export function Banking() {
                     type="button"
                     onClick={handleDownloadBai}
                     disabled={!baiOutput}
-                    className="rounded-full bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-60"
+                    className="rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-400 disabled:opacity-60"
                 >
                     Download BAI2
                 </button>
@@ -541,7 +541,7 @@ export function Banking() {
                     type="button"
                     onClick={handleRunCheck}
                     disabled={isChecking}
-                    className="rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
+                    className="rounded-full bg-amber-500 px-5 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:opacity-60"
                 >
                     {isChecking ? 'Checking…' : 'Run checks'}
                 </button>
@@ -653,7 +653,7 @@ export function Banking() {
                                 type="button"
                                 onClick={() => setActiveTool(tab.id)}
                                 className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-                                    isActive ? 'bg-indigo-600 text-white shadow' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                    isActive ? 'bg-amber-500 text-white shadow' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                                 }`}
                             >
                                 {tab.label}

@@ -6,28 +6,16 @@ import { Login } from './pages/Login';
 import { Layout } from './components/Layout';
 import { ResetPasswordModal } from './components/ResetPasswordModal';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
+import { Dashboard } from './pages/Dashboard';
+import { AbaWorkflow } from './pages/AbaWorkflow';
+import { Tools } from './pages/Tools';
+import { ForexTTApp } from './pages/ForexTTApp';
+import { MyFolder } from './pages/MyFolder';
+import type { AppId } from './lib/apps';
 
-const Generator = lazy(() => import('./pages/Generator').then((module) => ({ default: module.Generator })));
-const MyBatches = lazy(() => import('./pages/MyBatches').then((module) => ({ default: module.MyBatches })));
-const Reader = lazy(() => import('./pages/Reader').then((module) => ({ default: module.Reader })));
 const Banking = lazy(() => import('./pages/Banking').then((module) => ({ default: module.Banking })));
 const Payroll = lazy(() => import('./pages/Payroll').then((module) => ({ default: module.Payroll })));
-const Saas = lazy(() => import('./pages/Saas').then((module) => ({ default: module.Saas })));
-const Reviewer = lazy(() => import('./pages/Reviewer').then((module) => ({ default: module.Reviewer })));
 const Admin = lazy(() => import('./pages/Admin').then((module) => ({ default: module.Admin })));
-const Suppliers = lazy(() => import('./pages/Suppliers').then((module) => ({ default: module.Suppliers })));
-
-const ROLE_TABS: Record<string, string[]> = {
-  user: ['generator', 'my-batches', 'reader', 'suppliers'],
-  banking: ['generator', 'my-batches', 'reader', 'banking', 'suppliers'],
-  reviewer: ['generator', 'my-batches', 'reader', 'banking', 'suppliers', 'saas', 'reviewer'],
-  admin: ['generator', 'my-batches', 'reader', 'banking', 'suppliers', 'payroll', 'saas', 'reviewer', 'admin'],
-  payroll: ['payroll', 'suppliers'],
-};
-
-function getDefaultTab(role?: string | null) {
-  return ROLE_TABS[role || '']?.[0] || 'generator';
-}
 
 declare global {
   interface Window {
@@ -36,8 +24,8 @@ declare global {
 }
 
 function AppContent() {
-  const { isAuthenticated, isLoading, logout, user, requiresPasswordChange } = useAuth();
-  const [activeTab, setActiveTab] = useState('generator');
+  const { isAuthenticated, isLoading, logout, requiresPasswordChange } = useAuth();
+  const [activeApp, setActiveApp] = useState<AppId>('dashboard');
   const [resetToken, setResetToken] = useState<string | null>(() => {
     const hash = window.location.hash;
     if (hash.startsWith('#reset-password=')) {
@@ -61,9 +49,6 @@ function AppContent() {
     };
   }, [logout]);
 
-  const allowedTabs = ROLE_TABS[user?.role || ''] || [];
-  const resolvedActiveTab = allowedTabs.includes(activeTab) ? activeTab : getDefaultTab(user?.role);
-
   const handleResetPasswordClose = () => {
     setResetToken(null);
   };
@@ -82,7 +67,7 @@ function AppContent() {
       <>
         <div className="min-h-screen flex items-center justify-center bg-gray-100">
           <div className="text-center">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
             <p className="mt-4 text-gray-600">Loading...</p>
           </div>
         </div>
@@ -113,26 +98,24 @@ function AppContent() {
     );
   }
 
-  // Show main app if authenticated
   return (
     <>
-      <Layout activeTab={resolvedActiveTab} onTabChange={setActiveTab}>
+      <Layout activeApp={activeApp} onAppChange={setActiveApp}>
         <Suspense
           fallback={
             <div className="flex h-full min-h-96 items-center justify-center">
-              <div className="inline-block h-8 w-8 animate-spin rounded-full border-b-2 border-indigo-600"></div>
+              <div className="inline-block h-8 w-8 animate-spin rounded-full border-b-2 border-amber-500"></div>
             </div>
           }
         >
-          {resolvedActiveTab === 'generator' && <Generator />}
-          {resolvedActiveTab === 'my-batches' && <MyBatches />}
-          {resolvedActiveTab === 'reader' && <Reader onTabChange={setActiveTab} />}
-          {resolvedActiveTab === 'banking' && <Banking />}
-          {resolvedActiveTab === 'payroll' && <Payroll />}
-          {resolvedActiveTab === 'saas' && <Saas />}
-          {resolvedActiveTab === 'reviewer' && <Reviewer onTabChange={setActiveTab} />}
-          {resolvedActiveTab === 'admin' && <Admin />}
-          {resolvedActiveTab === 'suppliers' && <Suppliers />}
+          {activeApp === 'dashboard' && <Dashboard onOpenApp={setActiveApp} />}
+          {activeApp === 'aba' && <AbaWorkflow />}
+          {activeApp === 'banking' && <Banking />}
+          {activeApp === 'payroll' && <Payroll />}
+          {activeApp === 'tools' && <Tools />}
+          {activeApp === 'forex-tt' && <ForexTTApp />}
+          {activeApp === 'my-folder' && <MyFolder />}
+          {activeApp === 'admin' && <Admin />}
         </Suspense>
       </Layout>
       {resetToken && (

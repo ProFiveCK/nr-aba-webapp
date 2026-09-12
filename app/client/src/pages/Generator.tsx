@@ -635,7 +635,7 @@ export function Generator() {
                                 maxLength={2}
                                 value={commitForm.deptCode}
                                 onChange={(e) => handleCommitFieldChange('deptCode', e.target.value)}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                                 placeholder="e.g. 12"
                                 disabled={commitLoading || (!canEditDeptCode && !!autoDeptCode)}
                             />
@@ -657,7 +657,7 @@ export function Generator() {
                                 title="Enter the six-digit FMIS PD number"
                                 value={commitForm.paymentReference}
                                 onChange={(e) => handleCommitFieldChange('paymentReference', e.target.value)}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                                 placeholder="123456"
                                 disabled={commitLoading || (commitForm.useManualReference && canUseManualReference)}
                             />
@@ -670,7 +670,7 @@ export function Generator() {
                                         type="checkbox"
                                         checked={commitForm.useManualReference}
                                         onChange={(e) => handleCommitFieldChange('useManualReference', e.target.checked)}
-                                        className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                        className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
                                         disabled={commitLoading}
                                     />
                                     Use manual reference
@@ -680,7 +680,7 @@ export function Generator() {
                                         type="text"
                                         value={commitForm.manualReference}
                                         onChange={(e) => handleCommitFieldChange('manualReference', e.target.value)}
-                                        className="mt-2 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                        className="mt-2 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                                         placeholder="Urgent-1234"
                                         disabled={commitLoading}
                                     />
@@ -707,7 +707,7 @@ export function Generator() {
                                 rows={3}
                                 value={commitForm.notes}
                                 onChange={(e) => handleCommitFieldChange('notes', e.target.value)}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                                 placeholder="Reference or comments"
                                 disabled={commitLoading}
                             />

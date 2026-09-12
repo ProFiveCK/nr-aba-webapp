@@ -8,10 +8,10 @@ import { ReaderTable } from './Reader/ReaderTable';
 import { fromBase64 } from '../lib/utils';
 
 interface ReaderProps {
-    onTabChange: (tab: string) => void;
+    onSwitchToGenerator: () => void;
 }
 
-export function Reader({ onTabChange }: ReaderProps) {
+export function Reader({ onSwitchToGenerator }: ReaderProps) {
     const [initialImport] = useState(() => loadSharedAbaImport());
     const [parsedData, setParsedData] = useState<ParsedAbaResult | null>(initialImport.parsedData);
     const [error, setError] = useState<string | null>(initialImport.error);
@@ -73,7 +73,7 @@ export function Reader({ onTabChange }: ReaderProps) {
         localStorage.setItem('aba_generator_import', JSON.stringify(creditTransactions));
 
         // Switch to Generator tab immediately
-        onTabChange('generator');
+        onSwitchToGenerator();
     };
 
     return (
@@ -94,7 +94,7 @@ export function Reader({ onTabChange }: ReaderProps) {
                         />
                         <button
                             onClick={() => fileInputRef.current?.click()}
-                            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-medium shadow-sm transition-colors"
+                            className="px-4 py-2 bg-amber-500 text-white rounded-md hover:bg-amber-700 font-medium shadow-sm transition-colors"
                         >
                             Open ABA File
                         </button>
@@ -132,7 +132,7 @@ export function Reader({ onTabChange }: ReaderProps) {
                         <p className="mt-1 text-gray-500">Upload an ABA file to view its contents.</p>
                         <button
                             onClick={() => fileInputRef.current?.click()}
-                            className="mt-4 text-indigo-600 hover:text-indigo-500 font-medium"
+                            className="mt-4 text-amber-600 hover:text-amber-500 font-medium"
                         >
                             Select a file
                         </button>

@@ -179,7 +179,7 @@ export function Login() {
                                     autoComplete="email"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                                     placeholder="name@example.nr"
                                     disabled={isLoading}
                                 />
@@ -197,7 +197,7 @@ export function Login() {
                                     autoComplete="current-password"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                                     placeholder="••••••••"
                                     disabled={isLoading}
                                 />
@@ -214,7 +214,7 @@ export function Login() {
                             <button
                                 type="button"
                                 onClick={() => setResetOpen(true)}
-                                className="w-full text-xs text-center text-indigo-600 hover:text-indigo-500 font-medium"
+                                className="w-full text-xs text-center text-amber-600 hover:text-amber-500 font-medium"
                                 disabled={isLoading}
                             >
                                 Forgot password?
@@ -234,7 +234,7 @@ export function Login() {
                                     maxLength={40}
                                     value={signupName}
                                     onChange={(e) => setSignupName(e.target.value)}
-                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                                     placeholder="Your name"
                                     disabled={isLoading}
                                 />
@@ -251,7 +251,7 @@ export function Login() {
                                     autoComplete="email"
                                     value={signupEmail}
                                     onChange={(e) => setSignupEmail(e.target.value)}
-                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                                     placeholder="name@example.nr"
                                     disabled={isLoading}
                                 />
@@ -269,7 +269,7 @@ export function Login() {
                                     autoComplete="new-password"
                                     value={signupPassword}
                                     onChange={(e) => setSignupPassword(e.target.value)}
-                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                                     placeholder="••••••••"
                                     disabled={isLoading}
                                 />
@@ -284,7 +284,7 @@ export function Login() {
                                     required
                                     value={signupDept}
                                     onChange={(e) => setSignupDept(e.target.value)}
-                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
+                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white"
                                     disabled={isLoading || departmentsLoading}
                                 >
                                     <option value="">{departmentsLoading ? 'Loading departments...' : 'Select a department'}</option>
@@ -300,7 +300,7 @@ export function Login() {
                                         <button
                                             type="button"
                                             onClick={() => loadDepartments()}
-                                            className="text-indigo-600 hover:text-indigo-500 font-medium underline"
+                                            className="text-amber-600 hover:text-amber-500 font-medium underline"
                                             disabled={departmentsLoading}
                                         >
                                             Retry
@@ -328,7 +328,7 @@ export function Login() {
                                 setError('');
                                 setSuccessMessage('');
                             }}
-                            className="text-sm font-medium text-indigo-600 hover:text-indigo-500"
+                            className="text-sm font-medium text-amber-600 hover:text-amber-500"
                         >
                             {isLogin ? 'Need an account? Sign Up' : 'Already have an account? Sign In'}
                         </button>
@@ -372,7 +372,7 @@ export function Login() {
                                 required
                                 value={resetEmail}
                                 onChange={(e) => setResetEmail(e.target.value)}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                                 placeholder="name@example.nr"
                             />
                         </label>

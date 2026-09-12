@@ -10,12 +10,19 @@ import { Dashboard } from './pages/Dashboard';
 import { AbaWorkflow } from './pages/AbaWorkflow';
 import { Tools } from './pages/Tools';
 import { ForexTTApp } from './pages/ForexTTApp';
-import { MyFolder } from './pages/MyFolder';
-import type { AppId } from './lib/apps';
+import { PublicHealthApp } from './pages/PublicHealthApp';
+import { findApp, type AppId } from './lib/apps';
+import { readHash, setHash } from './lib/hash';
 
 const Banking = lazy(() => import('./pages/Banking').then((module) => ({ default: module.Banking })));
 const Payroll = lazy(() => import('./pages/Payroll').then((module) => ({ default: module.Payroll })));
 const Admin = lazy(() => import('./pages/Admin').then((module) => ({ default: module.Admin })));
+
+function appIdFromHash(): AppId | null {
+  const { app } = readHash();
+  if (!app || app.startsWith('reset-password=')) return null;
+  return findApp(app as AppId) ? (app as AppId) : null;
+}
 
 declare global {
   interface Window {
@@ -25,7 +32,7 @@ declare global {
 
 function AppContent() {
   const { isAuthenticated, isLoading, logout, requiresPasswordChange } = useAuth();
-  const [activeApp, setActiveApp] = useState<AppId>('dashboard');
+  const [activeApp, setActiveApp] = useState<AppId>(() => appIdFromHash() ?? 'dashboard');
   const [resetToken, setResetToken] = useState<string | null>(() => {
     const hash = window.location.hash;
     if (hash.startsWith('#reset-password=')) {
@@ -60,6 +67,20 @@ function AppContent() {
       logout();
     }
   };
+
+  const navigate = (appId: AppId) => {
+    setActiveApp(appId);
+    setHash(appId);
+  };
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const fromHash = appIdFromHash();
+      if (fromHash) setActiveApp(fromHash);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   // Show loading state while checking authentication
   if (isLoading) {
@@ -100,7 +121,7 @@ function AppContent() {
 
   return (
     <>
-      <Layout activeApp={activeApp} onAppChange={setActiveApp}>
+      <Layout activeApp={activeApp} onAppChange={navigate}>
         <Suspense
           fallback={
             <div className="flex h-full min-h-96 items-center justify-center">
@@ -108,13 +129,13 @@ function AppContent() {
             </div>
           }
         >
-          {activeApp === 'dashboard' && <Dashboard onOpenApp={setActiveApp} />}
+          {activeApp === 'dashboard' && <Dashboard onOpenApp={navigate} />}
           {activeApp === 'aba' && <AbaWorkflow />}
           {activeApp === 'banking' && <Banking />}
           {activeApp === 'payroll' && <Payroll />}
           {activeApp === 'tools' && <Tools />}
           {activeApp === 'forex-tt' && <ForexTTApp />}
-          {activeApp === 'my-folder' && <MyFolder />}
+          {activeApp === 'public-health' && <PublicHealthApp />}
           {activeApp === 'admin' && <Admin />}
         </Suspense>
       </Layout>

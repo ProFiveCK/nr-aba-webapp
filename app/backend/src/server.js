@@ -17,7 +17,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import forexTTRouter from './routes/forexTT.js';
 import healthRouter from './routes/health.js';
+import publicHealthRouter from './routes/public-health.js';
 import { setTestingMode } from './services/notificationService.js';
+import { BATCH_WORKFLOW_TYPES, workflowRequiresApproval, SIGNUP_ROLES } from './config.js';
 
 dotenv.config();
 
@@ -37,7 +39,7 @@ const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASS = process.env.SMTP_PASS;
 const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER || 'no-reply@example.com';
 const REPLY_TO = process.env.REPLY_TO_EMAIL;
-const ACCOUNT_ROLES = ['user', 'banking', 'reviewer', 'admin', 'payroll'];
+const ACCOUNT_ROLES = ['user', 'banking', 'reviewer', 'admin', 'payroll', 'public_health'];
 const REVIEW_ACCESS_ROLES = ['reviewer', 'admin'];
 const ACCOUNT_STATUSES = ['active', 'inactive'];
 const BSB_REGEX = /^[0-9]{3}-[0-9]{3}$/;
@@ -298,9 +300,41 @@ app.get('/health', async (_req, res) => {
 });
 
 app.use('/api/forex-tt', forexTTRouter);
+app.use('/api/public-health', publicHealthRouter);
 app.use('/api', healthRouter);
 
 // ===== Authentication =====
+function defaultPermissionsForRole(role) {
+  switch (role) {
+    case 'user':
+      return { submit_aba: true, submit_forex_tt: true };
+    case 'reviewer':
+      return {
+        review_aba: true,
+        review_forex_tt: true,
+        notify_aba_submissions: true,
+        notify_forex_tt_submissions: true,
+        public_health_review: true,
+      };
+    case 'public_health':
+      return { public_health_manage: true };
+    case 'admin':
+      return {
+        admin: true,
+        submit_aba: true,
+        review_aba: true,
+        notify_aba_submissions: true,
+        submit_forex_tt: true,
+        review_forex_tt: true,
+        notify_forex_tt_submissions: true,
+        public_health_manage: true,
+        public_health_review: true,
+      };
+    default:
+      return {};
+  }
+}
+
 // ===== Signup Request =====
 // List pending signup requests (admin only)
 app.get('/api/admin/signup-requests', requireAuth(['admin']), async (_req, res) => {
@@ -309,6 +343,7 @@ app.get('/api/admin/signup-requests', requireAuth(['admin']), async (_req, res) 
             sr.email,
             sr.name,
             sr.department_code,
+            sr.requested_role,
             sr.status,
             sr.created_at,
             sr.reviewed_at,
@@ -323,7 +358,8 @@ app.get('/api/admin/signup-requests', requireAuth(['admin']), async (_req, res) 
   res.json(rows);
 });
 
-// Approve signup request (admin only)
+// Approve signup request (admin only). The admin may override the requested role
+// by passing `role` in the body (e.g. correcting a wrong app selection).
 app.post('/api/admin/signup-requests/:id/approve', requireAuth(['admin']), async (req, res) => {
   const requestId = req.params.id;
   const reviewerId = req.user.id;
@@ -333,16 +369,23 @@ app.post('/api/admin/signup-requests/:id/approve', requireAuth(['admin']), async
   if (!rows.length) return res.status(404).json({ message: 'Signup request not found.' });
   const reqData = rows[0];
   if (reqData.status !== 'pending') return res.status(400).json({ message: 'Request already processed.' });
+
+  const requestedRole = req.body.role || reqData.requested_role || 'user';
+  if (!SIGNUP_ROLES.includes(requestedRole) && requestedRole !== 'admin') {
+    return res.status(400).json({ message: 'Invalid role.' });
+  }
+  const permissions = defaultPermissionsForRole(requestedRole);
+
   // Create reviewer account
   try {
     await pool.query(
-      `INSERT INTO reviewers (email, display_name, role, status, password_hash, must_change_password, department_code)
-       VALUES ($1, $2, 'user', 'active', $3, FALSE, $4)`,
-      [reqData.email, reqData.name, reqData.password_hash, reqData.department_code]
+      `INSERT INTO reviewers (email, display_name, role, status, password_hash, must_change_password, department_code, permissions)
+       VALUES ($1, $2, $3, 'active', $4, FALSE, $5, $6)`,
+      [reqData.email, reqData.name, requestedRole, reqData.password_hash, reqData.department_code, JSON.stringify(permissions)]
     );
     await pool.query(
-      `UPDATE signup_requests SET status = 'approved', reviewed_at = NOW(), reviewer_id = $1, review_comment = $2 WHERE id = $3`,
-      [reviewerId, review_comment || null, requestId]
+      `UPDATE signup_requests SET status = 'approved', reviewed_at = NOW(), reviewer_id = $1, review_comment = $2, requested_role = $3 WHERE id = $4`,
+      [reviewerId, review_comment || null, requestedRole, requestId]
     );
     // Send email to user
     await sendMail({
@@ -387,7 +430,8 @@ app.post(
     body('email').isEmail(),
     body('name').isString().isLength({ min: 1, max: 100 }),
     body('password').isString().isLength({ min: 6, max: 128 }),
-    body('department_code').optional({ nullable: true }).matches(/^\d{2}$/)
+    body('department_code').optional({ nullable: true }).matches(/^\d{2}$/),
+    body('requested_role').optional({ nullable: true }).isIn(SIGNUP_ROLES)
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -395,6 +439,7 @@ app.post(
     const name = req.body.name.trim();
     const password = req.body.password;
     const departmentCode = req.body.department_code || null;
+    const requestedRole = SIGNUP_ROLES.includes(req.body.requested_role) ? req.body.requested_role : 'user';
     const passwordHash = await bcrypt.hash(password, PASS_HASH_ROUNDS);
     try {
       const { rows: existingAccounts } = await pool.query(
@@ -423,15 +468,16 @@ app.post(
              SET name = $2,
                  password_hash = $3,
                  department_code = $4,
+                 requested_role = $5,
                  status = 'pending',
                  created_at = NOW(),
                  reviewed_at = NULL,
                  reviewer_id = NULL,
                  review_comment = NULL
            WHERE email = $1`,
-          [email, name, passwordHash, departmentCode]
+          [email, name, passwordHash, departmentCode, requestedRole]
         );
-        notifyAdminsOfSignupRequest({ email, name, departmentCode }).catch((err) => {
+        notifyAdminsOfSignupRequest({ email, name, departmentCode, requestedRole }).catch((err) => {
           console.error('Failed to notify admins of signup request', err);
         });
         res.status(200).json({ message: 'Signup request resubmitted. Await admin approval.' });
@@ -439,11 +485,11 @@ app.post(
       }
 
       await pool.query(
-        `INSERT INTO signup_requests (email, name, password_hash, department_code)
-         VALUES ($1, $2, $3, $4)`,
-        [email, name, passwordHash, departmentCode]
+        `INSERT INTO signup_requests (email, name, password_hash, department_code, requested_role)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [email, name, passwordHash, departmentCode, requestedRole]
       );
-      notifyAdminsOfSignupRequest({ email, name, departmentCode }).catch((err) => {
+      notifyAdminsOfSignupRequest({ email, name, departmentCode, requestedRole }).catch((err) => {
         console.error('Failed to notify admins of signup request', err);
       });
       res.status(201).json({ message: 'Signup request submitted. Await admin approval.' });
@@ -1732,7 +1778,7 @@ If you did not request this change, contact an administrator immediately.
   await sendMail({ to: email, subject: 'RON Treasury ABA reviewer password reset', text });
 }
 
-async function notifyAdminsOfSignupRequest({ email, name, departmentCode }) {
+async function notifyAdminsOfSignupRequest({ email, name, departmentCode, requestedRole }) {
   if (!mailTransport || testingModeEnabled) return;
   
   // Check if support_email is configured in smtp_settings
@@ -1758,8 +1804,9 @@ async function notifyAdminsOfSignupRequest({ email, name, departmentCode }) {
   if (!recipients.length) return;
   const signupName = name || email;
   const deptLine = departmentCode ? `Department Head: ${departmentCode}\n` : '';
+  const roleLine = requestedRole ? `Requested access: ${requestedRole}\n` : '';
   const adminLink = `${FRONTEND_BASE_URL}#admin`;
-  const text = `A new signup request is waiting for review.\n\nName: ${signupName}\nEmail: ${email}\n${deptLine}\nReview the request from the Admin tab: ${adminLink}\n`;
+  const text = `A new signup request is waiting for review.\n\nName: ${signupName}\nEmail: ${email}\n${deptLine}${roleLine}\nReview the request from the Admin tab: ${adminLink}\n`;
   const subject = `Signup request submitted by ${signupName}`;
   const [primaryRecipient, ...bccRecipients] = recipients;
   const mailOptions = { to: primaryRecipient, subject, text };
@@ -1811,6 +1858,35 @@ Stage: submitted
 
 Review it here: ${reviewLink}
 `;
+  const [primaryRecipient, ...bccRecipients] = recipients;
+  const mailOptions = {
+    to: primaryRecipient,
+    subject,
+    text,
+    replyTo: batch.submitted_email || metadata?.submitted_by_email
+  };
+  if (bccRecipients.length) mailOptions.bcc = bccRecipients;
+  await sendMail(mailOptions);
+}
+
+async function notifyPublicHealthReviewers(batch, metadata) {
+  if (!mailTransport || testingModeEnabled) return;
+  const { rows } = await pool.query(
+    `SELECT email, display_name FROM reviewers
+      WHERE status = 'active'
+        AND role IN ('reviewer', 'admin')
+        AND notify_on_submission = TRUE`
+  );
+  if (!rows.length) return;
+  const recipients = Array.from(new Set(rows.map((row) => lowerEmail(row.email)).filter(Boolean)));
+  if (!recipients.length) return;
+  const formattedCode = formatBatchCode(batch.code);
+  const paidDate = metadata?.paid_date || 'N/A';
+  const participantCount = metadata?.participant_count ?? 'N/A';
+  const submitter = metadata?.prepared_by || batch.submitted_email || 'Unknown';
+  const reviewLink = `${FRONTEND_BASE_URL}#public-health/review`;
+  const subject = `Wellness Program pay run submitted — ${formattedCode}`;
+  const text = `A new Wellness Program (Public Health) allowance pay run has been submitted for review.\n\nReference code: ${formattedCode}\nPaid date: ${paidDate}\nParticipants: ${participantCount}\nSubmitted by: ${submitter}\n\nReview it here: ${reviewLink}\n`;
   const [primaryRecipient, ...bccRecipients] = recipients;
   const mailOptions = {
     to: primaryRecipient,
@@ -2712,11 +2788,13 @@ app.post(
     body('metadata').optional({ nullable: true }),
     body('checksum').optional({ nullable: true }).isString(),
     body('suggested_file_name').optional({ nullable: true }).isString(),
-    body('dept_code').optional({ nullable: true }).matches(/^\d{2}$/)
+    body('dept_code').optional({ nullable: true }).matches(/^\d{2}$/),
+    body('workflow_type').optional({ nullable: true }).isIn(BATCH_WORKFLOW_TYPES)
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const account = req.user;
+    const workflowType = req.body.workflow_type || 'aba';
     const pdNumber = String(req.body.pd_number || '').trim();
     if (!pdNumber) {
       res.status(400).json({ message: 'PD number is required.' });
@@ -2856,6 +2934,8 @@ app.post(
 
     const batchId = crypto.randomUUID();
     if (!rootBatchId) rootBatchId = batchId;
+    // Repository pipelines skip the reviewer gate and are filed as approved immediately.
+    const initialStage = workflowRequiresApproval(workflowType) ? 'submitted' : 'approved';
     let insertedRow = null;
     for (let attempt = 0; attempt < 5 && !insertedRow; attempt++) {
       const code = `${prefix}${String(sequence).padStart(2, '0')}`;
@@ -2864,11 +2944,11 @@ app.post(
         const { rows } = await pool.query(
           `INSERT INTO batch_archives (
              batch_id, code, root_batch_id, department_code, file_name, file_path, checksum,
-             duplicate_report_path, transactions, file_data, pd_number, submitted_email,
+             duplicate_report_path, transactions, workflow_type, file_data, pd_number, submitted_email,
              submitted_by, stage, stage_updated_at, is_draft
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'submitted', $14, FALSE)
-           RETURNING batch_id, code, root_batch_id, file_name, created_at, department_code, stage, stage_updated_at, pd_number, submitted_email, submitted_by`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, FALSE)
+           RETURNING batch_id, code, root_batch_id, file_name, created_at, department_code, workflow_type, stage, stage_updated_at, pd_number, submitted_email, submitted_by`,
           [
             batchId,
             code,
@@ -2879,10 +2959,12 @@ app.post(
             req.body.checksum ?? null,
             null,
             metadata,
+            workflowType,
             fileData,
             pdNumber,
             account.email,
             account.id,
+            initialStage,
             submittedIso
           ]
         );
@@ -2902,25 +2984,33 @@ app.post(
 
     const initialReviewComment = metadata.notes && metadata.notes.trim()
       ? metadata.notes.trim()
-      : 'Batch submitted for review.';
+      : (initialStage === 'approved' ? 'Batch filed to repository.' : 'Batch submitted for review.');
     await pool.query(
       `INSERT INTO batch_reviews (batch_id, reviewer, status, comments, metadata, actor_id, stage)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         batchId,
         account.display_name || account.email,
-        'submitted',
+        initialStage,
         initialReviewComment,
-        { pd_number: pdNumber, department_code: deptCode },
+        { pd_number: pdNumber, department_code: deptCode, workflow_type: workflowType },
         account.id,
-        'submitted'
+        initialStage
       ]
     );
 
     const savedBatch = { ...insertedRow, metadata };
-    notifyReviewersOfNewBatch(savedBatch, metadata).catch((err) => {
-      console.error('Failed to send reviewer notification', err);
-    });
+    if (initialStage === 'submitted') {
+      if (workflowType === 'public_health') {
+        notifyPublicHealthReviewers(savedBatch, metadata).catch((err) => {
+          console.error('Failed to send public health reviewer notification', err);
+        });
+      } else {
+        notifyReviewersOfNewBatch(savedBatch, metadata).catch((err) => {
+          console.error('Failed to send reviewer notification', err);
+        });
+      }
+    }
     res.status(201).json(savedBatch);
   }
 );
@@ -2944,7 +3034,7 @@ app.patch(
 
     const { rows } = await pool.query(
       `SELECT batch_id, code, root_batch_id, department_code, file_name, checksum, created_at, transactions,
-        stage, stage_updated_at, pd_number, submitted_email, submitted_by, is_draft
+        workflow_type, stage, stage_updated_at, pd_number, submitted_email, submitted_by, is_draft
          FROM batch_archives
         WHERE code = $1`,
       [code]
@@ -2954,6 +3044,10 @@ app.patch(
       return;
     }
     const batch = rows[0];
+    if (!workflowRequiresApproval(batch.workflow_type)) {
+      res.status(400).json({ message: 'This workflow does not use an approval gate.' });
+      return;
+    }
     const metadata = (batch.transactions && typeof batch.transactions === 'object') ? batch.transactions : {};
     const currentStage = batch.stage;
     // Allow reviewers to revert approved batches back to rejected for corrections
@@ -3034,11 +3128,12 @@ app.get('/api/batches/:code', requireAuth(REVIEW_ACCESS_ROLES), async (req, res)
   }
   const record = rows[0];
   const response = { ...record };
-  if (record.stage !== 'approved') {
+  // Repository semantics: submitted and approved batches are both retrievable.
+  if (record.stage === 'approved' || record.stage === 'submitted') {
+    response.file_available = true;
+  } else {
     response.file_base64 = null;
     response.file_available = false;
-  } else {
-    response.file_available = true;
   }
   res.json(response);
 });
@@ -3139,11 +3234,11 @@ app.patch(
       );
 
       const response = { ...updated };
-      if (updated.stage !== 'approved') {
+      if (updated.stage === 'approved' || updated.stage === 'submitted') {
+        response.file_available = true;
+      } else {
         response.file_base64 = null;
         response.file_available = false;
-      } else {
-        response.file_available = true;
       }
       res.json(response);
     } catch (err) {

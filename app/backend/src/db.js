@@ -187,7 +187,7 @@ export async function initSchema() {
     await client.query('ALTER TABLE reviewers DROP CONSTRAINT IF EXISTS reviewers_role_check');
     await client.query(`
       ALTER TABLE reviewers
-      ADD CONSTRAINT reviewers_role_check CHECK (role IN ('user','banking','reviewer','admin','payroll'))
+      ADD CONSTRAINT reviewers_role_check CHECK (role IN ('user','banking','reviewer','admin','payroll','public_health'))
     `);
 
     await client.query(`
@@ -252,9 +252,11 @@ export async function initSchema() {
         checksum TEXT,
         duplicate_report_path TEXT,
         transactions JSONB,
+        workflow_type TEXT NOT NULL DEFAULT 'aba',
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await client.query("ALTER TABLE batch_archives ADD COLUMN IF NOT EXISTS workflow_type TEXT NOT NULL DEFAULT 'aba'");
     await client.query('ALTER TABLE batch_archives ADD COLUMN IF NOT EXISTS code TEXT UNIQUE');
     await client.query('ALTER TABLE batch_archives ADD COLUMN IF NOT EXISTS department_code TEXT');
     await client.query('ALTER TABLE batch_archives ADD COLUMN IF NOT EXISTS file_data BYTEA');
@@ -305,9 +307,11 @@ export async function initSchema() {
         root_batch_id UUID NOT NULL,
         is_draft BOOLEAN NOT NULL DEFAULT FALSE,
         deleted_at TIMESTAMPTZ,
+        workflow_type TEXT NOT NULL DEFAULT 'aba',
         archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
+    await client.query("ALTER TABLE batch_archives_history ADD COLUMN IF NOT EXISTS workflow_type TEXT NOT NULL DEFAULT 'aba'");
     await client.query('CREATE INDEX IF NOT EXISTS idx_batch_archives_history_root_batch_id ON batch_archives_history(root_batch_id)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_batch_archives_history_stage_updated_at ON batch_archives_history(stage, stage_updated_at DESC)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_batch_archives_history_created_at ON batch_archives_history(created_at DESC)');
@@ -335,7 +339,8 @@ export async function initSchema() {
         is_draft,
         deleted_at,
         NULL::TIMESTAMPTZ AS archived_at,
-        FALSE AS from_history
+        FALSE AS from_history,
+        workflow_type
       FROM batch_archives
       UNION ALL
       SELECT
@@ -360,7 +365,8 @@ export async function initSchema() {
         is_draft,
         deleted_at,
         archived_at,
-        TRUE AS from_history
+        TRUE AS from_history,
+        workflow_type
       FROM batch_archives_history;
     `);
 
@@ -372,6 +378,7 @@ export async function initSchema() {
         name TEXT NOT NULL,
         password_hash TEXT NOT NULL,
         department_code TEXT,
+        requested_role TEXT NOT NULL DEFAULT 'user',
         status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
         created_at TIMESTAMPTZ DEFAULT NOW(),
         reviewed_at TIMESTAMPTZ,
@@ -379,6 +386,7 @@ export async function initSchema() {
         review_comment TEXT
       );
     `);
+    await client.query("ALTER TABLE signup_requests ADD COLUMN IF NOT EXISTS requested_role TEXT NOT NULL DEFAULT 'user'");
 
     // Password reset tokens for self-service password reset
     await client.query(`
@@ -516,6 +524,126 @@ export async function initSchema() {
     `);
     await client.query('CREATE INDEX IF NOT EXISTS idx_forex_tt_attachments_request_id ON forex_tt_attachments(request_id)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_forex_tt_attachments_category ON forex_tt_attachments(request_id, category) WHERE superseded_at IS NULL');
+
+    // Public Health Allowance module
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public_health_tiers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        code TEXT NOT NULL UNIQUE CHECK (code IN ('LV0','LV1','LV2','LV3')),
+        label TEXT NOT NULL,
+        monthly_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        description TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query('ALTER TABLE public_health_tiers DROP CONSTRAINT IF EXISTS public_health_tiers_code_check');
+    await client.query(`
+      ALTER TABLE public_health_tiers
+        ADD CONSTRAINT public_health_tiers_code_check CHECK (code IN ('LV0','LV1','LV2','LV3'))
+    `);
+    await client.query(`
+      INSERT INTO public_health_tiers (code, label, monthly_amount, sort_order, description)
+      VALUES
+        ('LV0', 'Level 0', 0, 0, 'Demoted from LV1, no payment'),
+        ('LV1', 'Level 1', 0, 1, 'Base allowance'),
+        ('LV2', 'Level 2', 0, 2, 'First milestone increment'),
+        ('LV3', 'Level 3', 0, 3, 'Second milestone increment and ongoing monitoring')
+      ON CONFLICT (code) DO NOTHING
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public_health_participants (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        full_name TEXT NOT NULL,
+        bank_bsb VARCHAR(7),
+        bank_account_enc TEXT,
+        bank_account_name TEXT,
+        village TEXT,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
+        external_ref TEXT,
+        created_by UUID REFERENCES reviewers(id),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query('ALTER TABLE public_health_participants ADD COLUMN IF NOT EXISTS village TEXT');
+    await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_ph_participants_ext_ref ON public_health_participants(external_ref) WHERE external_ref IS NOT NULL');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_ph_participants_status ON public_health_participants(status)');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public_health_participant_levels (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        participant_id UUID NOT NULL REFERENCES public_health_participants(id) ON DELETE CASCADE,
+        level TEXT NOT NULL CHECK (level IN ('LV0','LV1','LV2','LV3')),
+        effective_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        effective_to TIMESTAMPTZ,
+        reason TEXT,
+        notes TEXT,
+        created_by UUID REFERENCES reviewers(id),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query('ALTER TABLE public_health_participant_levels DROP CONSTRAINT IF EXISTS public_health_participant_levels_level_check');
+    await client.query(`
+      ALTER TABLE public_health_participant_levels
+        ADD CONSTRAINT public_health_participant_levels_level_check CHECK (level IN ('LV0','LV1','LV2','LV3'))
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_ph_levels_participant ON public_health_participant_levels(participant_id, effective_from DESC)');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public_health_pay_periods (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        paid_date DATE NOT NULL,
+        status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','submitted','approved')),
+        aba_batch_id UUID,
+        created_by UUID REFERENCES reviewers(id),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query('ALTER TABLE public_health_pay_periods ADD COLUMN IF NOT EXISTS paid_date DATE');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_ph_periods_status ON public_health_pay_periods(status, created_at DESC)');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public_health_period_entries (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        period_id UUID NOT NULL REFERENCES public_health_pay_periods(id) ON DELETE CASCADE,
+        participant_id UUID NOT NULL REFERENCES public_health_participants(id) ON DELETE CASCADE,
+        level TEXT NOT NULL CHECK (level IN ('LV0','LV1','LV2','LV3')),
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+        is_manual_override BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (period_id, participant_id)
+      );
+    `);
+    await client.query('ALTER TABLE public_health_period_entries DROP CONSTRAINT IF EXISTS public_health_period_entries_level_check');
+    await client.query(`
+      ALTER TABLE public_health_period_entries
+        ADD CONSTRAINT public_health_period_entries_level_check CHECK (level IN ('LV0','LV1','LV2','LV3'))
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_ph_entries_period ON public_health_period_entries(period_id)');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id BIGSERIAL PRIMARY KEY,
+        actor_id UUID REFERENCES reviewers(id),
+        actor_email TEXT,
+        action TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT,
+        before JSONB,
+        after JSONB,
+        metadata JSONB DEFAULT '{}'::jsonb,
+        ip TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id, created_at DESC)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor_id, created_at DESC)');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS login_attempts (

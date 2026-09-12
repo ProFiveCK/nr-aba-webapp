@@ -20,7 +20,9 @@ export const SMTP_PASS = process.env.SMTP_PASS;
 export const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER || 'no-reply@example.com';
 export const REPLY_TO = process.env.REPLY_TO_EMAIL;
 
-export const ACCOUNT_ROLES = ['user', 'banking', 'reviewer', 'admin', 'payroll'];
+export const ACCOUNT_ROLES = ['user', 'banking', 'reviewer', 'admin', 'payroll', 'public_health'];
+// Roles selectable on the public signup form (admin is intentionally excluded).
+export const SIGNUP_ROLES = ['user', 'banking', 'payroll', 'public_health', 'reviewer'];
 export const REVIEW_ACCESS_ROLES = ['reviewer', 'admin'];
 export const ACCOUNT_STATUSES = ['active', 'inactive'];
 export const BSB_REGEX = /^[0-9]{3}-[0-9]{3}$/;
@@ -87,10 +89,24 @@ export const PERMISSIONS = {
   SUBMIT_FOREX_TT: 'submit_forex_tt',
   REVIEW_FOREX_TT: 'review_forex_tt',
   NOTIFY_FOREX_TT_SUBMISSIONS: 'notify_forex_tt_submissions',
+  PUBLIC_HEALTH_MANAGE: 'public_health_manage',
+  PUBLIC_HEALTH_REVIEW: 'public_health_review',
   ADMIN: 'admin',
 };
+
+// Public Health (Wellness Program) tier codes. LV0 = demoted, no payment.
+export const PUBLIC_HEALTH_TIERS = ['LV0', 'LV1', 'LV2', 'LV3'];
 
 // FOREX TT state machine
 export const FOREX_TT_STATUSES = [
   'draft', 'submitted', 'claimed', 'processing', 'needs_changes', 'approved', 'cancelled'
 ];
+
+// Batch workflow pipelines. Departmental ABA is repository-only (no reviewer
+// gate); public health batches are authoritative and always gated.
+export const BATCH_WORKFLOW_TYPES = ['aba', 'public_health'];
+
+export function workflowRequiresApproval(workflowType) {
+  const type = workflowType && BATCH_WORKFLOW_TYPES.includes(workflowType) ? workflowType : 'aba';
+  return type === 'public_health';
+}

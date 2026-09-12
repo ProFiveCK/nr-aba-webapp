@@ -6,8 +6,8 @@ import {
   Wallet,
   Wrench,
   Globe,
+  Activity,
   LayoutDashboard,
-  FolderClosed,
   Settings,
 } from 'lucide-react';
 
@@ -18,10 +18,10 @@ export type AppId =
   | 'payroll'
   | 'tools'
   | 'forex-tt'
-  | 'my-folder'
+  | 'public-health'
   | 'admin';
 
-export type UserRole = 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll';
+export type UserRole = 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll' | 'public_health';
 
 export interface AppDef {
   id: AppId;
@@ -79,6 +79,15 @@ export const APPS: AppDef[] = [
     description: 'Foreign currency telegraphic transfer requests and reviews.',
     color: 'bg-sky-600',
   },
+  {
+    id: 'public-health',
+    label: 'Wellness Program',
+    shortLabel: 'Public Health',
+    icon: Activity,
+    roles: ['public_health', 'admin'],
+    description: 'Manage wellness allowance participants and payment runs.',
+    color: 'bg-teal-600',
+  },
 ];
 
 export const SYSTEM_PAGES: AppDef[] = [
@@ -87,18 +96,9 @@ export const SYSTEM_PAGES: AppDef[] = [
     label: 'Dashboard',
     shortLabel: 'Dashboard',
     icon: LayoutDashboard,
-    roles: ['user', 'banking', 'reviewer', 'admin', 'payroll'],
+    roles: ['user', 'banking', 'reviewer', 'admin', 'payroll', 'public_health'],
     description: 'App launcher and overview.',
     color: 'bg-zinc-700',
-  },
-  {
-    id: 'my-folder',
-    label: 'My Folder',
-    shortLabel: 'My Folder',
-    icon: FolderClosed,
-    roles: ['user', 'banking', 'reviewer', 'admin', 'payroll'],
-    description: 'Your submissions and history across apps.',
-    color: 'bg-purple-600',
   },
   {
     id: 'admin',
@@ -113,7 +113,7 @@ export const SYSTEM_PAGES: AppDef[] = [
 
 export function canAccessApp(user: User | null, app: AppDef): boolean {
   if (!user) return false;
-  if (app.id === 'dashboard' || app.id === 'my-folder') return true;
+  if (app.id === 'dashboard') return true;
   return app.roles.includes(user.role as UserRole);
 }
 

@@ -14,7 +14,7 @@ import {
     getBatchStageBadgeClasses,
     toBase64,
 } from '../lib/utils';
-import { CREDIT_CODE_SET, CREDIT_TXN_CODES, HEADER_PRESETS, STAGE_META, STAGE_TRANSITIONS } from '../lib/constants';
+import { CREDIT_CODE_SET, CREDIT_TXN_CODES, HEADER_PRESETS, STAGE_META } from '../lib/constants';
 import { buildAbaFile } from '../lib/generator-utils';
 
 interface ReviewerProps {
@@ -55,7 +55,6 @@ interface ArchivePage {
 }
 
 const ARCHIVE_LIMIT = 40;
-type DecisionType = 'approved' | 'rejected';
 
 type PayloadTransaction = {
     bsb?: string;
@@ -84,10 +83,6 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
     const [detailError, setDetailError] = useState('');
     const [detailLoading, setDetailLoading] = useState(false);
 
-    const [comments, setComments] = useState('');
-    const [notifySubmitter, setNotifySubmitter] = useState(true);
-    const [actionError, setActionError] = useState('');
-    const [actionLoading, setActionLoading] = useState(false);
     const [valueDateModalOpen, setValueDateModalOpen] = useState(false);
     const [valueDateProc, setValueDateProc] = useState('');
     const [valueDateDesc, setValueDateDesc] = useState('');
@@ -149,9 +144,6 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
                 setDetailError('');
                 setSelectedBatch(batch);
                 setReviewHistory(Array.isArray(history) ? history : []);
-                setComments('');
-                setNotifySubmitter(true);
-                setActionError('');
             } catch (err) {
                 const message = (err as Error)?.message || 'Unable to load batch.';
                 if (!silent) setDetailError(message);
@@ -170,35 +162,7 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
 
     const stage = selectedBatch?.stage || 'submitted';
     const stageInfo = STAGE_META[stage] || { label: stage, classes: 'bg-gray-100 text-gray-700' };
-    const baseTransitions = STAGE_TRANSITIONS[stage as keyof typeof STAGE_TRANSITIONS] || { approve: false, reject: false };
     const isReviewerRole = user?.role === 'admin' || user?.role === 'reviewer';
-    const canApprove = !!baseTransitions.approve;
-    const canReject = stage === 'approved' ? Boolean(isReviewerRole) : !!baseTransitions.reject;
-
-    const submitDecision = async (next: DecisionType) => {
-        if (!selectedBatch) return;
-        const trimmedComments = comments.trim();
-        if (next === 'rejected' && !trimmedComments) {
-            setActionError('Provide a reason when rejecting a batch.');
-            return;
-        }
-        setActionLoading(true);
-        setActionError('');
-        try {
-            await apiClient.patch(`/batches/${encodeURIComponent(selectedBatch.code)}/stage`, {
-                stage: next,
-                comments: trimmedComments || undefined,
-                notify: next === 'rejected' ? notifySubmitter : undefined,
-            });
-            await fetchArchives(showFullArchive, archiveOffset, searchTerm);
-            await loadBatch(selectedBatch.code, true);
-            setComments('');
-        } catch (err) {
-            setActionError((err as Error)?.message || 'Unable to record decision.');
-        } finally {
-            setActionLoading(false);
-        }
-    };
 
     const handleDownloadAba = () => {
         if (!selectedBatch?.file_base64) {
@@ -331,8 +295,8 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
             <section className="app-panel p-6">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900">Reviewer Tools</h1>
-                        <p className="text-sm text-gray-600">Review batches, inspect their ABA payloads, and keep the audit trail current.</p>
+                        <h1 className="text-2xl font-bold text-gray-900">Repository</h1>
+                        <p className="text-sm text-gray-600">Browse submitted ABA batches, inspect their payloads, and adjust processing dates.</p>
                     </div>
                 </div>
             </section>
@@ -422,70 +386,25 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
 
                 <section className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-amber-50 p-6 shadow">
                     <div className="flex items-center justify-between">
-                        <h3 className="text-lg font-semibold text-amber-900">Record Decision</h3>
+                        <h3 className="text-lg font-semibold text-amber-900">Workflow</h3>
                         {selectedBatch && (
-                            <span className="text-xs font-semibold uppercase tracking-wide text-amber-500">Action Required</span>
+                            <span className="text-xs font-semibold uppercase tracking-wide text-amber-500">Repository</span>
                         )}
                     </div>
                     {!selectedBatch ? (
-                        <p className="mt-3 text-sm text-amber-700">Select a batch to enable reviewer actions.</p>
+                        <p className="mt-3 text-sm text-amber-700">Select a batch to view its workflow status.</p>
                     ) : (
                         <div className="mt-4 space-y-4">
-                            <div>
-                                <label className="text-sm font-medium text-gray-700" htmlFor="reviewer-comments">
-                                    Reviewer comments
-                                </label>
-                                <textarea
-                                    id="reviewer-comments"
-                                    rows={4}
-                                    value={comments}
-                                    onChange={(e) => setComments(e.target.value)}
-                                    className="mt-1 w-full rounded-md border border-amber-200 px-3 py-2 text-sm shadow-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                                    placeholder="Add context for your decision…"
-                                />
-                            </div>
-                            {selectedBatch.stage === 'approved' && isReviewerRole && (
-                                <p className="rounded-md bg-white/70 px-3 py-2 text-xs text-gray-600">
-                                    This batch was previously approved. You can revert it to <strong>rejected</strong> if further changes are required.
-                                </p>
-                            )}
-                            {selectedBatch && comments.trim() === '' && (
-                                <p className="text-xs text-gray-500">Comments are optional when approving, but required when rejecting.</p>
-                            )}
-                            {decisionHint(canApprove, canReject)}
-                            <div className="flex flex-wrap gap-3">
-                                <button
-                                    type="button"
-                                    onClick={() => submitDecision('approved')}
-                                    disabled={!canApprove || actionLoading}
-                                    className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                    {actionLoading ? 'Saving…' : 'Approve Batch'}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => submitDecision('rejected')}
-                                    disabled={!canReject || actionLoading}
-                                    className="flex-1 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                    {actionLoading ? 'Saving…' : 'Reject Batch'}
-                                </button>
+                            <p className="text-sm text-gray-700">
+                                Departmental ABA submissions are filed directly to the repository; no approval step is required.
+                            </p>
+                            <div className="rounded-lg bg-white/70 px-3 py-2 text-sm text-gray-700">
+                                <span className="font-medium">Status:</span> {stageInfo.label}
                             </div>
                             {selectedBatch.stage === 'rejected' && (
                                 <p className="text-xs text-gray-500">
-                                    Need to leave an internal note? Add it to the comments above and click <strong>Approve</strong> once the batch is ready again.
+                                    This batch was rejected, so its ABA file is not available for download.
                                 </p>
-                            )}
-                            {decisionHintMessage(actionError)}
-                            {selectedBatch && user?.role === 'admin' && (
-                                <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                                    <input
-                                        type="checkbox"
-                                        checked={notifySubmitter}
-                                        onChange={(e) => setNotifySubmitter(e.target.checked)}
-                                    />
-                                    Email submitter when rejecting
-                                </label>
                             )}
                         </div>
                     )}
@@ -638,9 +557,9 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
                             <Icon name="alert" />
                         </div>
                         <div className="min-w-0">
-                            <h3 id="reader-notice-title" className="text-lg font-semibold text-gray-900">ABA file not ready</h3>
+                            <h3 id="reader-notice-title" className="text-lg font-semibold text-gray-900">ABA file not available</h3>
                             <p className="mt-1 text-sm text-gray-600">
-                                ABA file becomes available once the batch is approved. Approve the batch first, then open it in Reader.
+                                The ABA file is not available for this batch.
                             </p>
                         </div>
                         <button
@@ -755,23 +674,6 @@ function normalizeBsb(value?: string) {
 function normalizeAccount(value?: string) {
     if (!value) return '';
     return value.replace(/[^0-9]/g, '').slice(0, 16);
-}
-
-function decisionHint(canApprove: boolean, canReject: boolean) {
-    if (!canApprove && !canReject) {
-        return <p className="text-xs text-gray-500">This batch is locked; no further actions are available.</p>;
-    }
-    if (!canApprove) {
-        return <p className="text-xs text-gray-500">Approval is not available from the current stage.</p>;
-    }
-    if (!canReject) {
-        return <p className="text-xs text-gray-500">Rejection is not available from the current stage.</p>;
-    }
-    return null;
-}
-
-function decisionHintMessage(actionError: string) {
-    return actionError ? <p className="text-sm text-rose-600">{actionError}</p> : null;
 }
 
 function normalizePayloadTransactions(items?: PayloadTransaction[]): GeneratorTransaction[] {

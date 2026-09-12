@@ -10,6 +10,14 @@ interface DepartmentOption {
     name: string | null;
 }
 
+const APP_OPTIONS = [
+    { value: 'user', label: 'ABA / Forex TT' },
+    { value: 'banking', label: 'Banking' },
+    { value: 'payroll', label: 'Payroll' },
+    { value: 'public_health', label: 'Health Program (Wellness)' },
+    { value: 'reviewer', label: 'Reviewer (Treasury)' },
+];
+
 export function Login() {
     const { login } = useAuth();
     const [isLogin, setIsLogin] = useState(true);
@@ -30,6 +38,7 @@ export function Login() {
     const [signupEmail, setSignupEmail] = useState('');
     const [signupPassword, setSignupPassword] = useState('');
     const [signupDept, setSignupDept] = useState('');
+    const [signupRole, setSignupRole] = useState('user');
     const [departments, setDepartments] = useState<DepartmentOption[]>([]);
     const [departmentsLoading, setDepartmentsLoading] = useState(false);
     const [departmentsError, setDepartmentsError] = useState('');
@@ -101,6 +110,7 @@ export function Login() {
                 name: signupName.trim(),
                 password: signupPassword,
                 department_code: trimmedDept,
+                requested_role: signupRole,
             });
             setSuccessMessage('Signup request submitted! Please wait for admin approval.');
             // Clear form
@@ -108,6 +118,7 @@ export function Login() {
             setSignupEmail('');
             setSignupPassword('');
             setSignupDept('');
+            setSignupRole('user');
             // Switch back to login after a delay
             setTimeout(() => setIsLogin(true), 3000);
         } catch (err) {
@@ -273,6 +284,24 @@ export function Login() {
                                     placeholder="••••••••"
                                     disabled={isLoading}
                                 />
+                            </div>
+
+                            <div>
+                                <label htmlFor="signup-app" className="block text-sm font-medium text-gray-700">
+                                    App
+                                </label>
+                                <select
+                                    id="signup-app"
+                                    required
+                                    value={signupRole}
+                                    onChange={(e) => setSignupRole(e.target.value)}
+                                    className="mt-1 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white"
+                                    disabled={isLoading}
+                                >
+                                    {APP_OPTIONS.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                    ))}
+                                </select>
                             </div>
 
                             <div>

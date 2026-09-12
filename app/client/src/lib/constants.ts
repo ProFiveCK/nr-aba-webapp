@@ -56,6 +56,7 @@ export const USER_ROLES = {
     USER: 'user',
     BANKING: 'banking',
     PAYROLL: 'payroll',
+    PUBLIC_HEALTH: 'public_health',
     REVIEWER: 'reviewer',
     ADMIN: 'admin',
 } as const;
@@ -65,8 +66,9 @@ export const ROLE_ORDER = {
     user: 1,
     banking: 2,
     payroll: 3,
-    reviewer: 4,
-    admin: 5,
+    public_health: 4,
+    reviewer: 5,
+    admin: 6,
 } as const;
 
 // Role display labels
@@ -74,6 +76,7 @@ export const ROLE_LABELS = {
     user: 'Level 1 User',
     banking: 'Level 2 Banking',
     payroll: 'Level 3 Payroll',
+    public_health: 'Public Health Staff',
     reviewer: 'Level 4 Reviewer',
     admin: 'Level 5 Administrator',
 } as const;

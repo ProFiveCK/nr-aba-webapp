@@ -2,7 +2,7 @@ export interface User {
     id: number;
     email: string;
     display_name: string;
-    role: 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll';
+    role: 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll' | 'public_health';
     department_code?: string;
     division_code?: string;
     notify_on_submission?: boolean;

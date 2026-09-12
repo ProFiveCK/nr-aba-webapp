@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ForexTT } from '../pages/ForexTT';
 import { ForexTTReview } from '../pages/ForexTTReview';
 import { useAuth } from '../contexts/useAuth';
+import { readHash, setHash } from '../lib/hash';
 
 type ForexTab = 'submit' | 'review';
 
@@ -10,7 +11,17 @@ export function ForexTTApp() {
   const perms = user?.permissions || {};
   const canReview = perms.review_forex_tt === true || user?.role === 'admin';
   const canSubmit = perms.submit_forex_tt === true || user?.role === 'admin';
-  const [tab, setTab] = useState<ForexTab>(canSubmit ? 'submit' : 'review');
+  const [tab, setTab] = useState<ForexTab>(() => {
+    const fromHash = readHash().tab as ForexTab;
+    if (fromHash === 'review' && canReview) return 'review';
+    if (fromHash === 'submit' && canSubmit) return 'submit';
+    return canSubmit ? 'submit' : 'review';
+  });
+
+  const changeTab = (next: ForexTab) => {
+    setTab(next);
+    setHash('forex-tt', next);
+  };
 
   return (
     <div className="space-y-4">
@@ -18,7 +29,7 @@ export function ForexTTApp() {
         <div className="flex flex-wrap gap-1">
           {canSubmit && (
             <button
-              onClick={() => setTab('submit')}
+              onClick={() => changeTab('submit')}
               className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
                 tab === 'submit' ? 'bg-sky-600 text-white' : 'text-gray-600 hover:bg-gray-50'
               }`}
@@ -28,7 +39,7 @@ export function ForexTTApp() {
           )}
           {canReview && (
             <button
-              onClick={() => setTab('review')}
+              onClick={() => changeTab('review')}
               className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
                 tab === 'review' ? 'bg-sky-600 text-white' : 'text-gray-600 hover:bg-gray-50'
               }`}

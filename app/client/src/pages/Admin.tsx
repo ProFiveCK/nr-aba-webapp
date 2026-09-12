@@ -25,6 +25,7 @@ interface SignupRequest {
     email: string;
     name: string;
     department_code: string | null;
+    requested_role: 'user' | 'banking' | 'payroll' | 'public_health' | 'reviewer';
     status: 'pending' | 'approved' | 'rejected';
     created_at: string;
     reviewed_at: string | null;
@@ -33,11 +34,23 @@ interface SignupRequest {
     review_comment: string | null;
 }
 
+const SIGNUP_ROLE_OPTIONS: { value: SignupRequest['requested_role']; label: string }[] = [
+    { value: 'user', label: 'ABA / Forex TT' },
+    { value: 'banking', label: 'Banking' },
+    { value: 'payroll', label: 'Payroll' },
+    { value: 'public_health', label: 'Health Program' },
+    { value: 'reviewer', label: 'Reviewer (Treasury)' },
+];
+
+function roleLabel(role: string): string {
+    return SIGNUP_ROLE_OPTIONS.find((o) => o.value === role)?.label || role;
+}
+
 interface AdminAccount {
     id: string;
     email: string;
     display_name: string | null;
-    role: 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll';
+    role: 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll' | 'public_health';
     status: 'active' | 'inactive';
     must_change_password: boolean;
     department_code: string | null;
@@ -196,6 +209,7 @@ function SignupRequestsPanel() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [actionId, setActionId] = useState<number | null>(null);
+    const [roleOverrides, setRoleOverrides] = useState<Record<number, SignupRequest['requested_role']>>({});
     const { addToast } = useToast();
 
     const refresh = async () => {
@@ -219,7 +233,7 @@ function SignupRequestsPanel() {
     const pending = useMemo(() => requests.filter((r) => r.status === 'pending'), [requests]);
     const completed = useMemo(() => requests.filter((r) => r.status !== 'pending'), [requests]);
 
-    const handleDecision = async (id: number, action: 'approve' | 'reject') => {
+    const handleDecision = async (id: number, action: 'approve' | 'reject', role?: SignupRequest['requested_role']) => {
         let review_comment = '';
         if (action === 'reject') {
             const response = window.prompt('Provide a short reason for rejecting this request:', '');
@@ -235,9 +249,13 @@ function SignupRequestsPanel() {
             review_comment = response.trim();
         }
 
+        const payload: Record<string, unknown> = {};
+        if (review_comment) payload.review_comment = review_comment;
+        if (action === 'approve' && role) payload.role = role;
+
         setActionId(id);
         try {
-            await apiClient.post(`/admin/signup-requests/${id}/${action}`, review_comment ? { review_comment } : undefined);
+            await apiClient.post(`/admin/signup-requests/${id}/${action}`, Object.keys(payload).length ? payload : undefined);
             addToast(`Request ${action === 'approve' ? 'approved' : 'rejected'}.`, 'success');
             await refresh();
         } catch (err) {
@@ -271,7 +289,7 @@ function SignupRequestsPanel() {
                                 <th className="px-3 py-2">Name</th>
                                 <th className="px-3 py-2">Email</th>
                                 <th className="px-3 py-2">Department</th>
-                                <th className="px-3 py-2">Requested</th>
+                                <th className="px-3 py-2">App</th>
                                 <th className="px-3 py-2 text-right">Actions</th>
                             </tr>
                         </thead>
@@ -294,11 +312,21 @@ function SignupRequestsPanel() {
                                         <td className="px-3 py-2 font-medium text-gray-900">{req.name}</td>
                                         <td className="px-3 py-2 text-gray-600">{req.email}</td>
                                         <td className="px-3 py-2 text-gray-600">{req.department_code || '—'}</td>
-                                        <td className="px-3 py-2 text-gray-600">{formatIsoDateTime(req.created_at)}</td>
+                                        <td className="px-3 py-2">
+                                            <select
+                                                value={roleOverrides[req.id] ?? req.requested_role}
+                                                onChange={(e) => setRoleOverrides((prev) => ({ ...prev, [req.id]: e.target.value as SignupRequest['requested_role'] }))}
+                                                className="rounded-md border border-gray-300 px-2 py-1 text-sm"
+                                            >
+                                                {SIGNUP_ROLE_OPTIONS.map((o) => (
+                                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                                ))}
+                                            </select>
+                                        </td>
                                         <td className="px-3 py-2 text-right space-x-2">
                                             <button
                                                 type="button"
-                                                onClick={() => handleDecision(req.id, 'approve')}
+                                                onClick={() => handleDecision(req.id, 'approve', roleOverrides[req.id] ?? req.requested_role)}
                                                 disabled={actionId === req.id}
                                                 className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
                                             >
@@ -333,6 +361,7 @@ function SignupRequestsPanel() {
                                 <tr>
                                     <th className="px-3 py-2">Name</th>
                                     <th className="px-3 py-2">Status</th>
+                                    <th className="px-3 py-2">App</th>
                                     <th className="px-3 py-2">Reviewer</th>
                                     <th className="px-3 py-2">Reviewed</th>
                                     <th className="px-3 py-2">Notes</th>
@@ -341,13 +370,13 @@ function SignupRequestsPanel() {
                             <tbody className="divide-y divide-gray-100">
                                 {loading ? (
                                     <tr>
-                                        <td colSpan={5} className="px-3 py-6 text-center text-gray-500">
+                                        <td colSpan={6} className="px-3 py-6 text-center text-gray-500">
                                             Loading…
                                         </td>
                                     </tr>
                                 ) : completed.length === 0 ? (
                                     <tr>
-                                        <td colSpan={5} className="px-3 py-6 text-center text-gray-500">
+                                        <td colSpan={6} className="px-3 py-6 text-center text-gray-500">
                                             No recent decisions yet.
                                         </td>
                                     </tr>
@@ -369,6 +398,7 @@ function SignupRequestsPanel() {
                                                     {req.status}
                                                 </span>
                                             </td>
+                                            <td className="px-3 py-2 text-gray-600">{roleLabel(req.requested_role)}</td>
                                             <td className="px-3 py-2 text-gray-700">{req.reviewer_name || req.reviewer_email || '—'}</td>
                                             <td className="px-3 py-2 text-gray-600">
                                                 {req.reviewed_at ? formatIsoDateTime(req.reviewed_at) : '—'}
@@ -636,6 +666,7 @@ function UserManagementPanel() {
                                 <option value="user">User</option>
                                 <option value="banking">Banking</option>
                                 <option value="payroll">Payroll</option>
+                                <option value="public_health">Public Health</option>
                                 <option value="reviewer">Reviewer</option>
                                 <option value="admin">Admin</option>
                             </select>
@@ -758,6 +789,7 @@ function UserManagementPanel() {
                             <option value="user">User</option>
                             <option value="banking">Banking</option>
                             <option value="payroll">Payroll</option>
+                            <option value="public_health">Public Health</option>
                             <option value="reviewer">Reviewer</option>
                             <option value="admin">Admin</option>
                         </select>

@@ -4,6 +4,7 @@ import { MyBatches } from '../pages/MyBatches';
 import { Reader } from '../pages/Reader';
 import { Reviewer } from '../pages/Reviewer';
 import { useAuth } from '../contexts/useAuth';
+import { readHash, setHash } from '../lib/hash';
 
 type AbaTab = 'generator' | 'my-batches' | 'reader' | 'reviewer';
 
@@ -11,20 +12,25 @@ interface AbaWorkflowProps {
   onTabChange?: (tab: string) => void;
 }
 
-const ALL_TABS: { id: AbaTab; label: string; roles: ('user' | 'banking' | 'reviewer' | 'admin' | 'payroll')[] }[] = [
+const ALL_TABS: { id: AbaTab; label: string; roles: ('user' | 'banking' | 'reviewer' | 'admin' | 'payroll' | 'public_health')[] }[] = [
   { id: 'generator', label: 'Generator', roles: ['user', 'reviewer', 'admin'] },
   { id: 'my-batches', label: 'My Batches', roles: ['user', 'reviewer', 'admin'] },
   { id: 'reader', label: 'Reader', roles: ['user', 'reviewer', 'admin'] },
-  { id: 'reviewer', label: 'ABA / PD Review', roles: ['reviewer', 'admin'] },
+  { id: 'reviewer', label: 'Repository', roles: ['reviewer', 'admin'] },
 ];
 
 export function AbaWorkflow({ onTabChange }: AbaWorkflowProps) {
   const { user } = useAuth();
   const tabs = ALL_TABS.filter((t) => user?.role && t.roles.includes(user.role));
-  const [tab, setTab] = useState<AbaTab>(tabs[0]?.id || 'generator');
+  const validIds = tabs.map((t) => t.id);
+  const [tab, setTab] = useState<AbaTab>(() => {
+    const fromHash = readHash().tab as AbaTab;
+    return validIds.includes(fromHash) ? fromHash : (tabs[0]?.id || 'generator');
+  });
 
   const changeTab = (next: AbaTab) => {
     setTab(next);
+    setHash('aba', next);
     onTabChange?.('aba');
   };
 

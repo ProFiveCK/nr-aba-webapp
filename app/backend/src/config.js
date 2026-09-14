@@ -108,7 +108,8 @@ export const FOREX_TT_STATUSES = [
 export const BATCH_WORKFLOW_TYPES = ['aba', 'public_health'];
 
 // Reviewer-driven stage transitions for each workflow. Departmental ABA has no
-// approval step, so its only transition is 'submitted' -> 'rejected'.
+// approval step; it can be rejected from either 'submitted' (new batches) or
+// 'approved' (legacy batches filed before rejection was introduced).
 export function workflowStageTransitions(workflowType) {
   const type = workflowType && BATCH_WORKFLOW_TYPES.includes(workflowType) ? workflowType : 'aba';
   if (type === 'public_health') {
@@ -120,7 +121,7 @@ export function workflowStageTransitions(workflowType) {
   }
   return {
     submitted: ['rejected'],
+    approved: ['rejected'],
     rejected: [],
-    approved: [],
   };
 }

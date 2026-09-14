@@ -438,7 +438,7 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
                                     This batch was rejected, so its ABA file is not available for download.
                                 </p>
                             )}
-                            {isAbaBatch && isReviewerRole && selectedBatch.stage === 'submitted' && (
+                            {isAbaBatch && isReviewerRole && (selectedBatch.stage === 'submitted' || selectedBatch.stage === 'approved') && (
                                 <div className="space-y-2 border-t border-amber-100 pt-3">
                                     {!rejectOpen ? (
                                         <button

@@ -5,6 +5,7 @@ import { parseCsvText } from '../features/banking/converters/csvUtils';
 import { GvaChfGenerator } from '../features/banking/components/GvaChfGenerator';
 import { GvaUsdGenerator } from '../features/banking/components/GvaUsdGenerator';
 import { NyStatementGenerator } from '../features/banking/components/NyStatementGenerator';
+import { RblInGenerator } from '../features/banking/components/RblInGenerator';
 import { WbcFjGenerator } from '../features/banking/components/WbcFjGenerator';
 
 interface StatementEntry {
@@ -98,6 +99,7 @@ const TOOL_TABS = [
     { id: 'ny', label: 'NYC-USD' },
     { id: 'gva-chf', label: 'GVA-CHF' },
     { id: 'gva-usd', label: 'GVA-USD' },
+    { id: 'ind-inr', label: 'IND-INR' },
 ] as const;
 
 export function Banking() {
@@ -633,6 +635,7 @@ export function Banking() {
         if (activeTool === 'ny') return <NyStatementGenerator />;
         if (activeTool === 'gva-chf') return <GvaChfGenerator />;
         if (activeTool === 'gva-usd') return <GvaUsdGenerator />;
+        if (activeTool === 'ind-inr') return <RblInGenerator />;
         return null;
     };
 

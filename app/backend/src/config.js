@@ -102,11 +102,25 @@ export const FOREX_TT_STATUSES = [
   'draft', 'submitted', 'claimed', 'processing', 'needs_changes', 'approved', 'cancelled'
 ];
 
-// Batch workflow pipelines. Departmental ABA is repository-only (no reviewer
-// gate); public health batches are authoritative and always gated.
+// Batch workflow pipelines. Departmental ABA is filed as 'submitted' and stays
+// there unless a reviewer rejects it; public health batches are authoritative
+// and always gated.
 export const BATCH_WORKFLOW_TYPES = ['aba', 'public_health'];
 
-export function workflowRequiresApproval(workflowType) {
+// Reviewer-driven stage transitions for each workflow. Departmental ABA has no
+// approval step, so its only transition is 'submitted' -> 'rejected'.
+export function workflowStageTransitions(workflowType) {
   const type = workflowType && BATCH_WORKFLOW_TYPES.includes(workflowType) ? workflowType : 'aba';
-  return type === 'public_health';
+  if (type === 'public_health') {
+    return {
+      submitted: ['approved', 'rejected'],
+      rejected: ['approved'],
+      approved: ['rejected'],
+    };
+  }
+  return {
+    submitted: ['rejected'],
+    rejected: [],
+    approved: [],
+  };
 }

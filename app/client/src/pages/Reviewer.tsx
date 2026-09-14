@@ -90,7 +90,6 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
     const [valueDateLoading, setValueDateLoading] = useState(false);
     const [valueDateError, setValueDateError] = useState('');
     const [readerNoticeOpen, setReaderNoticeOpen] = useState(false);
-    const [rejectOpen, setRejectOpen] = useState(false);
     const [rejectComment, setRejectComment] = useState('');
     const [rejectLoading, setRejectLoading] = useState(false);
     const [rejectError, setRejectError] = useState('');
@@ -306,9 +305,9 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
             await apiClient.patch(`/batches/${encodeURIComponent(selectedBatch.code)}/stage`, {
                 stage: 'rejected',
                 comments: rejectComment.trim(),
+                notify: true,
             });
             addToast('Batch rejected and the submitter has been notified.', 'success');
-            setRejectOpen(false);
             setRejectComment('');
             await loadBatch(selectedBatch.code, true);
             fetchArchives(showFullArchive, archiveOffset, searchTerm);
@@ -440,47 +439,25 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
                             )}
                             {isAbaBatch && isReviewerRole && (selectedBatch.stage === 'submitted' || selectedBatch.stage === 'approved') && (
                                 <div className="space-y-2 border-t border-amber-100 pt-3">
-                                    {!rejectOpen ? (
-                                        <button
-                                            type="button"
-                                            onClick={() => { setRejectOpen(true); setRejectError(''); }}
-                                            className="toolbar-button w-full justify-center border-rose-300 text-rose-700 hover:bg-rose-50"
-                                        >
-                                            Reject batch
-                                        </button>
-                                    ) : (
-                                        <>
-                                            <label className="block text-sm font-medium text-gray-700">
-                                                Rejection reason
-                                                <textarea
-                                                    value={rejectComment}
-                                                    onChange={(e) => setRejectComment(e.target.value)}
-                                                    rows={3}
-                                                    placeholder="Explain what needs to change before resubmission."
-                                                    className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
-                                                />
-                                            </label>
-                                            {rejectError && <p className="text-xs text-rose-600">{rejectError}</p>}
-                                            <div className="flex gap-2">
-                                                <button
-                                                    type="button"
-                                                    onClick={handleReject}
-                                                    disabled={rejectLoading}
-                                                    className="toolbar-button flex-1 justify-center bg-rose-600 text-white border-rose-600 hover:bg-rose-700 disabled:opacity-60"
-                                                >
-                                                    {rejectLoading ? 'Rejecting…' : 'Confirm rejection'}
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => { setRejectOpen(false); setRejectError(''); }}
-                                                    disabled={rejectLoading}
-                                                    className="toolbar-button"
-                                                >
-                                                    Cancel
-                                                </button>
-                                            </div>
-                                        </>
-                                    )}
+                                    <label className="block text-sm font-medium text-gray-700">
+                                        Rejection reason
+                                        <textarea
+                                            value={rejectComment}
+                                            onChange={(e) => setRejectComment(e.target.value)}
+                                            rows={3}
+                                            placeholder="Explain why this batch is rejected; this is emailed to the submitter."
+                                            className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
+                                        />
+                                    </label>
+                                    {rejectError && <p className="text-xs text-rose-600">{rejectError}</p>}
+                                    <button
+                                        type="button"
+                                        onClick={handleReject}
+                                        disabled={rejectLoading}
+                                        className="toolbar-button w-full justify-center bg-rose-600 text-white border-rose-600 hover:bg-rose-700 disabled:opacity-60"
+                                    >
+                                        {rejectLoading ? 'Rejecting…' : 'Reject batch'}
+                                    </button>
                                 </div>
                             )}
                         </div>

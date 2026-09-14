@@ -14,6 +14,7 @@ export interface Batch {
     submitted_email: string;
     submitted_by: number;
     is_draft: boolean;
+    workflow_type?: 'aba' | 'public_health';
 }
 
 export interface BatchHistoryEvent {

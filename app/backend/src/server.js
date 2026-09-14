@@ -19,7 +19,7 @@ import forexTTRouter from './routes/forexTT.js';
 import healthRouter from './routes/health.js';
 import publicHealthRouter from './routes/public-health.js';
 import { setTestingMode } from './services/notificationService.js';
-import { BATCH_WORKFLOW_TYPES, workflowRequiresApproval, SIGNUP_ROLES } from './config.js';
+import { BATCH_WORKFLOW_TYPES, workflowStageTransitions, SIGNUP_ROLES } from './config.js';
 
 dotenv.config();
 
@@ -2934,8 +2934,9 @@ app.post(
 
     const batchId = crypto.randomUUID();
     if (!rootBatchId) rootBatchId = batchId;
-    // Repository pipelines skip the reviewer gate and are filed as approved immediately.
-    const initialStage = workflowRequiresApproval(workflowType) ? 'submitted' : 'approved';
+    // All workflows land in 'submitted'. Departmental ABA stays there unless a
+    // reviewer rejects it; public health batches require explicit approval.
+    const initialStage = 'submitted';
     let insertedRow = null;
     for (let attempt = 0; attempt < 5 && !insertedRow; attempt++) {
       const code = `${prefix}${String(sequence).padStart(2, '0')}`;
@@ -3000,16 +3001,13 @@ app.post(
     );
 
     const savedBatch = { ...insertedRow, metadata };
-    if (initialStage === 'submitted') {
-      if (workflowType === 'public_health') {
-        notifyPublicHealthReviewers(savedBatch, metadata).catch((err) => {
-          console.error('Failed to send public health reviewer notification', err);
-        });
-      } else {
-        notifyReviewersOfNewBatch(savedBatch, metadata).catch((err) => {
-          console.error('Failed to send reviewer notification', err);
-        });
-      }
+    // Only public health pay runs notify reviewers on submission. Departmental
+    // ABA batches stay 'submitted' without a reviewer email; reviewers reject
+    // them from the Repository when needed.
+    if (workflowType === 'public_health') {
+      notifyPublicHealthReviewers(savedBatch, metadata).catch((err) => {
+        console.error('Failed to send public health reviewer notification', err);
+      });
     }
     res.status(201).json(savedBatch);
   }
@@ -3044,20 +3042,16 @@ app.patch(
       return;
     }
     const batch = rows[0];
-    if (!workflowRequiresApproval(batch.workflow_type)) {
-      res.status(400).json({ message: 'This workflow does not use an approval gate.' });
-      return;
-    }
     const metadata = (batch.transactions && typeof batch.transactions === 'object') ? batch.transactions : {};
     const currentStage = batch.stage;
-    // Allow reviewers to revert approved batches back to rejected for corrections
-    const baseTransitions = {
-      submitted: ['approved', 'rejected'],
-      rejected: ['approved'],
-      approved: ['rejected']
-    };
+    // Departmental ABA has no approval step (submitted -> rejected only);
+    // public health keeps the full approve/reject gate.
+    const baseTransitions = workflowStageTransitions(batch.workflow_type);
     const allowedNext = baseTransitions[currentStage] || [];
-    const isOverride = actor?.role === 'admin' && currentStage !== 'submitted' && targetStage === 'approved';
+    const isOverride = batch.workflow_type === 'public_health'
+      && actor?.role === 'admin'
+      && currentStage !== 'submitted'
+      && targetStage === 'approved';
     if (!allowedNext.includes(targetStage)) {
       res.status(400).json({ message: `Cannot move batch from ${currentStage} to ${targetStage}.` });
       return;
@@ -3115,7 +3109,7 @@ app.get('/api/batches/:code', requireAuth(REVIEW_ACCESS_ROLES), async (req, res)
   const { rows } = await pool.query(
     `SELECT batch_id, code, root_batch_id, department_code, file_name, checksum, created_at, transactions,
             encode(file_data, 'base64') AS file_base64, stage, stage_updated_at, pd_number,
-            submitted_email, submitted_by, is_draft, archived_at
+            submitted_email, submitted_by, is_draft, archived_at, workflow_type
        FROM combined_batch_archives
       WHERE code = $1
       ORDER BY archived_at NULLS FIRST, created_at DESC

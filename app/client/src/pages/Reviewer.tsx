@@ -90,6 +90,10 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
     const [valueDateLoading, setValueDateLoading] = useState(false);
     const [valueDateError, setValueDateError] = useState('');
     const [readerNoticeOpen, setReaderNoticeOpen] = useState(false);
+    const [rejectOpen, setRejectOpen] = useState(false);
+    const [rejectComment, setRejectComment] = useState('');
+    const [rejectLoading, setRejectLoading] = useState(false);
+    const [rejectError, setRejectError] = useState('');
 
     const fetchArchives = useCallback(async (full: boolean, offset = 0, search = '') => {
         setArchivesLoading(true);
@@ -163,6 +167,7 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
     const stage = selectedBatch?.stage || 'submitted';
     const stageInfo = STAGE_META[stage] || { label: stage, classes: 'bg-gray-100 text-gray-700' };
     const isReviewerRole = user?.role === 'admin' || user?.role === 'reviewer';
+    const isAbaBatch = !selectedBatch?.workflow_type || selectedBatch.workflow_type === 'aba';
 
     const handleDownloadAba = () => {
         if (!selectedBatch?.file_base64) {
@@ -289,6 +294,31 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
         }
     };
 
+    const handleReject = async () => {
+        if (!selectedBatch) return;
+        if (!rejectComment.trim()) {
+            setRejectError('Provide a reason for rejecting this batch.');
+            return;
+        }
+        setRejectLoading(true);
+        setRejectError('');
+        try {
+            await apiClient.patch(`/batches/${encodeURIComponent(selectedBatch.code)}/stage`, {
+                stage: 'rejected',
+                comments: rejectComment.trim(),
+            });
+            addToast('Batch rejected and the submitter has been notified.', 'success');
+            setRejectOpen(false);
+            setRejectComment('');
+            await loadBatch(selectedBatch.code, true);
+            fetchArchives(showFullArchive, archiveOffset, searchTerm);
+        } catch (err) {
+            setRejectError((err as Error)?.message || 'Unable to reject batch.');
+        } finally {
+            setRejectLoading(false);
+        }
+    };
+
     return (
         <>
         <div className="space-y-6">
@@ -396,7 +426,9 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
                     ) : (
                         <div className="mt-4 space-y-4">
                             <p className="text-sm text-gray-700">
-                                Departmental ABA submissions are filed directly to the repository; no approval step is required.
+                                {isAbaBatch
+                                    ? 'Departmental ABA submissions are saved as submitted and remain in that status unless a reviewer rejects them.'
+                                    : 'Public health pay runs are reviewed and approved from the Wellness Program review queue.'}
                             </p>
                             <div className="rounded-lg bg-white/70 px-3 py-2 text-sm text-gray-700">
                                 <span className="font-medium">Status:</span> {stageInfo.label}
@@ -405,6 +437,51 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
                                 <p className="text-xs text-gray-500">
                                     This batch was rejected, so its ABA file is not available for download.
                                 </p>
+                            )}
+                            {isAbaBatch && isReviewerRole && selectedBatch.stage === 'submitted' && (
+                                <div className="space-y-2 border-t border-amber-100 pt-3">
+                                    {!rejectOpen ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => { setRejectOpen(true); setRejectError(''); }}
+                                            className="toolbar-button w-full justify-center border-rose-300 text-rose-700 hover:bg-rose-50"
+                                        >
+                                            Reject batch
+                                        </button>
+                                    ) : (
+                                        <>
+                                            <label className="block text-sm font-medium text-gray-700">
+                                                Rejection reason
+                                                <textarea
+                                                    value={rejectComment}
+                                                    onChange={(e) => setRejectComment(e.target.value)}
+                                                    rows={3}
+                                                    placeholder="Explain what needs to change before resubmission."
+                                                    className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
+                                                />
+                                            </label>
+                                            {rejectError && <p className="text-xs text-rose-600">{rejectError}</p>}
+                                            <div className="flex gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={handleReject}
+                                                    disabled={rejectLoading}
+                                                    className="toolbar-button flex-1 justify-center bg-rose-600 text-white border-rose-600 hover:bg-rose-700 disabled:opacity-60"
+                                                >
+                                                    {rejectLoading ? 'Rejecting…' : 'Confirm rejection'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setRejectOpen(false); setRejectError(''); }}
+                                                    disabled={rejectLoading}
+                                                    className="toolbar-button"
+                                                >
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
                             )}
                         </div>
                     )}

@@ -19,44 +19,62 @@ import forexTTRouter from './routes/forexTT.js';
 import healthRouter from './routes/health.js';
 import publicHealthRouter from './routes/public-health.js';
 import { setTestingMode } from './services/notificationService.js';
-import { BATCH_WORKFLOW_TYPES, workflowStageTransitions, SIGNUP_ROLES } from './config.js';
+import {
+  buildCookieParser,
+  buildTokenPayload,
+  clearAuthCookie,
+  createSession,
+  csrfGuard,
+  generateTempPassword,
+  hashPassphrase,
+  invalidateSession,
+  isLegacyPassphraseHash,
+  legacyHashPassphrase,
+  lookupSession,
+  parsePermissions,
+  requireAuth,
+  resolveAllowedBankPresets,
+  reviewerAllowedPresets,
+  reviewerSummary,
+  setAuthCookie,
+} from './services/authService.js';
+import {
+  ACCOUNT_ROLES,
+  ACCOUNT_STATUSES,
+  ADMIN_ARCHIVE_LIMIT_DEFAULT,
+  AUTH_LOCKOUT_WINDOW_MS,
+  AUTH_MAX_FAILED_ATTEMPTS,
+  BANK_PRESET_KEYS,
+  BATCH_WORKFLOW_TYPES,
+  BSB_REGEX,
+  COOKIE_NAME,
+  DEFAULT_BANK_PRESETS,
+  EXCEL_MIME_TYPES,
+  FRONTEND_BASE_URL,
+  JWT_SECRET,
+  PASS_HASH_ROUNDS,
+  PAYROLL_ACCESS_ROLES,
+  PAYROLL_MAX_FILE_BYTES,
+  PAYROLL_PYTHON_BIN,
+  REPLY_TO,
+  REVIEW_ACCESS_ROLES,
+  REVIEWER_ARCHIVE_LIMIT_DEFAULT,
+  SESSION_MINUTES,
+  SIGNUP_ROLES,
+  SMTP_FROM,
+  SMTP_HOST,
+  SMTP_PASS,
+  SMTP_PORT,
+  SMTP_SECURE,
+  SMTP_USER,
+  TEMP_PASSWORD_LENGTH,
+  UUID_REGEX,
+  WORKFLOW_GUIDE_TEXT,
+  isProd,
+  workflowStageTransitions,
+} from './config.js';
 
 dotenv.config();
-
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  console.error('FATAL: JWT_SECRET environment variable is not set. Refusing to start.');
-  process.exit(1);
-}
-const SESSION_MINUTES = Number(process.env.REVIEWER_SESSION_MINUTES || 480);
-const PASS_HASH_ROUNDS = Number(process.env.BCRYPT_ROUNDS || 12);
-const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || 'http://localhost:8080';
-const TEMP_PASSWORD_LENGTH = Number(process.env.REVIEWER_TEMP_PASSWORD_LENGTH || 12);
-const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
-const SMTP_HOST = process.env.SMTP_HOST;
-const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
-const SMTP_USER = process.env.SMTP_USER;
-const SMTP_PASS = process.env.SMTP_PASS;
-const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER || 'no-reply@example.com';
-const REPLY_TO = process.env.REPLY_TO_EMAIL;
-const ACCOUNT_ROLES = ['user', 'banking', 'reviewer', 'admin', 'payroll', 'public_health'];
-const REVIEW_ACCESS_ROLES = ['reviewer', 'admin'];
-const ACCOUNT_STATUSES = ['active', 'inactive'];
-const BSB_REGEX = /^[0-9]{3}-[0-9]{3}$/;
-const BANK_PRESET_KEYS = ['CBA-RON', 'CBA-Agent', 'CBA-DFAT', 'CBA-NSUDP', 'CBA-NZAID', 'CBA-DEV.FUND', 'CBA-Seabed.Account', 'CBA-Tank Farm'];
-const DEFAULT_BANK_PRESETS = ['CBA-RON'];
-const ADMIN_ARCHIVE_LIMIT_DEFAULT = 100;
-const REVIEWER_ARCHIVE_LIMIT_DEFAULT = 50;
-const PAYROLL_ACCESS_ROLES = ['payroll', 'admin'];
-const PAYROLL_PYTHON_BIN = process.env.PAYROLL_PYTHON_BIN || process.env.PYTHON_BIN || 'python3';
-const PAYROLL_MAX_FILE_BYTES = 10 * 1024 * 1024;
-const AUTH_LOCKOUT_WINDOW_MS = Number(process.env.AUTH_LOCKOUT_WINDOW_MS || 15 * 60 * 1000);
-const AUTH_MAX_FAILED_ATTEMPTS = Number(process.env.AUTH_MAX_FAILED_ATTEMPTS || 5);
-const EXCEL_MIME_TYPES = new Set([
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/octet-stream'
-]);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '../../..');
@@ -91,19 +109,6 @@ if (AI_HELPER_ENABLED) {
 const ADMIN_ARCHIVE_LIMIT_MAX = 500;
 const REVIEWER_ARCHIVE_LIMIT_MAX = 100;
 const BLACKLIST_IMPORT_LIMIT = 1000;
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const WORKFLOW_GUIDE_TEXT = `Workflow Guide:\n\n1. Level 1 users prepare an ABA file in the Generator, enter the PD#, add notes, and click Commit.\n2. Reviewers are notified by email, open the Reviewer tab, and approve or reject the batch.\n3. If rejected, the submitter fixes their copy (upload via Reader → Load) and resubmits.\n4. Once approved, reviewers/admins can download the ABA from the archive; admins can delete batches when finished.`;
-
-function parsePermissions(value) {
-  if (!value) return {};
-  if (typeof value === 'object') return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return {};
-  }
-}
-
 // SFTP Sync Configuration
 const SFTP_SYNC_METHOD = process.env.SFTP_SYNC_METHOD || 'database'; // 'direct', 'file', or 'database'
 // Default to host.docker.internal for Docker containers (Windows/Mac), fallback to localhost for Linux native
@@ -202,58 +207,13 @@ app.use(helmet({
 }));
 
 // CORS: restrict to configured frontend origin
-const corsOrigin = process.env.FRONTEND_BASE_URL || 'http://localhost:8080';
-// Cookie-based auth: JWT is set as an httpOnly cookie so JavaScript (XSS) cannot read it.
-// The cookie name is 'auth_token' and is shared across login/refresh/change-password/logout.
-const COOKIE_NAME = 'auth_token';
-const isProd = process.env.NODE_ENV === 'production' || corsOrigin.startsWith('https://');
-function setAuthCookie(res, token, expiresAt) {
-  res.cookie(COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'lax',
-    expires: expiresAt,
-    path: '/',
-  });
-}
-function clearAuthCookie(res) {
-  res.clearCookie(COOKIE_NAME, { path: '/', httpOnly: true, secure: isProd, sameSite: 'lax' });
-}
-// Authenticated CSRF defense: reject cross-origin state-changing requests.
-// Bearer tokens in Authorization header are not sent by browsers cross-site,
-// but this adds defense-in-depth if tokens ever move to cookies.
-function csrfGuard(req, res, next) {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-  const origin = req.headers.origin;
-  const allowedOrigins = String(corsOrigin || '').split(',').map((s) => s.trim()).filter(Boolean);
-  if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
-    return next();
-  }
-  res.status(403).json({ message: 'Cross-origin request blocked.' });
-}
+const corsOrigin = FRONTEND_BASE_URL;
 app.use(cors({ origin: corsOrigin, credentials: true }));
-
-// Lightweight cookie parser — populates req.cookies from the Cookie header.
-// Avoids adding a cookie-parser dependency for a single auth cookie.
-app.use((req, _res, next) => {
-  req.cookies = {};
-  const cookieHeader = req.headers.cookie;
-  if (cookieHeader) {
-    for (const pair of cookieHeader.split(';')) {
-      const idx = pair.indexOf('=');
-      if (idx > 0) {
-        const key = pair.slice(0, idx).trim();
-        const val = pair.slice(idx + 1).trim();
-        if (key) req.cookies[key] = decodeURIComponent(val);
-      }
-    }
-  }
-  next();
-});
+app.use(buildCookieParser());
 
 // Allow larger payloads for ABA uploads (base64 inflates size by ~33%)
 app.use(express.json({ limit: '10mb' }));
-app.use(csrfGuard);
+app.use(csrfGuard(corsOrigin));
 
 // Rate limiting: general API
 // Skip /api/auth/* so authentication endpoints are governed only by the
@@ -1554,179 +1514,6 @@ async function sendMail(options = {}) {
   }
 }
 
-async function createSession(reviewerId) {
-  const tokenId = crypto.randomUUID();
-  const expiresAt = new Date(Date.now() + SESSION_MINUTES * 60 * 1000);
-  await pool.query(
-    `INSERT INTO reviewer_sessions (reviewer_id, token_id, expires_at)
-     VALUES ($1, $2, $3)`,
-    [reviewerId, tokenId, expiresAt.toISOString()]
-  );
-  return { tokenId, expiresAt };
-}
-
-async function invalidateSession(tokenId) {
-  if (!tokenId) return;
-  await pool.query('DELETE FROM reviewer_sessions WHERE token_id = $1', [tokenId]);
-}
-
-async function lookupSession(tokenId) {
-  if (!tokenId) return null;
-  const { rows } = await pool.query(
-    `SELECT r.id, r.email, r.display_name, r.role, r.status, r.must_change_password, r.last_login_at,
-            r.created_at, r.updated_at, r.department_code, r.division_code, r.notify_on_submission,
-            r.permissions, s.expires_at
-       FROM reviewer_sessions s
-       JOIN reviewers r ON r.id = s.reviewer_id
-      WHERE s.token_id = $1`,
-    [tokenId]
-  );
-  if (!rows.length) return null;
-  return rows[0];
-}
-
-function buildTokenPayload(reviewer, tokenId, expiresAt) {
-  return jwt.sign(
-    {
-      sub: reviewer.id,
-      email: reviewer.email,
-      role: reviewer.role,
-      tokenId
-    },
-    JWT_SECRET,
-    { expiresIn: `${SESSION_MINUTES}m` }
-  );
-}
-
-async function resolveAllowedBankPresets(departmentCode, divisionCode) {
-  if (!departmentCode) return DEFAULT_BANK_PRESETS;
-  const dept = String(departmentCode).trim();
-  const div = String(divisionCode ?? '00').trim() || '00';
-  const { rows } = await pool.query(
-    'SELECT allowed_bank_presets FROM department_profiles WHERE department_code = $1 AND division_code = $2',
-    [dept, div]
-  );
-  if (rows.length) {
-    const presets = (rows[0].allowed_bank_presets || []).filter((k) => BANK_PRESET_KEYS.includes(k));
-    if (presets.length) return presets;
-  }
-  return DEFAULT_BANK_PRESETS;
-}
-
-async function reviewerAllowedPresets(reviewerId) {
-  const { rows } = await pool.query(
-    'SELECT department_code, division_code FROM reviewers WHERE id = $1',
-    [reviewerId]
-  );
-  if (!rows.length) return DEFAULT_BANK_PRESETS;
-  return resolveAllowedBankPresets(rows[0].department_code, rows[0].division_code);
-}
-
-function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS) {
-  const permissions = parsePermissions(row.permissions);
-  // Legacy role-based defaults for backward compatibility
-  if (['reviewer', 'admin'].includes(row.role)) {
-    permissions.review_aba ??= true;
-    permissions.notify_aba_submissions ??= row.notify_on_submission !== false;
-    // FOREX TT defaults for reviewers/admins
-    permissions.review_forex_tt ??= true;
-    permissions.notify_forex_tt_submissions ??= row.notify_on_submission !== false;
-  }
-  if (row.status === 'active') {
-    // All active users may submit ABA batches and FOREX TT requests
-    permissions.submit_aba ??= true;
-    permissions.submit_forex_tt ??= true;
-  }
-  if (row.role === 'admin') {
-    permissions.admin ??= true;
-  }
-  return {
-    id: row.id,
-    email: row.email,
-    display_name: row.display_name,
-    role: row.role,
-    status: row.status,
-    must_change_password: row.must_change_password ?? false,
-    last_login_at: row.last_login_at,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    department_code: row.department_code || null,
-    division_code: row.division_code || '00',
-    notify_on_submission: row.notify_on_submission !== false,
-    allowed_bank_presets: Array.from(new Set(allowedBankPresets)),
-    permissions
-  };
-}
-
-function requireAuth(roles = []) {
-  const allowedRoles = Array.isArray(roles) && roles.length ? roles : null;
-  return async (req, res, next) => {
-    try {
-      // Read token from httpOnly cookie first, fall back to Authorization header (backward compat).
-      const header = req.headers.authorization || '';
-      const cookieToken = req.cookies?.[COOKIE_NAME];
-      const token = cookieToken || (header.startsWith('Bearer ') ? header.slice(7) : '');
-      const requestPath = req.originalUrl || req.path;
-      const requestIp = req.ip;
-      if (!token) {
-        console.warn(`[auth] no token for ${req.method} ${requestPath} from ${requestIp}`);
-        res.status(401).json({ message: 'Authentication required.' });
-        return;
-      }
-      let payload;
-      try {
-        // Explicit algorithm whitelist prevents alg:none and algorithm-confusion attacks.
-        payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
-      } catch (err) {
-        console.warn(`[auth] invalid/expired token for ${req.method} ${requestPath} from ${requestIp}: ${err.message}`);
-        res.status(401).json({ message: 'Invalid or expired token.' });
-        return;
-      }
-      const session = await lookupSession(payload.tokenId);
-      if (!session) {
-        console.warn(`[auth] session not found for ${req.method} ${requestPath} from ${requestIp}, tokenId ${payload.tokenId}`);
-        res.status(401).json({ message: 'Session not found.' });
-        return;
-      }
-      if (session.status !== 'active') {
-        res.status(403).json({ message: 'Account inactive.' });
-        return;
-      }
-      const now = new Date();
-      const expiry = new Date(session.expires_at);
-      if (expiry <= now) {
-        await invalidateSession(payload.tokenId);
-        res.status(401).json({ message: 'Session expired.' });
-        return;
-      }
-      if (allowedRoles && !allowedRoles.includes(session.role)) {
-        res.status(403).json({ message: 'Forbidden.' });
-        return;
-      }
-      const allowedPresets = await reviewerAllowedPresets(session.id);
-      const permissions = reviewerSummary(session, allowedPresets).permissions;
-      req.user = {
-        id: session.id,
-        email: session.email,
-        display_name: session.display_name,
-        role: session.role,
-        must_change_password: session.must_change_password ?? false,
-        tokenId: payload.tokenId,
-        session_expires_at: session.expires_at,
-        department_code: session.department_code || null,
-        division_code: session.division_code || '00',
-        notify_on_submission: session.notify_on_submission !== false,
-        allowed_bank_presets: allowedPresets,
-        permissions
-      };
-      next();
-    } catch (err) {
-      console.error('Authentication error', err);
-      res.status(500).json({ message: 'Authentication failed.' });
-    }
-  };
-}
-
 function buildBatchReviewLink(code) {
   const formatted = formatBatchCode(code);
   try {
@@ -1736,11 +1523,6 @@ function buildBatchReviewLink(code) {
   } catch (_) {
     return `${FRONTEND_BASE_URL}?batch=${encodeURIComponent(formatted)}`;
   }
-}
-
-function generateTempPassword(length = TEMP_PASSWORD_LENGTH) {
-  const bytes = crypto.randomBytes(Math.ceil(length * 0.75));
-  return bytes.toString('base64url').slice(0, length);
 }
 
 
@@ -3418,21 +3200,6 @@ function decryptSmtpPass(stored) {
 
 if (!SMTP_ENC_KEY_HEX) {
   console.warn('SECURITY WARNING: SMTP_ENC_KEY is not set. SMTP passwords will be stored without at-rest encryption.');
-}
-
-// Passphrases are now hashed with bcrypt (salted, slow) instead of unsalted SHA-256.
-// Legacy SHA-256 hashes are still accepted for verification during migration.
-async function hashPassphrase(passphrase) {
-  return bcrypt.hash(passphrase, PASS_HASH_ROUNDS);
-}
-
-function isLegacyPassphraseHash(hash) {
-  // SHA-256 hex digest is 64 chars; bcrypt hashes start with $2.
-  return typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash);
-}
-
-function legacyHashPassphrase(passphrase) {
-  return crypto.createHash('sha256').update(passphrase).digest('hex');
 }
 
 app.get('/api/reviewer/passphrase', async (_req, res) => {

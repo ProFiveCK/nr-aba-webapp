@@ -161,6 +161,27 @@ export const CAPABILITY_CATALOGUE = [
 
 export const ALL_CAPABILITIES = CAPABILITY_CATALOGUE.flatMap((g) => g.capabilities.map((c) => c.key));
 
+// Apps a person can request on the public signup form, and what approving that
+// request grants. Requesting access is per-app; the admin still sets the role.
+export const SIGNUP_APPS = [
+  { id: 'aba', label: 'ABA Payments', grants: [PERMISSIONS.ABA_ACCESS, PERMISSIONS.SUBMIT_ABA] },
+  { id: 'forex-tt', label: 'FOREX TT', grants: [PERMISSIONS.FOREX_TT_ACCESS, PERMISSIONS.SUBMIT_FOREX_TT] },
+  { id: 'banking', label: 'Banking', grants: [PERMISSIONS.BANKING_ACCESS] },
+  { id: 'payroll', label: 'Payroll', grants: [PERMISSIONS.PAYROLL_ACCESS] },
+  { id: 'public-health', label: 'Wellness Program', grants: [PERMISSIONS.PUBLIC_HEALTH_ACCESS] },
+];
+
+export const SIGNUP_APP_IDS = SIGNUP_APPS.map((a) => a.id);
+
+export function capabilitiesForApps(appIds = []) {
+  const wanted = new Set();
+  for (const id of appIds) {
+    const app = SIGNUP_APPS.find((a) => a.id === id);
+    for (const grant of app?.grants ?? []) wanted.add(grant);
+  }
+  return [...wanted];
+}
+
 // What each legacy role grants. Used to seed capabilities for existing accounts
 // and for newly created ones, and retained as a floor in reviewerSummary so a
 // user can never end up with less access than their role implies.

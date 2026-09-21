@@ -480,6 +480,9 @@ export async function initSchema() {
       );
     `);
     await client.query("ALTER TABLE signup_requests ADD COLUMN IF NOT EXISTS requested_role TEXT NOT NULL DEFAULT 'user'");
+    // Which apps the person asked for. Supersedes requested_role as the thing
+    // being requested; the role is what the approving admin assigns.
+    await client.query("ALTER TABLE signup_requests ADD COLUMN IF NOT EXISTS requested_apps TEXT[] NOT NULL DEFAULT '{}'");
 
     // Password reset tokens for self-service password reset
     await client.query(`

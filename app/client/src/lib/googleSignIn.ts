@@ -61,4 +61,5 @@ export function loadGoogleIdentity(): Promise<GoogleIdApi> {
 export interface AuthConfig {
     google_enabled: boolean;
     google_client_id: string;
+    signup_apps?: { id: string; label: string }[];
 }

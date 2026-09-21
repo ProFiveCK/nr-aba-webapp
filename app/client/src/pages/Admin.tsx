@@ -26,6 +26,7 @@ interface SignupRequest {
     name: string;
     department_code: string | null;
     requested_role: 'user' | 'banking' | 'payroll' | 'public_health' | 'reviewer';
+    requested_apps?: string[] | null;
     status: 'pending' | 'approved' | 'rejected';
     created_at: string;
     reviewed_at: string | null;
@@ -318,7 +319,18 @@ function SignupRequestsPanel() {
                             ) : (
                                 pending.map((req) => (
                                     <tr key={req.id}>
-                                        <td className="px-3 py-2 font-medium text-gray-900">{req.name}</td>
+                                        <td className="px-3 py-2 font-medium text-gray-900">
+                                            {req.name}
+                                            {req.requested_apps?.length ? (
+                                                <span className="mt-1 flex flex-wrap gap-1">
+                                                    {req.requested_apps.map((app) => (
+                                                        <span key={app} className="rounded bg-[#002B7F]/10 px-1.5 py-0.5 text-xs font-medium text-[#002B7F]">
+                                                            {app}
+                                                        </span>
+                                                    ))}
+                                                </span>
+                                            ) : null}
+                                        </td>
                                         <td className="px-3 py-2 text-gray-600">{req.email}</td>
                                         <td className="px-3 py-2 text-gray-600">{req.department_code || '—'}</td>
                                         <td className="px-3 py-2">

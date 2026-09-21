@@ -55,6 +55,9 @@ import {
   ALL_CAPABILITIES,
   BANK_PRESET_KEYS,
   BATCH_WORKFLOW_TYPES,
+  SIGNUP_APPS,
+  SIGNUP_APP_IDS,
+  capabilitiesForApps,
   CAPABILITY_CATALOGUE,
   ROLE_CAPABILITIES,
   BSB_REGEX,
@@ -349,13 +352,23 @@ app.post('/api/admin/signup-requests/:id/approve', requireAuth(['admin']), async
   }
   const permissions = defaultPermissionsForRole(requestedRole);
 
+  // Apps the person asked for, unless the admin overrode the selection.
+  const approvedApps = Array.isArray(req.body.apps)
+    ? req.body.apps.filter((a) => SIGNUP_APP_IDS.includes(a))
+    : (reqData.requested_apps || []);
+
   // Create reviewer account
   try {
-    await pool.query(
+    const { rows: created } = await pool.query(
       `INSERT INTO reviewers (email, display_name, role, status, password_hash, must_change_password, department_code, permissions)
-       VALUES ($1, $2, $3, 'active', $4, FALSE, $5, $6)`,
+       VALUES ($1, $2, $3, 'active', $4, FALSE, $5, $6) RETURNING id`,
       [reqData.email, reqData.name, requestedRole, reqData.password_hash, reqData.department_code, JSON.stringify(permissions)]
     );
+    const capabilities = new Set([
+      ...(ROLE_CAPABILITIES[requestedRole] ?? []),
+      ...capabilitiesForApps(approvedApps),
+    ]);
+    await setCapabilities(created[0].id, [...capabilities], reviewerId);
     await pool.query(
       `UPDATE signup_requests SET status = 'approved', reviewed_at = NOW(), reviewer_id = $1, review_comment = $2, requested_role = $3 WHERE id = $4`,
       [reviewerId, review_comment || null, requestedRole, requestId]
@@ -404,7 +417,9 @@ app.post(
     body('name').isString().isLength({ min: 1, max: 100 }),
     body('password').isString().isLength({ min: 6, max: 128 }),
     body('department_code').optional({ nullable: true }).matches(/^\d{2}$/),
-    body('requested_role').optional({ nullable: true }).isIn(SIGNUP_ROLES)
+    body('requested_role').optional({ nullable: true }).isIn(SIGNUP_ROLES),
+    body('requested_apps').optional().isArray(),
+    body('requested_apps.*').isIn(SIGNUP_APP_IDS)
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -413,6 +428,9 @@ app.post(
     const password = req.body.password;
     const departmentCode = req.body.department_code || null;
     const requestedRole = SIGNUP_ROLES.includes(req.body.requested_role) ? req.body.requested_role : 'user';
+    const requestedApps = Array.isArray(req.body.requested_apps)
+      ? [...new Set(req.body.requested_apps.filter((a) => SIGNUP_APP_IDS.includes(a)))]
+      : [];
     const passwordHash = await bcrypt.hash(password, PASS_HASH_ROUNDS);
     try {
       const { rows: existingAccounts } = await pool.query(
@@ -442,13 +460,14 @@ app.post(
                  password_hash = $3,
                  department_code = $4,
                  requested_role = $5,
+                 requested_apps = $6,
                  status = 'pending',
                  created_at = NOW(),
                  reviewed_at = NULL,
                  reviewer_id = NULL,
                  review_comment = NULL
            WHERE email = $1`,
-          [email, name, passwordHash, departmentCode, requestedRole]
+          [email, name, passwordHash, departmentCode, requestedRole, requestedApps]
         );
         notifyAdminsOfSignupRequest({ email, name, departmentCode, requestedRole }).catch((err) => {
           console.error('Failed to notify admins of signup request', err);
@@ -458,9 +477,9 @@ app.post(
       }
 
       await pool.query(
-        `INSERT INTO signup_requests (email, name, password_hash, department_code, requested_role)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [email, name, passwordHash, departmentCode, requestedRole]
+        `INSERT INTO signup_requests (email, name, password_hash, department_code, requested_role, requested_apps)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [email, name, passwordHash, departmentCode, requestedRole, requestedApps]
       );
       notifyAdminsOfSignupRequest({ email, name, departmentCode, requestedRole }).catch((err) => {
         console.error('Failed to notify admins of signup request', err);
@@ -475,7 +494,11 @@ app.post(
 // Public: lets the login page decide whether to render the Google button.
 // OAuth client IDs are public by design; no secret is exposed here.
 app.get('/api/auth/config', (_req, res) => {
-  res.json({ google_enabled: googleSignInEnabled, google_client_id: GOOGLE_CLIENT_ID });
+  res.json({
+    google_enabled: googleSignInEnabled,
+    google_client_id: GOOGLE_CLIENT_ID,
+    signup_apps: SIGNUP_APPS.map(({ id, label }) => ({ id, label })),
+  });
 });
 
 app.post(

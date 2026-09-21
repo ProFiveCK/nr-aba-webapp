@@ -13,14 +13,6 @@ interface DepartmentOption {
     name: string | null;
 }
 
-const APP_OPTIONS = [
-    { value: 'user', label: 'ABA / Forex TT' },
-    { value: 'banking', label: 'Banking' },
-    { value: 'payroll', label: 'Payroll' },
-    { value: 'public_health', label: 'Health Program (Wellness)' },
-    { value: 'reviewer', label: 'Reviewer (Treasury)' },
-];
-
 const fieldClass =
     'w-full h-11 pl-10 pr-3 bg-white border border-gray-300 rounded-md text-sm transition-colors focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-[#002B7F]/20 disabled:opacity-60 disabled:bg-gray-50';
 const labelClass = 'block text-sm font-medium text-gray-700 mb-1.5';
@@ -52,7 +44,8 @@ export function Login() {
     const [signupEmail, setSignupEmail] = useState('');
     const [signupPassword, setSignupPassword] = useState('');
     const [signupDept, setSignupDept] = useState('');
-    const [signupRole, setSignupRole] = useState('user');
+    const [signupApps, setSignupApps] = useState<string[]>([]);
+    const [availableApps, setAvailableApps] = useState<{ id: string; label: string }[]>([]);
     const [departments, setDepartments] = useState<DepartmentOption[]>([]);
     const [departmentsLoading, setDepartmentsLoading] = useState(false);
     const [departmentsError, setDepartmentsError] = useState('');
@@ -83,11 +76,19 @@ export function Login() {
         if (!isLogin) {
             const controller = new AbortController();
             loadDepartments(controller.signal);
+            apiClient
+                .get<AuthConfig>('/auth/config', { signal: controller.signal })
+                .then((config) => setAvailableApps(config?.signup_apps || []))
+                .catch(() => undefined);
             return () => {
                 controller.abort();
             };
         }
     }, [isLogin, loadDepartments]);
+
+    const toggleSignupApp = (id: string, checked: boolean) => {
+        setSignupApps((prev) => (checked ? [...new Set([...prev, id])] : prev.filter((a) => a !== id)));
+    };
 
     // Google sign-in: only rendered once the backend confirms it is configured.
     // Any failure here leaves password login untouched.
@@ -170,6 +171,11 @@ export function Login() {
             setError('Please select a Department from the list.');
             return;
         }
+        if (!signupApps.length) {
+            setIsLoading(false);
+            setError('Please select at least one app you need access to.');
+            return;
+        }
 
         try {
             await apiClient.post('/auth/signup', {
@@ -177,7 +183,7 @@ export function Login() {
                 name: signupName.trim(),
                 password: signupPassword,
                 department_code: trimmedDept,
-                requested_role: signupRole,
+                requested_apps: signupApps,
             });
             setSuccessMessage('Signup request submitted! Please wait for admin approval.');
             // Clear form
@@ -185,7 +191,7 @@ export function Login() {
             setSignupEmail('');
             setSignupPassword('');
             setSignupDept('');
-            setSignupRole('user');
+            setSignupApps([]);
             // Switch back to login after a delay
             setTimeout(() => setIsLogin(true), 3000);
         } catch (err) {
@@ -391,22 +397,28 @@ export function Login() {
                             </div>
 
                             <div>
-                                <label htmlFor="signup-app" className={labelClass}>App</label>
-                                <div className="relative">
-                                    <LayoutGrid className={iconClass} />
-                                    <select
-                                        id="signup-app"
-                                        required
-                                        value={signupRole}
-                                        onChange={(e) => setSignupRole(e.target.value)}
-                                        className={`${fieldClass} appearance-none bg-white`}
-                                        disabled={isLoading}
-                                    >
-                                        {APP_OPTIONS.map((opt) => (
-                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                        ))}
-                                    </select>
+                                <span className={labelClass}>
+                                    <LayoutGrid className="mr-1.5 inline h-4 w-4 align-text-bottom text-gray-400" />
+                                    Which apps do you need?
+                                </span>
+                                <div className="space-y-1.5 rounded-md border border-gray-300 bg-white p-3">
+                                    {availableApps.length ? (
+                                        availableApps.map((app) => (
+                                            <label key={app.id} className="flex items-center gap-2 text-sm text-gray-700">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={signupApps.includes(app.id)}
+                                                    onChange={(e) => toggleSignupApp(app.id, e.target.checked)}
+                                                    disabled={isLoading}
+                                                />
+                                                {app.label}
+                                            </label>
+                                        ))
+                                    ) : (
+                                        <p className="text-sm text-gray-500">Loading apps…</p>
+                                    )}
                                 </div>
+                                <p className="mt-1 text-xs text-gray-500">Select every app you need — you can be given more than one.</p>
                             </div>
 
                             <div>

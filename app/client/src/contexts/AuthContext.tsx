@@ -127,6 +127,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         saveSession(response.token, reviewer, response.expires_at);
     }, [saveSession]);
 
+    const loginWithGoogle = useCallback(async (credential: string) => {
+        const response = await apiClient.post<LoginResponse>('/auth/google', { credential });
+
+        if (!response.token || !response.reviewer || !response.expires_at) {
+            throw new Error('Invalid login response');
+        }
+
+        const reviewer: User = {
+            ...response.reviewer,
+            permissions: response.permissions || response.reviewer.permissions || {},
+        };
+        saveSession(response.token, reviewer, response.expires_at);
+    }, [saveSession]);
+
     const updateUser = useCallback((updates: Partial<User>) => {
         setUser((prev) => {
             if (!prev) return prev;
@@ -270,6 +284,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             user,
             token,
             login,
+            loginWithGoogle,
             logout,
             updateUser,
             replaceSession,
@@ -280,7 +295,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             sessionExpiresAt,
             requiresPasswordChange,
         }),
-        [user, token, login, logout, updateUser, replaceSession, isLoading, sessionExpiresAt, requiresPasswordChange]
+        [user, token, login, loginWithGoogle, logout, updateUser, replaceSession, isLoading, sessionExpiresAt, requiresPasswordChange]
     );
 
     return (

@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Building2, LayoutGrid, Loader2, LockKeyhole, Mail, User } from 'lucide-react';
 import { useAuth } from '../contexts/useAuth';
 import { apiClient } from '../lib/api';
+import { loadGoogleIdentity } from '../lib/googleSignIn';
+import type { AuthConfig } from '../lib/googleSignIn';
 
 interface DepartmentOption {
     id: string;
@@ -28,19 +30,10 @@ const submitClass =
 const linkClass =
     'text-sm font-medium text-[#002B7F] underline-offset-4 transition-colors hover:text-[#E8842C] hover:underline';
 
-function GoogleIcon() {
-    return (
-        <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
-            <path fill="#4285F4" d="M23.52 12.27c0-.79-.07-1.54-.2-2.27H12v4.51h6.47a5.54 5.54 0 0 1-2.4 3.63v3h3.87c2.27-2.09 3.58-5.17 3.58-8.87z" />
-            <path fill="#34A853" d="M12 24c3.24 0 5.96-1.08 7.94-2.91l-3.87-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.28v3.09A12 12 0 0 0 12 24z" />
-            <path fill="#FBBC05" d="M5.27 14.29a7.2 7.2 0 0 1 0-4.58V6.62H1.28a12 12 0 0 0 0 10.76l3.99-3.09z" />
-            <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.43-3.43C17.95 1.19 15.23 0 12 0A12 12 0 0 0 1.28 6.62l3.99 3.09C6.22 6.86 8.87 4.75 12 4.75z" />
-        </svg>
-    );
-}
-
 export function Login() {
-    const { login } = useAuth();
+    const { login, loginWithGoogle } = useAuth();
+    const googleButtonRef = useRef<HTMLDivElement | null>(null);
+    const [googleEnabled, setGoogleEnabled] = useState(false);
     const [isLogin, setIsLogin] = useState(true);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
@@ -95,6 +88,59 @@ export function Login() {
             };
         }
     }, [isLogin, loadDepartments]);
+
+    // Google sign-in: only rendered once the backend confirms it is configured.
+    // Any failure here leaves password login untouched.
+    useEffect(() => {
+        if (!isLogin) return;
+        let cancelled = false;
+
+        (async () => {
+            try {
+                const config = await apiClient.get<AuthConfig>('/auth/config');
+                if (cancelled || !config?.google_enabled || !config.google_client_id) return;
+
+                const api = await loadGoogleIdentity();
+                if (cancelled) return;
+
+                api.initialize({
+                    client_id: config.google_client_id,
+                    callback: async (response) => {
+                        if (!response.credential) return;
+                        setError('');
+                        setIsLoading(true);
+                        try {
+                            await loginWithGoogle(response.credential);
+                        } catch (err) {
+                            setError((err as Error)?.message || 'Google sign-in failed.');
+                        } finally {
+                            setIsLoading(false);
+                        }
+                    },
+                    cancel_on_tap_outside: true,
+                });
+
+                setGoogleEnabled(true);
+                if (googleButtonRef.current) {
+                    api.renderButton(googleButtonRef.current, {
+                        type: 'standard',
+                        theme: 'outline',
+                        size: 'large',
+                        text: 'continue_with',
+                        shape: 'rectangular',
+                        logo_alignment: 'center',
+                        width: 320,
+                    });
+                }
+            } catch (err) {
+                console.warn('Google sign-in unavailable', err);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isLogin, loginWithGoogle]);
 
     const handleLogin = async (e: FormEvent) => {
         e.preventDefault();
@@ -251,26 +297,18 @@ export function Login() {
                                 )}
                             </button>
 
-                            {/* Google sign-in is wired up in a later phase */}
-                            <div className="relative py-1">
-                                <div className="absolute inset-0 flex items-center" aria-hidden="true">
-                                    <div className="w-full border-t border-gray-200" />
+                            {/* Rendered by Google Identity Services; hidden entirely when unconfigured. */}
+                            <div className={googleEnabled ? 'block' : 'hidden'}>
+                                <div className="relative py-1">
+                                    <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                                        <div className="w-full border-t border-gray-200" />
+                                    </div>
+                                    <div className="relative flex justify-center">
+                                        <span className="bg-white px-3 text-xs uppercase tracking-wide text-gray-400">or</span>
+                                    </div>
                                 </div>
-                                <div className="relative flex justify-center">
-                                    <span className="bg-white px-3 text-xs uppercase tracking-wide text-gray-400">or</span>
-                                </div>
+                                <div ref={googleButtonRef} className="flex justify-center pt-3" />
                             </div>
-
-                            <button
-                                type="button"
-                                disabled
-                                title="Google sign-in is coming soon"
-                                className="flex h-11 w-full cursor-not-allowed items-center justify-center gap-2 rounded-md border border-gray-300 bg-white text-sm font-medium text-gray-500 opacity-60"
-                            >
-                                <GoogleIcon />
-                                Continue with Google
-                                <span className="text-xs font-normal text-gray-400">(coming soon)</span>
-                            </button>
 
                             <div className="flex items-center justify-between border-t border-gray-200 pt-4">
                                 <button

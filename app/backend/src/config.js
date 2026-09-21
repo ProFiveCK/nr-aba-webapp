@@ -49,6 +49,9 @@ export const REVIEWER_ARCHIVE_LIMIT_MAX = 100;
 export const BLACKLIST_IMPORT_LIMIT = 1000;
 export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// Google sign-in. Unset disables the /api/auth/google endpoint entirely.
+export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+
 export const COOKIE_NAME = 'auth_token';
 export const isProd = process.env.NODE_ENV === 'production' || FRONTEND_BASE_URL.startsWith('https://');
 

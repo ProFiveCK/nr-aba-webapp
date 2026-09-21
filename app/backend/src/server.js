@@ -39,6 +39,11 @@ import {
   setAuthCookie,
 } from './services/authService.js';
 import {
+  GoogleSignInResult,
+  googleSignInEnabled,
+  resolveGoogleIdentity,
+} from './services/googleAuthService.js';
+import {
   ACCOUNT_ROLES,
   ACCOUNT_STATUSES,
   ADMIN_ARCHIVE_LIMIT_DEFAULT,
@@ -51,6 +56,7 @@ import {
   DEFAULT_BANK_PRESETS,
   EXCEL_MIME_TYPES,
   FRONTEND_BASE_URL,
+  GOOGLE_CLIENT_ID,
   JWT_SECRET,
   PASS_HASH_ROUNDS,
   PAYROLL_ACCESS_ROLES,
@@ -246,6 +252,7 @@ const authLimiter = rateLimit({
   },
 });
 app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/google', authLimiter);
 app.use('/api/auth/signup', authLimiter);
 app.use('/api/auth/forgot-password', authLimiter);
 app.use('/api/auth/reset-password', authLimiter);
@@ -459,6 +466,12 @@ app.post(
     }
   }
 );
+// Public: lets the login page decide whether to render the Google button.
+// OAuth client IDs are public by design; no secret is exposed here.
+app.get('/api/auth/config', (_req, res) => {
+  res.json({ google_enabled: googleSignInEnabled, google_client_id: GOOGLE_CLIENT_ID });
+});
+
 app.post(
   '/api/auth/login',
   [
@@ -513,6 +526,42 @@ app.post(
     await pool.query('UPDATE reviewers SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [reviewer.id]);
     const token = buildTokenPayload(reviewer, tokenId, expiresAt);
     console.info(`[login] success: ${email} (${reviewer.role}) from ${clientIp}, session expires ${expiresAt.toISOString()}`);
+    const expiresIso = expiresAt.toISOString();
+    const allowedPresets = await reviewerAllowedPresets(reviewer.id);
+    const payload = { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso };
+    setAuthCookie(res, token, expiresAt);
+    res.json({ token, expires_at: expiresIso, reviewer: payload });
+  }
+);
+
+// Google sign-in. Issues exactly the same session as password login; the
+// difference is only how the account is established.
+app.post(
+  '/api/auth/google',
+  [body('credential').isString().isLength({ min: 1, max: 4096 })],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const clientIp = req.ip;
+    const { result, reviewer } = await resolveGoogleIdentity(req.body.credential, { ip: clientIp });
+
+    if (result !== GoogleSignInResult.OK) {
+      const responses = {
+        [GoogleSignInResult.DISABLED]: [503, 'Google sign-in is not configured.'],
+        [GoogleSignInResult.BAD_TOKEN]: [401, 'Could not verify your Google account.'],
+        [GoogleSignInResult.EMAIL_UNVERIFIED]: [403, 'Your Google email address is not verified.'],
+        [GoogleSignInResult.NO_ACCOUNT]: [403, 'No portal access for this Google account. Contact your administrator.'],
+        [GoogleSignInResult.INACTIVE]: [403, 'Account inactive.'],
+      };
+      const [status, message] = responses[result] ?? [401, 'Sign-in failed.'];
+      res.status(status).json({ message });
+      return;
+    }
+
+    await clearLoginAttempts(reviewer.email);
+    const { tokenId, expiresAt } = await createSession(reviewer.id);
+    await pool.query('UPDATE reviewers SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [reviewer.id]);
+    const token = buildTokenPayload(reviewer, tokenId, expiresAt);
+    console.info(`[login] google success: ${reviewer.email} (${reviewer.role}) from ${clientIp}`);
     const expiresIso = expiresAt.toISOString();
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
     const payload = { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso };

@@ -200,6 +200,23 @@ export async function initSchema() {
       );
     `);
 
+    // External sign-in identities (Google today). Keyed by the provider's
+    // immutable subject claim rather than email, because emails get reassigned.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS reviewer_identities (
+        reviewer_id UUID NOT NULL REFERENCES reviewers(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        provider_subject TEXT NOT NULL,
+        email TEXT NOT NULL,
+        linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_login_at TIMESTAMPTZ,
+        PRIMARY KEY (provider, provider_subject)
+      );
+    `);
+    await client.query(
+      'CREATE INDEX IF NOT EXISTS idx_reviewer_identities_reviewer ON reviewer_identities(reviewer_id)'
+    );
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS reviewer_settings (
         id BOOLEAN PRIMARY KEY DEFAULT TRUE,

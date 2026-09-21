@@ -18,6 +18,7 @@ import { fileURLToPath } from 'url';
 import forexTTRouter from './routes/forexTT.js';
 import healthRouter from './routes/health.js';
 import publicHealthRouter from './routes/public-health.js';
+import hrRouter from './routes/hr.js';
 import { setTestingMode } from './services/notificationService.js';
 import {
   buildCookieParser,
@@ -277,6 +278,7 @@ app.get('/health', async (_req, res) => {
 
 app.use('/api/forex-tt', forexTTRouter);
 app.use('/api/public-health', publicHealthRouter);
+app.use('/api/hr', hrRouter);
 app.use('/api', healthRouter);
 
 // ===== Authentication =====

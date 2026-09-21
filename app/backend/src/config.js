@@ -98,6 +98,11 @@ export const PERMISSIONS = {
   // App-level access. A single `role` column could not express someone who is
   // simultaneously an ABA preparer, a reviewer and a banking officer; these can
   // be granted in any combination.
+  HR_ACCESS: 'hr_access',
+  HR_LEAVE_APPLY: 'hr_leave_apply',
+  HR_LEAVE_APPROVE: 'hr_leave_approve',
+  HR_STAFF_MANAGE: 'hr_staff_manage',
+  HR_ADMIN: 'hr_admin',
   ABA_ACCESS: 'aba_access',
   BANKING_ACCESS: 'banking_access',
   PAYROLL_ACCESS: 'payroll_access',
@@ -150,6 +155,19 @@ export const CAPABILITY_CATALOGUE = [
     ],
   },
   {
+    app: 'hr',
+    label: 'Leave & HR',
+    capabilities: [
+      { key: PERMISSIONS.HR_ACCESS, label: 'Open the Leave app' },
+      { key: PERMISSIONS.HR_LEAVE_APPLY, label: 'Apply for leave' },
+      // Scoped by hr_employees.manager_id: this grants the ability to approve,
+      // the reporting line decides whose leave.
+      { key: PERMISSIONS.HR_LEAVE_APPROVE, label: 'Approve leave for direct reports' },
+      { key: PERMISSIONS.HR_STAFF_MANAGE, label: 'Manage staff records and balances' },
+      { key: PERMISSIONS.HR_ADMIN, label: 'Manage leave policies and override decisions' },
+    ],
+  },
+  {
     app: 'admin',
     label: 'Administration',
     capabilities: [
@@ -169,6 +187,7 @@ export const SIGNUP_APPS = [
   { id: 'banking', label: 'Banking', grants: [PERMISSIONS.BANKING_ACCESS] },
   { id: 'payroll', label: 'Payroll', grants: [PERMISSIONS.PAYROLL_ACCESS] },
   { id: 'public-health', label: 'Wellness Program', grants: [PERMISSIONS.PUBLIC_HEALTH_ACCESS] },
+  { id: 'hr', label: 'Leave & HR', grants: [PERMISSIONS.HR_ACCESS, PERMISSIONS.HR_LEAVE_APPLY] },
 ];
 
 export const SIGNUP_APP_IDS = SIGNUP_APPS.map((a) => a.id);
@@ -202,6 +221,9 @@ export const ROLE_CAPABILITIES = {
 
 // Public Health (Wellness Program) tier codes. LV0 = demoted, no payment.
 export const PUBLIC_HEALTH_TIERS = ['LV0', 'LV1', 'LV2', 'LV3'];
+
+// Leave application state machine
+export const HR_LEAVE_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'];
 
 // FOREX TT state machine
 export const FOREX_TT_STATUSES = [

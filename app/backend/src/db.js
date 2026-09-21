@@ -750,6 +750,102 @@ export async function initSchema() {
         attempted_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    // ===== Leave & HR =====
+    // Employment record, kept separate from the `reviewers` identity so the org
+    // chart stays out of the auth table and so staff can hold leave records
+    // without a portal login (reviewer_id nullable).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_employees (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        reviewer_id UUID UNIQUE REFERENCES reviewers(id) ON DELETE SET NULL,
+        display_name TEXT NOT NULL,
+        email TEXT,
+        manager_id UUID REFERENCES hr_employees(id) ON DELETE SET NULL,
+        department_code TEXT,
+        join_date DATE,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_employees_manager ON hr_employees(manager_id)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_employees_reviewer ON hr_employees(reviewer_id)');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_leave_types (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL UNIQUE,
+        description TEXT,
+        default_days NUMERIC(6,2) NOT NULL DEFAULT 0,
+        is_accruable BOOLEAN NOT NULL DEFAULT FALSE,
+        requires_note BOOLEAN NOT NULL DEFAULT FALSE,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_leave_balances (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        employee_id UUID NOT NULL REFERENCES hr_employees(id) ON DELETE CASCADE,
+        leave_type_id UUID NOT NULL REFERENCES hr_leave_types(id) ON DELETE CASCADE,
+        balance NUMERIC(6,2) NOT NULL DEFAULT 0,
+        pending NUMERIC(6,2) NOT NULL DEFAULT 0,
+        year INT NOT NULL,
+        UNIQUE (employee_id, leave_type_id, year)
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_leave_applications (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        employee_id UUID NOT NULL REFERENCES hr_employees(id) ON DELETE CASCADE,
+        leave_type_id UUID NOT NULL REFERENCES hr_leave_types(id) ON DELETE RESTRICT,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        days NUMERIC(6,2) NOT NULL,
+        reason TEXT,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','cancelled')),
+        attachment TEXT,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        archived_at TIMESTAMPTZ,
+        reviewed_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        reviewed_at TIMESTAMPTZ,
+        reviewer_note TEXT
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_apps_employee_status ON hr_leave_applications(employee_id, status)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_apps_status_dates ON hr_leave_applications(status, start_date, end_date)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_apps_employee_applied ON hr_leave_applications(employee_id, applied_at DESC)');
+
+    // Manual balance corrections. reason is required: every adjustment must say why.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_leave_adjustments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        employee_id UUID NOT NULL REFERENCES hr_employees(id) ON DELETE CASCADE,
+        leave_type_id UUID NOT NULL REFERENCES hr_leave_types(id) ON DELETE CASCADE,
+        amount NUMERIC(6,2) NOT NULL,
+        reason TEXT NOT NULL,
+        adjusted_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_adjustments_employee ON hr_leave_adjustments(employee_id)');
+
+    // Seed the standard Nauru Treasury leave types (no-op once present).
+    await client.query(`
+      INSERT INTO hr_leave_types (name, description, default_days, is_accruable, requires_note)
+      VALUES
+        ('Annual',        'Annual recreation leave',            20, TRUE,  FALSE),
+        ('Sick',          'Personal illness',                   10, FALSE, TRUE),
+        ('Compassionate', 'Bereavement and family emergency',    5, FALSE, TRUE),
+        ('Special',       'Approved special leave',              5, FALSE, TRUE),
+        ('Official',      'Official duty travel',                0, FALSE, FALSE),
+        ('Leave Without Pay', 'Unpaid leave',                    0, FALSE, TRUE)
+      ON CONFLICT (name) DO NOTHING
+    `);
+
     await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_email_attempted ON login_attempts(email, attempted_at)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_attempted_at ON login_attempts(attempted_at)');
 

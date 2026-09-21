@@ -7,6 +7,7 @@ import {
   Wrench,
   Globe,
   Activity,
+  CalendarDays,
   LayoutDashboard,
   Settings,
 } from 'lucide-react';
@@ -19,6 +20,7 @@ export type AppId =
   | 'tools'
   | 'forex-tt'
   | 'public-health'
+  | 'hr'
   | 'admin';
 
 export type UserRole = 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll' | 'public_health';
@@ -89,6 +91,15 @@ export const APPS: AppDef[] = [
     capability: 'public_health_access',
     description: 'Manage wellness allowance participants and payment runs.',
     color: 'bg-teal-600',
+  },
+  {
+    id: 'hr',
+    label: 'Leave & HR',
+    shortLabel: 'Leave',
+    icon: CalendarDays,
+    capability: 'hr_access',
+    description: 'Apply for leave, approve your team, and manage staff records.',
+    color: 'bg-[#002B7F]',
   },
 ];
 

@@ -13,6 +13,7 @@ import {
   TEMP_PASSWORD_LENGTH,
   DEFAULT_BANK_PRESETS,
   ROLE_CAPABILITIES,
+  ALL_CAPABILITIES,
 } from '../config.js';
 import { lowerEmail } from '../utils/helpers.js';
 
@@ -168,6 +169,36 @@ export async function loadCapabilities(reviewerId) {
   return rows.map((r) => r.capability);
 }
 
+/**
+ * Replaces a reviewer's grants with exactly `capabilities`, in one transaction
+ * so a failure cannot leave someone with a half-applied set of permissions.
+ */
+export async function setCapabilities(reviewerId, capabilities, grantedBy = null) {
+  const wanted = [...new Set(capabilities.filter((c) => ALL_CAPABILITIES.includes(c)))];
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      'DELETE FROM reviewer_capabilities WHERE reviewer_id = $1 AND NOT (capability = ANY($2::text[]))',
+      [reviewerId, wanted]
+    );
+    for (const capability of wanted) {
+      await client.query(
+        `INSERT INTO reviewer_capabilities (reviewer_id, capability, granted_by)
+         VALUES ($1, $2, $3) ON CONFLICT (reviewer_id, capability) DO NOTHING`,
+        [reviewerId, capability, grantedBy]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+  return wanted;
+}
+
 export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS, capabilities = []) {
   const permissions = parsePermissions(row.permissions);
   // Granted capabilities. Explicit JSONB overrides above still win, so an
@@ -211,6 +242,9 @@ export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS, 
     division_code: row.division_code || '00',
     notify_on_submission: row.notify_on_submission !== false,
     allowed_bank_presets: Array.from(new Set(allowedBankPresets)),
+    // Explicit grants, as distinct from `permissions` which also folds in the
+    // role floor. The admin UI needs to show what was actually granted.
+    capabilities: [...capabilities],
     permissions,
   };
 }

@@ -61,6 +61,7 @@ interface AdminAccount {
     created_at: string;
     updated_at: string;
     permissions?: Record<string, boolean>;
+    capabilities?: string[];
 }
 
 interface AdminArchiveEntry {
@@ -121,6 +122,13 @@ interface AccountFormState {
     division_code: string;
     notify_on_submission: boolean;
     permissions: Record<string, boolean>;
+    capabilities: string[];
+}
+
+interface CapabilityGroup {
+    app: string;
+    label: string;
+    capabilities: { key: string; label: string }[];
 }
 
 const EMPTY_FORM: AccountFormState = {
@@ -132,6 +140,7 @@ const EMPTY_FORM: AccountFormState = {
     division_code: '00',
     notify_on_submission: true,
     permissions: {},
+    capabilities: [],
 };
 
 const ADMIN_ARCHIVE_LIMIT = 200;
@@ -433,6 +442,8 @@ function UserManagementPanel() {
     const [formSuccess, setFormSuccess] = useState('');
     const [saving, setSaving] = useState(false);
     const formRef = useRef<HTMLFormElement | null>(null);
+    const [capabilityGroups, setCapabilityGroups] = useState<CapabilityGroup[]>([]);
+    const [roleCapabilities, setRoleCapabilities] = useState<Record<string, string[]>>({});
     const { addToast } = useToast();
 
     const refresh = async () => {
@@ -452,6 +463,27 @@ function UserManagementPanel() {
     useEffect(() => {
         refresh();
     }, []);
+
+    // Capability catalogue drives the checkboxes, so adding an app to the
+    // catalogue surfaces it here without touching this component.
+    useEffect(() => {
+        apiClient
+            .get<{ groups: CapabilityGroup[]; role_capabilities: Record<string, string[]> }>('/capability-catalogue')
+            .then((data) => {
+                setCapabilityGroups(data?.groups || []);
+                setRoleCapabilities(data?.role_capabilities || {});
+            })
+            .catch(() => setCapabilityGroups([]));
+    }, []);
+
+    const toggleCapability = (key: string, checked: boolean) => {
+        setForm((prev) => ({
+            ...prev,
+            capabilities: checked
+                ? [...new Set([...prev.capabilities, key])]
+                : prev.capabilities.filter((c) => c !== key),
+        }));
+    };
 
     const filteredAccounts = useMemo(() => {
         const term = search.trim().toLowerCase();
@@ -483,6 +515,7 @@ function UserManagementPanel() {
             division_code: account.division_code || '00',
             notify_on_submission: account.notify_on_submission ?? (account.role === 'reviewer'),
             permissions: account.permissions || {},
+            capabilities: account.capabilities || [],
         });
         setIsEditing(true);
         setFormError('');
@@ -578,6 +611,7 @@ function UserManagementPanel() {
             delete nextPermissions.notify_forex_tt_submissions;
         }
         body.permissions = nextPermissions;
+        body.capabilities = form.capabilities;
 
         setSaving(true);
         try {
@@ -712,21 +746,9 @@ function UserManagementPanel() {
                         Receive ABA submission notifications (reviewers & admins)
                     </label>
 
-                    <div className={`space-y-2 rounded-lg border p-3 ${canReceiveNotifications ? 'border-gray-200 bg-gray-50' : 'border-gray-100 bg-gray-50 opacity-60'}`}>
-                        <p className="text-sm font-medium text-gray-800">FOREX TT access</p>
-                        <label className="flex items-center gap-2 text-sm text-gray-700">
-                            <input
-                                type="checkbox"
-                                checked={Boolean(form.permissions.review_forex_tt)}
-                                onChange={(e) => setForm({
-                                    ...form,
-                                    permissions: { ...form.permissions, review_forex_tt: e.target.checked },
-                                })}
-                                disabled={!canReceiveNotifications}
-                            />
-                            FOREX TT reviewer — can claim and approve TT requests
-                        </label>
-                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                        <p className="text-sm font-medium text-gray-800">FOREX TT notifications</p>
+                        <label className={`flex items-center gap-2 text-sm text-gray-700 ${!canReceiveNotifications ? 'opacity-60' : ''}`}>
                             <input
                                 type="checkbox"
                                 checked={Boolean(form.permissions.notify_forex_tt_submissions)}
@@ -738,6 +760,58 @@ function UserManagementPanel() {
                             />
                             Notify me of new FOREX TT submissions
                         </label>
+                    </div>
+
+                    {/* Capabilities: granted in any combination, so one person can be an
+                        ABA preparer, a reviewer and a banking officer at the same time. */}
+                    <div className="space-y-3 rounded-lg border border-gray-200 p-4">
+                        <div>
+                            <p className="text-sm font-semibold text-gray-900">App access &amp; capabilities</p>
+                            <p className="mt-0.5 text-xs text-gray-500">
+                                Tick everything this person does. These are independent of the role above —
+                                someone can hold several at once. Greyed items are already granted by their role
+                                and cannot be removed here.
+                            </p>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            {capabilityGroups.map((group) => {
+                                const fromRole = roleCapabilities[form.role] || [];
+                                return (
+                                    <div key={group.app} className="rounded-md border border-gray-200 bg-white p-3">
+                                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                            {group.label}
+                                        </p>
+                                        <div className="space-y-1.5">
+                                            {group.capabilities.map((capability) => {
+                                                const grantedByRole = fromRole.includes(capability.key);
+                                                const checked = form.capabilities.includes(capability.key) || grantedByRole;
+                                                return (
+                                                    <label
+                                                        key={capability.key}
+                                                        className={`flex items-start gap-2 text-sm ${grantedByRole ? 'text-gray-400' : 'text-gray-700'}`}
+                                                        title={grantedByRole ? `Granted by the ${form.role} role` : undefined}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            className="mt-0.5"
+                                                            checked={checked}
+                                                            disabled={grantedByRole}
+                                                            onChange={(e) => toggleCapability(capability.key, e.target.checked)}
+                                                        />
+                                                        <span>{capability.label}</span>
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {!capabilityGroups.length && (
+                            <p className="text-sm text-gray-500">Capability catalogue unavailable.</p>
+                        )}
                     </div>
 
                     {formError && <p className="text-sm text-red-600">{formError}</p>}

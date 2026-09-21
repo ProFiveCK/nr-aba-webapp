@@ -38,7 +38,9 @@ import {
   reviewerAllowedPresets,
   reviewerSummary,
   setAuthCookie,
+  setCapabilities,
 } from './services/authService.js';
+import { recordAudit } from './services/auditService.js';
 import {
   GoogleSignInResult,
   googleSignInEnabled,
@@ -50,8 +52,11 @@ import {
   ADMIN_ARCHIVE_LIMIT_DEFAULT,
   AUTH_LOCKOUT_WINDOW_MS,
   AUTH_MAX_FAILED_ATTEMPTS,
+  ALL_CAPABILITIES,
   BANK_PRESET_KEYS,
   BATCH_WORKFLOW_TYPES,
+  CAPABILITY_CATALOGUE,
+  ROLE_CAPABILITIES,
   BSB_REGEX,
   COOKIE_NAME,
   DEFAULT_BANK_PRESETS,
@@ -946,6 +951,12 @@ app.delete(
 );
 
 // ===== Account management (admin) =====
+// Capability catalogue, so the admin UI renders its checkboxes from data
+// rather than hardcoding them for each new app.
+app.get('/api/capability-catalogue', requireAuth(['admin']), (_req, res) => {
+  res.json({ groups: CAPABILITY_CATALOGUE, role_capabilities: ROLE_CAPABILITIES });
+});
+
 app.get('/api/reviewers', requireAuth(['admin']), async (_req, res) => {
   const { rows } = await pool.query(
     `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
@@ -1055,7 +1066,9 @@ app.put(
       if (value === null) return true;
       if (value && typeof value === 'object' && !Array.isArray(value)) return true;
       throw new Error('permissions must be an object.');
-    })
+    }),
+    body('capabilities').optional().isArray(),
+    body('capabilities.*').isIn(ALL_CAPABILITIES)
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -1126,17 +1139,40 @@ app.put(
         fields.push(`${key} = $${values.length}`);
       }
     });
-    if (!fields.length) {
+    if (!fields.length && req.body.capabilities === undefined) {
       res.status(400).json({ message: 'No fields to update.' });
       return;
     }
-    fields.push('updated_at = NOW()');
-    values.push(reviewerId);
-    const { rows } = await pool.query(
-      `UPDATE reviewers SET ${fields.join(', ')} WHERE id = $${values.length} RETURNING id, email, display_name, role, status, last_login_at, created_at, updated_at,
-        must_change_password, department_code, division_code, notify_on_submission, permissions`,
-      values
-    );
+
+    let rows;
+    if (fields.length) {
+      fields.push('updated_at = NOW()');
+      values.push(reviewerId);
+      ({ rows } = await pool.query(
+        `UPDATE reviewers SET ${fields.join(', ')} WHERE id = $${values.length} RETURNING id, email, display_name, role, status, last_login_at, created_at, updated_at,
+          must_change_password, department_code, division_code, notify_on_submission, permissions`,
+        values
+      ));
+    } else {
+      ({ rows } = await pool.query(
+        `SELECT id, email, display_name, role, status, last_login_at, created_at, updated_at,
+          must_change_password, department_code, division_code, notify_on_submission, permissions
+         FROM reviewers WHERE id = $1`,
+        [reviewerId]
+      ));
+    }
+
+    if (req.body.capabilities !== undefined) {
+      await setCapabilities(reviewerId, req.body.capabilities, req.user.id);
+      await recordAudit({
+        actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+        action: 'reviewer.capabilities.set',
+        entityType: 'reviewer',
+        entityId: reviewerId,
+        after: { capabilities: req.body.capabilities },
+      });
+    }
+
     const allowedPresets = await reviewerAllowedPresets(rows[0].id);
     res.json({ reviewer: reviewerSummary(rows[0], allowedPresets, await loadCapabilities(rows[0].id)) });
   }

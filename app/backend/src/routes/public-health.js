@@ -2,15 +2,13 @@ import express from 'express';
 import { body, param } from '../middleware/validation.js';
 import { handleValidation } from '../middleware/validation.js';
 import { pool } from '../db.js';
-import { requireAuth } from '../services/authService.js';
+import { requirePermission } from '../services/authService.js';
 import { encryptSecret, decryptSecret } from '../services/encryption.js';
 import { recordAudit } from '../services/auditService.js';
-import { PUBLIC_HEALTH_TIERS } from '../config.js';
+import { PERMISSIONS, PUBLIC_HEALTH_TIERS } from '../config.js';
 
 const router = express.Router();
 
-const MANAGE_ROLES = ['public_health', 'admin'];
-const REVIEW_ROLES = ['reviewer', 'admin'];
 
 function tierRank(level) {
   const idx = PUBLIC_HEALTH_TIERS.indexOf(level);
@@ -28,7 +26,7 @@ function participantPayload(row) {
 }
 
 // ===== Tiers =====
-router.get('/tiers', requireAuth(MANAGE_ROLES), async (_req, res) => {
+router.get('/tiers', requirePermission(PERMISSIONS.PUBLIC_HEALTH_MANAGE), async (_req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM public_health_tiers ORDER BY sort_order');
     res.json(rows);
@@ -40,7 +38,7 @@ router.get('/tiers', requireAuth(MANAGE_ROLES), async (_req, res) => {
 
 router.put(
   '/tiers/:code',
-  requireAuth(MANAGE_ROLES),
+  requirePermission(PERMISSIONS.PUBLIC_HEALTH_MANAGE),
   [param('code').isIn(PUBLIC_HEALTH_TIERS), body('monthly_amount').isFloat({ min: 0 })],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -74,7 +72,7 @@ router.put(
 );
 
 // ===== Participants =====
-router.get('/participants', requireAuth(MANAGE_ROLES), async (_req, res) => {
+router.get('/participants', requirePermission(PERMISSIONS.PUBLIC_HEALTH_MANAGE), async (_req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT p.*, COALESCE(l.level, 'LV1') AS current_level
@@ -99,7 +97,7 @@ router.get('/participants', requireAuth(MANAGE_ROLES), async (_req, res) => {
 
 router.post(
   '/participants',
-  requireAuth(MANAGE_ROLES),
+  requirePermission(PERMISSIONS.PUBLIC_HEALTH_MANAGE),
   [
     body('full_name').isString().trim().notEmpty(),
     body('bank_bsb').optional({ nullable: true }).matches(/^\d{3}-\d{3}$/),
@@ -143,7 +141,7 @@ router.post(
 
 router.post(
   '/participants/import',
-  requireAuth(MANAGE_ROLES),
+  requirePermission(PERMISSIONS.PUBLIC_HEALTH_MANAGE),
   [body('participants').isArray({ min: 1 })],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -198,7 +196,7 @@ router.post(
 
 router.patch(
   '/participants/:id',
-  requireAuth(MANAGE_ROLES),
+  requirePermission(PERMISSIONS.PUBLIC_HEALTH_MANAGE),
   [param('id').isUUID()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -249,7 +247,7 @@ router.patch(
 
 router.delete(
   '/participants/:id',
-  requireAuth(MANAGE_ROLES),
+  requirePermission(PERMISSIONS.PUBLIC_HEALTH_MANAGE),
   [param('id').isUUID()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -278,7 +276,7 @@ router.delete(
 
 router.patch(
   '/participants/:id/level',
-  requireAuth(MANAGE_ROLES),
+  requirePermission(PERMISSIONS.PUBLIC_HEALTH_MANAGE),
   [param('id').isUUID(), body('level').isIn(PUBLIC_HEALTH_TIERS), body('reason').isString().trim().notEmpty()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -336,7 +334,7 @@ router.patch(
 );
 
 // ===== Pay periods =====
-router.get('/pay-periods', requireAuth(MANAGE_ROLES), async (_req, res) => {
+router.get('/pay-periods', requirePermission(PERMISSIONS.PUBLIC_HEALTH_MANAGE), async (_req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT p.*,
@@ -354,7 +352,7 @@ router.get('/pay-periods', requireAuth(MANAGE_ROLES), async (_req, res) => {
 
 router.post(
   '/pay-periods',
-  requireAuth(MANAGE_ROLES),
+  requirePermission(PERMISSIONS.PUBLIC_HEALTH_MANAGE),
   [body('paid_date').isISO8601()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -399,7 +397,7 @@ router.post(
 
 router.get(
   '/pay-periods/:id',
-  requireAuth(MANAGE_ROLES),
+  requirePermission(PERMISSIONS.PUBLIC_HEALTH_MANAGE),
   [param('id').isUUID()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -434,7 +432,7 @@ router.get(
 
 router.put(
   '/pay-periods/:id/entries',
-  requireAuth(MANAGE_ROLES),
+  requirePermission(PERMISSIONS.PUBLIC_HEALTH_MANAGE),
   [param('id').isUUID(), body('entries').isArray()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -479,7 +477,7 @@ router.put(
 
 router.patch(
   '/pay-periods/:id/status',
-  requireAuth(MANAGE_ROLES),
+  requirePermission(PERMISSIONS.PUBLIC_HEALTH_MANAGE),
   [param('id').isUUID(), body('status').isIn(['draft', 'submitted'])],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -510,7 +508,7 @@ router.patch(
 );
 
 // ===== Review (treasury) =====
-router.get('/review', requireAuth(REVIEW_ROLES), async (_req, res) => {
+router.get('/review', requirePermission(PERMISSIONS.PUBLIC_HEALTH_REVIEW), async (_req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT batch_id, code, root_batch_id, department_code, file_name, pd_number,

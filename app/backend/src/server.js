@@ -30,6 +30,7 @@ import {
   invalidateSession,
   isLegacyPassphraseHash,
   legacyHashPassphrase,
+  loadCapabilities,
   lookupSession,
   parsePermissions,
   requireAuth,
@@ -528,7 +529,7 @@ app.post(
     console.info(`[login] success: ${email} (${reviewer.role}) from ${clientIp}, session expires ${expiresAt.toISOString()}`);
     const expiresIso = expiresAt.toISOString();
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
-    const payload = { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso };
+    const payload = { ...reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), session_expires_at: expiresIso };
     setAuthCookie(res, token, expiresAt);
     res.json({ token, expires_at: expiresIso, reviewer: payload });
   }
@@ -564,7 +565,7 @@ app.post(
     console.info(`[login] google success: ${reviewer.email} (${reviewer.role}) from ${clientIp}`);
     const expiresIso = expiresAt.toISOString();
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
-    const payload = { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso };
+    const payload = { ...reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), session_expires_at: expiresIso };
     setAuthCookie(res, token, expiresAt);
     res.json({ token, expires_at: expiresIso, reviewer: payload });
   }
@@ -614,7 +615,7 @@ app.patch(
       values
     );
     const allowedPresets = await reviewerAllowedPresets(rows[0].id);
-    res.json({ reviewer: reviewerSummary(rows[0], allowedPresets) });
+    res.json({ reviewer: reviewerSummary(rows[0], allowedPresets, await loadCapabilities(rows[0].id)) });
   }
 );
 
@@ -642,7 +643,7 @@ app.post('/api/auth/refresh', requireAuth(), async (req, res) => {
   const expiresIso = expiresAt.toISOString();
   const allowedPresets = await reviewerAllowedPresets(reviewer.id);
   setAuthCookie(res, token, expiresAt);
-  res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso } });
+  res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), session_expires_at: expiresIso } });
 });
 
 app.post(
@@ -692,7 +693,7 @@ app.post(
     const expiresIso = expiresAt.toISOString();
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
     setAuthCookie(res, token, expiresAt);
-    res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso } });
+    res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), session_expires_at: expiresIso } });
   }
 );
 
@@ -952,7 +953,7 @@ app.get('/api/reviewers', requireAuth(['admin']), async (_req, res) => {
        FROM reviewers
       ORDER BY LOWER(COALESCE(NULLIF(display_name, ''), email)) ASC`
   );
-  res.json(await Promise.all(rows.map(async (row) => reviewerSummary(row, await reviewerAllowedPresets(row.id)))));
+  res.json(await Promise.all(rows.map(async (row) => reviewerSummary(row, await reviewerAllowedPresets(row.id), await loadCapabilities(row.id)))));
 });
 
 app.post(
@@ -1027,7 +1028,7 @@ app.post(
         }
       }
       const allowedPresets = await reviewerAllowedPresets(reviewer.id);
-      res.status(201).json({ reviewer: reviewerSummary(reviewer, allowedPresets), temporary_password: generated ? password : undefined });
+      res.status(201).json({ reviewer: reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), temporary_password: generated ? password : undefined });
     } catch (err) {
       if (err.code === '23505') {
         res.status(409).json({ message: 'Account with this email already exists.' });
@@ -1137,7 +1138,7 @@ app.put(
       values
     );
     const allowedPresets = await reviewerAllowedPresets(rows[0].id);
-    res.json({ reviewer: reviewerSummary(rows[0], allowedPresets) });
+    res.json({ reviewer: reviewerSummary(rows[0], allowedPresets, await loadCapabilities(rows[0].id)) });
   }
 );
 
@@ -1183,7 +1184,7 @@ app.post(
       }
     }
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
-    res.json({ reviewer: reviewerSummary(reviewer, allowedPresets), temporary_password: generated ? password : undefined });
+    res.json({ reviewer: reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), temporary_password: generated ? password : undefined });
   }
 );
 

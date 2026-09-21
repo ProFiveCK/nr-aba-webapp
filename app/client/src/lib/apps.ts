@@ -28,7 +28,9 @@ export interface AppDef {
   label: string;
   shortLabel: string;
   icon: LucideIcon;
-  roles: UserRole[];
+  /** Capability that grants access. Held in any combination, so one person can
+   *  be an ABA preparer, a reviewer and a banking officer at once. */
+  capability: string;
   description: string;
   color: string;
 }
@@ -39,7 +41,7 @@ export const APPS: AppDef[] = [
     label: 'ABA Payments',
     shortLabel: 'ABA',
     icon: CreditCard,
-    roles: ['user', 'reviewer', 'admin'],
+    capability: 'aba_access',
     description: 'Generate ABA files, read batches, and review payment instructions.',
     color: 'bg-amber-500',
   },
@@ -48,7 +50,7 @@ export const APPS: AppDef[] = [
     label: 'Banking',
     shortLabel: 'Banking',
     icon: Landmark,
-    roles: ['banking', 'admin'],
+    capability: 'banking_access',
     description: 'Bank accounts, presets, and statement tools.',
     color: 'bg-emerald-600',
   },
@@ -57,7 +59,7 @@ export const APPS: AppDef[] = [
     label: 'Payroll',
     shortLabel: 'Payroll',
     icon: Wallet,
-    roles: ['payroll', 'admin'],
+    capability: 'payroll_access',
     description: 'Payroll preparation and payment runs.',
     color: 'bg-amber-600',
   },
@@ -66,7 +68,7 @@ export const APPS: AppDef[] = [
     label: 'Tools',
     shortLabel: 'Tools',
     icon: Wrench,
-    roles: ['admin'],
+    capability: 'tools_access',
     description: 'SaaS subscriptions and utility tools.',
     color: 'bg-slate-600',
   },
@@ -75,7 +77,7 @@ export const APPS: AppDef[] = [
     label: 'FOREX TT',
     shortLabel: 'FOREX TT',
     icon: Globe,
-    roles: ['user', 'reviewer', 'admin'],
+    capability: 'forex_tt_access',
     description: 'Foreign currency telegraphic transfer requests and reviews.',
     color: 'bg-sky-600',
   },
@@ -84,7 +86,7 @@ export const APPS: AppDef[] = [
     label: 'Wellness Program',
     shortLabel: 'Public Health',
     icon: Activity,
-    roles: ['public_health', 'admin'],
+    capability: 'public_health_access',
     description: 'Manage wellness allowance participants and payment runs.',
     color: 'bg-teal-600',
   },
@@ -96,7 +98,7 @@ export const SYSTEM_PAGES: AppDef[] = [
     label: 'Dashboard',
     shortLabel: 'Dashboard',
     icon: LayoutDashboard,
-    roles: ['user', 'banking', 'reviewer', 'admin', 'payroll', 'public_health'],
+    capability: 'dashboard',
     description: 'App launcher and overview.',
     color: 'bg-zinc-700',
   },
@@ -105,7 +107,7 @@ export const SYSTEM_PAGES: AppDef[] = [
     label: 'Administration',
     shortLabel: 'Admin',
     icon: Settings,
-    roles: ['admin'],
+    capability: 'admin',
     description: 'Users, permissions, and system settings.',
     color: 'bg-rose-600',
   },
@@ -114,7 +116,7 @@ export const SYSTEM_PAGES: AppDef[] = [
 export function canAccessApp(user: User | null, app: AppDef): boolean {
   if (!user) return false;
   if (app.id === 'dashboard') return true;
-  return app.roles.includes(user.role as UserRole);
+  return user.permissions?.[app.capability] === true;
 }
 
 export function getAllowedApps(user: User | null): AppDef[] {

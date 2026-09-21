@@ -3,6 +3,7 @@ import { body, param, query, handleValidation } from '../middleware/validation.j
 import { pool } from '../db.js';
 import { requireAuth, requirePermission } from '../services/authService.js';
 import { recordAudit } from '../services/auditService.js';
+import { notifyLeaveDecision, notifyLeaveSubmitted } from '../services/notificationService.js';
 import { PERMISSIONS } from '../config.js';
 
 const router = express.Router();
@@ -181,6 +182,19 @@ router.post(
       );
       await client.query('COMMIT');
       res.status(201).json(created[0]);
+
+      // Best effort: a mail failure must not fail an accepted application.
+      if (employee.manager_id) {
+        const { rows: managers } = await pool.query(
+          'SELECT display_name, email FROM hr_employees WHERE id = $1',
+          [employee.manager_id]
+        );
+        notifyLeaveSubmitted({
+          application: { ...created[0], leave_type_name: types[0].name },
+          employee,
+          manager: managers[0],
+        }).catch((err) => console.error('Failed to notify manager of leave application', err));
+      }
     } catch (err) {
       await client.query('ROLLBACK');
       console.error('Failed to submit leave application', err);
@@ -243,6 +257,29 @@ async function releasePending(client, application) {
     [application.days, application.employee_id, application.leave_type_id, year]
   );
 }
+
+// Archiving only hides a finished application from the applicant's own list;
+// it never affects balances, and the row is kept for reporting.
+router.post(
+  '/leaves/:id/archive',
+  requirePermission(PERMISSIONS.HR_ACCESS),
+  [param('id').isUUID()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const employee = await currentEmployee(req);
+    const { rows } = await pool.query(
+      `UPDATE hr_leave_applications SET archived_at = NOW()
+        WHERE id = $1 AND employee_id = $2 AND status IN ('cancelled','rejected')
+        RETURNING id`,
+      [req.params.id, employee.id]
+    );
+    if (!rows.length) {
+      res.status(400).json({ message: 'Only your own cancelled or rejected applications can be archived.' });
+      return;
+    }
+    res.json({ message: 'Application archived.' });
+  }
+);
 
 // ===== Manager: team and approvals =====
 
@@ -342,6 +379,21 @@ router.post(
         entityId: application.id,
         after: { decision, days: application.days },
       });
+      const { rows: applicants } = await pool.query(
+        `SELECT e.display_name, e.email, t.name AS leave_type_name
+           FROM hr_employees e, hr_leave_types t
+          WHERE e.id = $1 AND t.id = $2`,
+        [application.employee_id, application.leave_type_id]
+      );
+      if (applicants.length) {
+        notifyLeaveDecision({
+          application: { ...application, leave_type_name: applicants[0].leave_type_name },
+          employee: applicants[0],
+          decision,
+          note,
+          decidedBy: req.user.display_name || req.user.email,
+        }).catch((err) => console.error('Failed to notify applicant of leave decision', err));
+      }
       res.json({ message: `Leave ${decision}.` });
     } catch (err) {
       await client.query('ROLLBACK');
@@ -535,6 +587,59 @@ router.put(
       return;
     }
     res.json(rows[0]);
+  }
+);
+
+// ===== Calendar and reporting =====
+
+// Approved leave across the people the caller can see, for the roster view.
+router.get(
+  '/calendar',
+  requirePermission(PERMISSIONS.HR_ACCESS),
+  [query('from').isISO8601(), query('to').isISO8601()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const me = await currentEmployee(req);
+    const seesEveryone = Boolean(
+      req.user.permissions?.[PERMISSIONS.HR_ADMIN] || req.user.permissions?.[PERMISSIONS.HR_STAFF_MANAGE]
+    );
+    const { rows } = await pool.query(
+      `SELECT a.id, a.start_date, a.end_date, a.days, a.status,
+              t.name AS leave_type_name, e.display_name AS employee_name, e.department_code
+         FROM hr_leave_applications a
+         JOIN hr_leave_types t ON t.id = a.leave_type_id
+         JOIN hr_employees e ON e.id = a.employee_id
+        WHERE a.status = 'approved'
+          AND a.start_date <= $2 AND a.end_date >= $1
+          ${seesEveryone ? '' : 'AND (e.manager_id = $3 OR e.id = $3)'}
+        ORDER BY a.start_date, e.display_name`,
+      seesEveryone ? [req.query.from, req.query.to] : [req.query.from, req.query.to, me.id]
+    );
+    res.json(rows);
+  }
+);
+
+// Approved leave per person for a pay period. Returned as rows; the client
+// turns it into CSV so no spreadsheet dependency is needed server side.
+router.get(
+  '/report',
+  requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
+  [query('from').isISO8601(), query('to').isISO8601()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const { rows } = await pool.query(
+      `SELECT e.display_name AS employee_name, e.department_code, t.name AS leave_type_name,
+              SUM(a.days) AS total_days, COUNT(*) AS applications
+         FROM hr_leave_applications a
+         JOIN hr_leave_types t ON t.id = a.leave_type_id
+         JOIN hr_employees e ON e.id = a.employee_id
+        WHERE a.status = 'approved'
+          AND a.start_date <= $2 AND a.end_date >= $1
+        GROUP BY e.display_name, e.department_code, t.name
+        ORDER BY e.display_name, t.name`,
+      [req.query.from, req.query.to]
+    );
+    res.json({ from: req.query.from, to: req.query.to, rows });
   }
 );
 

@@ -76,6 +76,16 @@ export function MyLeave() {
         }
     };
 
+    const archive = async (application: LeaveApplication) => {
+        try {
+            await apiClient.post(`/hr/leaves/${application.id}/archive`);
+            addToast('Application archived.', 'success');
+            await load();
+        } catch (err) {
+            addToast((err as Error)?.message || 'Unable to archive the application.', 'error');
+        }
+    };
+
     const cancel = async (application: LeaveApplication) => {
         if (!window.confirm(`Cancel your ${application.leave_type_name} leave application?`)) return;
         try {
@@ -240,6 +250,16 @@ export function MyLeave() {
                                                     className="text-sm font-medium text-red-600 hover:underline"
                                                 >
                                                     Cancel
+                                                </button>
+                                            )}
+                                            {(application.status === 'cancelled' || application.status === 'rejected') && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => archive(application)}
+                                                    className="text-sm font-medium text-zinc-500 hover:underline"
+                                                    title="Hide this from your list. Balances are unaffected."
+                                                >
+                                                    Archive
                                                 </button>
                                             )}
                                         </td>

@@ -5,8 +5,10 @@ import { MyLeave } from './Hr/MyLeave';
 import { Approvals } from './Hr/Approvals';
 import { Staff } from './Hr/Staff';
 import { Policies } from './Hr/Policies';
+import { Calendar } from './Hr/Calendar';
+import { Report } from './Hr/Report';
 
-type Tab = 'my-leave' | 'approvals' | 'staff' | 'policies';
+type Tab = 'my-leave' | 'approvals' | 'calendar' | 'staff' | 'report' | 'policies';
 
 export function HrApp() {
   const { user } = useAuth();
@@ -15,7 +17,9 @@ export function HrApp() {
   const tabs: { id: Tab; label: string; show: boolean }[] = [
     { id: 'my-leave', label: 'My Leave', show: can('hr_leave_apply') },
     { id: 'approvals', label: 'Approvals', show: can('hr_leave_approve') || can('hr_admin') },
+    { id: 'calendar', label: 'Calendar', show: can('hr_access') },
     { id: 'staff', label: 'Staff', show: can('hr_staff_manage') || can('hr_admin') },
+    { id: 'report', label: 'Report', show: can('hr_staff_manage') || can('hr_admin') },
     { id: 'policies', label: 'Leave Policies', show: can('hr_admin') },
   ];
   const visible = tabs.filter((t) => t.show);
@@ -60,7 +64,9 @@ export function HrApp() {
 
       {tab === 'my-leave' && <MyLeave />}
       {tab === 'approvals' && <Approvals />}
+      {tab === 'calendar' && <Calendar />}
       {tab === 'staff' && <Staff />}
+      {tab === 'report' && <Report />}
       {tab === 'policies' && <Policies />}
     </div>
   );

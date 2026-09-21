@@ -1750,7 +1750,7 @@ async function sendReviewerWelcomeEmail({ email, display_name, role }, tempPassw
   const loginUrl = FRONTEND_BASE_URL;
   const text = `Hi ${name},
 
-Your ${roleLabel.toLowerCase()} access has been created for the RON ABA portal.
+Your ${roleLabel.toLowerCase()} access has been created for the Nauru Treasury Portal.
 
 Login: ${loginUrl}
 Email: ${email}
@@ -1758,7 +1758,7 @@ Temporary password: ${tempPassword}
 
 You will be asked to set a new password after signing in.
 `;
-  await sendMail({ to: email, subject: 'RON Treasury ABA reviewer access', text });
+  await sendMail({ to: email, subject: 'Nauru Treasury Portal access', text });
 }
 
 async function sendReviewerPasswordResetEmail({ email, display_name, role }, tempPassword) {
@@ -1775,7 +1775,7 @@ Temporary password: ${tempPassword}
 
 If you did not request this change, contact an administrator immediately.
 `;
-  await sendMail({ to: email, subject: 'RON Treasury ABA reviewer password reset', text });
+  await sendMail({ to: email, subject: 'Nauru Treasury Portal password reset', text });
 }
 
 async function notifyAdminsOfSignupRequest({ email, name, departmentCode, requestedRole }) {
@@ -3681,8 +3681,8 @@ app.post('/api/admin/smtp-settings/test', [
     const testEmail = req.body.test_email;
     await sendMail({
       to: testEmail,
-      subject: 'ABA Stack - SMTP Test',
-      text: `This is a test email from the ABA Stack application.\n\nSent at: ${new Date().toISOString()}\n\nIf you receive this, your SMTP settings are working correctly.`
+      subject: 'Nauru Treasury Portal - SMTP Test',
+      text: `This is a test email from the Nauru Treasury Portal.\n\nSent at: ${new Date().toISOString()}\n\nIf you receive this, your SMTP settings are working correctly.`
     });
     res.json({ success: true, message: `Test email sent to ${testEmail}` });
   } catch (err) {

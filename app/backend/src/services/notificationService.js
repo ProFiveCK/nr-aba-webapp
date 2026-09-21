@@ -288,8 +288,8 @@ export async function sendReviewerWelcomeEmail({ email, display_name, role }, te
   const name = display_name || email;
   const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : 'Account';
   const loginUrl = FRONTEND_BASE_URL;
-  const text = `Hi ${name},\n\nYour ${roleLabel.toLowerCase()} access has been created for the RON ABA portal.\n\nLogin: ${loginUrl}\nEmail: ${email}\nTemporary password: ${tempPassword}\n\nYou will be asked to set a new password after signing in.\n`;
-  await sendMail({ to: email, subject: 'RON Treasury ABA reviewer access', text });
+  const text = `Hi ${name},\n\nYour ${roleLabel.toLowerCase()} access has been created for the Nauru Treasury Portal.\n\nLogin: ${loginUrl}\nEmail: ${email}\nTemporary password: ${tempPassword}\n\nYou will be asked to set a new password after signing in.\n`;
+  await sendMail({ to: email, subject: 'Nauru Treasury Portal access', text });
 }
 
 export async function sendReviewerPasswordResetEmail({ email, display_name, role }, tempPassword) {
@@ -297,5 +297,5 @@ export async function sendReviewerPasswordResetEmail({ email, display_name, role
   const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : 'account';
   const loginUrl = FRONTEND_BASE_URL;
   const text = `Hi ${name},\n\nYour ${roleLabel.toLowerCase()} password has been reset. Use the temporary password below to sign in; you will be prompted to set a new password immediately afterwards.\n\nLogin: ${loginUrl}\nEmail: ${email}\nTemporary password: ${tempPassword}\n\nIf you did not request this change, contact an administrator immediately.\n`;
-  await sendMail({ to: email, subject: 'RON Treasury ABA reviewer password reset', text });
+  await sendMail({ to: email, subject: 'Nauru Treasury Portal password reset', text });
 }

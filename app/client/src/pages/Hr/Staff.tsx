@@ -16,6 +16,12 @@ export function Staff() {
     const [adjustAmount, setAdjustAmount] = useState('');
     const [adjustReason, setAdjustReason] = useState('');
     const [saving, setSaving] = useState(false);
+    const [showAddForm, setShowAddForm] = useState(false);
+    const [newName, setNewName] = useState('');
+    const [newDept, setNewDept] = useState('');
+    const [newManagerId, setNewManagerId] = useState('');
+    const [newJoinDate, setNewJoinDate] = useState('');
+    const [creating, setCreating] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -60,6 +66,36 @@ export function Staff() {
         }
     };
 
+    // Creates a leave/HR record ahead of a portal login existing. It starts
+    // unlinked; use User Management to attach a login once the account
+    // exists, or it links itself the first time that person opens Leave.
+    const createEmployee = async () => {
+        if (!newName.trim()) {
+            addToast('Enter a name.', 'error');
+            return;
+        }
+        setCreating(true);
+        try {
+            await apiClient.post('/hr/employees', {
+                display_name: newName.trim(),
+                department_code: newDept.trim() || null,
+                manager_id: newManagerId || null,
+                join_date: newJoinDate || null,
+            });
+            addToast('Staff record created. Link a login for them in User Management when their account is ready.', 'success');
+            setNewName('');
+            setNewDept('');
+            setNewManagerId('');
+            setNewJoinDate('');
+            setShowAddForm(false);
+            await load();
+        } catch (err) {
+            addToast((err as Error)?.message || 'Unable to create the staff record.', 'error');
+        } finally {
+            setCreating(false);
+        }
+    };
+
     const adjust = async () => {
         if (!selected) return;
         const amount = Number(adjustAmount);
@@ -95,15 +131,72 @@ export function Staff() {
     return (
         <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
             <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
-                <h2 className="border-b border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-900">
-                    Staff ({employees.length})
-                </h2>
+                <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
+                    <h2 className="text-sm font-semibold text-zinc-900">Staff ({employees.length})</h2>
+                    <button
+                        type="button"
+                        onClick={() => setShowAddForm((s) => !s)}
+                        className="rounded-full bg-[#002B7F] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#001f5c]"
+                    >
+                        {showAddForm ? 'Cancel' : '+ Add staff'}
+                    </button>
+                </div>
+                {showAddForm && (
+                    <div className="space-y-2 border-b border-zinc-200 bg-zinc-50 p-4">
+                        <p className="text-xs text-zinc-500">
+                            Creates a leave record ahead of their login existing. Link it to an account in
+                            User Management once it's set up, or it links itself the first time they open Leave.
+                        </p>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                            <input
+                                type="text"
+                                value={newName}
+                                onChange={(e) => setNewName(e.target.value)}
+                                placeholder="Full name"
+                                className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                            />
+                            <input
+                                type="text"
+                                value={newDept}
+                                onChange={(e) => setNewDept(e.target.value)}
+                                placeholder="Department code, e.g. 16"
+                                maxLength={10}
+                                className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                            />
+                            <select
+                                value={newManagerId}
+                                onChange={(e) => setNewManagerId(e.target.value)}
+                                className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                            >
+                                <option value="">Reports to — none —</option>
+                                {employees.map((candidate) => (
+                                    <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>
+                                ))}
+                            </select>
+                            <input
+                                type="date"
+                                value={newJoinDate}
+                                onChange={(e) => setNewJoinDate(e.target.value)}
+                                className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                            />
+                        </div>
+                        <button
+                            type="button"
+                            onClick={createEmployee}
+                            disabled={creating}
+                            className="rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50"
+                        >
+                            {creating ? 'Creating…' : 'Create staff record'}
+                        </button>
+                    </div>
+                )}
                 {employees.length ? (
                     <div className="overflow-x-auto">
                         <table className="min-w-full text-sm">
                             <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
                                 <tr>
                                     <th className="px-4 py-2">Name</th>
+                                    <th className="px-4 py-2">Login</th>
                                     <th className="px-4 py-2">Dept</th>
                                     <th className="px-4 py-2">Reports to</th>
                                     <th className="px-4 py-2">Joined</th>
@@ -120,6 +213,15 @@ export function Staff() {
                                             <span className="font-medium text-zinc-900">{employee.display_name}</span>
                                             {employee.status === 'inactive' && (
                                                 <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500">inactive</span>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-2">
+                                            {employee.reviewer_id ? (
+                                                <span className="text-zinc-600">{employee.email || 'Linked'}</span>
+                                            ) : (
+                                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                                                    No login
+                                                </span>
                                             )}
                                         </td>
                                         <td className="px-4 py-2 text-zinc-600">{employee.department_code || '—'}</td>

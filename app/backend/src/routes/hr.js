@@ -417,6 +417,39 @@ router.get('/employees', requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSI
   res.json(rows);
 });
 
+// Creates a leave/HR record ahead of a portal login existing — e.g. HR wants
+// to set up someone's department, manager and opening balance before their
+// account is provisioned. `reviewer_id` starts NULL; see PUT below to link a
+// login once one exists. This coexists with the lazy auto-provisioning in
+// currentEmployee(): once linked, a person's own first visit to the Leave
+// app finds this row by reviewer_id instead of creating a duplicate.
+router.post(
+  '/employees',
+  requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
+  [
+    body('display_name').isString().trim().isLength({ min: 1, max: 200 }),
+    body('department_code').optional({ nullable: true }).isString().isLength({ max: 10 }),
+    body('manager_id').optional({ nullable: true }).isUUID(),
+    body('join_date').optional({ nullable: true }).isISO8601(),
+  ],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const { rows } = await pool.query(
+      `INSERT INTO hr_employees (display_name, department_code, manager_id, join_date)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [req.body.display_name, req.body.department_code || null, req.body.manager_id || null, req.body.join_date || null]
+    );
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.employee.created',
+      entityType: 'hr_employee',
+      entityId: rows[0].id,
+      after: { display_name: rows[0].display_name },
+    });
+    res.status(201).json(rows[0]);
+  }
+);
+
 router.put(
   '/employees/:id',
   requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
@@ -426,6 +459,7 @@ router.put(
     body('department_code').optional({ nullable: true }).isString().isLength({ max: 10 }),
     body('join_date').optional({ nullable: true }).isISO8601(),
     body('status').optional().isIn(['active', 'inactive']),
+    body('reviewer_id').optional({ nullable: true }).isUUID(),
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -433,22 +467,50 @@ router.put(
       res.status(400).json({ message: 'An employee cannot be their own manager.' });
       return;
     }
-    const { rows } = await pool.query(
-      `UPDATE hr_employees
-          SET manager_id = COALESCE($2, manager_id),
-              department_code = COALESCE($3, department_code),
-              join_date = COALESCE($4, join_date),
-              status = COALESCE($5, status),
-              updated_at = NOW()
-        WHERE id = $1 RETURNING *`,
-      [req.params.id, req.body.manager_id ?? null, req.body.department_code ?? null,
-       req.body.join_date ?? null, req.body.status ?? null]
-    );
-    if (!rows.length) {
-      res.status(404).json({ message: 'Employee not found.' });
-      return;
+    let linkedEmail = null;
+    if (req.body.reviewer_id) {
+      const { rows: reviewerRows } = await pool.query('SELECT id, display_name, email FROM reviewers WHERE id = $1', [req.body.reviewer_id]);
+      if (!reviewerRows.length) {
+        res.status(400).json({ message: 'No such account.' });
+        return;
+      }
+      linkedEmail = reviewerRows[0].email;
     }
-    res.json(rows[0]);
+    try {
+      const { rows } = await pool.query(
+        `UPDATE hr_employees
+            SET manager_id = COALESCE($2, manager_id),
+                department_code = COALESCE($3, department_code),
+                join_date = COALESCE($4, join_date),
+                status = COALESCE($5, status),
+                reviewer_id = COALESCE($6, reviewer_id),
+                email = COALESCE($7, email),
+                updated_at = NOW()
+          WHERE id = $1 RETURNING *`,
+        [req.params.id, req.body.manager_id ?? null, req.body.department_code ?? null,
+         req.body.join_date ?? null, req.body.status ?? null, req.body.reviewer_id ?? null, linkedEmail]
+      );
+      if (!rows.length) {
+        res.status(404).json({ message: 'Employee not found.' });
+        return;
+      }
+      if (req.body.reviewer_id) {
+        await recordAudit({
+          actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+          action: 'hr.employee.linked',
+          entityType: 'hr_employee',
+          entityId: rows[0].id,
+          after: { reviewer_id: req.body.reviewer_id },
+        });
+      }
+      res.json(rows[0]);
+    } catch (err) {
+      if (err.code === '23505') {
+        res.status(409).json({ message: 'That login is already linked to a different staff record.' });
+        return;
+      }
+      throw err;
+    }
   }
 );
 

@@ -137,12 +137,20 @@ interface AccountFormState {
     notify_on_submission: boolean;
     permissions: Record<string, boolean>;
     capabilities: string[];
+    hr_employee_id: string;
 }
 
 interface CapabilityGroup {
     app: string;
     label: string;
     capabilities: { key: string; label: string }[];
+}
+
+interface HrEmployeeOption {
+    id: string;
+    display_name: string;
+    department_code: string | null;
+    reviewer_id: string | null;
 }
 
 const EMPTY_FORM: AccountFormState = {
@@ -155,6 +163,7 @@ const EMPTY_FORM: AccountFormState = {
     notify_on_submission: true,
     permissions: {},
     capabilities: [],
+    hr_employee_id: '',
 };
 
 const ADMIN_ARCHIVE_LIMIT = 200;
@@ -560,6 +569,7 @@ function UserManagementPanel() {
     const formRef = useRef<HTMLFormElement | null>(null);
     const [capabilityGroups, setCapabilityGroups] = useState<CapabilityGroup[]>([]);
     const [roleCapabilities, setRoleCapabilities] = useState<Record<string, string[]>>({});
+    const [hrEmployees, setHrEmployees] = useState<HrEmployeeOption[]>([]);
     const { addToast } = useToast();
     const { confirm } = useConfirm();
 
@@ -592,6 +602,19 @@ function UserManagementPanel() {
             })
             .catch(() => setCapabilityGroups([]));
     }, []);
+
+    // Staff records HR created ahead of a login existing, so this account can
+    // be linked to one instead of always waiting on its own first Leave visit.
+    const loadHrEmployees = useCallback(() => {
+        apiClient
+            .get<HrEmployeeOption[]>('/hr/employees')
+            .then((data) => setHrEmployees(Array.isArray(data) ? data : []))
+            .catch(() => setHrEmployees([]));
+    }, []);
+
+    useEffect(() => {
+        loadHrEmployees();
+    }, [loadHrEmployees]);
 
     const toggleCapability = (key: string, checked: boolean) => {
         setForm((prev) => ({
@@ -647,10 +670,12 @@ function UserManagementPanel() {
             notify_on_submission: account.notify_on_submission ?? (account.role === 'reviewer'),
             permissions: account.permissions || {},
             capabilities: account.capabilities || [],
+            hr_employee_id: hrEmployees.find((e) => e.reviewer_id === account.id)?.id || '',
         });
         setIsEditing(true);
         setFormError('');
         setIsFormOpen(true);
+        loadHrEmployees();
     };
 
     const handleStatusToggle = async (account: AdminAccount) => {
@@ -744,6 +769,7 @@ function UserManagementPanel() {
 
         setSaving(true);
         try {
+            let accountId = form.id;
             if (isEditing && form.id) {
                 await apiClient.put(`/reviewers/${form.id}`, body);
                 addToast('Account updated.', 'success');
@@ -756,13 +782,27 @@ function UserManagementPanel() {
                     });
                 }
             } else {
-                await apiClient.post('/reviewers', {
+                const created = await apiClient.post<{ reviewer: { id: string } }>('/reviewers', {
                     ...body,
                     email: form.email.trim().toLowerCase(),
                     send_email: false,
                 });
+                accountId = created.reviewer.id;
                 addToast('Account created.', 'success');
             }
+
+            // Link this login to a pre-created HR/Leave staff record, if one
+            // was picked — lets HR set someone up (department, manager,
+            // opening balance) before their account exists.
+            if (form.hr_employee_id && accountId) {
+                try {
+                    await apiClient.put(`/hr/employees/${form.hr_employee_id}`, { reviewer_id: accountId });
+                    loadHrEmployees();
+                } catch (linkErr) {
+                    addToast((linkErr as Error)?.message || 'Account saved, but linking the HR staff record failed.', 'error');
+                }
+            }
+
             await refresh();
             closeForm();
         } catch (err) {
@@ -773,6 +813,10 @@ function UserManagementPanel() {
     };
 
     const canReceiveNotifications = form.role === 'reviewer' || form.role === 'admin';
+    // Employees with no login yet, plus whichever one is already linked to
+    // this account (if editing) — never someone else's linked record, so
+    // picking one here can't accidentally steal another person's leave data.
+    const linkableEmployees = hrEmployees.filter((e) => !e.reviewer_id || e.id === form.hr_employee_id);
     const [passwordCopied, setPasswordCopied] = useState(false);
 
     const copyTempPassword = async () => {
@@ -1150,6 +1194,26 @@ function UserManagementPanel() {
                             <p className="text-sm text-gray-500">Capability catalogue unavailable.</p>
                         )}
                     </div>
+
+                    <label className="block text-sm font-medium text-gray-700">
+                        Leave &amp; HR staff record (optional)
+                        <select
+                            value={form.hr_employee_id}
+                            onChange={(e) => setForm({ ...form, hr_employee_id: e.target.value })}
+                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        >
+                            <option value="">— none / create automatically on first login —</option>
+                            {linkableEmployees.map((employee) => (
+                                <option key={employee.id} value={employee.id}>
+                                    {employee.display_name}{employee.department_code ? ` (Dept ${employee.department_code})` : ''}
+                                </option>
+                            ))}
+                        </select>
+                        <p className="mt-1 text-xs text-gray-500">
+                            Link this login to a staff record HR already set up (department, manager, balance) in
+                            Leave &amp; HR &rarr; Staff. Leave unset and one is created the first time they open the Leave app themselves.
+                        </p>
+                    </label>
 
                     {formError && <p className="text-sm text-red-600">{formError}</p>}
 

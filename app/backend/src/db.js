@@ -846,6 +846,19 @@ export async function initSchema() {
       ON CONFLICT (name) DO NOTHING
     `);
 
+    // Sick leave actually splits into two policy-distinct entitlements; the
+    // combined 'Sick' type above predates that and is retired below rather
+    // than deleted, so historical applications against it stay intact.
+    await client.query(`
+      INSERT INTO hr_leave_types (name, description, default_days, is_accruable, requires_note)
+      VALUES
+        ('Sick (with MC)',    'Personal illness, medical certificate provided', 7, FALSE, TRUE),
+        ('Sick (without MC)', 'Personal illness, no medical certificate',       3, FALSE, TRUE),
+        ('Furlough',          'Long-service leave',                            0, FALSE, FALSE)
+      ON CONFLICT (name) DO NOTHING
+    `);
+    await client.query(`UPDATE hr_leave_types SET is_active = FALSE WHERE name = 'Sick'`);
+
     await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_email_attempted ON login_attempts(email, attempted_at)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_attempted_at ON login_attempts(attempted_at)');
 

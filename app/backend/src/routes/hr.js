@@ -417,6 +417,42 @@ router.get('/employees', requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSI
   res.json(rows);
 });
 
+// One-call matrix for the "balances report": every active staff member
+// against every active leave type. A type an employee has never been
+// adjusted or applied against has no hr_leave_balances row yet (it is
+// seeded lazily by ensureBalance on first touch), so it falls back to the
+// type's default_days here — the same number that first touch would seed.
+router.get(
+  '/employees/balances',
+  requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
+  [query('year').optional().isInt()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const [{ rows: employees }, { rows: types }, { rows: balances }] = await Promise.all([
+      pool.query(
+        `SELECT id, display_name, department_code, status, reviewer_id, email, join_date
+           FROM hr_employees WHERE status = 'active' ORDER BY display_name`
+      ),
+      pool.query('SELECT id, name, default_days FROM hr_leave_types WHERE is_active = TRUE ORDER BY name'),
+      pool.query('SELECT employee_id, leave_type_id, balance, pending FROM hr_leave_balances WHERE year = $1', [year]),
+    ]);
+    const balanceByKey = new Map(balances.map((b) => [`${b.employee_id}:${b.leave_type_id}`, b]));
+    const result = employees.map((e) => {
+      const byType = {};
+      for (const t of types) {
+        const b = balanceByKey.get(`${e.id}:${t.id}`);
+        byType[t.name] = {
+          balance: b ? Number(b.balance) : Number(t.default_days),
+          pending: b ? Number(b.pending) : 0,
+        };
+      }
+      return { ...e, balances: byType };
+    });
+    res.json({ year, leave_types: types.map((t) => t.name), employees: result });
+  }
+);
+
 // Creates a leave/HR record ahead of a portal login existing — e.g. HR wants
 // to set up someone's department, manager and opening balance before their
 // account is provisioned. `reviewer_id` starts NULL; see PUT below to link a
@@ -750,7 +786,7 @@ router.get(
     const from = req.query.from || new Date(today.getFullYear() - 1, today.getMonth(), today.getDate() + 1)
       .toISOString().slice(0, 10);
 
-    const [headcount, applications, turnaround, byType, byDepartment, monthly, upcoming] = await Promise.all([
+    const [headcount, applications, turnaround, byType, byDepartment, monthly, upcoming, balanceByType] = await Promise.all([
       pool.query(
         `SELECT
            (SELECT COUNT(*) FROM hr_employees WHERE status = 'active') AS active_employees,
@@ -809,6 +845,23 @@ router.get(
           ORDER BY a.start_date
           LIMIT 10`
       ),
+      // Stock, not flow: how many unused days are currently sitting on the
+      // books per leave type, across active staff, this calendar year. A
+      // type never touched for a given employee has no balance row yet
+      // (ensureBalance seeds it lazily) so it falls back to default_days,
+      // the same number a first touch would seed.
+      pool.query(
+        `SELECT t.name AS leave_type,
+                SUM(GREATEST(COALESCE(b.balance, t.default_days) - COALESCE(b.pending, 0), 0)) AS available_days
+           FROM hr_leave_types t
+           CROSS JOIN hr_employees e
+           LEFT JOIN hr_leave_balances b
+             ON b.employee_id = e.id AND b.leave_type_id = t.id AND b.year = $1
+          WHERE t.is_active = TRUE AND e.status = 'active'
+          GROUP BY t.name
+          ORDER BY available_days DESC`,
+        [today.getFullYear()]
+      ),
     ]);
 
     const statusCounts = { pending: 0, approved: 0, rejected: 0, cancelled: 0 };
@@ -845,6 +898,9 @@ router.get(
       })),
       monthly_trend: trendMonths,
       upcoming: upcoming.rows.map((r) => ({ ...r, days: Number(r.days) })),
+      balance_by_type: balanceByType.rows.map((r) => ({
+        leave_type: r.leave_type, available_days: Number(r.available_days),
+      })),
     });
   }
 );

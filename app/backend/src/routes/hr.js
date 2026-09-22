@@ -590,6 +590,121 @@ router.put(
   }
 );
 
+// ===== Senior management overview =====
+
+// Aggregate KPIs for leadership: headcount, application throughput, usage by
+// type/department, a monthly trend, and who's out soon. HR_ADMIN only — this
+// is a leadership summary, not a personal or team view.
+router.get(
+  '/overview',
+  requirePermission(PERMISSIONS.HR_ADMIN),
+  [query('from').optional().isISO8601(), query('to').optional().isISO8601()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const today = new Date();
+    const to = req.query.to || today.toISOString().slice(0, 10);
+    const from = req.query.from || new Date(today.getFullYear() - 1, today.getMonth(), today.getDate() + 1)
+      .toISOString().slice(0, 10);
+
+    const [headcount, applications, turnaround, byType, byDepartment, monthly, upcoming] = await Promise.all([
+      pool.query(
+        `SELECT
+           (SELECT COUNT(*) FROM hr_employees WHERE status = 'active') AS active_employees,
+           (SELECT COUNT(DISTINCT a.employee_id) FROM hr_leave_applications a
+             WHERE a.status = 'approved' AND a.start_date <= CURRENT_DATE AND a.end_date >= CURRENT_DATE
+           ) AS on_leave_today`
+      ),
+      pool.query(
+        `SELECT status, COUNT(*) AS count
+           FROM hr_leave_applications
+          WHERE applied_at >= $1 AND applied_at < ($2::date + INTERVAL '1 day')
+          GROUP BY status`,
+        [from, to]
+      ),
+      pool.query(
+        `SELECT AVG(EXTRACT(EPOCH FROM (reviewed_at - applied_at)) / 3600) AS avg_hours
+           FROM hr_leave_applications
+          WHERE applied_at >= $1 AND applied_at < ($2::date + INTERVAL '1 day') AND reviewed_at IS NOT NULL`,
+        [from, to]
+      ),
+      pool.query(
+        `SELECT t.name AS leave_type, SUM(a.days) AS days, COUNT(*) AS count
+           FROM hr_leave_applications a
+           JOIN hr_leave_types t ON t.id = a.leave_type_id
+          WHERE a.status = 'approved' AND a.start_date <= $2 AND a.end_date >= $1
+          GROUP BY t.name
+          ORDER BY days DESC`,
+        [from, to]
+      ),
+      pool.query(
+        `SELECT COALESCE(e.department_code, 'Unassigned') AS department_code, SUM(a.days) AS days, COUNT(*) AS count
+           FROM hr_leave_applications a
+           JOIN hr_employees e ON e.id = a.employee_id
+          WHERE a.status = 'approved' AND a.start_date <= $2 AND a.end_date >= $1
+          GROUP BY department_code
+          ORDER BY days DESC`,
+        [from, to]
+      ),
+      pool.query(
+        `SELECT to_char(date_trunc('month', a.start_date), 'YYYY-MM') AS month,
+                SUM(a.days) AS days, COUNT(*) AS count
+           FROM hr_leave_applications a
+          WHERE a.status = 'approved' AND a.start_date >= $1 AND a.start_date <= $2
+          GROUP BY month
+          ORDER BY month`,
+        [from, to]
+      ),
+      pool.query(
+        `SELECT e.display_name AS employee_name, t.name AS leave_type_name,
+                a.start_date, a.end_date, a.days
+           FROM hr_leave_applications a
+           JOIN hr_employees e ON e.id = a.employee_id
+           JOIN hr_leave_types t ON t.id = a.leave_type_id
+          WHERE a.status = 'approved' AND a.start_date >= CURRENT_DATE
+            AND a.start_date <= CURRENT_DATE + INTERVAL '30 days'
+          ORDER BY a.start_date
+          LIMIT 10`
+      ),
+    ]);
+
+    const statusCounts = { pending: 0, approved: 0, rejected: 0, cancelled: 0 };
+    for (const row of applications.rows) statusCounts[row.status] = Number(row.count);
+
+    // Fill every month in range so the trend line has no gaps to misread as zero-vs-missing.
+    const monthByKey = new Map(monthly.rows.map((r) => [r.month, { days: Number(r.days), count: Number(r.count) }]));
+    const trendMonths = [];
+    const cursor = new Date(from);
+    cursor.setDate(1);
+    const end = new Date(to);
+    while (cursor <= end) {
+      const key = cursor.toISOString().slice(0, 7);
+      const found = monthByKey.get(key);
+      trendMonths.push({ month: key, days: found?.days || 0, count: found?.count || 0 });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    res.json({
+      from,
+      to,
+      headcount: {
+        active_employees: Number(headcount.rows[0].active_employees),
+        on_leave_today: Number(headcount.rows[0].on_leave_today),
+      },
+      applications: {
+        ...statusCounts,
+        total: Object.values(statusCounts).reduce((sum, n) => sum + n, 0),
+        avg_turnaround_hours: turnaround.rows[0].avg_hours ? Number(turnaround.rows[0].avg_hours) : null,
+      },
+      by_type: byType.rows.map((r) => ({ leave_type: r.leave_type, days: Number(r.days), count: Number(r.count) })),
+      by_department: byDepartment.rows.map((r) => ({
+        department_code: r.department_code, days: Number(r.days), count: Number(r.count),
+      })),
+      monthly_trend: trendMonths,
+      upcoming: upcoming.rows.map((r) => ({ ...r, days: Number(r.days) })),
+    });
+  }
+);
+
 // ===== Calendar and reporting =====
 
 // Approved leave across the people the caller can see, for the roster view.

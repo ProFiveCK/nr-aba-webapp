@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/useAuth';
 import { readHash, setHash } from '../lib/hash';
+import { Overview } from './Hr/Overview';
 import { MyLeave } from './Hr/MyLeave';
 import { Approvals } from './Hr/Approvals';
 import { Staff } from './Hr/Staff';
@@ -8,13 +9,14 @@ import { Policies } from './Hr/Policies';
 import { Calendar } from './Hr/Calendar';
 import { Report } from './Hr/Report';
 
-type Tab = 'my-leave' | 'approvals' | 'calendar' | 'staff' | 'report' | 'policies';
+type Tab = 'overview' | 'my-leave' | 'approvals' | 'calendar' | 'staff' | 'report' | 'policies';
 
 export function HrApp() {
   const { user } = useAuth();
   const can = (capability: string) => user?.permissions?.[capability] === true;
 
   const tabs: { id: Tab; label: string; show: boolean }[] = [
+    { id: 'overview', label: 'Overview', show: can('hr_admin') },
     { id: 'my-leave', label: 'My Leave', show: can('hr_leave_apply') },
     { id: 'approvals', label: 'Approvals', show: can('hr_leave_approve') || can('hr_admin') },
     { id: 'calendar', label: 'Calendar', show: can('hr_access') },
@@ -62,6 +64,7 @@ export function HrApp() {
         </div>
       </div>
 
+      {tab === 'overview' && <Overview />}
       {tab === 'my-leave' && <MyLeave />}
       {tab === 'approvals' && <Approvals />}
       {tab === 'calendar' && <Calendar />}

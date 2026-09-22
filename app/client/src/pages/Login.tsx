@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Building2, LayoutGrid, Loader2, LockKeyhole, Mail, User } from 'lucide-react';
+import { Building2, ChevronDown, LayoutGrid, Loader2, LockKeyhole, Mail, User } from 'lucide-react';
 import { useAuth } from '../contexts/useAuth';
 import { apiClient } from '../lib/api';
 import { loadGoogleIdentity } from '../lib/googleSignIn';
@@ -140,6 +140,13 @@ export function Login() {
 
         return () => {
             cancelled = true;
+            setGoogleEnabled(false);
+            // Google injects its button/iframe straight into this container outside
+            // React's tree; clear it explicitly so it can never survive a switch
+            // away from the login view (e.g. onto the signup form).
+            if (googleButtonRef.current) {
+                googleButtonRef.current.innerHTML = '';
+            }
         };
     }, [isLogin, loginWithGoogle]);
 
@@ -225,9 +232,9 @@ export function Login() {
                 <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center">
                     {/* Crest + wordmark */}
                     <div className="mb-8">
-                        <img src="/logo.png" alt="Republic of Nauru coat of arms" className="h-16 w-auto" />
+                        <img src="/logo.png" alt="Republic of Naoero coat of arms" className="h-16 w-auto" />
                         <h1 className="mt-4 text-xl font-bold tracking-tight text-[#002B7F]">
-                            Nauru Treasury Portal
+                            Naoero Treasury Portal
                         </h1>
                         <p className="mt-1 text-sm text-gray-500">
                             {isLogin
@@ -254,7 +261,7 @@ export function Login() {
 
                     {isLogin ? (
                         /* Login Form */
-                        <form onSubmit={handleLogin} className="space-y-4">
+                        <form key="login-form" onSubmit={handleLogin} className="space-y-4">
                             <div>
                                 <label htmlFor="email" className={labelClass}>Email address</label>
                                 <div className="relative">
@@ -340,7 +347,7 @@ export function Login() {
                         </form>
                     ) : (
                         /* Signup Form */
-                        <form onSubmit={handleSignup} className="space-y-4">
+                        <form key="signup-form" onSubmit={handleSignup} className="space-y-4">
                             <div>
                                 <label htmlFor="signup-name" className={labelClass}>Full name</label>
                                 <div className="relative">
@@ -401,21 +408,30 @@ export function Login() {
                                     <LayoutGrid className="mr-1.5 inline h-4 w-4 align-text-bottom text-gray-400" />
                                     Which apps do you need?
                                 </span>
-                                <div className="space-y-1.5 rounded-md border border-gray-300 bg-white p-3">
+                                <div className="space-y-1 rounded-md border border-gray-300 bg-white p-2">
                                     {availableApps.length ? (
-                                        availableApps.map((app) => (
-                                            <label key={app.id} className="flex items-center gap-2 text-sm text-gray-700">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={signupApps.includes(app.id)}
-                                                    onChange={(e) => toggleSignupApp(app.id, e.target.checked)}
-                                                    disabled={isLoading}
-                                                />
-                                                {app.label}
-                                            </label>
-                                        ))
+                                        availableApps.map((app) => {
+                                            const checked = signupApps.includes(app.id);
+                                            return (
+                                                <label
+                                                    key={app.id}
+                                                    className={`flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm transition-colors ${
+                                                        checked ? 'bg-[#002B7F]/5 text-[#002B7F]' : 'text-gray-700 hover:bg-gray-50'
+                                                    }`}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={checked}
+                                                        onChange={(e) => toggleSignupApp(app.id, e.target.checked)}
+                                                        disabled={isLoading}
+                                                        className="h-4 w-4 rounded border-gray-300 text-[#002B7F] focus:ring-[#002B7F]/40"
+                                                    />
+                                                    {app.label}
+                                                </label>
+                                            );
+                                        })
                                     ) : (
-                                        <p className="text-sm text-gray-500">Loading apps…</p>
+                                        <p className="px-2 py-1.5 text-sm text-gray-500">Loading apps…</p>
                                     )}
                                 </div>
                                 <p className="mt-1 text-xs text-gray-500">Select every app you need — you can be given more than one.</p>
@@ -430,16 +446,23 @@ export function Login() {
                                         required
                                         value={signupDept}
                                         onChange={(e) => setSignupDept(e.target.value)}
-                                        className={`${fieldClass} appearance-none bg-white`}
+                                        className={`${fieldClass} appearance-none bg-white pr-9`}
                                         disabled={isLoading || departmentsLoading}
                                     >
-                                        <option value="">{departmentsLoading ? 'Loading departments...' : 'Select a department'}</option>
+                                        <option value="" disabled>
+                                            {departmentsLoading ? 'Loading departments...' : 'Select a department'}
+                                        </option>
                                         {departments.map((dept) => (
                                             <option key={dept.id} value={dept.department_code}>
                                                 {dept.name ? `${dept.name} (${dept.department_code})` : `Department ${dept.department_code}`}
                                             </option>
                                         ))}
                                     </select>
+                                    {departmentsLoading ? (
+                                        <Loader2 className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-gray-400" />
+                                    ) : (
+                                        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                                    )}
                                 </div>
                                 {departmentsError && (
                                     <div className="mt-2 flex items-center gap-2 text-xs text-red-600">
@@ -489,7 +512,7 @@ export function Login() {
                 </div>
 
                 <p className="mx-auto mt-8 w-full max-w-sm text-xs text-gray-400">
-                    &copy; {new Date().getFullYear()} Republic of Nauru — Department of Finance
+                    &copy; {new Date().getFullYear()} Republic of Naoero — Department of Finance
                 </p>
             </div>
 
@@ -497,7 +520,7 @@ export function Login() {
             <div className="relative hidden lg:block">
                 <img
                     src="/nauru-anibare-bay.jpg"
-                    alt="Coral pinnacles in the shallows of Anibare Bay, Nauru"
+                    alt="Coral pinnacles in the shallows of Anibare Bay, Naoero"
                     className="absolute inset-0 h-full w-full object-cover"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#002B7F]/90 via-[#002B7F]/35 to-[#002B7F]/10" />
@@ -505,7 +528,7 @@ export function Login() {
                 <div className="relative flex h-full flex-col justify-end p-12 text-white">
                     <div className="h-1 w-16 rounded-full bg-[#E8842C]" />
                     <h2 className="mt-6 text-4xl font-bold tracking-tight drop-shadow-sm">
-                        Republic of Nauru
+                        Republic of Naoero
                     </h2>
                     <p className="mt-3 max-w-md text-lg text-white/85">
                         One sign-in for Treasury payments, banking, payroll and programme administration.

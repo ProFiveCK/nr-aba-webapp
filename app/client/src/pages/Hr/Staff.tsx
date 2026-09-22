@@ -1,9 +1,60 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
 import { EmptyState, LoadingState } from '../../components/Ui';
 import { formatDate } from '../../features/hr/types';
 import type { Employee, LeaveBalance, LeaveType } from '../../features/hr/types';
+
+const FIXED_COLUMNS = ['display_name', 'department_code', 'join_date'];
+
+interface ImportRow {
+    display_name: string;
+    department_code: string;
+    join_date: string;
+    balances: Record<string, number>;
+}
+
+interface ImportResult {
+    created: { id: string; display_name: string }[];
+    skipped: { display_name: string; reason: string }[];
+}
+
+/** Minimal RFC4180 parser: quoted fields, escaped "" inside quotes, CRLF/LF. */
+function parseCsv(text: string): string[][] {
+    const rows: string[][] = [];
+    let row: string[] = [];
+    let field = '';
+    let inQuotes = false;
+    const pushField = () => { row.push(field); field = ''; };
+    const pushRow = () => { pushField(); rows.push(row); row = []; };
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (inQuotes) {
+            if (c === '"') {
+                if (text[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
+            } else {
+                field += c;
+            }
+        } else if (c === '"') {
+            inQuotes = true;
+        } else if (c === ',') {
+            pushField();
+        } else if (c === '\n') {
+            pushRow();
+        } else if (c === '\r') {
+            // skip; \n (if present) ends the row
+        } else {
+            field += c;
+        }
+    }
+    if (field.length || row.length) pushRow();
+    return rows.filter((r) => r.some((cell) => cell.trim().length));
+}
+
+function csvCell(value: unknown): string {
+    const text = value === null || value === undefined ? '' : String(value);
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
 
 export function Staff() {
     const { addToast } = useToast();
@@ -22,6 +73,13 @@ export function Staff() {
     const [newManagerId, setNewManagerId] = useState('');
     const [newJoinDate, setNewJoinDate] = useState('');
     const [creating, setCreating] = useState(false);
+    const [showImport, setShowImport] = useState(false);
+    const [importRows, setImportRows] = useState<ImportRow[]>([]);
+    const [importFileName, setImportFileName] = useState('');
+    const [importParseError, setImportParseError] = useState('');
+    const [importing, setImporting] = useState(false);
+    const [importResult, setImportResult] = useState<ImportResult | null>(null);
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -63,6 +121,86 @@ export function Staff() {
             await load();
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to update the reporting line.', 'error');
+        }
+    };
+
+    const downloadTemplate = () => {
+        const header = [...FIXED_COLUMNS, ...types.map((t) => t.name)];
+        const example = ['Jane Example', '16', '2024-01-15', ...types.map(() => '')];
+        const csv = [header, example].map((line) => line.map(csvCell).join(',')).join('\r\n');
+        const bom = String.fromCharCode(0xfeff);
+        const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'staff-import-template.csv';
+        link.click();
+        URL.revokeObjectURL(url);
+    };
+
+    const handleImportFile = async (file: File) => {
+        setImportParseError('');
+        setImportResult(null);
+        setImportFileName(file.name);
+        try {
+            const text = await file.text();
+            const table = parseCsv(text);
+            if (table.length < 2) throw new Error('The file has no data rows.');
+            const header = table[0].map((h) => h.trim());
+            const nameIdx = header.findIndex((h) => h.toLowerCase() === 'display_name');
+            if (nameIdx === -1) throw new Error('Missing a "display_name" column.');
+            const deptIdx = header.findIndex((h) => h.toLowerCase() === 'department_code');
+            const joinIdx = header.findIndex((h) => h.toLowerCase() === 'join_date');
+            const typeCols = header
+                .map((h, i) => ({ h, i }))
+                .filter(({ i }) => i !== nameIdx && i !== deptIdx && i !== joinIdx);
+
+            const rows: ImportRow[] = table.slice(1)
+                .filter((r) => r[nameIdx]?.trim())
+                .map((r) => {
+                    const balances: Record<string, number> = {};
+                    for (const { h, i } of typeCols) {
+                        const raw = (r[i] || '').trim();
+                        if (raw !== '') {
+                            const num = Number(raw);
+                            if (Number.isFinite(num)) balances[h] = num;
+                        }
+                    }
+                    return {
+                        display_name: r[nameIdx].trim(),
+                        department_code: deptIdx >= 0 ? (r[deptIdx] || '').trim() : '',
+                        join_date: joinIdx >= 0 ? (r[joinIdx] || '').trim() : '',
+                        balances,
+                    };
+                });
+            if (!rows.length) throw new Error('No rows with a name were found.');
+            setImportRows(rows);
+        } catch (err) {
+            setImportRows([]);
+            setImportParseError((err as Error)?.message || 'Unable to read this file.');
+        }
+    };
+
+    const confirmImport = async () => {
+        setImporting(true);
+        try {
+            const result = await apiClient.post<ImportResult>('/hr/employees/import', {
+                rows: importRows.map((r) => ({
+                    display_name: r.display_name,
+                    department_code: r.department_code || null,
+                    join_date: r.join_date || null,
+                    balances: r.balances,
+                })),
+            });
+            setImportResult(result);
+            setImportRows([]);
+            setImportFileName('');
+            if (fileInputRef.current) fileInputRef.current.value = '';
+            await load();
+        } catch (err) {
+            addToast((err as Error)?.message || 'Import failed.', 'error');
+        } finally {
+            setImporting(false);
         }
     };
 
@@ -133,14 +271,110 @@ export function Staff() {
             <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
                 <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
                     <h2 className="text-sm font-semibold text-zinc-900">Staff ({employees.length})</h2>
-                    <button
-                        type="button"
-                        onClick={() => setShowAddForm((s) => !s)}
-                        className="rounded-full bg-[#002B7F] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#001f5c]"
-                    >
-                        {showAddForm ? 'Cancel' : '+ Add staff'}
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => { setShowImport((s) => !s); setShowAddForm(false); }}
+                            className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
+                        >
+                            {showImport ? 'Cancel' : 'Import from spreadsheet'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => { setShowAddForm((s) => !s); setShowImport(false); }}
+                            className="rounded-full bg-[#002B7F] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#001f5c]"
+                        >
+                            {showAddForm ? 'Cancel' : '+ Add staff'}
+                        </button>
+                    </div>
                 </div>
+                {showImport && (
+                    <div className="space-y-3 border-b border-zinc-200 bg-zinc-50 p-4">
+                        <p className="text-xs text-zinc-500">
+                            Bulk-create staff records (each starts with no login — link one in User Management, or it
+                            links itself the first time that person opens Leave). Download the template, fill it in,
+                            and upload it back here.
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={downloadTemplate}
+                                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100"
+                            >
+                                Download CSV template
+                            </button>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".csv,text/csv"
+                                onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleImportFile(file);
+                                }}
+                                className="text-sm"
+                            />
+                        </div>
+                        {importParseError && <p className="text-sm text-red-600">{importParseError}</p>}
+
+                        {importRows.length > 0 && (
+                            <div className="space-y-2">
+                                <p className="text-sm font-medium text-zinc-800">
+                                    {importFileName}: {importRows.length} row{importRows.length === 1 ? '' : 's'} ready to import
+                                </p>
+                                <div className="max-h-56 overflow-auto rounded-md border border-zinc-200 bg-white">
+                                    <table className="min-w-full text-sm">
+                                        <thead className="sticky top-0 bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
+                                            <tr>
+                                                <th className="px-3 py-1.5">Name</th>
+                                                <th className="px-3 py-1.5">Dept</th>
+                                                <th className="px-3 py-1.5">Joined</th>
+                                                <th className="px-3 py-1.5">Balances set</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-zinc-100">
+                                            {importRows.map((r, i) => (
+                                                <tr key={i}>
+                                                    <td className="px-3 py-1.5 text-zinc-900">{r.display_name}</td>
+                                                    <td className="px-3 py-1.5 text-zinc-600">{r.department_code || '—'}</td>
+                                                    <td className="px-3 py-1.5 text-zinc-600">{r.join_date || '—'}</td>
+                                                    <td className="px-3 py-1.5 text-zinc-600">
+                                                        {Object.keys(r.balances).length
+                                                            ? Object.entries(r.balances).map(([k, v]) => `${k}: ${v}`).join(', ')
+                                                            : '—'}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={confirmImport}
+                                    disabled={importing}
+                                    className="rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50"
+                                >
+                                    {importing ? 'Importing…' : `Confirm import (${importRows.length})`}
+                                </button>
+                            </div>
+                        )}
+
+                        {importResult && (
+                            <div className="rounded-md border border-zinc-200 bg-white p-3 text-sm">
+                                <p className="font-medium text-emerald-700">{importResult.created.length} staff record(s) created.</p>
+                                {importResult.skipped.length > 0 && (
+                                    <div className="mt-2">
+                                        <p className="font-medium text-amber-700">{importResult.skipped.length} skipped:</p>
+                                        <ul className="mt-1 list-inside list-disc text-zinc-600">
+                                            {importResult.skipped.map((s, i) => (
+                                                <li key={i}>{s.display_name} — {s.reason}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
                 {showAddForm && (
                     <div className="space-y-2 border-b border-zinc-200 bg-zinc-50 p-4">
                         <p className="text-xs text-zinc-500">

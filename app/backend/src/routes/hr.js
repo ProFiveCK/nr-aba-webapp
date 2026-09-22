@@ -514,6 +514,88 @@ router.put(
   }
 );
 
+// Bulk-creates unlinked staff records (like POST /employees, repeated) and
+// sets each one's opening balance per leave type in the same call. Reuses
+// ensureBalance's default-seed-then-adjust path so an import produces the
+// exact same audit trail (hr_leave_adjustments) a manual adjustment would.
+// Skips (never overwrites) any name that already has a staff record, so
+// re-running an import after fixing a few rows is safe.
+router.post(
+  '/employees/import',
+  requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
+  [
+    body('rows').isArray({ min: 1, max: 500 }),
+    body('rows.*.display_name').isString().trim().isLength({ min: 1, max: 200 }),
+    body('rows.*.department_code').optional({ nullable: true }).isString().isLength({ max: 10 }),
+    body('rows.*.join_date').optional({ nullable: true }).isISO8601(),
+    body('rows.*.balances').optional().isObject(),
+  ],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const year = new Date().getFullYear();
+    const [{ rows: existing }, { rows: types }] = await Promise.all([
+      pool.query('SELECT display_name FROM hr_employees'),
+      pool.query('SELECT id, name FROM hr_leave_types'),
+    ]);
+    const existingNames = new Set(existing.map((r) => r.display_name.trim().toLowerCase()));
+    const typeByName = new Map(types.map((t) => [t.name.toLowerCase(), t]));
+
+    const created = [];
+    const skipped = [];
+    for (const row of req.body.rows) {
+      const name = row.display_name.trim();
+      if (existingNames.has(name.toLowerCase())) {
+        skipped.push({ display_name: name, reason: 'A staff record with this name already exists.' });
+        continue;
+      }
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows: inserted } = await client.query(
+          `INSERT INTO hr_employees (display_name, department_code, join_date)
+           VALUES ($1, $2, $3) RETURNING id`,
+          [name, row.department_code || null, row.join_date || null]
+        );
+        const employeeId = inserted[0].id;
+        for (const [typeName, rawAmount] of Object.entries(row.balances || {})) {
+          const amount = Number(rawAmount);
+          const type = typeByName.get(String(typeName).trim().toLowerCase());
+          if (!Number.isFinite(amount) || !type) continue;
+          const balance = await ensureBalance(client, employeeId, type.id, year);
+          const delta = amount - Number(balance.balance);
+          if (delta !== 0) {
+            await client.query('UPDATE hr_leave_balances SET balance = balance + $1 WHERE id = $2', [delta, balance.id]);
+            await client.query(
+              `INSERT INTO hr_leave_adjustments (employee_id, leave_type_id, amount, reason, adjusted_by)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [employeeId, type.id, delta, 'Bulk import: opening balance', req.user.id]
+            );
+          }
+        }
+        await client.query('COMMIT');
+        existingNames.add(name.toLowerCase());
+        created.push({ id: employeeId, display_name: name });
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(`Bulk import failed for "${name}"`, err);
+        skipped.push({ display_name: name, reason: 'Unable to import this row.' });
+      } finally {
+        client.release();
+      }
+    }
+
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.employees.bulk_import',
+      entityType: 'hr_employee',
+      entityId: null,
+      after: { created: created.length, skipped: skipped.length },
+    });
+
+    res.status(201).json({ created, skipped });
+  }
+);
+
 router.get(
   '/employees/:id/balances',
   requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),

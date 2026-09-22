@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { AuthProvider } from './contexts/AuthContext';
 import { useAuth } from './contexts/useAuth';
 import { ToastProvider } from './contexts/ToastContext';
+import { ConfirmProvider } from './contexts/ConfirmContext';
 import { Login } from './pages/Login';
 import { Layout } from './components/Layout';
 import { ResetPasswordModal } from './components/ResetPasswordModal';
@@ -164,7 +165,9 @@ function App() {
   return (
     <AuthProvider>
       <ToastProvider>
-        <AppContent />
+        <ConfirmProvider>
+          <AppContent />
+        </ConfirmProvider>
       </ToastProvider>
     </AuthProvider>
   );

@@ -378,7 +378,7 @@ app.post('/api/admin/signup-requests/:id/approve', requireAuth(['admin']), async
     // Send email to user
     await sendMail({
       to: reqData.email,
-      subject: 'Your Nauru Treasury account is approved',
+      subject: 'Your Naoero Treasury account is approved',
       text: `Hello ${reqData.name},\n\nYour account request has been approved. You may now sign in at ${FRONTEND_BASE_URL} using your email and password.\n\n${WORKFLOW_GUIDE_TEXT}\n\nIf you have questions, reply to this email.`
     });
     res.json({ message: 'Signup request approved and user notified.' });
@@ -407,7 +407,7 @@ app.post('/api/admin/signup-requests/:id/reject', requireAuth(['admin']), async 
   // Optionally notify user of rejection
   await sendMail({
     to: reqData.email,
-    subject: 'Your Nauru Treasury account request was rejected',
+    subject: 'Your Naoero Treasury account request was rejected',
     text: `Hello ${reqData.name},\n\nYour account request was not approved. Reason: ${review_comment || 'No reason provided.'}\n\nIf you have questions, reply to this email.`
   });
   res.json({ message: 'Signup request rejected.' });
@@ -765,10 +765,10 @@ app.post(
       await sendMail({
         to: email,
         replyTo: REPLY_TO,
-        subject: 'Reset your Nauru Treasury account password',
+        subject: 'Reset your Naoero Treasury account password',
         text: `Hello ${user.display_name || 'User'},
 
-You requested a password reset for your Nauru Treasury account.
+You requested a password reset for your Naoero Treasury account.
 
 Click the link below to reset your password:
 ${resetUrl}
@@ -1004,7 +1004,9 @@ app.post(
     body('department_code').optional({ nullable: true }).matches(/^\d{2}$/),
     body('division_code').optional({ nullable: true }).matches(/^\d{2}$/),
     body('notify_on_submission').optional().isBoolean(),
-    body('send_email').optional().isBoolean()
+    body('send_email').optional().isBoolean(),
+    body('capabilities').optional().isArray(),
+    body('capabilities.*').isIn(ALL_CAPABILITIES)
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -1062,6 +1064,16 @@ app.post(
         } catch (err) {
           console.error('Failed to send reviewer welcome email', err);
         }
+      }
+      if (req.body.capabilities !== undefined) {
+        await setCapabilities(reviewer.id, req.body.capabilities, req.user.id);
+        await recordAudit({
+          actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+          action: 'reviewer.capabilities.set',
+          entityType: 'reviewer',
+          entityId: reviewer.id,
+          after: { capabilities: req.body.capabilities },
+        });
       }
       const allowedPresets = await reviewerAllowedPresets(reviewer.id);
       res.status(201).json({ reviewer: reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), temporary_password: generated ? password : undefined });
@@ -1643,7 +1655,7 @@ async function sendReviewerWelcomeEmail({ email, display_name, role }, tempPassw
   const loginUrl = FRONTEND_BASE_URL;
   const text = `Hi ${name},
 
-Your ${roleLabel.toLowerCase()} access has been created for the Nauru Treasury Portal.
+Your ${roleLabel.toLowerCase()} access has been created for the Naoero Treasury Portal.
 
 Login: ${loginUrl}
 Email: ${email}
@@ -1651,7 +1663,7 @@ Temporary password: ${tempPassword}
 
 You will be asked to set a new password after signing in.
 `;
-  await sendMail({ to: email, subject: 'Nauru Treasury Portal access', text });
+  await sendMail({ to: email, subject: 'Naoero Treasury Portal access', text });
 }
 
 async function sendReviewerPasswordResetEmail({ email, display_name, role }, tempPassword) {
@@ -1668,7 +1680,7 @@ Temporary password: ${tempPassword}
 
 If you did not request this change, contact an administrator immediately.
 `;
-  await sendMail({ to: email, subject: 'Nauru Treasury Portal password reset', text });
+  await sendMail({ to: email, subject: 'Naoero Treasury Portal password reset', text });
 }
 
 async function notifyAdminsOfSignupRequest({ email, name, departmentCode, requestedRole }) {
@@ -1808,7 +1820,7 @@ async function notifySubmitterOfApproval(batch, metadata, comments, actor) {
 
 Your ABA batch ${formattedCode} for department ${departmentCode} (PD ${pdNumber}) was approved by ${actorName}.
 ${commentsText}
-Sign in to the Nauru Treasury portal to view the approved batch.
+Sign in to the Naoero Treasury portal to view the approved batch.
 `;
   await sendMail({ to: recipient, replyTo: actor?.email, subject, text });
 }
@@ -1831,7 +1843,7 @@ Your ABA batch ${formattedCode} for department ${departmentCode} (PD ${pdNumber}
 Reviewer comments:
 ${reasonText}
 
-Sign in to the Nauru Treasury portal to review the notes and resubmit a corrected batch.
+Sign in to the Naoero Treasury portal to review the notes and resubmit a corrected batch.
 `;
   await sendMail({ to: recipient, replyTo: actor?.email, subject, text });
 }
@@ -3559,8 +3571,8 @@ app.post('/api/admin/smtp-settings/test', [
     const testEmail = req.body.test_email;
     await sendMail({
       to: testEmail,
-      subject: 'Nauru Treasury Portal - SMTP Test',
-      text: `This is a test email from the Nauru Treasury Portal.\n\nSent at: ${new Date().toISOString()}\n\nIf you receive this, your SMTP settings are working correctly.`
+      subject: 'Naoero Treasury Portal - SMTP Test',
+      text: `This is a test email from the Naoero Treasury Portal.\n\nSent at: ${new Date().toISOString()}\n\nIf you receive this, your SMTP settings are working correctly.`
     });
     res.json({ success: true, message: `Test email sent to ${testEmail}` });
   } catch (err) {
@@ -3903,7 +3915,7 @@ app.post('/api/ai-helper/chat', requireAuth(), async (req, res) => {
 
     console.log('[AI Helper] Not an acknowledgment, passing to LLM');
 
-    const systemPrompt = `You are a helpful assistant for the RON ABA Generator & Review System used by Nauru Treasury. Be conversational and friendly while staying concise.
+    const systemPrompt = `You are a helpful assistant for the RON ABA Generator & Review System used by Naoero Treasury. Be conversational and friendly while staying concise.
 
 CURRENT USER CONTEXT (THIS IS WHO YOU ARE TALKING TO RIGHT NOW):
 - User: ${userName || 'Guest'}

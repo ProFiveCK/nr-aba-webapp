@@ -293,7 +293,10 @@ export function Generator() {
             const { transactions: imported, errors } = parseTransactionsFromCSV(text);
 
             if (errors.length > 0) {
-                alert(`Import completed with ${errors.length} error(s):\n\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n...and ${errors.length - 5} more` : ''}`);
+                addToast(
+                    `Import completed with ${errors.length} error(s): ${errors.slice(0, 5).join('; ')}${errors.length > 5 ? `; and ${errors.length - 5} more` : ''}`,
+                    'error'
+                );
             }
 
             if (imported.length > 0) {

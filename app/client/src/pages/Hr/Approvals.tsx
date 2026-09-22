@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
+import { useConfirm } from '../../contexts/useConfirm';
 import { EmptyState, LoadingState } from '../../components/Ui';
 import { formatDate } from '../../features/hr/types';
 import type { LeaveApplication } from '../../features/hr/types';
 
 export function Approvals() {
     const { addToast } = useToast();
+    const { prompt } = useConfirm();
     const [items, setItems] = useState<LeaveApplication[]>([]);
     const [loading, setLoading] = useState(true);
     const [busyId, setBusyId] = useState<string | null>(null);
@@ -30,10 +32,10 @@ export function Approvals() {
         let note = '';
         if (decision === 'rejected') {
             // The server also enforces this; asking here avoids a wasted round trip.
-            const response = window.prompt(
-                `Why are you rejecting ${application.employee_name}'s ${application.leave_type_name} leave?`,
-                ''
-            );
+            const response = await prompt({
+                title: 'Reject leave request',
+                message: `Why are you rejecting ${application.employee_name}'s ${application.leave_type_name} leave?`,
+            });
             if (response === null) return;
             note = response.trim();
             if (!note) {

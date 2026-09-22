@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
+import { useConfirm } from '../../contexts/useConfirm';
 import { EmptyState, LoadingState } from '../../components/Ui';
 import {
     calculateWorkingDays,
@@ -12,6 +13,7 @@ import type { LeaveApplication, LeaveType, MyLeaveResponse } from '../../feature
 
 export function MyLeave() {
     const { addToast } = useToast();
+    const { confirm } = useConfirm();
     const [summary, setSummary] = useState<MyLeaveResponse | null>(null);
     const [types, setTypes] = useState<LeaveType[]>([]);
     const [applications, setApplications] = useState<LeaveApplication[]>([]);
@@ -87,7 +89,7 @@ export function MyLeave() {
     };
 
     const cancel = async (application: LeaveApplication) => {
-        if (!window.confirm(`Cancel your ${application.leave_type_name} leave application?`)) return;
+        if (!(await confirm(`Cancel your ${application.leave_type_name} leave application?`))) return;
         try {
             await apiClient.post(`/hr/leaves/${application.id}/cancel`);
             addToast('Application cancelled.', 'success');

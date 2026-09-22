@@ -26,6 +26,7 @@ interface OverviewResponse {
     by_department: { department_code: string; days: number; count: number }[];
     monthly_trend: { month: string; days: number; count: number }[];
     upcoming: { employee_name: string; leave_type_name: string; start_date: string; end_date: string; days: number }[];
+    balance_by_type: { leave_type: string; available_days: number }[];
 }
 
 type Preset = '30d' | '6m' | '12m' | 'ytd' | 'custom';
@@ -322,6 +323,7 @@ export function Overview() {
                     <div className="grid gap-4 lg:grid-cols-2">
                         <ChartCard
                             title="Days taken by leave type"
+                            subtitle="Flow: approved leave started in this period"
                             tableHeaders={['Leave type', 'Days', 'Applications']}
                             tableRows={data.by_type.map((t) => [t.leave_type, t.days.toFixed(1), t.count])}
                         >
@@ -330,12 +332,22 @@ export function Overview() {
 
                         <ChartCard
                             title="Days taken by department"
+                            subtitle="Flow: approved leave started in this period"
                             tableHeaders={['Department', 'Days', 'Applications']}
                             tableRows={data.by_department.map((d) => [d.department_code, d.days.toFixed(1), d.count])}
                         >
                             <HorizontalBars data={data.by_department.map((d) => ({ label: d.department_code, value: d.days }))} />
                         </ChartCard>
                     </div>
+
+                    <ChartCard
+                        title="Unused leave balance by type"
+                        subtitle={`Stock: available days sitting on the books across active staff, ${new Date().getFullYear()}`}
+                        tableHeaders={['Leave type', 'Available days']}
+                        tableRows={data.balance_by_type.map((b) => [b.leave_type, b.available_days.toFixed(1)])}
+                    >
+                        <HorizontalBars data={data.balance_by_type.map((b) => ({ label: b.leave_type, value: b.available_days }))} />
+                    </ChartCard>
 
                     <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
                         <h3 className="text-sm font-semibold text-zinc-900">Upcoming leave — next 30 days</h3>

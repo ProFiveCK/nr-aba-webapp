@@ -196,7 +196,7 @@ export async function notifyForexTTSubmitter(request, newStatus, comments, actor
     : '';
 
   const subject = `FOREX TT ${action} — ${requestId}`;
-  const text = `Hi ${submitter.display_name || 'there'},\n\nYour foreign currency telegraphic transfer request ${requestId} has been ${action} by ${actorName}.${commentsBlock}${bankConfirmationBlock}\n${nextStep}\n\nView the request: ${requestLink}\n\nNauru Treasury Portal\n`;
+  const text = `Hi ${submitter.display_name || 'there'},\n\nYour foreign currency telegraphic transfer request ${requestId} has been ${action} by ${actorName}.${commentsBlock}${bankConfirmationBlock}\n${nextStep}\n\nView the request: ${requestLink}\n\nNaoero Treasury Portal\n`;
 
   await sendMail({ to: recipient, replyTo: actor?.email, subject, text });
 }
@@ -240,7 +240,7 @@ export async function notifySubmitterOfApproval(batch, metadata, comments, actor
   const commentsText = comments?.trim()
     ? `\nReviewer comments:\n${comments.trim()}\n`
     : '';
-  const text = `Hi ${submitterName},\n\nYour ABA batch ${formattedCode} for department ${departmentCode} (PD ${pdNumber}) was approved by ${actorName}.${commentsText}\nSign in to the Nauru Treasury portal to view the approved batch.\n`;
+  const text = `Hi ${submitterName},\n\nYour ABA batch ${formattedCode} for department ${departmentCode} (PD ${pdNumber}) was approved by ${actorName}.${commentsText}\nSign in to the Naoero Treasury portal to view the approved batch.\n`;
   await sendMail({ to: recipient, replyTo: actor?.email, subject, text });
 }
 
@@ -254,7 +254,7 @@ export async function notifySubmitterOfRejection(batch, metadata, comments, acto
   const submitterName = metadata?.prepared_by || metadata?.prepared_by_name || 'team';
   const subject = `PD ${pdNumber} - Dept ${departmentCode} - ${formattedCode} requires updates`;
   const reasonText = comments?.trim() ? comments.trim() : 'No additional comments were provided.';
-  const text = `Hi ${submitterName},\n\nYour ABA batch ${formattedCode} for department ${departmentCode} (PD ${pdNumber}) was rejected by ${actorName}.\n\nReviewer comments:\n${reasonText}\n\nSign in to the Nauru Treasury portal to review the notes and resubmit a corrected batch.\n`;
+  const text = `Hi ${submitterName},\n\nYour ABA batch ${formattedCode} for department ${departmentCode} (PD ${pdNumber}) was rejected by ${actorName}.\n\nReviewer comments:\n${reasonText}\n\nSign in to the Naoero Treasury portal to review the notes and resubmit a corrected batch.\n`;
   await sendMail({ to: recipient, replyTo: actor?.email, subject, text });
 }
 
@@ -292,8 +292,8 @@ export async function sendReviewerWelcomeEmail({ email, display_name, role }, te
   const name = display_name || email;
   const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : 'Account';
   const loginUrl = FRONTEND_BASE_URL;
-  const text = `Hi ${name},\n\nYour ${roleLabel.toLowerCase()} access has been created for the Nauru Treasury Portal.\n\nLogin: ${loginUrl}\nEmail: ${email}\nTemporary password: ${tempPassword}\n\nYou will be asked to set a new password after signing in.\n`;
-  await sendMail({ to: email, subject: 'Nauru Treasury Portal access', text });
+  const text = `Hi ${name},\n\nYour ${roleLabel.toLowerCase()} access has been created for the Naoero Treasury Portal.\n\nLogin: ${loginUrl}\nEmail: ${email}\nTemporary password: ${tempPassword}\n\nYou will be asked to set a new password after signing in.\n`;
+  await sendMail({ to: email, subject: 'Naoero Treasury Portal access', text });
 }
 
 export async function sendReviewerPasswordResetEmail({ email, display_name, role }, tempPassword) {
@@ -301,7 +301,7 @@ export async function sendReviewerPasswordResetEmail({ email, display_name, role
   const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : 'account';
   const loginUrl = FRONTEND_BASE_URL;
   const text = `Hi ${name},\n\nYour ${roleLabel.toLowerCase()} password has been reset. Use the temporary password below to sign in; you will be prompted to set a new password immediately afterwards.\n\nLogin: ${loginUrl}\nEmail: ${email}\nTemporary password: ${tempPassword}\n\nIf you did not request this change, contact an administrator immediately.\n`;
-  await sendMail({ to: email, subject: 'Nauru Treasury Portal password reset', text });
+  await sendMail({ to: email, subject: 'Naoero Treasury Portal password reset', text });
 }
 
 // ===== Leave & HR =====

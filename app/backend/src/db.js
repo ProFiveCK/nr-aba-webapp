@@ -833,7 +833,7 @@ export async function initSchema() {
     `);
     await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_adjustments_employee ON hr_leave_adjustments(employee_id)');
 
-    // Seed the standard Nauru Treasury leave types (no-op once present).
+    // Seed the standard Naoero Treasury leave types (no-op once present).
     await client.query(`
       INSERT INTO hr_leave_types (name, description, default_days, is_accruable, requires_note)
       VALUES

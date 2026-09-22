@@ -22,6 +22,7 @@ export interface AuthContextType {
     user: User | null;
     token: string | null;
     login: (email: string, password: string) => Promise<void>;
+    loginWithGoogle: (credential: string) => Promise<void>;
     logout: () => void;
     updateUser: (updates: Partial<User>) => void;
     replaceSession: (token: string, reviewer: User) => void;

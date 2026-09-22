@@ -18,45 +18,79 @@ import { fileURLToPath } from 'url';
 import forexTTRouter from './routes/forexTT.js';
 import healthRouter from './routes/health.js';
 import publicHealthRouter from './routes/public-health.js';
+import hrRouter from './routes/hr.js';
 import { setTestingMode } from './services/notificationService.js';
-import { BATCH_WORKFLOW_TYPES, workflowStageTransitions, SIGNUP_ROLES } from './config.js';
+import {
+  buildCookieParser,
+  buildTokenPayload,
+  clearAuthCookie,
+  createSession,
+  csrfGuard,
+  generateTempPassword,
+  hashPassphrase,
+  invalidateSession,
+  isLegacyPassphraseHash,
+  legacyHashPassphrase,
+  loadCapabilities,
+  lookupSession,
+  parsePermissions,
+  requireAuth,
+  resolveAllowedBankPresets,
+  reviewerAllowedPresets,
+  reviewerSummary,
+  setAuthCookie,
+  setCapabilities,
+} from './services/authService.js';
+import { recordAudit } from './services/auditService.js';
+import {
+  GoogleSignInResult,
+  googleSignInEnabled,
+  resolveGoogleIdentity,
+} from './services/googleAuthService.js';
+import {
+  ACCOUNT_ROLES,
+  ACCOUNT_STATUSES,
+  ADMIN_ARCHIVE_LIMIT_DEFAULT,
+  AUTH_LOCKOUT_WINDOW_MS,
+  AUTH_MAX_FAILED_ATTEMPTS,
+  ALL_CAPABILITIES,
+  BANK_PRESET_KEYS,
+  BATCH_WORKFLOW_TYPES,
+  SIGNUP_APPS,
+  SIGNUP_APP_IDS,
+  capabilitiesForApps,
+  CAPABILITY_CATALOGUE,
+  ROLE_CAPABILITIES,
+  BSB_REGEX,
+  COOKIE_NAME,
+  DEFAULT_BANK_PRESETS,
+  EXCEL_MIME_TYPES,
+  FRONTEND_BASE_URL,
+  GOOGLE_CLIENT_ID,
+  JWT_SECRET,
+  PASS_HASH_ROUNDS,
+  PAYROLL_ACCESS_ROLES,
+  PAYROLL_MAX_FILE_BYTES,
+  PAYROLL_PYTHON_BIN,
+  REPLY_TO,
+  REVIEW_ACCESS_ROLES,
+  REVIEWER_ARCHIVE_LIMIT_DEFAULT,
+  SESSION_MINUTES,
+  SIGNUP_ROLES,
+  SMTP_FROM,
+  SMTP_HOST,
+  SMTP_PASS,
+  SMTP_PORT,
+  SMTP_SECURE,
+  SMTP_USER,
+  TEMP_PASSWORD_LENGTH,
+  UUID_REGEX,
+  WORKFLOW_GUIDE_TEXT,
+  isProd,
+  workflowStageTransitions,
+} from './config.js';
 
 dotenv.config();
-
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  console.error('FATAL: JWT_SECRET environment variable is not set. Refusing to start.');
-  process.exit(1);
-}
-const SESSION_MINUTES = Number(process.env.REVIEWER_SESSION_MINUTES || 480);
-const PASS_HASH_ROUNDS = Number(process.env.BCRYPT_ROUNDS || 12);
-const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || 'http://localhost:8080';
-const TEMP_PASSWORD_LENGTH = Number(process.env.REVIEWER_TEMP_PASSWORD_LENGTH || 12);
-const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
-const SMTP_HOST = process.env.SMTP_HOST;
-const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
-const SMTP_USER = process.env.SMTP_USER;
-const SMTP_PASS = process.env.SMTP_PASS;
-const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER || 'no-reply@example.com';
-const REPLY_TO = process.env.REPLY_TO_EMAIL;
-const ACCOUNT_ROLES = ['user', 'banking', 'reviewer', 'admin', 'payroll', 'public_health'];
-const REVIEW_ACCESS_ROLES = ['reviewer', 'admin'];
-const ACCOUNT_STATUSES = ['active', 'inactive'];
-const BSB_REGEX = /^[0-9]{3}-[0-9]{3}$/;
-const BANK_PRESET_KEYS = ['CBA-RON', 'CBA-Agent', 'CBA-DFAT', 'CBA-NSUDP', 'CBA-NZAID', 'CBA-DEV.FUND', 'CBA-Seabed.Account', 'CBA-Tank Farm'];
-const DEFAULT_BANK_PRESETS = ['CBA-RON'];
-const ADMIN_ARCHIVE_LIMIT_DEFAULT = 100;
-const REVIEWER_ARCHIVE_LIMIT_DEFAULT = 50;
-const PAYROLL_ACCESS_ROLES = ['payroll', 'admin'];
-const PAYROLL_PYTHON_BIN = process.env.PAYROLL_PYTHON_BIN || process.env.PYTHON_BIN || 'python3';
-const PAYROLL_MAX_FILE_BYTES = 10 * 1024 * 1024;
-const AUTH_LOCKOUT_WINDOW_MS = Number(process.env.AUTH_LOCKOUT_WINDOW_MS || 15 * 60 * 1000);
-const AUTH_MAX_FAILED_ATTEMPTS = Number(process.env.AUTH_MAX_FAILED_ATTEMPTS || 5);
-const EXCEL_MIME_TYPES = new Set([
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/octet-stream'
-]);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '../../..');
@@ -91,19 +125,6 @@ if (AI_HELPER_ENABLED) {
 const ADMIN_ARCHIVE_LIMIT_MAX = 500;
 const REVIEWER_ARCHIVE_LIMIT_MAX = 100;
 const BLACKLIST_IMPORT_LIMIT = 1000;
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const WORKFLOW_GUIDE_TEXT = `Workflow Guide:\n\n1. Level 1 users prepare an ABA file in the Generator, enter the PD#, add notes, and click Commit.\n2. Reviewers are notified by email, open the Reviewer tab, and approve or reject the batch.\n3. If rejected, the submitter fixes their copy (upload via Reader → Load) and resubmits.\n4. Once approved, reviewers/admins can download the ABA from the archive; admins can delete batches when finished.`;
-
-function parsePermissions(value) {
-  if (!value) return {};
-  if (typeof value === 'object') return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return {};
-  }
-}
-
 // SFTP Sync Configuration
 const SFTP_SYNC_METHOD = process.env.SFTP_SYNC_METHOD || 'database'; // 'direct', 'file', or 'database'
 // Default to host.docker.internal for Docker containers (Windows/Mac), fallback to localhost for Linux native
@@ -202,58 +223,13 @@ app.use(helmet({
 }));
 
 // CORS: restrict to configured frontend origin
-const corsOrigin = process.env.FRONTEND_BASE_URL || 'http://localhost:8080';
-// Cookie-based auth: JWT is set as an httpOnly cookie so JavaScript (XSS) cannot read it.
-// The cookie name is 'auth_token' and is shared across login/refresh/change-password/logout.
-const COOKIE_NAME = 'auth_token';
-const isProd = process.env.NODE_ENV === 'production' || corsOrigin.startsWith('https://');
-function setAuthCookie(res, token, expiresAt) {
-  res.cookie(COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'lax',
-    expires: expiresAt,
-    path: '/',
-  });
-}
-function clearAuthCookie(res) {
-  res.clearCookie(COOKIE_NAME, { path: '/', httpOnly: true, secure: isProd, sameSite: 'lax' });
-}
-// Authenticated CSRF defense: reject cross-origin state-changing requests.
-// Bearer tokens in Authorization header are not sent by browsers cross-site,
-// but this adds defense-in-depth if tokens ever move to cookies.
-function csrfGuard(req, res, next) {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-  const origin = req.headers.origin;
-  const allowedOrigins = String(corsOrigin || '').split(',').map((s) => s.trim()).filter(Boolean);
-  if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
-    return next();
-  }
-  res.status(403).json({ message: 'Cross-origin request blocked.' });
-}
+const corsOrigin = FRONTEND_BASE_URL;
 app.use(cors({ origin: corsOrigin, credentials: true }));
-
-// Lightweight cookie parser — populates req.cookies from the Cookie header.
-// Avoids adding a cookie-parser dependency for a single auth cookie.
-app.use((req, _res, next) => {
-  req.cookies = {};
-  const cookieHeader = req.headers.cookie;
-  if (cookieHeader) {
-    for (const pair of cookieHeader.split(';')) {
-      const idx = pair.indexOf('=');
-      if (idx > 0) {
-        const key = pair.slice(0, idx).trim();
-        const val = pair.slice(idx + 1).trim();
-        if (key) req.cookies[key] = decodeURIComponent(val);
-      }
-    }
-  }
-  next();
-});
+app.use(buildCookieParser());
 
 // Allow larger payloads for ABA uploads (base64 inflates size by ~33%)
 app.use(express.json({ limit: '10mb' }));
-app.use(csrfGuard);
+app.use(csrfGuard(corsOrigin));
 
 // Rate limiting: general API
 // Skip /api/auth/* so authentication endpoints are governed only by the
@@ -286,6 +262,7 @@ const authLimiter = rateLimit({
   },
 });
 app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/google', authLimiter);
 app.use('/api/auth/signup', authLimiter);
 app.use('/api/auth/forgot-password', authLimiter);
 app.use('/api/auth/reset-password', authLimiter);
@@ -301,6 +278,7 @@ app.get('/health', async (_req, res) => {
 
 app.use('/api/forex-tt', forexTTRouter);
 app.use('/api/public-health', publicHealthRouter);
+app.use('/api/hr', hrRouter);
 app.use('/api', healthRouter);
 
 // ===== Authentication =====
@@ -376,13 +354,23 @@ app.post('/api/admin/signup-requests/:id/approve', requireAuth(['admin']), async
   }
   const permissions = defaultPermissionsForRole(requestedRole);
 
+  // Apps the person asked for, unless the admin overrode the selection.
+  const approvedApps = Array.isArray(req.body.apps)
+    ? req.body.apps.filter((a) => SIGNUP_APP_IDS.includes(a))
+    : (reqData.requested_apps || []);
+
   // Create reviewer account
   try {
-    await pool.query(
+    const { rows: created } = await pool.query(
       `INSERT INTO reviewers (email, display_name, role, status, password_hash, must_change_password, department_code, permissions)
-       VALUES ($1, $2, $3, 'active', $4, FALSE, $5, $6)`,
+       VALUES ($1, $2, $3, 'active', $4, FALSE, $5, $6) RETURNING id`,
       [reqData.email, reqData.name, requestedRole, reqData.password_hash, reqData.department_code, JSON.stringify(permissions)]
     );
+    const capabilities = new Set([
+      ...(ROLE_CAPABILITIES[requestedRole] ?? []),
+      ...capabilitiesForApps(approvedApps),
+    ]);
+    await setCapabilities(created[0].id, [...capabilities], reviewerId);
     await pool.query(
       `UPDATE signup_requests SET status = 'approved', reviewed_at = NOW(), reviewer_id = $1, review_comment = $2, requested_role = $3 WHERE id = $4`,
       [reviewerId, review_comment || null, requestedRole, requestId]
@@ -390,7 +378,7 @@ app.post('/api/admin/signup-requests/:id/approve', requireAuth(['admin']), async
     // Send email to user
     await sendMail({
       to: reqData.email,
-      subject: 'Your Nauru Treasury account is approved',
+      subject: 'Your Naoero Treasury account is approved',
       text: `Hello ${reqData.name},\n\nYour account request has been approved. You may now sign in at ${FRONTEND_BASE_URL} using your email and password.\n\n${WORKFLOW_GUIDE_TEXT}\n\nIf you have questions, reply to this email.`
     });
     res.json({ message: 'Signup request approved and user notified.' });
@@ -419,7 +407,7 @@ app.post('/api/admin/signup-requests/:id/reject', requireAuth(['admin']), async 
   // Optionally notify user of rejection
   await sendMail({
     to: reqData.email,
-    subject: 'Your Nauru Treasury account request was rejected',
+    subject: 'Your Naoero Treasury account request was rejected',
     text: `Hello ${reqData.name},\n\nYour account request was not approved. Reason: ${review_comment || 'No reason provided.'}\n\nIf you have questions, reply to this email.`
   });
   res.json({ message: 'Signup request rejected.' });
@@ -431,7 +419,9 @@ app.post(
     body('name').isString().isLength({ min: 1, max: 100 }),
     body('password').isString().isLength({ min: 6, max: 128 }),
     body('department_code').optional({ nullable: true }).matches(/^\d{2}$/),
-    body('requested_role').optional({ nullable: true }).isIn(SIGNUP_ROLES)
+    body('requested_role').optional({ nullable: true }).isIn(SIGNUP_ROLES),
+    body('requested_apps').optional().isArray(),
+    body('requested_apps.*').isIn(SIGNUP_APP_IDS)
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -440,6 +430,9 @@ app.post(
     const password = req.body.password;
     const departmentCode = req.body.department_code || null;
     const requestedRole = SIGNUP_ROLES.includes(req.body.requested_role) ? req.body.requested_role : 'user';
+    const requestedApps = Array.isArray(req.body.requested_apps)
+      ? [...new Set(req.body.requested_apps.filter((a) => SIGNUP_APP_IDS.includes(a)))]
+      : [];
     const passwordHash = await bcrypt.hash(password, PASS_HASH_ROUNDS);
     try {
       const { rows: existingAccounts } = await pool.query(
@@ -469,13 +462,14 @@ app.post(
                  password_hash = $3,
                  department_code = $4,
                  requested_role = $5,
+                 requested_apps = $6,
                  status = 'pending',
                  created_at = NOW(),
                  reviewed_at = NULL,
                  reviewer_id = NULL,
                  review_comment = NULL
            WHERE email = $1`,
-          [email, name, passwordHash, departmentCode, requestedRole]
+          [email, name, passwordHash, departmentCode, requestedRole, requestedApps]
         );
         notifyAdminsOfSignupRequest({ email, name, departmentCode, requestedRole }).catch((err) => {
           console.error('Failed to notify admins of signup request', err);
@@ -485,9 +479,9 @@ app.post(
       }
 
       await pool.query(
-        `INSERT INTO signup_requests (email, name, password_hash, department_code, requested_role)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [email, name, passwordHash, departmentCode, requestedRole]
+        `INSERT INTO signup_requests (email, name, password_hash, department_code, requested_role, requested_apps)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [email, name, passwordHash, departmentCode, requestedRole, requestedApps]
       );
       notifyAdminsOfSignupRequest({ email, name, departmentCode, requestedRole }).catch((err) => {
         console.error('Failed to notify admins of signup request', err);
@@ -499,6 +493,16 @@ app.post(
     }
   }
 );
+// Public: lets the login page decide whether to render the Google button.
+// OAuth client IDs are public by design; no secret is exposed here.
+app.get('/api/auth/config', (_req, res) => {
+  res.json({
+    google_enabled: googleSignInEnabled,
+    google_client_id: GOOGLE_CLIENT_ID,
+    signup_apps: SIGNUP_APPS.map(({ id, label }) => ({ id, label })),
+  });
+});
+
 app.post(
   '/api/auth/login',
   [
@@ -555,7 +559,43 @@ app.post(
     console.info(`[login] success: ${email} (${reviewer.role}) from ${clientIp}, session expires ${expiresAt.toISOString()}`);
     const expiresIso = expiresAt.toISOString();
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
-    const payload = { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso };
+    const payload = { ...reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), session_expires_at: expiresIso };
+    setAuthCookie(res, token, expiresAt);
+    res.json({ token, expires_at: expiresIso, reviewer: payload });
+  }
+);
+
+// Google sign-in. Issues exactly the same session as password login; the
+// difference is only how the account is established.
+app.post(
+  '/api/auth/google',
+  [body('credential').isString().isLength({ min: 1, max: 4096 })],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const clientIp = req.ip;
+    const { result, reviewer } = await resolveGoogleIdentity(req.body.credential, { ip: clientIp });
+
+    if (result !== GoogleSignInResult.OK) {
+      const responses = {
+        [GoogleSignInResult.DISABLED]: [503, 'Google sign-in is not configured.'],
+        [GoogleSignInResult.BAD_TOKEN]: [401, 'Could not verify your Google account.'],
+        [GoogleSignInResult.EMAIL_UNVERIFIED]: [403, 'Your Google email address is not verified.'],
+        [GoogleSignInResult.NO_ACCOUNT]: [403, 'No portal access for this Google account. Contact your administrator.'],
+        [GoogleSignInResult.INACTIVE]: [403, 'Account inactive.'],
+      };
+      const [status, message] = responses[result] ?? [401, 'Sign-in failed.'];
+      res.status(status).json({ message });
+      return;
+    }
+
+    await clearLoginAttempts(reviewer.email);
+    const { tokenId, expiresAt } = await createSession(reviewer.id);
+    await pool.query('UPDATE reviewers SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [reviewer.id]);
+    const token = buildTokenPayload(reviewer, tokenId, expiresAt);
+    console.info(`[login] google success: ${reviewer.email} (${reviewer.role}) from ${clientIp}`);
+    const expiresIso = expiresAt.toISOString();
+    const allowedPresets = await reviewerAllowedPresets(reviewer.id);
+    const payload = { ...reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), session_expires_at: expiresIso };
     setAuthCookie(res, token, expiresAt);
     res.json({ token, expires_at: expiresIso, reviewer: payload });
   }
@@ -605,7 +645,7 @@ app.patch(
       values
     );
     const allowedPresets = await reviewerAllowedPresets(rows[0].id);
-    res.json({ reviewer: reviewerSummary(rows[0], allowedPresets) });
+    res.json({ reviewer: reviewerSummary(rows[0], allowedPresets, await loadCapabilities(rows[0].id)) });
   }
 );
 
@@ -633,7 +673,7 @@ app.post('/api/auth/refresh', requireAuth(), async (req, res) => {
   const expiresIso = expiresAt.toISOString();
   const allowedPresets = await reviewerAllowedPresets(reviewer.id);
   setAuthCookie(res, token, expiresAt);
-  res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso } });
+  res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), session_expires_at: expiresIso } });
 });
 
 app.post(
@@ -683,7 +723,7 @@ app.post(
     const expiresIso = expiresAt.toISOString();
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
     setAuthCookie(res, token, expiresAt);
-    res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer, allowedPresets), session_expires_at: expiresIso } });
+    res.json({ token, expires_at: expiresIso, reviewer: { ...reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), session_expires_at: expiresIso } });
   }
 );
 
@@ -725,10 +765,10 @@ app.post(
       await sendMail({
         to: email,
         replyTo: REPLY_TO,
-        subject: 'Reset your Nauru Treasury account password',
+        subject: 'Reset your Naoero Treasury account password',
         text: `Hello ${user.display_name || 'User'},
 
-You requested a password reset for your Nauru Treasury account.
+You requested a password reset for your Naoero Treasury account.
 
 Click the link below to reset your password:
 ${resetUrl}
@@ -936,6 +976,12 @@ app.delete(
 );
 
 // ===== Account management (admin) =====
+// Capability catalogue, so the admin UI renders its checkboxes from data
+// rather than hardcoding them for each new app.
+app.get('/api/capability-catalogue', requireAuth(['admin']), (_req, res) => {
+  res.json({ groups: CAPABILITY_CATALOGUE, role_capabilities: ROLE_CAPABILITIES });
+});
+
 app.get('/api/reviewers', requireAuth(['admin']), async (_req, res) => {
   const { rows } = await pool.query(
     `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
@@ -943,7 +989,7 @@ app.get('/api/reviewers', requireAuth(['admin']), async (_req, res) => {
        FROM reviewers
       ORDER BY LOWER(COALESCE(NULLIF(display_name, ''), email)) ASC`
   );
-  res.json(await Promise.all(rows.map(async (row) => reviewerSummary(row, await reviewerAllowedPresets(row.id)))));
+  res.json(await Promise.all(rows.map(async (row) => reviewerSummary(row, await reviewerAllowedPresets(row.id), await loadCapabilities(row.id)))));
 });
 
 app.post(
@@ -958,7 +1004,9 @@ app.post(
     body('department_code').optional({ nullable: true }).matches(/^\d{2}$/),
     body('division_code').optional({ nullable: true }).matches(/^\d{2}$/),
     body('notify_on_submission').optional().isBoolean(),
-    body('send_email').optional().isBoolean()
+    body('send_email').optional().isBoolean(),
+    body('capabilities').optional().isArray(),
+    body('capabilities.*').isIn(ALL_CAPABILITIES)
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -1017,8 +1065,18 @@ app.post(
           console.error('Failed to send reviewer welcome email', err);
         }
       }
+      if (req.body.capabilities !== undefined) {
+        await setCapabilities(reviewer.id, req.body.capabilities, req.user.id);
+        await recordAudit({
+          actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+          action: 'reviewer.capabilities.set',
+          entityType: 'reviewer',
+          entityId: reviewer.id,
+          after: { capabilities: req.body.capabilities },
+        });
+      }
       const allowedPresets = await reviewerAllowedPresets(reviewer.id);
-      res.status(201).json({ reviewer: reviewerSummary(reviewer, allowedPresets), temporary_password: generated ? password : undefined });
+      res.status(201).json({ reviewer: reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), temporary_password: generated ? password : undefined });
     } catch (err) {
       if (err.code === '23505') {
         res.status(409).json({ message: 'Account with this email already exists.' });
@@ -1045,7 +1103,9 @@ app.put(
       if (value === null) return true;
       if (value && typeof value === 'object' && !Array.isArray(value)) return true;
       throw new Error('permissions must be an object.');
-    })
+    }),
+    body('capabilities').optional().isArray(),
+    body('capabilities.*').isIn(ALL_CAPABILITIES)
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -1116,19 +1176,42 @@ app.put(
         fields.push(`${key} = $${values.length}`);
       }
     });
-    if (!fields.length) {
+    if (!fields.length && req.body.capabilities === undefined) {
       res.status(400).json({ message: 'No fields to update.' });
       return;
     }
-    fields.push('updated_at = NOW()');
-    values.push(reviewerId);
-    const { rows } = await pool.query(
-      `UPDATE reviewers SET ${fields.join(', ')} WHERE id = $${values.length} RETURNING id, email, display_name, role, status, last_login_at, created_at, updated_at,
-        must_change_password, department_code, division_code, notify_on_submission, permissions`,
-      values
-    );
+
+    let rows;
+    if (fields.length) {
+      fields.push('updated_at = NOW()');
+      values.push(reviewerId);
+      ({ rows } = await pool.query(
+        `UPDATE reviewers SET ${fields.join(', ')} WHERE id = $${values.length} RETURNING id, email, display_name, role, status, last_login_at, created_at, updated_at,
+          must_change_password, department_code, division_code, notify_on_submission, permissions`,
+        values
+      ));
+    } else {
+      ({ rows } = await pool.query(
+        `SELECT id, email, display_name, role, status, last_login_at, created_at, updated_at,
+          must_change_password, department_code, division_code, notify_on_submission, permissions
+         FROM reviewers WHERE id = $1`,
+        [reviewerId]
+      ));
+    }
+
+    if (req.body.capabilities !== undefined) {
+      await setCapabilities(reviewerId, req.body.capabilities, req.user.id);
+      await recordAudit({
+        actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+        action: 'reviewer.capabilities.set',
+        entityType: 'reviewer',
+        entityId: reviewerId,
+        after: { capabilities: req.body.capabilities },
+      });
+    }
+
     const allowedPresets = await reviewerAllowedPresets(rows[0].id);
-    res.json({ reviewer: reviewerSummary(rows[0], allowedPresets) });
+    res.json({ reviewer: reviewerSummary(rows[0], allowedPresets, await loadCapabilities(rows[0].id)) });
   }
 );
 
@@ -1174,7 +1257,7 @@ app.post(
       }
     }
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
-    res.json({ reviewer: reviewerSummary(reviewer, allowedPresets), temporary_password: generated ? password : undefined });
+    res.json({ reviewer: reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), temporary_password: generated ? password : undefined });
   }
 );
 
@@ -1554,179 +1637,6 @@ async function sendMail(options = {}) {
   }
 }
 
-async function createSession(reviewerId) {
-  const tokenId = crypto.randomUUID();
-  const expiresAt = new Date(Date.now() + SESSION_MINUTES * 60 * 1000);
-  await pool.query(
-    `INSERT INTO reviewer_sessions (reviewer_id, token_id, expires_at)
-     VALUES ($1, $2, $3)`,
-    [reviewerId, tokenId, expiresAt.toISOString()]
-  );
-  return { tokenId, expiresAt };
-}
-
-async function invalidateSession(tokenId) {
-  if (!tokenId) return;
-  await pool.query('DELETE FROM reviewer_sessions WHERE token_id = $1', [tokenId]);
-}
-
-async function lookupSession(tokenId) {
-  if (!tokenId) return null;
-  const { rows } = await pool.query(
-    `SELECT r.id, r.email, r.display_name, r.role, r.status, r.must_change_password, r.last_login_at,
-            r.created_at, r.updated_at, r.department_code, r.division_code, r.notify_on_submission,
-            r.permissions, s.expires_at
-       FROM reviewer_sessions s
-       JOIN reviewers r ON r.id = s.reviewer_id
-      WHERE s.token_id = $1`,
-    [tokenId]
-  );
-  if (!rows.length) return null;
-  return rows[0];
-}
-
-function buildTokenPayload(reviewer, tokenId, expiresAt) {
-  return jwt.sign(
-    {
-      sub: reviewer.id,
-      email: reviewer.email,
-      role: reviewer.role,
-      tokenId
-    },
-    JWT_SECRET,
-    { expiresIn: `${SESSION_MINUTES}m` }
-  );
-}
-
-async function resolveAllowedBankPresets(departmentCode, divisionCode) {
-  if (!departmentCode) return DEFAULT_BANK_PRESETS;
-  const dept = String(departmentCode).trim();
-  const div = String(divisionCode ?? '00').trim() || '00';
-  const { rows } = await pool.query(
-    'SELECT allowed_bank_presets FROM department_profiles WHERE department_code = $1 AND division_code = $2',
-    [dept, div]
-  );
-  if (rows.length) {
-    const presets = (rows[0].allowed_bank_presets || []).filter((k) => BANK_PRESET_KEYS.includes(k));
-    if (presets.length) return presets;
-  }
-  return DEFAULT_BANK_PRESETS;
-}
-
-async function reviewerAllowedPresets(reviewerId) {
-  const { rows } = await pool.query(
-    'SELECT department_code, division_code FROM reviewers WHERE id = $1',
-    [reviewerId]
-  );
-  if (!rows.length) return DEFAULT_BANK_PRESETS;
-  return resolveAllowedBankPresets(rows[0].department_code, rows[0].division_code);
-}
-
-function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS) {
-  const permissions = parsePermissions(row.permissions);
-  // Legacy role-based defaults for backward compatibility
-  if (['reviewer', 'admin'].includes(row.role)) {
-    permissions.review_aba ??= true;
-    permissions.notify_aba_submissions ??= row.notify_on_submission !== false;
-    // FOREX TT defaults for reviewers/admins
-    permissions.review_forex_tt ??= true;
-    permissions.notify_forex_tt_submissions ??= row.notify_on_submission !== false;
-  }
-  if (row.status === 'active') {
-    // All active users may submit ABA batches and FOREX TT requests
-    permissions.submit_aba ??= true;
-    permissions.submit_forex_tt ??= true;
-  }
-  if (row.role === 'admin') {
-    permissions.admin ??= true;
-  }
-  return {
-    id: row.id,
-    email: row.email,
-    display_name: row.display_name,
-    role: row.role,
-    status: row.status,
-    must_change_password: row.must_change_password ?? false,
-    last_login_at: row.last_login_at,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    department_code: row.department_code || null,
-    division_code: row.division_code || '00',
-    notify_on_submission: row.notify_on_submission !== false,
-    allowed_bank_presets: Array.from(new Set(allowedBankPresets)),
-    permissions
-  };
-}
-
-function requireAuth(roles = []) {
-  const allowedRoles = Array.isArray(roles) && roles.length ? roles : null;
-  return async (req, res, next) => {
-    try {
-      // Read token from httpOnly cookie first, fall back to Authorization header (backward compat).
-      const header = req.headers.authorization || '';
-      const cookieToken = req.cookies?.[COOKIE_NAME];
-      const token = cookieToken || (header.startsWith('Bearer ') ? header.slice(7) : '');
-      const requestPath = req.originalUrl || req.path;
-      const requestIp = req.ip;
-      if (!token) {
-        console.warn(`[auth] no token for ${req.method} ${requestPath} from ${requestIp}`);
-        res.status(401).json({ message: 'Authentication required.' });
-        return;
-      }
-      let payload;
-      try {
-        // Explicit algorithm whitelist prevents alg:none and algorithm-confusion attacks.
-        payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
-      } catch (err) {
-        console.warn(`[auth] invalid/expired token for ${req.method} ${requestPath} from ${requestIp}: ${err.message}`);
-        res.status(401).json({ message: 'Invalid or expired token.' });
-        return;
-      }
-      const session = await lookupSession(payload.tokenId);
-      if (!session) {
-        console.warn(`[auth] session not found for ${req.method} ${requestPath} from ${requestIp}, tokenId ${payload.tokenId}`);
-        res.status(401).json({ message: 'Session not found.' });
-        return;
-      }
-      if (session.status !== 'active') {
-        res.status(403).json({ message: 'Account inactive.' });
-        return;
-      }
-      const now = new Date();
-      const expiry = new Date(session.expires_at);
-      if (expiry <= now) {
-        await invalidateSession(payload.tokenId);
-        res.status(401).json({ message: 'Session expired.' });
-        return;
-      }
-      if (allowedRoles && !allowedRoles.includes(session.role)) {
-        res.status(403).json({ message: 'Forbidden.' });
-        return;
-      }
-      const allowedPresets = await reviewerAllowedPresets(session.id);
-      const permissions = reviewerSummary(session, allowedPresets).permissions;
-      req.user = {
-        id: session.id,
-        email: session.email,
-        display_name: session.display_name,
-        role: session.role,
-        must_change_password: session.must_change_password ?? false,
-        tokenId: payload.tokenId,
-        session_expires_at: session.expires_at,
-        department_code: session.department_code || null,
-        division_code: session.division_code || '00',
-        notify_on_submission: session.notify_on_submission !== false,
-        allowed_bank_presets: allowedPresets,
-        permissions
-      };
-      next();
-    } catch (err) {
-      console.error('Authentication error', err);
-      res.status(500).json({ message: 'Authentication failed.' });
-    }
-  };
-}
-
 function buildBatchReviewLink(code) {
   const formatted = formatBatchCode(code);
   try {
@@ -1738,11 +1648,6 @@ function buildBatchReviewLink(code) {
   }
 }
 
-function generateTempPassword(length = TEMP_PASSWORD_LENGTH) {
-  const bytes = crypto.randomBytes(Math.ceil(length * 0.75));
-  return bytes.toString('base64url').slice(0, length);
-}
-
 
 async function sendReviewerWelcomeEmail({ email, display_name, role }, tempPassword) {
   const name = display_name || email;
@@ -1750,7 +1655,7 @@ async function sendReviewerWelcomeEmail({ email, display_name, role }, tempPassw
   const loginUrl = FRONTEND_BASE_URL;
   const text = `Hi ${name},
 
-Your ${roleLabel.toLowerCase()} access has been created for the RON ABA portal.
+Your ${roleLabel.toLowerCase()} access has been created for the Naoero Treasury Portal.
 
 Login: ${loginUrl}
 Email: ${email}
@@ -1758,7 +1663,7 @@ Temporary password: ${tempPassword}
 
 You will be asked to set a new password after signing in.
 `;
-  await sendMail({ to: email, subject: 'RON Treasury ABA reviewer access', text });
+  await sendMail({ to: email, subject: 'Naoero Treasury Portal access', text });
 }
 
 async function sendReviewerPasswordResetEmail({ email, display_name, role }, tempPassword) {
@@ -1775,7 +1680,7 @@ Temporary password: ${tempPassword}
 
 If you did not request this change, contact an administrator immediately.
 `;
-  await sendMail({ to: email, subject: 'RON Treasury ABA reviewer password reset', text });
+  await sendMail({ to: email, subject: 'Naoero Treasury Portal password reset', text });
 }
 
 async function notifyAdminsOfSignupRequest({ email, name, departmentCode, requestedRole }) {
@@ -1915,7 +1820,7 @@ async function notifySubmitterOfApproval(batch, metadata, comments, actor) {
 
 Your ABA batch ${formattedCode} for department ${departmentCode} (PD ${pdNumber}) was approved by ${actorName}.
 ${commentsText}
-Sign in to the Nauru Treasury portal to view the approved batch.
+Sign in to the Naoero Treasury portal to view the approved batch.
 `;
   await sendMail({ to: recipient, replyTo: actor?.email, subject, text });
 }
@@ -1938,7 +1843,7 @@ Your ABA batch ${formattedCode} for department ${departmentCode} (PD ${pdNumber}
 Reviewer comments:
 ${reasonText}
 
-Sign in to the Nauru Treasury portal to review the notes and resubmit a corrected batch.
+Sign in to the Naoero Treasury portal to review the notes and resubmit a corrected batch.
 `;
   await sendMail({ to: recipient, replyTo: actor?.email, subject, text });
 }
@@ -3420,21 +3325,6 @@ if (!SMTP_ENC_KEY_HEX) {
   console.warn('SECURITY WARNING: SMTP_ENC_KEY is not set. SMTP passwords will be stored without at-rest encryption.');
 }
 
-// Passphrases are now hashed with bcrypt (salted, slow) instead of unsalted SHA-256.
-// Legacy SHA-256 hashes are still accepted for verification during migration.
-async function hashPassphrase(passphrase) {
-  return bcrypt.hash(passphrase, PASS_HASH_ROUNDS);
-}
-
-function isLegacyPassphraseHash(hash) {
-  // SHA-256 hex digest is 64 chars; bcrypt hashes start with $2.
-  return typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash);
-}
-
-function legacyHashPassphrase(passphrase) {
-  return crypto.createHash('sha256').update(passphrase).digest('hex');
-}
-
 app.get('/api/reviewer/passphrase', async (_req, res) => {
   const { rows } = await pool.query('SELECT updated_at FROM reviewer_settings WHERE id = TRUE');
   if (!rows.length) {
@@ -3681,8 +3571,8 @@ app.post('/api/admin/smtp-settings/test', [
     const testEmail = req.body.test_email;
     await sendMail({
       to: testEmail,
-      subject: 'ABA Stack - SMTP Test',
-      text: `This is a test email from the ABA Stack application.\n\nSent at: ${new Date().toISOString()}\n\nIf you receive this, your SMTP settings are working correctly.`
+      subject: 'Naoero Treasury Portal - SMTP Test',
+      text: `This is a test email from the Naoero Treasury Portal.\n\nSent at: ${new Date().toISOString()}\n\nIf you receive this, your SMTP settings are working correctly.`
     });
     res.json({ success: true, message: `Test email sent to ${testEmail}` });
   } catch (err) {
@@ -4025,7 +3915,7 @@ app.post('/api/ai-helper/chat', requireAuth(), async (req, res) => {
 
     console.log('[AI Helper] Not an acknowledgment, passing to LLM');
 
-    const systemPrompt = `You are a helpful assistant for the RON ABA Generator & Review System used by Nauru Treasury. Be conversational and friendly while staying concise.
+    const systemPrompt = `You are a helpful assistant for the RON ABA Generator & Review System used by Naoero Treasury. Be conversational and friendly while staying concise.
 
 CURRENT USER CONTEXT (THIS IS WHO YOU ARE TALKING TO RIGHT NOW):
 - User: ${userName || 'Guest'}

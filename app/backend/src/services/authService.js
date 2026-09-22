@@ -12,6 +12,8 @@ import {
   BANK_PRESET_KEYS,
   TEMP_PASSWORD_LENGTH,
   DEFAULT_BANK_PRESETS,
+  ROLE_CAPABILITIES,
+  ALL_CAPABILITIES,
 } from '../config.js';
 import { lowerEmail } from '../utils/helpers.js';
 
@@ -159,8 +161,51 @@ export function hasPermission(permissions, permission) {
   return p[permission] === true;
 }
 
-export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS) {
+export async function loadCapabilities(reviewerId) {
+  const { rows } = await pool.query(
+    'SELECT capability FROM reviewer_capabilities WHERE reviewer_id = $1',
+    [reviewerId]
+  );
+  return rows.map((r) => r.capability);
+}
+
+/**
+ * Replaces a reviewer's grants with exactly `capabilities`, in one transaction
+ * so a failure cannot leave someone with a half-applied set of permissions.
+ */
+export async function setCapabilities(reviewerId, capabilities, grantedBy = null) {
+  const wanted = [...new Set(capabilities.filter((c) => ALL_CAPABILITIES.includes(c)))];
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      'DELETE FROM reviewer_capabilities WHERE reviewer_id = $1 AND NOT (capability = ANY($2::text[]))',
+      [reviewerId, wanted]
+    );
+    for (const capability of wanted) {
+      await client.query(
+        `INSERT INTO reviewer_capabilities (reviewer_id, capability, granted_by)
+         VALUES ($1, $2, $3) ON CONFLICT (reviewer_id, capability) DO NOTHING`,
+        [reviewerId, capability, grantedBy]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+  return wanted;
+}
+
+export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS, capabilities = []) {
   const permissions = parsePermissions(row.permissions);
+  // Granted capabilities. Explicit JSONB overrides above still win, so an
+  // administrator can revoke something a grant would otherwise allow.
+  for (const capability of capabilities) {
+    permissions[capability] ??= true;
+  }
   // Defaults based on legacy role model for backward compatibility
   if (['reviewer', 'admin'].includes(row.role)) {
     permissions.review_aba ??= true;
@@ -177,6 +222,12 @@ export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS) 
   if (row.role === 'admin') {
     permissions.admin ??= true;
   }
+  // Role floor: retained during the migration to capabilities so an account can
+  // never end up with less access than its legacy role implied. Capabilities are
+  // additive on top of this; remove once every account is granted explicitly.
+  for (const capability of ROLE_CAPABILITIES[row.role] ?? []) {
+    permissions[capability] ??= true;
+  }
   return {
     id: row.id,
     email: row.email,
@@ -191,6 +242,9 @@ export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS) 
     division_code: row.division_code || '00',
     notify_on_submission: row.notify_on_submission !== false,
     allowed_bank_presets: Array.from(new Set(allowedBankPresets)),
+    // Explicit grants, as distinct from `permissions` which also folds in the
+    // role floor. The admin UI needs to show what was actually granted.
+    capabilities: [...capabilities],
     permissions,
   };
 }
@@ -238,8 +292,11 @@ export function requireAuth(roles = []) {
         res.status(403).json({ message: 'Forbidden.' });
         return;
       }
-      const allowedPresets = await reviewerAllowedPresets(session.id);
-      const permissions = reviewerSummary(session, allowedPresets).permissions;
+      const [allowedPresets, capabilities] = await Promise.all([
+        reviewerAllowedPresets(session.id),
+        loadCapabilities(session.id),
+      ]);
+      const permissions = reviewerSummary(session, allowedPresets, capabilities).permissions;
       req.user = {
         id: session.id,
         email: session.email,
@@ -262,21 +319,23 @@ export function requireAuth(roles = []) {
   };
 }
 
-export function requirePermission(permission) {
-  return async (req, res, next) => {
-    try {
-      // Reuse requireAuth first to populate req.user
-      await new Promise((resolve, reject) => {
-        requireAuth()(req, res, (err) => (err ? reject(err) : resolve()));
-      });
-      if (!req.user?.permissions?.[permission]) {
-        res.status(403).json({ message: 'Forbidden.' });
-        return;
-      }
-      next();
-    } catch (err) {
-      console.error('Permission check error', err);
-      res.status(500).json({ message: 'Permission check failed.' });
-    }
+/**
+ * Authenticates, then requires ANY ONE of the given capabilities.
+ *
+ * Composes with requireAuth's own middleware rather than awaiting it: when
+ * requireAuth rejects it answers the request itself and never invokes the
+ * callback, so there is nothing further to do here.
+ */
+export function requirePermission(...permissions) {
+  const required = permissions.flat();
+  const authenticate = requireAuth();
+  return (req, res, next) => {
+    authenticate(req, res, (err) => {
+      if (err) return next(err);
+      const granted = req.user?.permissions ?? {};
+      if (required.some((permission) => granted[permission] === true)) return next();
+      console.warn(`[auth] missing capability (${required.join(' or ')}) for ${req.method} ${req.originalUrl || req.path}`);
+      res.status(403).json({ message: 'Forbidden.' });
+    });
   };
 }

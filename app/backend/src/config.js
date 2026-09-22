@@ -49,6 +49,9 @@ export const REVIEWER_ARCHIVE_LIMIT_MAX = 100;
 export const BLACKLIST_IMPORT_LIMIT = 1000;
 export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// Google sign-in. Unset disables the /api/auth/google endpoint entirely.
+export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+
 export const COOKIE_NAME = 'auth_token';
 export const isProd = process.env.NODE_ENV === 'production' || FRONTEND_BASE_URL.startsWith('https://');
 
@@ -92,10 +95,135 @@ export const PERMISSIONS = {
   PUBLIC_HEALTH_MANAGE: 'public_health_manage',
   PUBLIC_HEALTH_REVIEW: 'public_health_review',
   ADMIN: 'admin',
+  // App-level access. A single `role` column could not express someone who is
+  // simultaneously an ABA preparer, a reviewer and a banking officer; these can
+  // be granted in any combination.
+  HR_ACCESS: 'hr_access',
+  HR_LEAVE_APPLY: 'hr_leave_apply',
+  HR_LEAVE_APPROVE: 'hr_leave_approve',
+  HR_STAFF_MANAGE: 'hr_staff_manage',
+  HR_ADMIN: 'hr_admin',
+  ABA_ACCESS: 'aba_access',
+  BANKING_ACCESS: 'banking_access',
+  PAYROLL_ACCESS: 'payroll_access',
+  TOOLS_ACCESS: 'tools_access',
+  FOREX_TT_ACCESS: 'forex_tt_access',
+  PUBLIC_HEALTH_ACCESS: 'public_health_access',
+};
+
+// Grantable capabilities, grouped by app, so the admin UI renders itself from
+// data instead of hardcoded checkboxes.
+//
+// `notify_*` keys are deliberately absent: they are a per-user preference
+// carried by reviewers.notify_on_submission, not an access grant.
+export const CAPABILITY_CATALOGUE = [
+  {
+    app: 'aba',
+    label: 'ABA Payments',
+    capabilities: [
+      { key: PERMISSIONS.ABA_ACCESS, label: 'Open the ABA app' },
+      { key: PERMISSIONS.SUBMIT_ABA, label: 'Prepare and submit batches' },
+      { key: PERMISSIONS.REVIEW_ABA, label: 'Review and reject batches' },
+    ],
+  },
+  {
+    app: 'forex-tt',
+    label: 'FOREX TT',
+    capabilities: [
+      { key: PERMISSIONS.FOREX_TT_ACCESS, label: 'Open the FOREX TT app' },
+      { key: PERMISSIONS.SUBMIT_FOREX_TT, label: 'Raise TT requests' },
+      { key: PERMISSIONS.REVIEW_FOREX_TT, label: 'Process and approve TT requests' },
+    ],
+  },
+  {
+    app: 'banking',
+    label: 'Banking',
+    capabilities: [{ key: PERMISSIONS.BANKING_ACCESS, label: 'Open the Banking app' }],
+  },
+  {
+    app: 'payroll',
+    label: 'Payroll',
+    capabilities: [{ key: PERMISSIONS.PAYROLL_ACCESS, label: 'Open the Payroll app' }],
+  },
+  {
+    app: 'public-health',
+    label: 'Wellness Program',
+    capabilities: [
+      { key: PERMISSIONS.PUBLIC_HEALTH_ACCESS, label: 'Open the Wellness app' },
+      { key: PERMISSIONS.PUBLIC_HEALTH_MANAGE, label: 'Manage participants and pay periods' },
+      { key: PERMISSIONS.PUBLIC_HEALTH_REVIEW, label: 'Review wellness batches' },
+    ],
+  },
+  {
+    app: 'hr',
+    label: 'Leave & HR',
+    capabilities: [
+      { key: PERMISSIONS.HR_ACCESS, label: 'Open the Leave app' },
+      { key: PERMISSIONS.HR_LEAVE_APPLY, label: 'Apply for leave' },
+      // Scoped by hr_employees.manager_id: this grants the ability to approve,
+      // the reporting line decides whose leave.
+      { key: PERMISSIONS.HR_LEAVE_APPROVE, label: 'Approve leave for direct reports' },
+      { key: PERMISSIONS.HR_STAFF_MANAGE, label: 'Manage staff records and balances' },
+      { key: PERMISSIONS.HR_ADMIN, label: 'Manage leave policies and override decisions' },
+    ],
+  },
+  {
+    app: 'admin',
+    label: 'Administration',
+    capabilities: [
+      { key: PERMISSIONS.TOOLS_ACCESS, label: 'Open the Tools app' },
+      { key: PERMISSIONS.ADMIN, label: 'Full administration' },
+    ],
+  },
+];
+
+export const ALL_CAPABILITIES = CAPABILITY_CATALOGUE.flatMap((g) => g.capabilities.map((c) => c.key));
+
+// Apps a person can request on the public signup form, and what approving that
+// request grants. Requesting access is per-app; the admin still sets the role.
+export const SIGNUP_APPS = [
+  { id: 'aba', label: 'ABA Payments', grants: [PERMISSIONS.ABA_ACCESS, PERMISSIONS.SUBMIT_ABA] },
+  { id: 'forex-tt', label: 'FOREX TT', grants: [PERMISSIONS.FOREX_TT_ACCESS, PERMISSIONS.SUBMIT_FOREX_TT] },
+  { id: 'banking', label: 'Banking', grants: [PERMISSIONS.BANKING_ACCESS] },
+  { id: 'payroll', label: 'Payroll', grants: [PERMISSIONS.PAYROLL_ACCESS] },
+  { id: 'public-health', label: 'Wellness Program', grants: [PERMISSIONS.PUBLIC_HEALTH_ACCESS] },
+  { id: 'hr', label: 'Leave & HR', grants: [PERMISSIONS.HR_ACCESS, PERMISSIONS.HR_LEAVE_APPLY] },
+];
+
+export const SIGNUP_APP_IDS = SIGNUP_APPS.map((a) => a.id);
+
+export function capabilitiesForApps(appIds = []) {
+  const wanted = new Set();
+  for (const id of appIds) {
+    const app = SIGNUP_APPS.find((a) => a.id === id);
+    for (const grant of app?.grants ?? []) wanted.add(grant);
+  }
+  return [...wanted];
+}
+
+// What each legacy role grants. Used to seed capabilities for existing accounts
+// and for newly created ones, and retained as a floor in reviewerSummary so a
+// user can never end up with less access than their role implies.
+export const ROLE_CAPABILITIES = {
+  user: [PERMISSIONS.ABA_ACCESS, PERMISSIONS.FOREX_TT_ACCESS],
+  banking: [PERMISSIONS.BANKING_ACCESS],
+  payroll: [PERMISSIONS.PAYROLL_ACCESS],
+  public_health: [PERMISSIONS.PUBLIC_HEALTH_ACCESS, PERMISSIONS.PUBLIC_HEALTH_MANAGE],
+  reviewer: [
+    PERMISSIONS.ABA_ACCESS,
+    PERMISSIONS.FOREX_TT_ACCESS,
+    PERMISSIONS.REVIEW_ABA,
+    PERMISSIONS.REVIEW_FOREX_TT,
+    PERMISSIONS.PUBLIC_HEALTH_REVIEW,
+  ],
+  admin: ALL_CAPABILITIES,
 };
 
 // Public Health (Wellness Program) tier codes. LV0 = demoted, no payment.
 export const PUBLIC_HEALTH_TIERS = ['LV0', 'LV1', 'LV2', 'LV3'];
+
+// Leave application state machine
+export const HR_LEAVE_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'];
 
 // FOREX TT state machine
 export const FOREX_TT_STATUSES = [

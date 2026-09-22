@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiClient } from '../../lib/api';
 import { useAuth } from '../../contexts/useAuth';
+import { useConfirm } from '../../contexts/useConfirm';
 import { ForexTTForm } from './ForexTTForm';
 import type { ForexTTAttachment, ForexTTEvent, ForexTTRequest } from './forexTTTypes';
 
@@ -20,6 +21,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 export function ForexTTDetail({ request, reviewMode, onBack, onSaved, onSubmitted, onDeleted }: ForexTTDetailProps) {
   const { user } = useAuth();
+  const { confirm } = useConfirm();
   const [detail, setDetail] = useState<ForexTTRequest | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +61,7 @@ export function ForexTTDetail({ request, reviewMode, onBack, onSaved, onSubmitte
         setError('Provide a cancellation reason before cancelling this request.');
         return;
       }
-      if (!window.confirm(`Cancel ${detail.request_id}? The submitter will be notified.`)) return;
+      if (!(await confirm({ message: `Cancel ${detail.request_id}? The submitter will be notified.`, confirmLabel: 'Cancel request', tone: 'danger' }))) return;
     }
     try {
       const body: Record<string, unknown> = { status, comments };
@@ -79,7 +81,8 @@ export function ForexTTDetail({ request, reviewMode, onBack, onSaved, onSubmitte
   };
 
   const deleteDraft = async () => {
-    if (!detail || !window.confirm(`Delete draft ${detail.request_id}? This cannot be undone.`)) return;
+    if (!detail) return;
+    if (!(await confirm({ message: `Delete draft ${detail.request_id}? This cannot be undone.`, confirmLabel: 'Delete draft', tone: 'danger' }))) return;
     setIsDeleting(true);
     setError(null);
     try {

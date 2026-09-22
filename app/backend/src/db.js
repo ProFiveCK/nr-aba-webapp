@@ -1,7 +1,64 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
+import { ALL_CAPABILITIES, ROLE_CAPABILITIES } from './config.js';
 
 dotenv.config();
+
+/**
+ * Seeds reviewer_capabilities from the legacy `role` column plus any explicit
+ * `permissions` JSONB overrides, so every existing account keeps exactly the
+ * access it had before capabilities existed.
+ *
+ * Runs once, guarded by reviewer_settings.capabilities_backfilled_at — without
+ * that guard it would re-grant capabilities an administrator had revoked.
+ */
+async function backfillCapabilities(client) {
+  const { rows: flag } = await client.query(
+    'SELECT capabilities_backfilled_at FROM reviewer_settings WHERE id = TRUE'
+  );
+  if (flag.length && flag[0].capabilities_backfilled_at) return;
+
+  const { rows: reviewers } = await client.query(
+    'SELECT id, role, status, permissions FROM reviewers'
+  );
+
+  let granted = 0;
+  for (const reviewer of reviewers) {
+    const capabilities = new Set(ROLE_CAPABILITIES[reviewer.role] ?? []);
+
+    // Active accounts could always submit, regardless of role.
+    if (reviewer.status === 'active') {
+      capabilities.add('submit_aba');
+      capabilities.add('submit_forex_tt');
+    }
+
+    // Explicit JSONB overrides win in both directions.
+    let overrides = reviewer.permissions;
+    if (typeof overrides === 'string') {
+      try { overrides = JSON.parse(overrides); } catch { overrides = {}; }
+    }
+    for (const [key, value] of Object.entries(overrides || {})) {
+      if (!ALL_CAPABILITIES.includes(key)) continue;
+      if (value === true) capabilities.add(key);
+      else capabilities.delete(key);
+    }
+
+    for (const capability of capabilities) {
+      await client.query(
+        `INSERT INTO reviewer_capabilities (reviewer_id, capability)
+         VALUES ($1, $2) ON CONFLICT (reviewer_id, capability) DO NOTHING`,
+        [reviewer.id, capability]
+      );
+      granted += 1;
+    }
+  }
+
+  await client.query(
+    `INSERT INTO reviewer_settings (id, capabilities_backfilled_at) VALUES (TRUE, NOW())
+     ON CONFLICT (id) DO UPDATE SET capabilities_backfilled_at = NOW()`
+  );
+  console.info(`[schema] backfilled ${granted} capability grants across ${reviewers.length} accounts`);
+}
 
 const { Pool } = pg;
 
@@ -200,6 +257,38 @@ export async function initSchema() {
       );
     `);
 
+    // Capability grants. Replaces authorizing on the single `reviewers.role`
+    // column, which could not express a user who holds several roles at once.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS reviewer_capabilities (
+        reviewer_id UUID NOT NULL REFERENCES reviewers(id) ON DELETE CASCADE,
+        capability TEXT NOT NULL,
+        granted_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (reviewer_id, capability)
+      );
+    `);
+    await client.query(
+      'CREATE INDEX IF NOT EXISTS idx_reviewer_capabilities_capability ON reviewer_capabilities(capability)'
+    );
+
+    // External sign-in identities (Google today). Keyed by the provider's
+    // immutable subject claim rather than email, because emails get reassigned.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS reviewer_identities (
+        reviewer_id UUID NOT NULL REFERENCES reviewers(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        provider_subject TEXT NOT NULL,
+        email TEXT NOT NULL,
+        linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_login_at TIMESTAMPTZ,
+        PRIMARY KEY (provider, provider_subject)
+      );
+    `);
+    await client.query(
+      'CREATE INDEX IF NOT EXISTS idx_reviewer_identities_reviewer ON reviewer_identities(reviewer_id)'
+    );
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS reviewer_settings (
         id BOOLEAN PRIMARY KEY DEFAULT TRUE,
@@ -210,6 +299,10 @@ export async function initSchema() {
     await client.query(`
       ALTER TABLE reviewer_settings
         ADD COLUMN IF NOT EXISTS testing_mode BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    await client.query(`
+      ALTER TABLE reviewer_settings
+        ADD COLUMN IF NOT EXISTS capabilities_backfilled_at TIMESTAMPTZ
     `);
     await client.query(`
       ALTER TABLE reviewer_settings
@@ -387,6 +480,9 @@ export async function initSchema() {
       );
     `);
     await client.query("ALTER TABLE signup_requests ADD COLUMN IF NOT EXISTS requested_role TEXT NOT NULL DEFAULT 'user'");
+    // Which apps the person asked for. Supersedes requested_role as the thing
+    // being requested; the role is what the approving admin assigns.
+    await client.query("ALTER TABLE signup_requests ADD COLUMN IF NOT EXISTS requested_apps TEXT[] NOT NULL DEFAULT '{}'");
 
     // Password reset tokens for self-service password reset
     await client.query(`
@@ -654,8 +750,106 @@ export async function initSchema() {
         attempted_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    // ===== Leave & HR =====
+    // Employment record, kept separate from the `reviewers` identity so the org
+    // chart stays out of the auth table and so staff can hold leave records
+    // without a portal login (reviewer_id nullable).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_employees (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        reviewer_id UUID UNIQUE REFERENCES reviewers(id) ON DELETE SET NULL,
+        display_name TEXT NOT NULL,
+        email TEXT,
+        manager_id UUID REFERENCES hr_employees(id) ON DELETE SET NULL,
+        department_code TEXT,
+        join_date DATE,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_employees_manager ON hr_employees(manager_id)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_employees_reviewer ON hr_employees(reviewer_id)');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_leave_types (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL UNIQUE,
+        description TEXT,
+        default_days NUMERIC(6,2) NOT NULL DEFAULT 0,
+        is_accruable BOOLEAN NOT NULL DEFAULT FALSE,
+        requires_note BOOLEAN NOT NULL DEFAULT FALSE,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_leave_balances (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        employee_id UUID NOT NULL REFERENCES hr_employees(id) ON DELETE CASCADE,
+        leave_type_id UUID NOT NULL REFERENCES hr_leave_types(id) ON DELETE CASCADE,
+        balance NUMERIC(6,2) NOT NULL DEFAULT 0,
+        pending NUMERIC(6,2) NOT NULL DEFAULT 0,
+        year INT NOT NULL,
+        UNIQUE (employee_id, leave_type_id, year)
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_leave_applications (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        employee_id UUID NOT NULL REFERENCES hr_employees(id) ON DELETE CASCADE,
+        leave_type_id UUID NOT NULL REFERENCES hr_leave_types(id) ON DELETE RESTRICT,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        days NUMERIC(6,2) NOT NULL,
+        reason TEXT,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','cancelled')),
+        attachment TEXT,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        archived_at TIMESTAMPTZ,
+        reviewed_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        reviewed_at TIMESTAMPTZ,
+        reviewer_note TEXT
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_apps_employee_status ON hr_leave_applications(employee_id, status)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_apps_status_dates ON hr_leave_applications(status, start_date, end_date)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_apps_employee_applied ON hr_leave_applications(employee_id, applied_at DESC)');
+
+    // Manual balance corrections. reason is required: every adjustment must say why.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_leave_adjustments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        employee_id UUID NOT NULL REFERENCES hr_employees(id) ON DELETE CASCADE,
+        leave_type_id UUID NOT NULL REFERENCES hr_leave_types(id) ON DELETE CASCADE,
+        amount NUMERIC(6,2) NOT NULL,
+        reason TEXT NOT NULL,
+        adjusted_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_adjustments_employee ON hr_leave_adjustments(employee_id)');
+
+    // Seed the standard Naoero Treasury leave types (no-op once present).
+    await client.query(`
+      INSERT INTO hr_leave_types (name, description, default_days, is_accruable, requires_note)
+      VALUES
+        ('Annual',        'Annual recreation leave',            20, TRUE,  FALSE),
+        ('Sick',          'Personal illness',                   10, FALSE, TRUE),
+        ('Compassionate', 'Bereavement and family emergency',    5, FALSE, TRUE),
+        ('Special',       'Approved special leave',              5, FALSE, TRUE),
+        ('Official',      'Official duty travel',                0, FALSE, FALSE),
+        ('Leave Without Pay', 'Unpaid leave',                    0, FALSE, TRUE)
+      ON CONFLICT (name) DO NOTHING
+    `);
+
     await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_email_attempted ON login_attempts(email, attempted_at)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_attempted_at ON login_attempts(attempted_at)');
+
+    await backfillCapabilities(client);
 
     await client.query('COMMIT');
   } catch (error) {

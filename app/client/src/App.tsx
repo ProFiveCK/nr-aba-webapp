@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { AuthProvider } from './contexts/AuthContext';
 import { useAuth } from './contexts/useAuth';
 import { ToastProvider } from './contexts/ToastContext';
+import { ConfirmProvider } from './contexts/ConfirmContext';
 import { Login } from './pages/Login';
 import { Layout } from './components/Layout';
 import { ResetPasswordModal } from './components/ResetPasswordModal';
@@ -11,6 +12,7 @@ import { AbaWorkflow } from './pages/AbaWorkflow';
 import { Tools } from './pages/Tools';
 import { ForexTTApp } from './pages/ForexTTApp';
 import { PublicHealthApp } from './pages/PublicHealthApp';
+import { HrApp } from './pages/HrApp';
 import { findApp, type AppId } from './lib/apps';
 import { readHash, setHash } from './lib/hash';
 
@@ -136,6 +138,7 @@ function AppContent() {
           {activeApp === 'tools' && <Tools />}
           {activeApp === 'forex-tt' && <ForexTTApp />}
           {activeApp === 'public-health' && <PublicHealthApp />}
+          {activeApp === 'hr' && <HrApp />}
           {activeApp === 'admin' && <Admin />}
         </Suspense>
       </Layout>
@@ -162,7 +165,9 @@ function App() {
   return (
     <AuthProvider>
       <ToastProvider>
-        <AppContent />
+        <ConfirmProvider>
+          <AppContent />
+        </ConfirmProvider>
       </ToastProvider>
     </AuthProvider>
   );

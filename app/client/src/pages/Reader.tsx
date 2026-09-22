@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import type { ChangeEvent } from 'react';
 import { parseAba } from '../lib/abaParser';
+import { useToast } from '../contexts/useToast';
 import type { ParsedAbaResult } from '../lib/abaParser';
 import { ReaderHeader } from './Reader/ReaderHeader';
 import { ReaderControl } from './Reader/ReaderControl';
@@ -16,6 +17,7 @@ export function Reader({ onSwitchToGenerator }: ReaderProps) {
     const [parsedData, setParsedData] = useState<ParsedAbaResult | null>(initialImport.parsedData);
     const [error, setError] = useState<string | null>(initialImport.error);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const { addToast } = useToast();
 
     const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -65,7 +67,7 @@ export function Reader({ onSwitchToGenerator }: ReaderProps) {
             }));
 
         if (creditTransactions.length === 0) {
-            alert('No credit transactions found to load.');
+            addToast('No credit transactions found to load.', 'error');
             return;
         }
 

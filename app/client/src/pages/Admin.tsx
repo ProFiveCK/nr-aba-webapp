@@ -1,7 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ChangeEvent, FormEvent } from 'react';
+import type { ChangeEvent, FormEvent, ReactNode } from 'react';
+import {
+    Bell,
+    Check,
+    Copy,
+    KeyRound,
+    MoreVertical,
+    Pencil,
+    Plus,
+    Power,
+    Trash2,
+    X,
+} from 'lucide-react';
 import { useAuth } from '../contexts/useAuth';
 import { useToast } from '../contexts/useToast';
+import { useConfirm } from '../contexts/useConfirm';
 import { EmptyState, Icon, LoadingState } from '../components/Ui';
 import { apiClient } from '../lib/api';
 import {
@@ -26,6 +39,7 @@ interface SignupRequest {
     name: string;
     department_code: string | null;
     requested_role: 'user' | 'banking' | 'payroll' | 'public_health' | 'reviewer';
+    requested_apps?: string[] | null;
     status: 'pending' | 'approved' | 'rejected';
     created_at: string;
     reviewed_at: string | null;
@@ -61,6 +75,7 @@ interface AdminAccount {
     created_at: string;
     updated_at: string;
     permissions?: Record<string, boolean>;
+    capabilities?: string[];
 }
 
 interface AdminArchiveEntry {
@@ -121,6 +136,13 @@ interface AccountFormState {
     division_code: string;
     notify_on_submission: boolean;
     permissions: Record<string, boolean>;
+    capabilities: string[];
+}
+
+interface CapabilityGroup {
+    app: string;
+    label: string;
+    capabilities: { key: string; label: string }[];
 }
 
 const EMPTY_FORM: AccountFormState = {
@@ -132,6 +154,7 @@ const EMPTY_FORM: AccountFormState = {
     division_code: '00',
     notify_on_submission: true,
     permissions: {},
+    capabilities: [],
 };
 
 const ADMIN_ARCHIVE_LIMIT = 200;
@@ -211,6 +234,7 @@ function SignupRequestsPanel() {
     const [actionId, setActionId] = useState<number | null>(null);
     const [roleOverrides, setRoleOverrides] = useState<Record<number, SignupRequest['requested_role']>>({});
     const { addToast } = useToast();
+    const { prompt } = useConfirm();
 
     const refresh = async () => {
         setLoading(true);
@@ -236,7 +260,11 @@ function SignupRequestsPanel() {
     const handleDecision = async (id: number, action: 'approve' | 'reject', role?: SignupRequest['requested_role']) => {
         let review_comment = '';
         if (action === 'reject') {
-            const response = window.prompt('Provide a short reason for rejecting this request:', '');
+            const response = await prompt({
+                title: 'Reject signup request',
+                message: 'Provide a short reason for rejecting this request:',
+                confirmLabel: 'Reject',
+            });
             if (response === null) return;
             review_comment = response.trim();
             if (!review_comment) {
@@ -244,7 +272,12 @@ function SignupRequestsPanel() {
                 return;
             }
         } else {
-            const response = window.prompt('Optional welcome note (press Cancel to skip):', '');
+            const response = await prompt({
+                title: 'Approve signup request',
+                message: 'Optional welcome note — leave it blank to approve without one.',
+                required: false,
+                confirmLabel: 'Approve',
+            });
             if (response === null) return;
             review_comment = response.trim();
         }
@@ -309,7 +342,18 @@ function SignupRequestsPanel() {
                             ) : (
                                 pending.map((req) => (
                                     <tr key={req.id}>
-                                        <td className="px-3 py-2 font-medium text-gray-900">{req.name}</td>
+                                        <td className="px-3 py-2 font-medium text-gray-900">
+                                            {req.name}
+                                            {req.requested_apps?.length ? (
+                                                <span className="mt-1 flex flex-wrap gap-1">
+                                                    {req.requested_apps.map((app) => (
+                                                        <span key={app} className="rounded bg-[#002B7F]/10 px-1.5 py-0.5 text-xs font-medium text-[#002B7F]">
+                                                            {app}
+                                                        </span>
+                                                    ))}
+                                                </span>
+                                            ) : null}
+                                        </td>
                                         <td className="px-3 py-2 text-gray-600">{req.email}</td>
                                         <td className="px-3 py-2 text-gray-600">{req.department_code || '—'}</td>
                                         <td className="px-3 py-2">
@@ -420,6 +464,85 @@ function SignupRequestsPanel() {
 
 
 
+// Which app groups (from the capability catalogue) this account actually has
+// a foothold in, with the specific capabilities granted in each — so the user
+// list grows a badge per app instead of a bespoke column per app.
+function accountAccessGroups(
+    account: AdminAccount,
+    capabilityGroups: CapabilityGroup[],
+    roleCapabilities: Record<string, string[]>
+) {
+    const effective = new Set([...(roleCapabilities[account.role] || []), ...(account.capabilities || [])]);
+    return capabilityGroups
+        .map((group) => ({ ...group, granted: group.capabilities.filter((c) => effective.has(c.key)) }))
+        .filter((group) => group.granted.length > 0);
+}
+
+// Notification preferences are per-user settings, not access grants (see
+// CAPABILITY_CATALOGUE's notify_* comment in config.js), so they don't belong
+// in the capability catalogue either — collapsed into one badge here instead
+// of a column per workflow that can send a notification.
+function notificationSummary(account: AdminAccount): string[] {
+    const items: string[] = [];
+    if ((account.role === 'reviewer' || account.role === 'admin') && account.notify_on_submission) {
+        items.push('ABA submissions');
+    }
+    if (account.permissions?.notify_forex_tt_submissions) {
+        items.push('FOREX TT submissions');
+    }
+    return items;
+}
+
+function RowMenu({ children }: { children: ReactNode }) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!open) return;
+        const onClick = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+        };
+        document.addEventListener('mousedown', onClick);
+        return () => document.removeEventListener('mousedown', onClick);
+    }, [open]);
+
+    return (
+        <div className="relative inline-block text-left" ref={ref}>
+            <button
+                type="button"
+                onClick={() => setOpen((o) => !o)}
+                className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                aria-label="More actions"
+            >
+                <MoreVertical className="h-4 w-4" />
+            </button>
+            {open && (
+                <div
+                    className="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-lg"
+                    onClick={() => setOpen(false)}
+                >
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function RowMenuItem({ onClick, danger, icon, children }: { onClick: () => void; danger?: boolean; icon: ReactNode; children: ReactNode }) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
+                danger ? 'text-red-600 hover:bg-red-50' : 'text-gray-700 hover:bg-gray-50'
+            }`}
+        >
+            {icon}
+            {children}
+        </button>
+    );
+}
+
 function UserManagementPanel() {
     const { user: authUser, updateUser } = useAuth();
     const [accounts, setAccounts] = useState<AdminAccount[]>([]);
@@ -427,13 +550,18 @@ function UserManagementPanel() {
     const [error, setError] = useState('');
     const [search, setSearch] = useState('');
     const [roleFilter, setRoleFilter] = useState<'all' | AdminAccount['role']>('all');
+    const [appFilter, setAppFilter] = useState('all');
     const [form, setForm] = useState<AccountFormState>({ ...EMPTY_FORM });
     const [isEditing, setIsEditing] = useState(false);
+    const [isFormOpen, setIsFormOpen] = useState(false);
     const [formError, setFormError] = useState('');
-    const [formSuccess, setFormSuccess] = useState('');
     const [saving, setSaving] = useState(false);
+    const [tempPassword, setTempPassword] = useState<{ email: string; value: string } | null>(null);
     const formRef = useRef<HTMLFormElement | null>(null);
+    const [capabilityGroups, setCapabilityGroups] = useState<CapabilityGroup[]>([]);
+    const [roleCapabilities, setRoleCapabilities] = useState<Record<string, string[]>>({});
     const { addToast } = useToast();
+    const { confirm } = useConfirm();
 
     const refresh = async () => {
         setLoading(true);
@@ -453,24 +581,59 @@ function UserManagementPanel() {
         refresh();
     }, []);
 
+    // Capability catalogue drives the checkboxes, so adding an app to the
+    // catalogue surfaces it here without touching this component.
+    useEffect(() => {
+        apiClient
+            .get<{ groups: CapabilityGroup[]; role_capabilities: Record<string, string[]> }>('/capability-catalogue')
+            .then((data) => {
+                setCapabilityGroups(data?.groups || []);
+                setRoleCapabilities(data?.role_capabilities || {});
+            })
+            .catch(() => setCapabilityGroups([]));
+    }, []);
+
+    const toggleCapability = (key: string, checked: boolean) => {
+        setForm((prev) => ({
+            ...prev,
+            capabilities: checked
+                ? [...new Set([...prev.capabilities, key])]
+                : prev.capabilities.filter((c) => c !== key),
+        }));
+    };
+
     const filteredAccounts = useMemo(() => {
         const term = search.trim().toLowerCase();
         return accounts.filter((account) => {
             const matchesRole = roleFilter === 'all' || account.role === roleFilter;
             if (!matchesRole) return false;
+            if (appFilter !== 'all') {
+                const effective = new Set([...(roleCapabilities[account.role] || []), ...(account.capabilities || [])]);
+                const group = capabilityGroups.find((g) => g.app === appFilter);
+                if (!group || !group.capabilities.some((c) => effective.has(c.key))) return false;
+            }
             if (!term) return true;
             const haystack = [account.display_name, account.email, account.role]
                 .map((part) => String(part || '').toLowerCase())
                 .join(' ');
             return haystack.includes(term);
         });
-    }, [accounts, search, roleFilter]);
+    }, [accounts, search, roleFilter, appFilter, capabilityGroups, roleCapabilities]);
 
-    const resetForm = (clearSuccess = true) => {
+    const resetForm = () => {
         setForm({ ...EMPTY_FORM });
         setIsEditing(false);
         setFormError('');
-        if (clearSuccess) setFormSuccess('');
+    };
+
+    const openCreate = () => {
+        resetForm();
+        setIsFormOpen(true);
+    };
+
+    const closeForm = () => {
+        setIsFormOpen(false);
+        resetForm();
     };
 
     const startEdit = (account: AdminAccount) => {
@@ -483,13 +646,11 @@ function UserManagementPanel() {
             division_code: account.division_code || '00',
             notify_on_submission: account.notify_on_submission ?? (account.role === 'reviewer'),
             permissions: account.permissions || {},
+            capabilities: account.capabilities || [],
         });
         setIsEditing(true);
         setFormError('');
-        setFormSuccess('');
-        setTimeout(() => {
-            formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 50);
+        setIsFormOpen(true);
     };
 
     const handleStatusToggle = async (account: AdminAccount) => {
@@ -504,12 +665,12 @@ function UserManagementPanel() {
     };
 
     const handleDelete = async (account: AdminAccount) => {
-        const confirmed = window.confirm(`Delete ${account.email}? This cannot be undone.`);
+        const confirmed = await confirm({ message: `Delete ${account.email}? This cannot be undone.`, confirmLabel: 'Delete', tone: 'danger' });
         if (!confirmed) return;
         try {
             await apiClient.delete(`/reviewers/${account.id}`);
             if (isEditing && form.id === account.id) {
-                resetForm();
+                closeForm();
             }
             await refresh();
             addToast(`Deleted account ${account.email}.`, 'success');
@@ -524,7 +685,9 @@ function UserManagementPanel() {
                 send_email: false,
             });
             if (response?.temporary_password) {
-                addToast(`Temporary password for ${account.email}: ${response.temporary_password}`, 'info');
+                // A one-shot credential needs a dialog the admin controls closing
+                // themselves, not a toast that vanishes before they can copy it.
+                setTempPassword({ email: account.email, value: response.temporary_password });
             } else {
                 addToast('Password reset. User must change it on next login.', 'success');
             }
@@ -536,7 +699,6 @@ function UserManagementPanel() {
     const handleFormSubmit = async (event: FormEvent) => {
         event.preventDefault();
         setFormError('');
-        setFormSuccess('');
         if (!form.email.trim() && !isEditing) {
             setFormError('Email is required.');
             return;
@@ -578,12 +740,13 @@ function UserManagementPanel() {
             delete nextPermissions.notify_forex_tt_submissions;
         }
         body.permissions = nextPermissions;
+        body.capabilities = form.capabilities;
 
         setSaving(true);
         try {
             if (isEditing && form.id) {
                 await apiClient.put(`/reviewers/${form.id}`, body);
-                setFormSuccess('Account updated.');
+                addToast('Account updated.', 'success');
                 if (authUser && String(authUser.id) === form.id) {
                     updateUser({
                         display_name: (body.display_name as string | null) || undefined,
@@ -598,10 +761,10 @@ function UserManagementPanel() {
                     email: form.email.trim().toLowerCase(),
                     send_email: false,
                 });
-                setFormSuccess('Account created.');
+                addToast('Account created.', 'success');
             }
             await refresh();
-            resetForm(false);
+            closeForm();
         } catch (err) {
             setFormError((err as Error)?.message || 'Unable to save account.');
         } finally {
@@ -610,19 +773,227 @@ function UserManagementPanel() {
     };
 
     const canReceiveNotifications = form.role === 'reviewer' || form.role === 'admin';
+    const [passwordCopied, setPasswordCopied] = useState(false);
+
+    const copyTempPassword = async () => {
+        if (!tempPassword) return;
+        try {
+            await navigator.clipboard.writeText(tempPassword.value);
+            setPasswordCopied(true);
+            setTimeout(() => setPasswordCopied(false), 1500);
+        } catch {
+            addToast('Could not copy automatically — select and copy manually.', 'error');
+        }
+    };
 
     return (
         <section className="space-y-6">
-            <div className="rounded-2xl bg-white p-6 shadow">
-                <div className="mb-4 flex flex-col gap-1">
-                    <h2 className="text-xl font-semibold text-gray-900">{isEditing ? 'Edit user' : 'Add user'}</h2>
-                    <p className="text-sm text-gray-500">
-                        {isEditing
-                            ? "Update a user's role, department, and notification preferences."
-                            : 'Create a new account for a submitter, banking officer, payroll user, reviewer, or admin.'}
-                    </p>
+            <div className="app-panel space-y-4 p-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <h2 className="text-xl font-semibold text-gray-900">User list</h2>
+                        <p className="text-sm text-gray-500">
+                            {loading ? 'Loading…' : `${filteredAccounts.length} of ${accounts.length} accounts`}
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <input
+                            type="search"
+                            placeholder="Search name or email"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                        <select
+                            value={roleFilter}
+                            onChange={(e) => setRoleFilter(e.target.value as typeof roleFilter)}
+                            className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        >
+                            <option value="all">All roles</option>
+                            <option value="user">User</option>
+                            <option value="banking">Banking</option>
+                            <option value="payroll">Payroll</option>
+                            <option value="public_health">Public Health</option>
+                            <option value="reviewer">Reviewer</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                        <select
+                            value={appFilter}
+                            onChange={(e) => setAppFilter(e.target.value)}
+                            className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        >
+                            <option value="all">All app access</option>
+                            {capabilityGroups.map((group) => (
+                                <option key={group.app} value={group.app}>
+                                    {group.label}
+                                </option>
+                            ))}
+                        </select>
+                        <button
+                            type="button"
+                            onClick={refresh}
+                            className="rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                            Refresh
+                        </button>
+                        <button
+                            type="button"
+                            onClick={openCreate}
+                            className="flex items-center gap-1.5 rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-amber-600"
+                        >
+                            <Plus className="h-4 w-4" />
+                            Add user
+                        </button>
+                    </div>
                 </div>
-                <form ref={formRef} onSubmit={handleFormSubmit} className="space-y-4">
+                {error && <p className="text-sm text-red-600">{error}</p>}
+                <div className="rounded-xl border border-gray-100">
+                    <div className="max-h-[560px] overflow-y-auto">
+                        <table className="min-w-full divide-y divide-gray-200 text-sm">
+                            <thead className="bg-gray-50 text-left text-xs font-semibold uppercase text-gray-600">
+                                <tr>
+                                    <th className="px-3 py-2">User</th>
+                                    <th className="px-3 py-2">Role</th>
+                                    <th className="px-3 py-2">Dept / Div</th>
+                                    <th className="px-3 py-2">Access</th>
+                                    <th className="px-3 py-2">Status</th>
+                                    <th className="px-3 py-2">Notifications</th>
+                                    <th className="px-3 py-2">Last Login</th>
+                                    <th className="px-3 py-2 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 bg-white">
+                                {loading ? (
+                                    <tr>
+                                        <td colSpan={8} className="px-3 py-6 text-center text-gray-500">
+                                            Loading…
+                                        </td>
+                                    </tr>
+                                ) : filteredAccounts.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={8} className="px-3 py-6 text-center text-gray-500">
+                                            No accounts match the current filters.
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    filteredAccounts.map((account) => {
+                                        const accessGroups = accountAccessGroups(account, capabilityGroups, roleCapabilities);
+                                        const notifs = notificationSummary(account);
+                                        return (
+                                            <tr key={account.id}>
+                                                <td className="px-3 py-2">
+                                                    <div className="font-semibold text-gray-900">{account.display_name || '—'}</div>
+                                                    <div className="text-xs text-gray-500">{account.email}</div>
+                                                </td>
+                                                <td className="px-3 py-2 capitalize">{account.role}</td>
+                                                <td className="px-3 py-2 font-mono text-gray-600">{account.department_code || '—'} / {account.division_code || '00'}</td>
+                                                <td className="px-3 py-2">
+                                                    <div className="flex max-w-xs flex-wrap gap-1">
+                                                        {accessGroups.length === 0 ? (
+                                                            <span className="text-xs text-gray-400">No app access</span>
+                                                        ) : (
+                                                            accessGroups.map((group) => {
+                                                                const detail = group.granted.map((c) => c.label);
+                                                                if (group.app === 'aba' && account.allowed_bank_presets?.length) {
+                                                                    detail.push(`Banks: ${account.allowed_bank_presets.join(', ')}`);
+                                                                }
+                                                                return (
+                                                                    <span
+                                                                        key={group.app}
+                                                                        title={detail.join(' · ')}
+                                                                        className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700"
+                                                                    >
+                                                                        {group.label}
+                                                                    </span>
+                                                                );
+                                                            })
+                                                        )}
+                                                    </div>
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <span
+                                                        className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                                            account.status === 'active'
+                                                                ? 'bg-emerald-100 text-emerald-700'
+                                                                : 'bg-gray-200 text-gray-700'
+                                                        }`}
+                                                    >
+                                                        {account.status}
+                                                    </span>
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <span
+                                                        title={notifs.length ? notifs.join(', ') : 'No notifications enabled'}
+                                                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                                            notifs.length ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-500'
+                                                        }`}
+                                                    >
+                                                        <Bell className="h-3 w-3" />
+                                                        {notifs.length || 'Off'}
+                                                    </span>
+                                                </td>
+                                                <td className="px-3 py-2 text-gray-600">
+                                                    {account.last_login_at ? formatIsoDateTime(account.last_login_at) : 'Never'}
+                                                </td>
+                                                <td className="px-3 py-2 text-right">
+                                                    <div className="inline-flex items-center justify-end gap-1">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => startEdit(account)}
+                                                            title="Edit user"
+                                                            className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-amber-600"
+                                                        >
+                                                            <Pencil className="h-4 w-4" />
+                                                        </button>
+                                                        <RowMenu>
+                                                            <RowMenuItem icon={<KeyRound className="h-4 w-4" />} onClick={() => handleResetPassword(account)}>
+                                                                Reset password
+                                                            </RowMenuItem>
+                                                            <RowMenuItem icon={<Power className="h-4 w-4" />} onClick={() => handleStatusToggle(account)}>
+                                                                {account.status === 'active' ? 'Deactivate' : 'Activate'}
+                                                            </RowMenuItem>
+                                                            <div className="my-1 border-t border-gray-100" />
+                                                            <RowMenuItem icon={<Trash2 className="h-4 w-4" />} danger onClick={() => handleDelete(account)}>
+                                                                Delete
+                                                            </RowMenuItem>
+                                                        </RowMenu>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            {isFormOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={closeForm}>
+                    <div
+                        className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="mb-4 flex items-start justify-between gap-4">
+                            <div>
+                                <h2 className="text-xl font-semibold text-gray-900">{isEditing ? 'Edit user' : 'Add user'}</h2>
+                                <p className="text-sm text-gray-500">
+                                    {isEditing
+                                        ? "Update a user's role, department, and notification preferences."
+                                        : 'Create a new account for a submitter, banking officer, payroll user, reviewer, or admin.'}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={closeForm}
+                                className="text-gray-400 hover:text-gray-600"
+                                aria-label="Close"
+                            >
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+                        <form ref={formRef} onSubmit={handleFormSubmit} className="space-y-4">
                     <div className="grid gap-4 md:grid-cols-2">
                         <label className="text-sm font-medium text-gray-700">
                             Email
@@ -712,21 +1083,9 @@ function UserManagementPanel() {
                         Receive ABA submission notifications (reviewers & admins)
                     </label>
 
-                    <div className={`space-y-2 rounded-lg border p-3 ${canReceiveNotifications ? 'border-gray-200 bg-gray-50' : 'border-gray-100 bg-gray-50 opacity-60'}`}>
-                        <p className="text-sm font-medium text-gray-800">FOREX TT access</p>
-                        <label className="flex items-center gap-2 text-sm text-gray-700">
-                            <input
-                                type="checkbox"
-                                checked={Boolean(form.permissions.review_forex_tt)}
-                                onChange={(e) => setForm({
-                                    ...form,
-                                    permissions: { ...form.permissions, review_forex_tt: e.target.checked },
-                                })}
-                                disabled={!canReceiveNotifications}
-                            />
-                            FOREX TT reviewer — can claim and approve TT requests
-                        </label>
-                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                        <p className="text-sm font-medium text-gray-800">FOREX TT notifications</p>
+                        <label className={`flex items-center gap-2 text-sm text-gray-700 ${!canReceiveNotifications ? 'opacity-60' : ''}`}>
                             <input
                                 type="checkbox"
                                 checked={Boolean(form.permissions.notify_forex_tt_submissions)}
@@ -740,8 +1099,59 @@ function UserManagementPanel() {
                         </label>
                     </div>
 
+                    {/* Capabilities: granted in any combination, so one person can be an
+                        ABA preparer, a reviewer and a banking officer at the same time. */}
+                    <div className="space-y-3 rounded-lg border border-gray-200 p-4">
+                        <div>
+                            <p className="text-sm font-semibold text-gray-900">App access &amp; capabilities</p>
+                            <p className="mt-0.5 text-xs text-gray-500">
+                                Tick everything this person does. These are independent of the role above —
+                                someone can hold several at once. Greyed items are already granted by their role
+                                and cannot be removed here.
+                            </p>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            {capabilityGroups.map((group) => {
+                                const fromRole = roleCapabilities[form.role] || [];
+                                return (
+                                    <div key={group.app} className="rounded-md border border-gray-200 bg-white p-3">
+                                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                            {group.label}
+                                        </p>
+                                        <div className="space-y-1.5">
+                                            {group.capabilities.map((capability) => {
+                                                const grantedByRole = fromRole.includes(capability.key);
+                                                const checked = form.capabilities.includes(capability.key) || grantedByRole;
+                                                return (
+                                                    <label
+                                                        key={capability.key}
+                                                        className={`flex items-start gap-2 text-sm ${grantedByRole ? 'text-gray-400' : 'text-gray-700'}`}
+                                                        title={grantedByRole ? `Granted by the ${form.role} role` : undefined}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            className="mt-0.5"
+                                                            checked={checked}
+                                                            disabled={grantedByRole}
+                                                            onChange={(e) => toggleCapability(capability.key, e.target.checked)}
+                                                        />
+                                                        <span>{capability.label}</span>
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {!capabilityGroups.length && (
+                            <p className="text-sm text-gray-500">Capability catalogue unavailable.</p>
+                        )}
+                    </div>
+
                     {formError && <p className="text-sm text-red-600">{formError}</p>}
-                    {formSuccess && <p className="text-sm text-green-600">{formSuccess}</p>}
 
                     <div className="flex flex-wrap gap-3">
                         <button
@@ -751,171 +1161,52 @@ function UserManagementPanel() {
                         >
                             {saving ? 'Saving…' : isEditing ? 'Save changes' : 'Create user'}
                         </button>
-                        {isEditing && (
-                            <button
-                                type="button"
-                                onClick={() => resetForm()}
-                                className="rounded-full border border-gray-300 px-6 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                            >
-                                Cancel
-                            </button>
-                        )}
-                    </div>
-                </form>
-            </div>
-
-            <div className="app-panel space-y-4 p-6">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                        <h3 className="text-xl font-semibold text-gray-900">User list</h3>
-                        <p className="text-sm text-gray-500">
-                            {loading ? 'Loading…' : `${filteredAccounts.length} of ${accounts.length} accounts`} · Scroll to see more than 10
-                        </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                        <input
-                            type="search"
-                            placeholder="Search name or email"
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                        />
-                        <select
-                            value={roleFilter}
-                            onChange={(e) => setRoleFilter(e.target.value as typeof roleFilter)}
-                            className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                        >
-                            <option value="all">All roles</option>
-                            <option value="user">User</option>
-                            <option value="banking">Banking</option>
-                            <option value="payroll">Payroll</option>
-                            <option value="public_health">Public Health</option>
-                            <option value="reviewer">Reviewer</option>
-                            <option value="admin">Admin</option>
-                        </select>
                         <button
                             type="button"
-                            onClick={refresh}
-                            className="rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                            onClick={closeForm}
+                            className="rounded-full border border-gray-300 px-6 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                         >
-                            Refresh
+                            Cancel
                         </button>
                     </div>
-                </div>
-                {error && <p className="text-sm text-red-600">{error}</p>}
-                <div className="rounded-xl border border-gray-100">
-                    <div className="max-h-[520px] overflow-y-auto">
-                        <table className="min-w-full divide-y divide-gray-200 text-sm">
-                            <thead className="bg-gray-50 text-left text-xs font-semibold uppercase text-gray-600">
-                                <tr>
-                                    <th className="px-3 py-2">User</th>
-                                    <th className="px-3 py-2">Role</th>
-                                    <th className="px-3 py-2">Department / Division</th>
-                                    <th className="px-3 py-2">Allowed banks</th>
-                                    <th className="px-3 py-2">Status</th>
-                                    <th className="px-3 py-2">Notify</th>
-                                    <th className="px-3 py-2">FOREX TT</th>
-                                    <th className="px-3 py-2">Last Login</th>
-                                    <th className="px-3 py-2 text-right">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100 bg-white">
-                                {loading ? (
-                                    <tr>
-                                        <td colSpan={9} className="px-3 py-6 text-center text-gray-500">
-                                            Loading…
-                                        </td>
-                                    </tr>
-                                ) : filteredAccounts.length === 0 ? (
-                                    <tr>
-                                        <td colSpan={9} className="px-3 py-6 text-center text-gray-500">
-                                            No accounts match the current filters.
-                                        </td>
-                                    </tr>
-                                ) : (
-                                    filteredAccounts.map((account) => (
-                                        <tr key={account.id}>
-                                            <td className="px-3 py-2">
-                                                <div className="font-semibold text-gray-900">{account.display_name || '—'}</div>
-                                                <div className="text-xs text-gray-500">{account.email}</div>
-                                            </td>
-                                            <td className="px-3 py-2 capitalize">{account.role}</td>
-                                            <td className="px-3 py-2 font-mono text-gray-600">{account.department_code || '—'} / {account.division_code || '00'}</td>
-                                            <td className="px-3 py-2 text-gray-700">{(account.allowed_bank_presets || []).join(', ') || 'CBA-RON (default)'}</td>
-                                            <td className="px-3 py-2">
-                                                <span
-                                                    className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                                        account.status === 'active'
-                                                            ? 'bg-emerald-100 text-emerald-700'
-                                                            : 'bg-gray-200 text-gray-700'
-                                                    }`}
-                                                >
-                                                    {account.status}
-                                                </span>
-                                            </td>
-                                            <td className="px-3 py-2">
-                                                {account.role === 'reviewer' || account.role === 'admin' ? (
-                                                    <span
-                                                        className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                                            account.notify_on_submission ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600'
-                                                        }`}
-                                                    >
-                                                        {account.notify_on_submission ? 'On' : 'Off'}
-                                                    </span>
-                                                ) : (
-                                                    <span className="rounded-full px-2 py-0.5 text-xs font-semibold bg-gray-100 text-gray-500">N/A</span>
-                                                )}
-                                            </td>
-                                            <td className="px-3 py-2">
-                                                {account.permissions?.review_forex_tt ? (
-                                                    <span className="rounded-full px-2 py-0.5 text-xs font-semibold bg-sky-100 text-sky-700">
-                                                        {account.permissions.notify_forex_tt_submissions ? 'Reviewer + notify' : 'Reviewer'}
-                                                    </span>
-                                                ) : (
-                                                    <span className="rounded-full px-2 py-0.5 text-xs font-semibold bg-gray-100 text-gray-500">Off</span>
-                                                )}
-                                            </td>
-                                            <td className="px-3 py-2 text-gray-600">
-                                                {account.last_login_at ? formatIsoDateTime(account.last_login_at) : 'Never'}
-                                            </td>
-                                            <td className="px-3 py-2 text-right space-x-2">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => startEdit(account)}
-                                                    className="text-xs text-amber-600 hover:text-amber-800"
-                                                >
-                                                    Edit
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleResetPassword(account)}
-                                                    className="text-xs text-amber-600 hover:text-amber-800"
-                                                >
-                                                    Reset password
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleStatusToggle(account)}
-                                                    className="text-xs text-amber-600 hover:text-amber-800"
-                                                >
-                                                    {account.status === 'active' ? 'Deactivate' : 'Activate'}
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleDelete(account)}
-                                                    className="text-xs text-red-600 hover:text-red-800"
-                                                >
-                                                    Delete
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
+                        </form>
                     </div>
                 </div>
-            </div>
+            )}
+
+            {tempPassword && (
+                <div
+                    className="fixed inset-0 z-[70] flex items-center justify-center bg-gray-900/60 px-4 py-6"
+                    onClick={() => setTempPassword(null)}
+                >
+                    <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                        <h2 className="text-lg font-semibold text-gray-900">Temporary password</h2>
+                        <p className="mt-1 text-sm text-gray-500">
+                            For {tempPassword.email}. They must change it on next login. This won't be shown again, so copy it now.
+                        </p>
+                        <div className="mt-4 flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2">
+                            <code className="flex-1 select-all font-mono text-sm text-gray-900">{tempPassword.value}</code>
+                            <button
+                                type="button"
+                                onClick={copyTempPassword}
+                                className="rounded-md p-1.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
+                                aria-label="Copy temporary password"
+                            >
+                                {passwordCopied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                            </button>
+                        </div>
+                        <div className="mt-5 flex justify-end">
+                            <button
+                                type="button"
+                                onClick={() => setTempPassword(null)}
+                                className="rounded-full bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-amber-600"
+                            >
+                                Done
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </section>
     );
 }
@@ -947,6 +1238,7 @@ function DepartmentProfilesPanel() {
     const [formSuccess, setFormSuccess] = useState('');
     const [saving, setSaving] = useState(false);
     const { addToast } = useToast();
+    const { confirm } = useConfirm();
 
     const refresh = useCallback(async () => {
         setLoading(true);
@@ -1045,9 +1337,11 @@ function DepartmentProfilesPanel() {
     };
 
     const handleDelete = async (profile: DepartmentProfile) => {
-        const confirmed = window.confirm(
-            `Delete profile for department ${profile.department_code} / division ${profile.division_code || '00'}?`
-        );
+        const confirmed = await confirm({
+            message: `Delete profile for department ${profile.department_code} / division ${profile.division_code || '00'}?`,
+            confirmLabel: 'Delete',
+            tone: 'danger',
+        });
         if (!confirmed) return;
         try {
             await apiClient.delete(`/department-profiles/${profile.id}`);
@@ -1518,6 +1812,7 @@ function BlacklistPanel() {
     const [actionId, setActionId] = useState<number | null>(null);
     const [importSummary, setImportSummary] = useState('');
     const { addToast } = useToast();
+    const { confirm } = useConfirm();
     const [importError, setImportError] = useState('');
     const [importing, setImporting] = useState(false);
     const importInputRef = useRef<HTMLInputElement>(null);
@@ -1643,7 +1938,7 @@ function BlacklistPanel() {
     };
 
     const handleDelete = async (entry: BlacklistEntry) => {
-        const confirmed = window.confirm(`Delete blacklist entry for ${entry.bsb} · ${entry.account}?`);
+        const confirmed = await confirm({ message: `Delete blacklist entry for ${entry.bsb} · ${entry.account}?`, confirmLabel: 'Delete', tone: 'danger' });
         if (!confirmed) return;
         setActionId(entry.id);
         try {

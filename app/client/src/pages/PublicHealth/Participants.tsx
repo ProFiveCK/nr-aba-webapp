@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
+import { useConfirm } from '../../contexts/useConfirm';
 import { EmptyState, LoadingState } from '../../components/Ui';
 import { parseCsvRows, formatBSB } from '../../lib/utils';
 import { printReport } from '../../lib/print';
@@ -44,6 +45,7 @@ function esc(value: string | null | undefined): string {
 
 export function Participants() {
   const { addToast } = useToast();
+  const { confirm } = useConfirm();
   const [participants, setParticipants] = useState<PublicHealthParticipant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -168,7 +170,7 @@ export function Participants() {
   };
 
   const deactivate = async (p: PublicHealthParticipant) => {
-    if (!window.confirm(`Deactivate ${p.full_name}?`)) return;
+    if (!(await confirm({ message: `Deactivate ${p.full_name}?`, confirmLabel: 'Deactivate', tone: 'danger' }))) return;
     try {
       await apiClient.delete(`/public-health/participants/${p.id}`);
       addToast('Participant deactivated.', 'success');

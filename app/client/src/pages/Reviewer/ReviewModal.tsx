@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { formatMoney, formatDate } from '../../lib/utils';
+import { useToast } from '../../contexts/useToast';
 import type { BatchDetail } from '../MyBatches/types';
 
 interface ReviewModalProps {
@@ -9,6 +10,7 @@ interface ReviewModalProps {
 }
 
 export function ReviewModal({ batch, onClose, onDecision }: ReviewModalProps) {
+    const { addToast } = useToast();
     const [notes, setNotes] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [action, setAction] = useState<'approve' | 'reject' | null>(null);
@@ -21,7 +23,7 @@ export function ReviewModal({ batch, onClose, onDecision }: ReviewModalProps) {
             onClose();
         } catch (error) {
             console.error('Failed to submit decision:', error);
-            alert('Failed to submit decision. Please try again.');
+            addToast('Failed to submit decision. Please try again.', 'error');
         } finally {
             setIsSubmitting(false);
         }

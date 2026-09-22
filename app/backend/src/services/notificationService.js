@@ -99,8 +99,12 @@ export async function notifyByPermission({
 }) {
   if (!mailTransport || testingModeEnabled) return [];
 
+  // Match an explicit JSONB override OR a row in reviewer_capabilities; since
+  // capabilities became the grant store, the JSONB alone holds only overrides.
   const hasPermission = permission
-    ? `r.permissions ? $1 AND (r.permissions -> $1)::boolean = TRUE`
+    ? `((r.permissions ? $1 AND (r.permissions -> $1)::boolean = TRUE)
+        OR EXISTS (SELECT 1 FROM reviewer_capabilities c
+                    WHERE c.reviewer_id = r.id AND c.capability = $1))`
     : 'FALSE';
   const fallback = fallbackRoles.length ? ` OR r.role = ANY($2::text[])` : '';
   const params = permission
@@ -192,7 +196,7 @@ export async function notifyForexTTSubmitter(request, newStatus, comments, actor
     : '';
 
   const subject = `FOREX TT ${action} — ${requestId}`;
-  const text = `Hi ${submitter.display_name || 'there'},\n\nYour foreign currency telegraphic transfer request ${requestId} has been ${action} by ${actorName}.${commentsBlock}${bankConfirmationBlock}\n${nextStep}\n\nView the request: ${requestLink}\n\nNauru Treasury Portal\n`;
+  const text = `Hi ${submitter.display_name || 'there'},\n\nYour foreign currency telegraphic transfer request ${requestId} has been ${action} by ${actorName}.${commentsBlock}${bankConfirmationBlock}\n${nextStep}\n\nView the request: ${requestLink}\n\nNaoero Treasury Portal\n`;
 
   await sendMail({ to: recipient, replyTo: actor?.email, subject, text });
 }
@@ -236,7 +240,7 @@ export async function notifySubmitterOfApproval(batch, metadata, comments, actor
   const commentsText = comments?.trim()
     ? `\nReviewer comments:\n${comments.trim()}\n`
     : '';
-  const text = `Hi ${submitterName},\n\nYour ABA batch ${formattedCode} for department ${departmentCode} (PD ${pdNumber}) was approved by ${actorName}.${commentsText}\nSign in to the Nauru Treasury portal to view the approved batch.\n`;
+  const text = `Hi ${submitterName},\n\nYour ABA batch ${formattedCode} for department ${departmentCode} (PD ${pdNumber}) was approved by ${actorName}.${commentsText}\nSign in to the Naoero Treasury portal to view the approved batch.\n`;
   await sendMail({ to: recipient, replyTo: actor?.email, subject, text });
 }
 
@@ -250,7 +254,7 @@ export async function notifySubmitterOfRejection(batch, metadata, comments, acto
   const submitterName = metadata?.prepared_by || metadata?.prepared_by_name || 'team';
   const subject = `PD ${pdNumber} - Dept ${departmentCode} - ${formattedCode} requires updates`;
   const reasonText = comments?.trim() ? comments.trim() : 'No additional comments were provided.';
-  const text = `Hi ${submitterName},\n\nYour ABA batch ${formattedCode} for department ${departmentCode} (PD ${pdNumber}) was rejected by ${actorName}.\n\nReviewer comments:\n${reasonText}\n\nSign in to the Nauru Treasury portal to review the notes and resubmit a corrected batch.\n`;
+  const text = `Hi ${submitterName},\n\nYour ABA batch ${formattedCode} for department ${departmentCode} (PD ${pdNumber}) was rejected by ${actorName}.\n\nReviewer comments:\n${reasonText}\n\nSign in to the Naoero Treasury portal to review the notes and resubmit a corrected batch.\n`;
   await sendMail({ to: recipient, replyTo: actor?.email, subject, text });
 }
 
@@ -288,8 +292,8 @@ export async function sendReviewerWelcomeEmail({ email, display_name, role }, te
   const name = display_name || email;
   const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : 'Account';
   const loginUrl = FRONTEND_BASE_URL;
-  const text = `Hi ${name},\n\nYour ${roleLabel.toLowerCase()} access has been created for the RON ABA portal.\n\nLogin: ${loginUrl}\nEmail: ${email}\nTemporary password: ${tempPassword}\n\nYou will be asked to set a new password after signing in.\n`;
-  await sendMail({ to: email, subject: 'RON Treasury ABA reviewer access', text });
+  const text = `Hi ${name},\n\nYour ${roleLabel.toLowerCase()} access has been created for the Naoero Treasury Portal.\n\nLogin: ${loginUrl}\nEmail: ${email}\nTemporary password: ${tempPassword}\n\nYou will be asked to set a new password after signing in.\n`;
+  await sendMail({ to: email, subject: 'Naoero Treasury Portal access', text });
 }
 
 export async function sendReviewerPasswordResetEmail({ email, display_name, role }, tempPassword) {
@@ -297,5 +301,50 @@ export async function sendReviewerPasswordResetEmail({ email, display_name, role
   const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : 'account';
   const loginUrl = FRONTEND_BASE_URL;
   const text = `Hi ${name},\n\nYour ${roleLabel.toLowerCase()} password has been reset. Use the temporary password below to sign in; you will be prompted to set a new password immediately afterwards.\n\nLogin: ${loginUrl}\nEmail: ${email}\nTemporary password: ${tempPassword}\n\nIf you did not request this change, contact an administrator immediately.\n`;
-  await sendMail({ to: email, subject: 'RON Treasury ABA reviewer password reset', text });
+  await sendMail({ to: email, subject: 'Naoero Treasury Portal password reset', text });
+}
+
+// ===== Leave & HR =====
+
+function leaveDates(application) {
+  const format = (value) => new Date(value).toLocaleDateString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric',
+  });
+  return `${format(application.start_date)} to ${format(application.end_date)}`;
+}
+
+/** Tells the approving manager that leave is waiting for them. */
+export async function notifyLeaveSubmitted({ application, employee, manager }) {
+  if (!mailTransport || testingModeEnabled) return [];
+  const to = lowerEmail(manager?.email || '');
+  if (!to) return [];
+
+  const link = `${FRONTEND_BASE_URL}#hr/approvals`;
+  const text = `${employee.display_name} has applied for leave and needs your approval.
+
+Type: ${application.leave_type_name}
+Dates: ${leaveDates(application)}
+Working days: ${application.days}
+${application.reason ? `Reason: ${application.reason}\n` : ''}
+Review it here: ${link}
+`;
+  await sendMail({ to, subject: `Leave approval needed — ${employee.display_name}`, text });
+  return [to];
+}
+
+/** Tells the applicant what was decided. Rejections always carry the reason. */
+export async function notifyLeaveDecision({ application, employee, decision, note, decidedBy }) {
+  if (!mailTransport || testingModeEnabled) return [];
+  const to = lowerEmail(employee?.email || '');
+  if (!to) return [];
+
+  const outcome = decision === 'approved' ? 'approved' : 'not approved';
+  const text = `Hello ${employee.display_name},
+
+Your ${application.leave_type_name} leave request for ${leaveDates(application)} (${application.days} working days) has been ${outcome}${decidedBy ? ` by ${decidedBy}` : ''}.
+${note ? `\nReason: ${note}\n` : ''}
+You can see your leave at ${FRONTEND_BASE_URL}#hr/my-leave
+`;
+  await sendMail({ to, subject: `Your leave request was ${outcome}`, text });
+  return [to];
 }

@@ -66,13 +66,14 @@ export async function createEmployee(pool, { name, joinDate = null, entitled = t
 /** The stored balance for one employee and type, as plain numbers. */
 export async function readBalance(pool, employeeId, leaveTypeId, year) {
   const { rows } = await pool.query(
-    'SELECT balance, pending, last_reset_at FROM hr_leave_balances WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3',
+    `SELECT balance, pending, to_char(last_reset_at, 'YYYY-MM-DD') AS last_reset_date
+       FROM hr_leave_balances WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3`,
     [employeeId, leaveTypeId, year]
   );
   if (!rows.length) return null;
   return {
     balance: Number(rows[0].balance),
     pending: Number(rows[0].pending),
-    lastResetAt: rows[0].last_reset_at,
+    lastResetDate: rows[0].last_reset_date,
   };
 }

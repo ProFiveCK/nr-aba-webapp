@@ -207,6 +207,65 @@ describe('leave accrual', { skip: skipWithoutDatabase }, () => {
     });
   });
 
+  describe('the financial-year boundary', () => {
+    test('forfeits on 1 July, not 1 January', async () => {
+      const type = await upsertLeaveType(pool, {
+        name: 'T:Annual', accruable: true, perFortnight: 5, resetPeriod: 'financial_year' });
+      const ana = await createEmployee(pool, { name: 'Ana' });
+
+      // Accrue in a period before July, with the balance last stamped in the
+      // previous financial year.
+      await accrue('2026-05-15');
+      await pool.query(
+        `UPDATE hr_leave_balances SET last_reset_at = '2025-07-01' WHERE employee_id = $1`, [ana.id]);
+
+      // A June period is still inside the 2025-26 year: nothing is forfeited.
+      const june = await accrue('2026-06-26');
+      assert.equal(june.reset, 0, 'June is mid-year');
+      assert.equal((await readBalance(pool, ana.id, type.id, 2026)).balance, 10);
+
+      // The first period after 1 July forfeits what is left.
+      const july = await accrue('2026-07-10');
+      assert.equal(july.reset, 1);
+      assert.equal((await readBalance(pool, ana.id, type.id, 2026)).balance, 0);
+    });
+
+    test('stamps the boundary, not the clock', async () => {
+      const type = await upsertLeaveType(pool, {
+        name: 'T:Annual', accruable: true, perFortnight: 5, resetPeriod: 'financial_year' });
+      const ana = await createEmployee(pool, { name: 'Ana' });
+
+      await accrue('2026-05-15');
+      await pool.query(
+        `UPDATE hr_leave_balances SET last_reset_at = '2025-07-01' WHERE employee_id = $1`, [ana.id]);
+      await accrue('2026-07-10');
+
+      // Recorded against the boundary rather than the day it happened to run,
+      // which is what lets next year's boundary still register as unapplied.
+      const balance = await readBalance(pool, ana.id, type.id, 2026);
+      assert.equal(balance.lastResetDate, '2026-07-01');
+    });
+
+    test('a catch-up run applies the boundary that fell between periods', async () => {
+      const type = await upsertLeaveType(pool, {
+        name: 'T:Annual', accruable: true, perFortnight: 5, resetPeriod: 'financial_year' });
+      const ana = await createEmployee(pool, { name: 'Ana' });
+
+      await accrue('2026-06-12');
+      await pool.query(
+        `UPDATE hr_leave_balances SET last_reset_at = '2025-07-01' WHERE employee_id = $1`, [ana.id]);
+
+      // Two periods run late, in order. Judging against the clock instead of
+      // the period would have let the first stamp both as current and lose the
+      // July forfeiture entirely.
+      const june = await accrue('2026-06-26');
+      assert.equal(june.reset, 0);
+      const july = await accrue('2026-07-24');
+      assert.equal(july.reset, 1);
+      assert.equal((await readBalance(pool, ana.id, type.id, 2026)).balance, 0);
+    });
+  });
+
   describe('carryover into a new year', () => {
     test('carries unused days for a type that never resets', async () => {
       const type = await upsertLeaveType(pool, { name: 'T:Annual', accruable: true, perFortnight: 3, resetPeriod: 'none' });
@@ -242,7 +301,9 @@ describe('leave accrual', { skip: skipWithoutDatabase }, () => {
       assert.equal((await readBalance(pool, ana.id, type.id, YEAR)).balance, 7);
     });
 
-    test('carries nothing for a type that resets', async () => {
+    test('a resetting type carries across January, since that is mid-year', async () => {
+      // With a 1 July boundary, January is the middle of the entitlement
+      // period. Opening at zero here would forfeit the balance twice a year.
       const type = await upsertLeaveType(pool, {
         name: 'T:Annual', accruable: true, perFortnight: 3, resetPeriod: 'financial_year' });
       const ana = await createEmployee(pool, { name: 'Ana' });
@@ -257,7 +318,26 @@ describe('leave accrual', { skip: skipWithoutDatabase }, () => {
         client.release();
       }
 
-      assert.equal((await readBalance(pool, ana.id, type.id, YEAR)).balance, 0);
+      assert.equal((await readBalance(pool, ana.id, type.id, YEAR)).balance, 12);
+    });
+
+    test('a resetting upfront type does not get a second entitlement in January', async () => {
+      const type = await upsertLeaveType(pool, {
+        name: 'T:Sick', accruable: false, defaultDays: 10, resetPeriod: 'financial_year' });
+      const ana = await createEmployee(pool, { name: 'Ana' });
+      await pool.query(
+        `INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, balance, pending)
+         VALUES ($1, $2, $3, 6, 0)`, [ana.id, type.id, YEAR - 1]);
+
+      const client = await pool.connect();
+      try {
+        await ensureBalance(client, ana.id, type.id, YEAR);
+      } finally {
+        client.release();
+      }
+
+      // 6 remaining, not 16: the grant belongs to the year that began in July.
+      assert.equal((await readBalance(pool, ana.id, type.id, YEAR)).balance, 6);
     });
   });
 

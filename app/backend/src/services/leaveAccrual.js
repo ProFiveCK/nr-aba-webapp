@@ -10,8 +10,8 @@
  */
 
 import {
-  carryoverFor,
   isResetDue,
+  openingBalanceFor,
   resetBoundaryFor,
   resetDelta,
   seedBalanceFor,
@@ -35,27 +35,23 @@ export async function ensureBalance(client, employeeId, leaveTypeId, year) {
     [leaveTypeId]
   );
   const type = typeRows[0];
-  const fresh = seedBalanceFor(type);
 
-  // A type configured to never reset carries any unused balance from the most
-  // recent prior year into the new one, on top of the fresh grant.
-  let carryover = 0;
-  if (type?.reset_period === 'none') {
-    const { rows: prior } = await client.query(
-      `SELECT balance, pending FROM hr_leave_balances
-        WHERE employee_id = $1 AND leave_type_id = $2 AND year < $3
-        ORDER BY year DESC LIMIT 1`,
-      [employeeId, leaveTypeId, year]
-    );
-    carryover = carryoverFor(type, prior[0]);
-  }
+  // The opening balance depends on the year before it, because an entitlement
+  // period is not always a calendar year — see openingBalanceFor.
+  const { rows: prior } = await client.query(
+    `SELECT balance, pending FROM hr_leave_balances
+      WHERE employee_id = $1 AND leave_type_id = $2 AND year < $3
+      ORDER BY year DESC LIMIT 1`,
+    [employeeId, leaveTypeId, year]
+  );
+  const opening = openingBalanceFor(type, prior[0]);
 
   const { rows: created } = await client.query(
     `INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, balance, pending, last_reset_at)
      VALUES ($1, $2, $3, $4, 0, NOW())
      ON CONFLICT (employee_id, leave_type_id, year) DO UPDATE SET year = EXCLUDED.year
      RETURNING *`,
-    [employeeId, leaveTypeId, year, fresh + carryover]
+    [employeeId, leaveTypeId, year, opening]
   );
   return created[0];
 }
@@ -97,29 +93,38 @@ export async function runLeaveAccrual(client, { periodEnd, actorId }) {
   }
 
   let reset = 0;
-  const now = new Date();
+  // Judged against the period being run, not against the clock. A catch-up run
+  // for an old period has to apply that period's boundary: using today's would
+  // let one late run stamp every balance as current and swallow a forfeiture
+  // that belonged to a period in between.
+  const asAt = parseDateOnly(periodEnd);
   for (const type of resetTypes) {
     const fresh = seedBalanceFor(type);
     for (const employee of employees) {
-      const boundary = resetBoundaryFor(employee, type.reset_period, now);
+      const boundary = resetBoundaryFor(employee, type.reset_period, asAt);
       if (!boundary) continue;
       const { rows } = await client.query(
-        'SELECT * FROM hr_leave_balances WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3 FOR UPDATE',
+        `SELECT *, to_char(last_reset_at, 'YYYY-MM-DD') AS last_reset_date
+           FROM hr_leave_balances
+          WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3 FOR UPDATE`,
         [employee.id, type.id, year]
       );
       if (!rows.length) continue;
       const balance = rows[0];
-      if (!isResetDue(balance.last_reset_at, boundary)) continue;
+      const boundaryDate = toIsoDate(boundary);
+      if (!isResetDue(balance.last_reset_date, boundaryDate)) continue;
       const delta = resetDelta(type, balance.balance);
+      // Stamped with the boundary rather than the clock, so a later catch-up
+      // run can still tell that a newer boundary has not been applied yet.
       await client.query(
-        'UPDATE hr_leave_balances SET balance = $1, last_reset_at = NOW() WHERE id = $2',
-        [fresh, balance.id]
+        'UPDATE hr_leave_balances SET balance = $1, last_reset_at = $2 WHERE id = $3',
+        [fresh, boundaryDate, balance.id]
       );
       if (delta !== 0) {
         await client.query(
           `INSERT INTO hr_leave_adjustments (employee_id, leave_type_id, amount, reason, adjusted_by)
            VALUES ($1, $2, $3, $4, $5)`,
-          [employee.id, type.id, delta, `Balance reset (${type.reset_period})`, actorId]
+          [employee.id, type.id, delta, `Balance reset (${type.reset_period} boundary ${boundaryDate})`, actorId]
         );
       }
       reset += 1;

@@ -111,19 +111,58 @@ Complete.
       so the two can overlap during a migration. Documented in
       `.env.prod.example`.
 
-### Found by the Phase 2 tests — needs a decision
+### Decisions taken after Phase 2
 
-- **`reset_period = 'financial_year'` resets on 1 January**, i.e. the calendar
-  year, despite the name. Naoero's financial year runs July to June. Balances
-  are also keyed by calendar year, so this is not a one-line change — it is a
-  policy question about when leave should actually be forfeited. Left exactly
-  as it was; current behaviour is pinned by a test that says so.
-- **Resets use today's date, not the period being run.** A catch-up run for a
-  period three months ago applies today's reset boundary. The net balances come
-  out right because `last_reset_at` stops a second application, but the
-  attribution is wrong. Using `periodEnd` would be more correct.
-- **Leave spanning 31 December** is charged wholly to the year it began, and
-  `balanceYearFor` in `leaveService.js` is the single place that decides it.
+- **The financial year now begins 1 July.** `reset_period = 'financial_year'`
+  forfeits on the most recent 1 July rather than 1 January, matching Naoero's
+  financial year. `FINANCIAL_YEAR_START_MONTH` in `lib/accrualRules.js` is the
+  single place that says so.
+
+  Moving the boundary off 1 January exposed a second, hidden forfeiture.
+  Balances are keyed by calendar year, and a new year's row was opened without
+  carrying anything for a resetting type — so the balance went to zero every
+  1 January regardless. With the boundary also on 1 January the two coincided
+  and it looked deliberate. With a July boundary staff would have lost their
+  leave **twice a year**. `openingBalanceFor` now continues the entitlement
+  period across 1 January: a resetting type carries its unused days and does
+  *not* get a second grant, and the forfeit-and-regrant happens at the real
+  boundary. A type set to never reset is unchanged.
+
+- **Resets are judged against the period being run, not the clock.** A
+  catch-up run for an old period applies that period's boundary, and
+  `last_reset_at` is stamped with the boundary rather than the time of the run.
+  Without this, one late run stamped every balance as current and swallowed a
+  forfeiture that belonged to a period in between.
+
+  While doing it, the comparison became date-only (`YYYY-MM-DD` strings rather
+  than Date objects). A boundary is a calendar day, and an hour either side of
+  midnight should not decide whether someone loses their leave.
+
+- **Leave spanning 31 December** is still charged wholly to the year it began.
+  Left alone pending a decision; `balanceYearFor` in `leaveService.js` is the
+  single place that decides it. See the note below.
+
+### Before deploying the July boundary
+
+Check whether any leave type is actually configured to reset:
+
+```sql
+SELECT name, reset_period, is_accruable, default_days
+  FROM hr_leave_types WHERE reset_period <> 'none';
+```
+
+If that returns nothing, the change is inert — the seeded types all use
+`none`. If it returns rows, the first accrual run after deploying **will apply
+the 1 July boundary**, because it genuinely passed and was never applied. That
+is the correct outcome, but it will forfeit balances, so it should not be a
+surprise. To start the clock from now instead, stamp the affected balances
+before the first run:
+
+```sql
+UPDATE hr_leave_balances b SET last_reset_at = NOW()
+  FROM hr_leave_types t
+ WHERE t.id = b.leave_type_id AND t.reset_period <> 'none';
+```
 
 ### Still open from this phase
 

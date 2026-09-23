@@ -23,6 +23,7 @@ interface OverviewResponse {
         cancelled: number;
         avg_turnaround_hours: number | null;
     };
+    days_taken: number;
     by_type: { leave_type: string; days: number; count: number }[];
     by_department: { department_code: string; days: number; count: number }[];
     monthly_trend: { month: string; days: number; count: number }[];
@@ -288,12 +289,17 @@ export function Overview() {
                 <EmptyState title="Unable to load the overview" />
             ) : (
                 <>
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        <StatTile
+                            label="Days taken"
+                            value={data.days_taken.toFixed(1)}
+                            hint="Working days falling in this period"
+                        />
                         <StatTile label="Active staff" value={String(data.headcount.active_employees)} />
                         <StatTile label="On leave today" value={String(data.headcount.on_leave_today)} />
                         <StatTile label="Pending approvals" value={String(data.applications.pending)} />
                         <StatTile
-                            label="Applications (period)"
+                            label="Applications submitted"
                             value={String(data.applications.total)}
                             hint={`${data.applications.approved} approved · ${data.applications.rejected} rejected · ${data.applications.cancelled} cancelled`}
                         />
@@ -308,9 +314,15 @@ export function Overview() {
                         />
                     </div>
 
+                    <p className="px-1 text-xs text-zinc-500">
+                        Days taken counts working days that fall inside the selected period, so the three
+                        panels below add up to {data.days_taken.toFixed(1)} days. Applications submitted
+                        counts by the date applied, which is a different measure and will not match.
+                    </p>
+
                     <ChartCard
                         title="Approved leave days per month"
-                        subtitle="Working days taken, by the month leave started"
+                        subtitle="Working days falling in each month, so a leave spanning two months is split between them"
                         tableHeaders={['Month', 'Days', 'Applications']}
                         tableRows={data.monthly_trend.map((m) => [monthLabel(m.month), m.days.toFixed(1), m.count])}
                     >
@@ -320,7 +332,7 @@ export function Overview() {
                     <div className="grid gap-4 lg:grid-cols-2">
                         <ChartCard
                             title="Days taken by leave type"
-                            subtitle="Flow: approved leave started in this period"
+                            subtitle="Working days falling in this period"
                             tableHeaders={['Leave type', 'Days', 'Applications']}
                             tableRows={data.by_type.map((t) => [t.leave_type, t.days.toFixed(1), t.count])}
                         >
@@ -329,7 +341,7 @@ export function Overview() {
 
                         <ChartCard
                             title="Days taken by department"
-                            subtitle="Flow: approved leave started in this period"
+                            subtitle="Working days falling in this period"
                             tableHeaders={['Department', 'Days', 'Applications']}
                             tableRows={data.by_department.map((d) => [d.department_code, d.days.toFixed(1), d.count])}
                         >

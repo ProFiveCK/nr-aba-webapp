@@ -52,18 +52,40 @@ Small, independent, each one a user-visible or operational defect.
       at a time, and `Staff.tsx` was already written as
       `manager_id: managerId || null`, expecting a clear that silently did
       nothing. Covered by `lib/sqlUpdate.test.js`.
-- [ ] **4. Overview KPIs do not reconcile.** Three different definitions of
-      "leave in this period" run on one screen: application tiles filter on
-      `applied_at` (`hr.js:988`), the type/department bars filter on range
-      *overlap* and then sum the *entire* application (`hr.js:1002`, `1011`),
-      and the trend filters on `start_date` (`hr.js:1020`). A 10-day leave
-      starting before the window contributes all 10 days to the bars and zero
-      to the line. Settle on days actually falling inside the window.
+- [x] **4. Overview KPIs do not reconcile.** *Done.* Every "days taken" figure
+      now counts **working days falling inside the window**, via one shared
+      `WORKING_DAYS_IN_RANGE` lateral subquery, so the type bars, the department
+      bars and the trend line measure the same thing and add up to each other.
+      The trend attributes each day to the month it falls in, so a leave
+      spanning two months is split between them rather than credited entirely
+      to its start month.
+
+      A "Days taken" tile states the total the three panels sum to, and a line
+      under it says outright that "Applications submitted" counts by date
+      applied and will not match — two different measures, no longer presented
+      as if they should agree. Counts exclude applications contributing zero
+      days, so a weekend-only absence no longer pads them.
+
+      **`GET /report` changed too.** It had the same overlap-plus-full-length
+      shape, which counted a leave straddling two pay periods in full against
+      both. It now uses the same measure as the overview, so the CSV export and
+      the dashboard agree. *Figures in this export will differ from before —
+      they were overstated for any leave crossing a period boundary.*
+
+      Also moved `calculateWorkingDays` and the new `monthsBetween` into
+      `lib/leaveDates.js`. They are pure, but reaching them through
+      `routes/hr.js` meant importing `config.js` and needing a `JWT_SECRET` just
+      to test arithmetic — a small taste of why item 5 matters. Covered by
+      `lib/leaveDates.test.js`, and verified end to end against a real Postgres:
+      five panels, one number.
+
+Phase 1 is complete.
 
 ## Phase 2 — Next sprint
 
 Structural. Item 6 gates the rest: nothing else here is safe to refactor
-without it.
+without it. Its runner is already in place (`npm test` in `app/backend`), and
+`lib/` now holds the first pure, dependency-free modules to build on.
 
 - [ ] **5. Extract `services/leaveService.js`.** `routes/hr.js` is 1,149 lines
       of HTTP, authorization, SQL, transactions and notification fan-out

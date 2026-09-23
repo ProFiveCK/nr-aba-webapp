@@ -7,24 +7,9 @@ import { notifyLeaveDecision, notifyLeaveSubmitted } from '../services/notificat
 import { ensureBalance, runLeaveAccrual } from '../services/leaveAccrual.js';
 import { PERMISSIONS } from '../config.js';
 import { buildUpdateAssignments, changedFields, collectUpdates } from '../lib/sqlUpdate.js';
+import { calculateWorkingDays, monthsBetween } from '../lib/leaveDates.js';
 
 const router = express.Router();
-
-/**
- * Working days (Mon-Fri) between two dates, inclusive. Mirrors the leave
- * calculation the standalone HR app used, so balances stay comparable.
- */
-export function calculateWorkingDays(startDate, endDate) {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  if (end < start) return 0;
-  let days = 0;
-  for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
-    const weekday = cursor.getDay();
-    if (weekday !== 0 && weekday !== 6) days += 1;
-  }
-  return days;
-}
 
 /** The signed-in user's employee record, created on first use. */
 async function currentEmployee(req) {
@@ -1013,6 +998,28 @@ router.put(
 
 // ===== Senior management overview =====
 
+/**
+ * Working days of one application that fall inside the reporting window.
+ *
+ * Every "days taken" figure on the overview uses this, so the tiles, the bars
+ * and the trend line all measure the same thing and add up to each other. The
+ * alternative — summing `a.days`, the application's whole length — credits a
+ * ten-day absence entirely to whichever window it touches, so a leave starting
+ * three days before the window still contributed all ten days to it.
+ *
+ * Mon-Fri inclusive, matching calculateWorkingDays() in lib/leaveDates.js, so a figure here is
+ * comparable with the days deducted from a balance. Correlated on `a`, so it
+ * only makes sense inside a LATERAL join against hr_leave_applications, with
+ * the window bound to $1 and $2.
+ */
+const WORKING_DAYS_IN_RANGE = `(
+  SELECT COUNT(*)::numeric AS days
+    FROM generate_series(
+      GREATEST(a.start_date, $1::date), LEAST(a.end_date, $2::date), INTERVAL '1 day'
+    ) AS day
+   WHERE EXTRACT(ISODOW FROM day) < 6
+)`;
+
 // Aggregate KPIs for leadership: headcount, application throughput, usage by
 // type/department, a monthly trend, and who's out soon. HR_ADMIN only — this
 // is a leadership summary, not a personal or team view.
@@ -1049,28 +1056,34 @@ router.get(
         [from, to]
       ),
       pool.query(
-        `SELECT t.name AS leave_type, SUM(a.days) AS days, COUNT(*) AS count
+        `SELECT t.name AS leave_type, SUM(w.days) AS days, COUNT(*) FILTER (WHERE w.days > 0) AS count
            FROM hr_leave_applications a
            JOIN hr_leave_types t ON t.id = a.leave_type_id
+           CROSS JOIN LATERAL ${WORKING_DAYS_IN_RANGE} w
           WHERE a.status = 'approved' AND a.start_date <= $2 AND a.end_date >= $1
           GROUP BY t.name
           ORDER BY days DESC`,
         [from, to]
       ),
       pool.query(
-        `SELECT COALESCE(e.department_code, 'Unassigned') AS department_code, SUM(a.days) AS days, COUNT(*) AS count
+        `SELECT COALESCE(e.department_code, 'Unassigned') AS department_code, SUM(w.days) AS days, COUNT(*) FILTER (WHERE w.days > 0) AS count
            FROM hr_leave_applications a
            JOIN hr_employees e ON e.id = a.employee_id
+           CROSS JOIN LATERAL ${WORKING_DAYS_IN_RANGE} w
           WHERE a.status = 'approved' AND a.start_date <= $2 AND a.end_date >= $1
           GROUP BY department_code
           ORDER BY days DESC`,
         [from, to]
       ),
       pool.query(
-        `SELECT to_char(date_trunc('month', a.start_date), 'YYYY-MM') AS month,
-                SUM(a.days) AS days, COUNT(*) AS count
+        `SELECT to_char(day, 'YYYY-MM') AS month,
+                COUNT(*)::numeric AS days, COUNT(DISTINCT a.id) AS count
            FROM hr_leave_applications a
-          WHERE a.status = 'approved' AND a.start_date >= $1 AND a.start_date <= $2
+           CROSS JOIN LATERAL generate_series(
+             GREATEST(a.start_date, $1::date), LEAST(a.end_date, $2::date), INTERVAL '1 day'
+           ) AS day
+          WHERE a.status = 'approved' AND a.start_date <= $2 AND a.end_date >= $1
+            AND EXTRACT(ISODOW FROM day) < 6
           GROUP BY month
           ORDER BY month`,
         [from, to]
@@ -1105,21 +1118,23 @@ router.get(
       ),
     ]);
 
+    const byTypeRows = byType.rows.map((r) => ({
+      leave_type: r.leave_type, days: Number(r.days), count: Number(r.count),
+    }));
+
     const statusCounts = { pending: 0, approved: 0, rejected: 0, cancelled: 0 };
     for (const row of applications.rows) statusCounts[row.status] = Number(row.count);
 
-    // Fill every month in range so the trend line has no gaps to misread as zero-vs-missing.
+    // Fill every month in range so the trend line has no gaps to misread as
+    // zero-vs-missing. Built by integer arithmetic on the YYYY-MM-DD strings
+    // rather than by stepping a Date, which would put the month a day out
+    // whenever the server's timezone is not the one the dates were written in.
     const monthByKey = new Map(monthly.rows.map((r) => [r.month, { days: Number(r.days), count: Number(r.count) }]));
-    const trendMonths = [];
-    const cursor = new Date(from);
-    cursor.setDate(1);
-    const end = new Date(to);
-    while (cursor <= end) {
-      const key = cursor.toISOString().slice(0, 7);
-      const found = monthByKey.get(key);
-      trendMonths.push({ month: key, days: found?.days || 0, count: found?.count || 0 });
-      cursor.setMonth(cursor.getMonth() + 1);
-    }
+    const trendMonths = monthsBetween(from, to).map((month) => ({
+      month,
+      days: monthByKey.get(month)?.days || 0,
+      count: monthByKey.get(month)?.count || 0,
+    }));
 
     res.json({
       from,
@@ -1133,7 +1148,10 @@ router.get(
         total: Object.values(statusCounts).reduce((sum, n) => sum + n, 0),
         avg_turnaround_hours: turnaround.rows[0].avg_hours ? Number(turnaround.rows[0].avg_hours) : null,
       },
-      by_type: byType.rows.map((r) => ({ leave_type: r.leave_type, days: Number(r.days), count: Number(r.count) })),
+      // The figure every "days taken" panel sums to. Stated outright so the
+      // dashboard can be checked against itself at a glance.
+      days_taken: byTypeRows.reduce((sum, r) => sum + r.days, 0),
+      by_type: byTypeRows,
       by_department: byDepartment.rows.map((r) => ({
         department_code: r.department_code, days: Number(r.days), count: Number(r.count),
       })),
@@ -1177,6 +1195,11 @@ router.get(
 
 // Approved leave per person for a pay period. Returned as rows; the client
 // turns it into CSV so no spreadsheet dependency is needed server side.
+//
+// Counts only the working days falling inside the requested window, the same
+// measure the overview uses, so the export and the dashboard agree. Summing
+// each application's whole length instead would count a leave that straddles
+// two pay periods in full against both of them.
 router.get(
   '/report',
   requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
@@ -1185,10 +1208,11 @@ router.get(
     if (!handleValidation(req, res)) return;
     const { rows } = await pool.query(
       `SELECT e.display_name AS employee_name, e.department_code, t.name AS leave_type_name,
-              SUM(a.days) AS total_days, COUNT(*) AS applications
+              SUM(w.days) AS total_days, COUNT(*) FILTER (WHERE w.days > 0) AS applications
          FROM hr_leave_applications a
          JOIN hr_leave_types t ON t.id = a.leave_type_id
          JOIN hr_employees e ON e.id = a.employee_id
+         CROSS JOIN LATERAL ${WORKING_DAYS_IN_RANGE} w
         WHERE a.status = 'approved'
           AND a.start_date <= $2 AND a.end_date >= $1
         GROUP BY e.display_name, e.department_code, t.name

@@ -23,4 +23,6 @@ docker exec "$CONTAINER" pg_isready -U test >/dev/null
 
 export TEST_DATABASE_URL="postgres://test:test@127.0.0.1:$PORT/test"
 export JWT_SECRET=0123456789abcdef0123456789abcdef
-node --test "src/**/*.test.js"
+# Serially: the integration files share one database and truncate the same
+# tables, so running them in parallel makes each one wipe the other's rows.
+node --test --test-concurrency=1 "src/**/*.test.js"

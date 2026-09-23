@@ -4,7 +4,16 @@ import { pool } from '../db.js';
 import { requireAuth, requirePermission } from '../services/authService.js';
 import { recordAudit } from '../services/auditService.js';
 import { notifyLeaveDecision, notifyLeaveSubmitted } from '../services/notificationService.js';
-import { ensureBalance, runLeaveAccrual } from '../services/leaveAccrual.js';
+import { runLeaveAccrual } from '../services/leaveAccrual.js';
+import {
+  adjustBalance,
+  applyForLeave,
+  cancelLeave,
+  decideLeave,
+  setOpeningBalance,
+} from '../services/leaveService.js';
+import { withTransaction } from '../lib/transaction.js';
+import { ServiceError } from '../lib/serviceError.js';
 import { PERMISSIONS } from '../config.js';
 import { buildUpdateAssignments, changedFields, collectUpdates } from '../lib/sqlUpdate.js';
 import { calculateWorkingDays, monthsBetween, parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
@@ -123,77 +132,27 @@ router.post(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const employee = await currentEmployee(req);
-    if (employee.leave_entitled === false) {
-      res.status(403).json({ message: 'You are not entitled to leave.' });
-      return;
-    }
-    const { leave_type_id: leaveTypeId, start_date: startDate, end_date: endDate } = req.body;
-    const days = calculateWorkingDays(startDate, endDate);
-    if (days <= 0) {
-      res.status(400).json({ message: 'The selected dates contain no working days.' });
-      return;
-    }
+    const { application, leaveType } = await applyForLeave(pool, {
+      employee,
+      leaveTypeId: req.body.leave_type_id,
+      startDate: req.body.start_date,
+      endDate: req.body.end_date,
+      reason: req.body.reason,
+    });
+    res.status(201).json(application);
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { rows: types } = await client.query(
-        'SELECT * FROM hr_leave_types WHERE id = $1 AND is_active = TRUE',
-        [leaveTypeId]
+    // After the response, and best effort: a mail failure must not fail an
+    // application the database has already accepted.
+    if (employee.manager_id) {
+      const { rows: managers } = await pool.query(
+        'SELECT display_name, email FROM hr_employees WHERE id = $1',
+        [employee.manager_id]
       );
-      if (!types.length) {
-        await client.query('ROLLBACK');
-        res.status(400).json({ message: 'Unknown leave type.' });
-        return;
-      }
-      if (types[0].requires_note && !String(req.body.reason || '').trim()) {
-        await client.query('ROLLBACK');
-        res.status(400).json({ message: `${types[0].name} leave requires a reason.` });
-        return;
-      }
-
-      const year = new Date(startDate).getFullYear();
-      const balance = await ensureBalance(client, employee.id, leaveTypeId, year);
-      const available = Number(balance.balance) - Number(balance.pending);
-      if (days > available) {
-        await client.query('ROLLBACK');
-        res.status(400).json({
-          message: `Insufficient leave balance. You have ${available} working days available but requested ${days}.`,
-        });
-        return;
-      }
-
-      // Hold the days against `pending` until the application is decided.
-      await client.query(
-        'UPDATE hr_leave_balances SET pending = pending + $1 WHERE id = $2',
-        [days, balance.id]
-      );
-      const { rows: created } = await client.query(
-        `INSERT INTO hr_leave_applications (employee_id, leave_type_id, start_date, end_date, days, reason)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [employee.id, leaveTypeId, startDate, endDate, days, req.body.reason || null]
-      );
-      await client.query('COMMIT');
-      res.status(201).json(created[0]);
-
-      // Best effort: a mail failure must not fail an accepted application.
-      if (employee.manager_id) {
-        const { rows: managers } = await pool.query(
-          'SELECT display_name, email FROM hr_employees WHERE id = $1',
-          [employee.manager_id]
-        );
-        notifyLeaveSubmitted({
-          application: { ...created[0], leave_type_name: types[0].name },
-          employee,
-          manager: managers[0],
-        }).catch((err) => console.error('Failed to notify manager of leave application', err));
-      }
-    } catch (err) {
-      await client.query('ROLLBACK');
-      console.error('Failed to submit leave application', err);
-      res.status(500).json({ message: 'Unable to submit leave application.' });
-    } finally {
-      client.release();
+      notifyLeaveSubmitted({
+        application: { ...application, leave_type_name: leaveType.name },
+        employee,
+        manager: managers[0],
+      }).catch((err) => console.error('Failed to notify manager of leave application', err));
     }
   }
 );
@@ -205,51 +164,10 @@ router.post(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const employee = await currentEmployee(req);
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { rows } = await client.query(
-        'SELECT * FROM hr_leave_applications WHERE id = $1 FOR UPDATE',
-        [req.params.id]
-      );
-      if (!rows.length || rows[0].employee_id !== employee.id) {
-        await client.query('ROLLBACK');
-        res.status(404).json({ message: 'Leave application not found.' });
-        return;
-      }
-      const application = rows[0];
-      if (application.status !== 'pending') {
-        await client.query('ROLLBACK');
-        res.status(400).json({ message: 'Only pending applications can be cancelled.' });
-        return;
-      }
-      await releasePending(client, application);
-      await client.query(
-        `UPDATE hr_leave_applications SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
-        [application.id]
-      );
-      await client.query('COMMIT');
-      res.json({ message: 'Leave application cancelled.' });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      console.error('Failed to cancel leave application', err);
-      res.status(500).json({ message: 'Unable to cancel leave application.' });
-    } finally {
-      client.release();
-    }
+    await cancelLeave(pool, { employee, applicationId: req.params.id });
+    res.json({ message: 'Leave application cancelled.' });
   }
 );
-
-/** Releases the pending hold created when the application was submitted. */
-async function releasePending(client, application) {
-  const year = parseDateOnly(application.start_date).getFullYear();
-  await client.query(
-    `UPDATE hr_leave_balances
-        SET pending = GREATEST(0, pending - $1)
-      WHERE employee_id = $2 AND leave_type_id = $3 AND year = $4`,
-    [application.days, application.employee_id, application.leave_type_id, year]
-  );
-}
 
 // Archiving only hides a finished application from the applicant's own list;
 // it never affects balances, and the row is kept for reporting.
@@ -319,82 +237,36 @@ router.post(
     if (!handleValidation(req, res)) return;
     const decision = req.body.decision;
     const note = String(req.body.reviewer_note || '').trim();
-    if (decision === 'rejected' && !note) {
-      res.status(400).json({ message: 'A reason is required when rejecting leave.' });
-      return;
+
+    const { application, applicant, leaveTypeName } = await decideLeave(pool, {
+      applicationId: req.params.id,
+      decision,
+      note,
+      actorId: req.user.id,
+      // Capability is checked above; whose leave this approver may touch is a
+      // question about the reporting line, which lives here rather than in the
+      // service.
+      canAct: (employeeId) => canActOnEmployee(req, employeeId),
+    });
+
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: `hr.leave.${decision}`,
+      entityType: 'hr_leave_application',
+      entityId: application.id,
+      after: { decision, days: application.days },
+    });
+
+    if (applicant) {
+      notifyLeaveDecision({
+        application: { ...application, leave_type_name: leaveTypeName },
+        employee: applicant,
+        decision,
+        note,
+        decidedBy: req.user.display_name || req.user.email,
+      }).catch((err) => console.error('Failed to notify applicant of leave decision', err));
     }
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { rows } = await client.query(
-        'SELECT * FROM hr_leave_applications WHERE id = $1 FOR UPDATE',
-        [req.params.id]
-      );
-      if (!rows.length) {
-        await client.query('ROLLBACK');
-        res.status(404).json({ message: 'Leave application not found.' });
-        return;
-      }
-      const application = rows[0];
-      if (application.status !== 'pending') {
-        await client.query('ROLLBACK');
-        res.status(400).json({ message: 'This application is no longer pending.' });
-        return;
-      }
-      if (!(await canActOnEmployee(req, application.employee_id))) {
-        await client.query('ROLLBACK');
-        res.status(403).json({ message: 'This person does not report to you.' });
-        return;
-      }
-
-      await releasePending(client, application);
-      if (decision === 'approved') {
-        const year = parseDateOnly(application.start_date).getFullYear();
-        await client.query(
-          `UPDATE hr_leave_balances SET balance = balance - $1
-            WHERE employee_id = $2 AND leave_type_id = $3 AND year = $4`,
-          [application.days, application.employee_id, application.leave_type_id, year]
-        );
-      }
-      await client.query(
-        `UPDATE hr_leave_applications
-            SET status = $1, reviewed_by = $2, reviewed_at = NOW(), reviewer_note = $3, updated_at = NOW()
-          WHERE id = $4`,
-        [decision, req.user.id, note || null, application.id]
-      );
-      await client.query('COMMIT');
-
-      await recordAudit({
-        actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-        action: `hr.leave.${decision}`,
-        entityType: 'hr_leave_application',
-        entityId: application.id,
-        after: { decision, days: application.days },
-      });
-      const { rows: applicants } = await pool.query(
-        `SELECT e.display_name, e.email, t.name AS leave_type_name
-           FROM hr_employees e, hr_leave_types t
-          WHERE e.id = $1 AND t.id = $2`,
-        [application.employee_id, application.leave_type_id]
-      );
-      if (applicants.length) {
-        notifyLeaveDecision({
-          application: { ...application, leave_type_name: applicants[0].leave_type_name },
-          employee: applicants[0],
-          decision,
-          note,
-          decidedBy: req.user.display_name || req.user.email,
-        }).catch((err) => console.error('Failed to notify applicant of leave decision', err));
-      }
-      res.json({ message: `Leave ${decision}.` });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      console.error('Failed to decide leave application', err);
-      res.status(500).json({ message: 'Unable to record the decision.' });
-    } finally {
-      client.release();
-    }
+    res.json({ message: `Leave ${decision}.` });
   }
 );
 
@@ -635,39 +507,34 @@ router.post(
         skipped.push({ display_name: name, reason: 'A staff record with this name already exists.' });
         continue;
       }
-      const client = await pool.connect();
       try {
-        await client.query('BEGIN');
-        const { rows: inserted } = await client.query(
-          `INSERT INTO hr_employees (display_name, department_code, join_date)
-           VALUES ($1, $2, $3) RETURNING id`,
-          [name, row.department_code || null, row.join_date || null]
-        );
-        const employeeId = inserted[0].id;
-        for (const [typeName, rawAmount] of Object.entries(row.balances || {})) {
-          const amount = Number(rawAmount);
-          const type = typeByName.get(String(typeName).trim().toLowerCase());
-          if (!Number.isFinite(amount) || !type) continue;
-          const balance = await ensureBalance(client, employeeId, type.id, year);
-          const delta = amount - Number(balance.balance);
-          if (delta !== 0) {
-            await client.query('UPDATE hr_leave_balances SET balance = balance + $1 WHERE id = $2', [delta, balance.id]);
-            await client.query(
-              `INSERT INTO hr_leave_adjustments (employee_id, leave_type_id, amount, reason, adjusted_by)
-               VALUES ($1, $2, $3, $4, $5)`,
-              [employeeId, type.id, delta, 'Bulk import: opening balance', req.user.id]
-            );
+        const employeeId = await withTransaction(pool, async (client) => {
+          const { rows: inserted } = await client.query(
+            `INSERT INTO hr_employees (display_name, department_code, join_date)
+             VALUES ($1, $2, $3) RETURNING id`,
+            [name, row.department_code || null, row.join_date || null]
+          );
+          const id = inserted[0].id;
+          for (const [typeName, rawAmount] of Object.entries(row.balances || {})) {
+            const amount = Number(rawAmount);
+            const type = typeByName.get(String(typeName).trim().toLowerCase());
+            if (!Number.isFinite(amount) || !type) continue;
+            await setOpeningBalance(client, {
+              employeeId: id,
+              leaveTypeId: type.id,
+              target: amount,
+              reason: 'Bulk import: opening balance',
+              actorId: req.user.id,
+              year,
+            });
           }
-        }
-        await client.query('COMMIT');
+          return id;
+        });
         existingNames.add(name.toLowerCase());
         created.push({ id: employeeId, display_name: name });
       } catch (err) {
-        await client.query('ROLLBACK');
         console.error(`Bulk import failed for "${name}"`, err);
         skipped.push({ display_name: name, reason: 'Unable to import this row.' });
-      } finally {
-        client.release();
       }
     }
 
@@ -716,39 +583,22 @@ router.post(
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
-    const year = Number(req.body.year) || new Date().getFullYear();
-    const amount = Number(req.body.amount);
-    if (amount === 0) {
-      res.status(400).json({ message: 'Adjustment amount cannot be zero.' });
-      return;
-    }
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const balance = await ensureBalance(client, req.body.employee_id, req.body.leave_type_id, year);
-      await client.query('UPDATE hr_leave_balances SET balance = balance + $1 WHERE id = $2', [amount, balance.id]);
-      await client.query(
-        `INSERT INTO hr_leave_adjustments (employee_id, leave_type_id, amount, reason, adjusted_by)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [req.body.employee_id, req.body.leave_type_id, amount, req.body.reason.trim(), req.user.id]
-      );
-      await client.query('COMMIT');
-      await recordAudit({
-        actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-        action: 'hr.balance.adjusted',
-        entityType: 'hr_employee',
-        entityId: req.body.employee_id,
-        after: { amount, reason: req.body.reason.trim(), year },
-      });
-      res.status(201).json({ message: 'Balance adjusted.' });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      console.error('Failed to adjust leave balance', err);
-      res.status(500).json({ message: 'Unable to adjust the balance.' });
-    } finally {
-      client.release();
-    }
+    const { amount, year, reason } = await adjustBalance(pool, {
+      employeeId: req.body.employee_id,
+      leaveTypeId: req.body.leave_type_id,
+      amount: req.body.amount,
+      reason: req.body.reason,
+      actorId: req.user.id,
+      year: req.body.year,
+    });
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.balance.adjusted',
+      entityType: 'hr_employee',
+      entityId: req.body.employee_id,
+      after: { amount, reason, year },
+    });
+    res.status(201).json({ message: 'Balance adjusted.' });
   }
 );
 
@@ -912,52 +762,40 @@ router.post(
     const periodEnd = req.body.period_end
       ? toIsoDate(parseDateOnly(req.body.period_end))
       : toIsoDate(new Date());
-    const periodStart = new Date(periodEnd);
+    const periodStart = parseDateOnly(periodEnd);
     periodStart.setDate(periodStart.getDate() - 13);
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
+    const { credited, reset } = await withTransaction(pool, async (client) => {
       const { rows: existingRun } = await client.query(
         'SELECT id FROM hr_accrual_runs WHERE period_end = $1',
         [periodEnd]
       );
       if (existingRun.length) {
-        await client.query('ROLLBACK');
-        res.status(409).json({ message: `Accrual for the period ending ${periodEnd} has already been run.` });
-        return;
+        throw new ServiceError(409, `Accrual for the period ending ${periodEnd} has already been run.`);
       }
 
-      const { credited, reset } = await runLeaveAccrual(client, { periodEnd, actorId: req.user.id });
-
+      const outcome = await runLeaveAccrual(client, { periodEnd, actorId: req.user.id });
       await client.query(
         'INSERT INTO hr_accrual_runs (period_end, credited, run_by) VALUES ($1, $2, $3)',
-        [periodEnd, credited, req.user.id]
+        [periodEnd, outcome.credited, req.user.id]
       );
-      await client.query('COMMIT');
+      return outcome;
+    });
 
-      await recordAudit({
-        actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-        action: 'hr.accrual.run',
-        entityType: 'hr_accrual_run',
-        entityId: null,
-        after: { period_start: periodStart.toISOString().slice(0, 10), period_end: periodEnd, credited, reset },
-      });
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.accrual.run',
+      entityType: 'hr_accrual_run',
+      entityId: null,
+      after: { period_start: toIsoDate(periodStart), period_end: periodEnd, credited, reset },
+    });
 
-      res.status(201).json({
-        message: `Accrual complete: ${credited} balance(s) credited, ${reset} balance(s) reset.`,
-        period_end: periodEnd,
-        credited,
-        reset,
-      });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      console.error('Failed to run leave accrual', err);
-      res.status(500).json({ message: 'Unable to run leave accrual.' });
-    } finally {
-      client.release();
-    }
+    res.status(201).json({
+      message: `Accrual complete: ${credited} balance(s) credited, ${reset} balance(s) reset.`,
+      period_end: periodEnd,
+      credited,
+      reset,
+    });
   }
 );
 

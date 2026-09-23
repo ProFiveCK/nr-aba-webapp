@@ -75,7 +75,7 @@ export function Calendar() {
 
     return (
         <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 app-panel px-4 py-3">
                 <h2 className="text-sm font-semibold text-zinc-900">Who is away — {monthLabel}</h2>
                 <div className="flex gap-2">
                     <button type="button" onClick={() => setOffset(offset - 1)} className="rounded-md border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-50">
@@ -93,11 +93,11 @@ export function Calendar() {
             {loading ? (
                 <LoadingState label="Loading calendar…" />
             ) : !byPerson.length ? (
-                <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+                <div className="app-panel p-4">
                     <EmptyState title="Nobody is on approved leave this month" />
                 </div>
             ) : (
-                <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm">
+                <div className="overflow-x-auto app-panel">
                     <table className="min-w-full text-sm">
                         <thead className="bg-zinc-50 text-xs text-zinc-500">
                             <tr>
@@ -146,7 +146,7 @@ export function Calendar() {
             )}
 
             {!loading && entries.length > 0 && (
-                <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm shadow-sm">
+                <div className="app-panel p-4 text-sm">
                     <h3 className="mb-2 text-sm font-semibold text-zinc-900">Detail</h3>
                     <ul className="space-y-1 text-zinc-600">
                         {entries.map((entry) => (

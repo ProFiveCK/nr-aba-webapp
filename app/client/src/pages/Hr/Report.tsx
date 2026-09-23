@@ -3,6 +3,7 @@ import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
 import { EmptyState } from '../../components/Ui';
 import { toIsoDate } from '../../lib/date';
+import { csvCell } from '../../features/hr/csv';
 
 interface ReportRow {
     employee_name: string;
@@ -17,12 +18,6 @@ function defaultRange() {
     const first = new Date(now.getFullYear(), now.getMonth(), 1);
     const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
     return { from: toIsoDate(first), to: toIsoDate(last) };
-}
-
-/** Quotes a CSV field so commas, quotes and newlines survive Excel. */
-function csvCell(value: unknown): string {
-    const text = value === null || value === undefined ? '' : String(value);
-    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 export function Report() {
@@ -68,7 +63,7 @@ export function Report() {
 
     return (
         <div className="space-y-4">
-            <div className="flex flex-wrap items-end gap-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-end gap-3 app-panel p-4">
                 <label className="text-sm">
                     <span className="mb-1 block font-medium text-zinc-700">Period from</span>
                     <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
@@ -92,15 +87,15 @@ export function Report() {
             </div>
 
             {rows === null ? (
-                <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+                <div className="app-panel p-4">
                     <EmptyState title="Choose a period" detail="Approved leave in the period is totalled per person and leave type." />
                 </div>
             ) : rows.length === 0 ? (
-                <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+                <div className="app-panel p-4">
                     <EmptyState title="No approved leave in this period" />
                 </div>
             ) : (
-                <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm">
+                <div className="overflow-x-auto app-panel">
                     <table className="min-w-full text-sm">
                         <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
                             <tr>

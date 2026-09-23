@@ -12,13 +12,13 @@ import { AbaWorkflow } from './pages/AbaWorkflow';
 import { Tools } from './pages/Tools';
 import { ForexTTApp } from './pages/ForexTTApp';
 import { PublicHealthApp } from './pages/PublicHealthApp';
-import { HrApp } from './pages/HrApp';
 import { findApp, type AppId } from './lib/apps';
 import { readHash, setHash } from './lib/hash';
 
 const Banking = lazy(() => import('./pages/Banking').then((module) => ({ default: module.Banking })));
 const Payroll = lazy(() => import('./pages/Payroll').then((module) => ({ default: module.Payroll })));
 const Admin = lazy(() => import('./pages/Admin').then((module) => ({ default: module.Admin })));
+const HrApp = lazy(() => import('./pages/HrApp').then((module) => ({ default: module.HrApp })));
 
 function appIdFromHash(): AppId | null {
   const { app } = readHash();

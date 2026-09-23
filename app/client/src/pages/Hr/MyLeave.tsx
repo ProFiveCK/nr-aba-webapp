@@ -115,7 +115,7 @@ export function MyLeave() {
             )}
 
             {/* Balances */}
-            <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="app-panel p-4">
                 <div className="mb-3 flex items-baseline justify-between">
                     <h2 className="text-sm font-semibold text-zinc-900">
                         Leave balances {summary ? `— ${summary.year}` : ''}
@@ -151,7 +151,7 @@ export function MyLeave() {
 
             {/* Apply */}
             {!notEntitled && (
-            <form onSubmit={submit} className="space-y-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <form onSubmit={submit} className="space-y-3 app-panel p-4">
                 <h2 className="text-sm font-semibold text-zinc-900">Apply for leave</h2>
                 <div className="grid gap-3 sm:grid-cols-3">
                     <label className="text-sm">
@@ -226,7 +226,7 @@ export function MyLeave() {
             )}
 
             {/* History */}
-            <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+            <div className="app-panel">
                 <h2 className="border-b border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-900">
                     My applications
                 </h2>

@@ -25,11 +25,18 @@ export function Policies() {
     const [isAccruable, setIsAccruable] = useState(false);
     const [saving, setSaving] = useState(false);
     const [runningAccrual, setRunningAccrual] = useState(false);
+    const [anchorDate, setAnchorDate] = useState('');
+    const [savingAnchor, setSavingAnchor] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            setTypes((await apiClient.get<LeaveType[]>('/hr/policies')) || []);
+            const [policies, accrualSettings] = await Promise.all([
+                apiClient.get<LeaveType[]>('/hr/policies'),
+                apiClient.get<{ accrual_anchor_date: string | null }>('/hr/accrual/settings'),
+            ]);
+            setTypes(policies || []);
+            setAnchorDate(accrualSettings?.accrual_anchor_date || '');
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to load leave policies.', 'error');
         } finally {
@@ -105,17 +112,30 @@ export function Policies() {
         }
     };
 
+    const saveAnchor = async () => {
+        setSavingAnchor(true);
+        try {
+            await apiClient.put('/hr/accrual/settings', { accrual_anchor_date: anchorDate || null });
+            addToast('Accrual schedule saved. It will now run every fortnight from that date.', 'success');
+            await load();
+        } catch (err) {
+            addToast((err as Error)?.message || 'Unable to save the accrual schedule.', 'error');
+        } finally {
+            setSavingAnchor(false);
+        }
+    };
+
     if (loading) return <LoadingState label="Loading leave policies…" />;
 
     return (
         <div className="space-y-4">
-            <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="space-y-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                         <h2 className="text-sm font-semibold text-zinc-900">Fortnightly accrual</h2>
                         <p className="mt-1 text-xs text-zinc-500">
-                            Payroll runs every fortnight. Run this after each pay to credit accruable leave types and
-                            apply any due balance resets. Each period is only credited once.
+                            Payroll runs every fortnight. Accrual runs automatically every two weeks from the first
+                            date below, crediting accruable leave types and applying any due balance resets.
                         </p>
                     </div>
                     <button
@@ -124,7 +144,26 @@ export function Policies() {
                         disabled={runningAccrual}
                         className="rounded-md bg-[#E8842C] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#d4761f] disabled:opacity-50"
                     >
-                        {runningAccrual ? 'Running…' : 'Run fortnightly accrual'}
+                        {runningAccrual ? 'Running…' : 'Run now'}
+                    </button>
+                </div>
+                <div className="flex flex-wrap items-end gap-3">
+                    <label className="text-sm">
+                        <span className="mb-1 block font-medium text-zinc-700">First accrual date</span>
+                        <input
+                            type="date"
+                            value={anchorDate}
+                            onChange={(e) => setAnchorDate(e.target.value)}
+                            className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        />
+                    </label>
+                    <button
+                        type="button"
+                        onClick={saveAnchor}
+                        disabled={savingAnchor}
+                        className="rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50"
+                    >
+                        {savingAnchor ? 'Saving…' : 'Save schedule'}
                     </button>
                 </div>
             </div>

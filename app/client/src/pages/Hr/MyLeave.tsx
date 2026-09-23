@@ -49,6 +49,7 @@ export function MyLeave() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    const notEntitled = summary?.employee.leave_entitled === false;
     const selectedType = types.find((t) => t.id === leaveTypeId);
     const previewDays = calculateWorkingDays(startDate, endDate);
     const selectedBalance = summary?.balances.find((b) => b.leave_type_id === leaveTypeId);
@@ -106,6 +107,13 @@ export function MyLeave() {
 
     return (
         <div className="space-y-4">
+            {notEntitled && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                    You are not currently entitled to leave, so no balance is available and applications are disabled.
+                    Contact your administrator if this looks incorrect.
+                </div>
+            )}
+
             {/* Balances */}
             <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
                 <div className="mb-3 flex items-baseline justify-between">
@@ -142,6 +150,7 @@ export function MyLeave() {
             </div>
 
             {/* Apply */}
+            {!notEntitled && (
             <form onSubmit={submit} className="space-y-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
                 <h2 className="text-sm font-semibold text-zinc-900">Apply for leave</h2>
                 <div className="grid gap-3 sm:grid-cols-3">
@@ -214,6 +223,7 @@ export function MyLeave() {
                     )}
                 </div>
             </form>
+            )}
 
             {/* History */}
             <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">

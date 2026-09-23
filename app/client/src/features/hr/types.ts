@@ -35,6 +35,7 @@ export interface Employee {
     department_code: string | null;
     join_date: string | null;
     status: 'active' | 'inactive';
+    leave_entitled: boolean;
 }
 
 export interface LeaveApplication {

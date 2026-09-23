@@ -20,6 +20,7 @@ import healthRouter from './routes/health.js';
 import publicHealthRouter from './routes/public-health.js';
 import hrRouter from './routes/hr.js';
 import { setTestingMode } from './services/notificationService.js';
+import { runDueLeaveAccruals } from './services/leaveAccrual.js';
 import {
   buildCookieParser,
   buildTokenPayload,
@@ -4183,6 +4184,22 @@ initSchema()
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`RON ABA backend listening on port ${PORT}`);
     });
+
+    // Fortnightly leave accrual automation. Runs any due periods on startup
+    // (catching up after downtime) and then checks hourly. Idempotent per
+    // period, so overlapping runs are safe.
+    const runScheduledAccruals = async () => {
+      try {
+        const { ran } = await runDueLeaveAccruals(pool);
+        for (const periodEnd of ran) {
+          console.log(`[accrual-scheduler] Ran leave accrual for period ending ${periodEnd}`);
+        }
+      } catch (err) {
+        console.error('[accrual-scheduler] Failed to run due leave accruals', err);
+      }
+    };
+    runScheduledAccruals();
+    setInterval(runScheduledAccruals, 60 * 60 * 1000);
   })
   .catch((err) => {
     console.error('Failed to start server', err);

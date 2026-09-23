@@ -4,6 +4,7 @@ import { pool } from '../db.js';
 import { requireAuth, requirePermission } from '../services/authService.js';
 import { recordAudit } from '../services/auditService.js';
 import { notifyLeaveDecision, notifyLeaveSubmitted } from '../services/notificationService.js';
+import { ensureBalance, runLeaveAccrual } from '../services/leaveAccrual.js';
 import { PERMISSIONS } from '../config.js';
 
 const router = express.Router();
@@ -61,24 +62,6 @@ async function canActOnEmployee(req, employeeId) {
   return rows.length > 0;
 }
 
-async function ensureBalance(client, employeeId, leaveTypeId, year) {
-  const { rows } = await client.query(
-    'SELECT * FROM hr_leave_balances WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3',
-    [employeeId, leaveTypeId, year]
-  );
-  if (rows.length) return rows[0];
-
-  // Seed from the leave type's annual entitlement the first time it is used.
-  const { rows: created } = await client.query(
-    `INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, balance, pending)
-     SELECT $1, $2, $3, default_days, 0 FROM hr_leave_types WHERE id = $2
-     ON CONFLICT (employee_id, leave_type_id, year) DO UPDATE SET year = EXCLUDED.year
-     RETURNING *`,
-    [employeeId, leaveTypeId, year]
-  );
-  return created[0];
-}
-
 // ===== Reference data =====
 
 router.get('/leave-types', requirePermission(PERMISSIONS.HR_ACCESS), async (_req, res) => {
@@ -93,11 +76,22 @@ router.get('/leave-types', requirePermission(PERMISSIONS.HR_ACCESS), async (_req
 router.get('/me', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res) => {
   const employee = await currentEmployee(req);
   const year = new Date().getFullYear();
+  // Return every active leave type, not just the ones the employee has touched,
+  // so the form can show a zero (or not-yet-accrued) balance instead of hiding
+  // the type entirely. Untouched accruable types read as zero; upfront types
+  // read as their full entitlement — matching what ensureBalance would seed.
   const { rows: balances } = await pool.query(
-    `SELECT b.*, t.name AS leave_type_name, t.requires_note
-       FROM hr_leave_balances b
-       JOIN hr_leave_types t ON t.id = b.leave_type_id
-      WHERE b.employee_id = $1 AND b.year = $2
+    `SELECT COALESCE(b.id, t.id) AS id,
+            t.id AS leave_type_id,
+            t.name AS leave_type_name,
+            COALESCE(b.balance, CASE WHEN t.is_accruable THEN 0 ELSE t.default_days END) AS balance,
+            COALESCE(b.pending, 0) AS pending,
+            $2 AS year,
+            t.requires_note
+       FROM hr_leave_types t
+       LEFT JOIN hr_leave_balances b
+         ON b.leave_type_id = t.id AND b.employee_id = $1 AND b.year = $2
+      WHERE t.is_active = TRUE
       ORDER BY t.name`,
     [employee.id, year]
   );
@@ -421,7 +415,8 @@ router.get('/employees', requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSI
 // against every active leave type. A type an employee has never been
 // adjusted or applied against has no hr_leave_balances row yet (it is
 // seeded lazily by ensureBalance on first touch), so it falls back to the
-// type's default_days here — the same number that first touch would seed.
+// type's default_days (or zero for accruable types) here — the same number
+// that first touch would seed.
 router.get(
   '/employees/balances',
   requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
@@ -434,7 +429,7 @@ router.get(
         `SELECT id, display_name, department_code, status, reviewer_id, email, join_date
            FROM hr_employees WHERE status = 'active' ORDER BY display_name`
       ),
-      pool.query('SELECT id, name, default_days FROM hr_leave_types WHERE is_active = TRUE ORDER BY name'),
+      pool.query('SELECT id, name, default_days, is_accruable FROM hr_leave_types WHERE is_active = TRUE ORDER BY name'),
       pool.query('SELECT employee_id, leave_type_id, balance, pending FROM hr_leave_balances WHERE year = $1', [year]),
     ]);
     const balanceByKey = new Map(balances.map((b) => [`${b.employee_id}:${b.leave_type_id}`, b]));
@@ -443,7 +438,7 @@ router.get(
       for (const t of types) {
         const b = balanceByKey.get(`${e.id}:${t.id}`);
         byType[t.name] = {
-          balance: b ? Number(b.balance) : Number(t.default_days),
+          balance: b ? Number(b.balance) : (t.is_accruable ? 0 : Number(t.default_days)),
           pending: b ? Number(b.pending) : 0,
         };
       }
@@ -704,7 +699,14 @@ router.post(
 // ===== Leave policies =====
 
 router.get('/policies', requirePermission(PERMISSIONS.HR_ADMIN), async (_req, res) => {
-  const { rows } = await pool.query('SELECT * FROM hr_leave_types ORDER BY name');
+  const { rows } = await pool.query(
+    `SELECT t.*,
+            ((SELECT COUNT(*) FROM hr_leave_applications a WHERE a.leave_type_id = t.id)
+           + (SELECT COUNT(*) FROM hr_leave_balances b WHERE b.leave_type_id = t.id)
+           + (SELECT COUNT(*) FROM hr_leave_adjustments adj WHERE adj.leave_type_id = t.id))::int AS usage_count
+       FROM hr_leave_types t
+      ORDER BY t.name`
+  );
   res.json(rows);
 });
 
@@ -717,16 +719,26 @@ router.post(
     body('default_days').isFloat({ min: 0, max: 365 }),
     body('is_accruable').optional().isBoolean(),
     body('requires_note').optional().isBoolean(),
+    body('accrual_days_per_fortnight').optional().isFloat({ min: 0, max: 365 }),
+    body('reset_period').optional().isIn(['none', 'financial_year', 'anniversary']),
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     try {
       const { rows } = await pool.query(
-        `INSERT INTO hr_leave_types (name, description, default_days, is_accruable, requires_note)
-         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        `INSERT INTO hr_leave_types (name, description, default_days, is_accruable, requires_note, accrual_days_per_fortnight, reset_period)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
         [req.body.name.trim(), req.body.description || null, req.body.default_days,
-         req.body.is_accruable === true, req.body.requires_note === true]
+         req.body.is_accruable === true, req.body.requires_note === true,
+         req.body.accrual_days_per_fortnight ?? 0, req.body.reset_period || 'none']
       );
+      await recordAudit({
+        actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+        action: 'hr.leave_type.created',
+        entityType: 'hr_leave_type',
+        entityId: rows[0].id,
+        after: { name: rows[0].name },
+      });
       res.status(201).json(rows[0]);
     } catch (err) {
       if (err.code === '23505') {
@@ -743,30 +755,153 @@ router.put(
   requirePermission(PERMISSIONS.HR_ADMIN),
   [
     param('id').isUUID(),
+    body('name').optional().isString().isLength({ min: 1, max: 100 }),
     body('description').optional({ nullable: true }).isString().isLength({ max: 500 }),
     body('default_days').optional().isFloat({ min: 0, max: 365 }),
     body('is_accruable').optional().isBoolean(),
     body('requires_note').optional().isBoolean(),
     body('is_active').optional().isBoolean(),
+    body('accrual_days_per_fortnight').optional().isFloat({ min: 0, max: 365 }),
+    body('reset_period').optional().isIn(['none', 'financial_year', 'anniversary']),
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
+    const before = await pool.query('SELECT * FROM hr_leave_types WHERE id = $1', [req.params.id]);
+    if (!before.rows.length) {
+      res.status(404).json({ message: 'Leave type not found.' });
+      return;
+    }
     const { rows } = await pool.query(
       `UPDATE hr_leave_types
-          SET description = COALESCE($2, description),
-              default_days = COALESCE($3, default_days),
-              is_accruable = COALESCE($4, is_accruable),
-              requires_note = COALESCE($5, requires_note),
-              is_active = COALESCE($6, is_active)
+          SET name = COALESCE($2, name),
+              description = COALESCE($3, description),
+              default_days = COALESCE($4, default_days),
+              is_accruable = COALESCE($5, is_accruable),
+              requires_note = COALESCE($6, requires_note),
+              is_active = COALESCE($7, is_active),
+              accrual_days_per_fortnight = COALESCE($8, accrual_days_per_fortnight),
+              reset_period = COALESCE($9, reset_period)
         WHERE id = $1 RETURNING *`,
-      [req.params.id, req.body.description ?? null, req.body.default_days ?? null,
-       req.body.is_accruable ?? null, req.body.requires_note ?? null, req.body.is_active ?? null]
+      [req.params.id, req.body.name ?? null, req.body.description ?? null, req.body.default_days ?? null,
+       req.body.is_accruable ?? null, req.body.requires_note ?? null, req.body.is_active ?? null,
+       req.body.accrual_days_per_fortnight ?? null, req.body.reset_period ?? null]
     );
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.leave_type.updated',
+      entityType: 'hr_leave_type',
+      entityId: req.params.id,
+      before: { name: before.rows[0].name, default_days: before.rows[0].default_days },
+      after: { name: rows[0].name, default_days: rows[0].default_days },
+    });
+    res.json(rows[0]);
+  }
+);
+
+// Deleting a leave type is allowed only when nothing references it — i.e. it
+// has never been applied against, held a balance, or been adjusted. A type in
+// use cannot be removed without breaking the historical record.
+router.delete(
+  '/policies/:id',
+  requirePermission(PERMISSIONS.HR_ADMIN),
+  [param('id').isUUID()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const { rows: usage } = await pool.query(
+      `SELECT
+         (SELECT COUNT(*) FROM hr_leave_applications WHERE leave_type_id = $1) AS apps,
+         (SELECT COUNT(*) FROM hr_leave_balances WHERE leave_type_id = $1) AS balances,
+         (SELECT COUNT(*) FROM hr_leave_adjustments WHERE leave_type_id = $1) AS adjustments`,
+      [req.params.id]
+    );
+    if (!usage.length) {
+      res.status(404).json({ message: 'Leave type not found.' });
+      return;
+    }
+    const used = Number(usage[0].apps) + Number(usage[0].balances) + Number(usage[0].adjustments);
+    if (used > 0) {
+      res.status(409).json({
+        message: 'This leave type is already in use and cannot be deleted. Deactivate it instead.',
+      });
+      return;
+    }
+    const { rows } = await pool.query('DELETE FROM hr_leave_types WHERE id = $1 RETURNING *', [req.params.id]);
     if (!rows.length) {
       res.status(404).json({ message: 'Leave type not found.' });
       return;
     }
-    res.json(rows[0]);
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.leave_type.deleted',
+      entityType: 'hr_leave_type',
+      entityId: req.params.id,
+      after: { name: rows[0].name },
+    });
+    res.json({ message: 'Leave type deleted.' });
+  }
+);
+
+// ===== Accrual & reset =====
+
+/**
+ * Runs one fortnight of accrual and any due balance resets. Idempotent per
+ * `period_end` (accrual) and per balance's `last_reset_at` (reset).
+ */
+router.post(
+  '/accrual/run',
+  requirePermission(PERMISSIONS.HR_ADMIN),
+  [body('period_end').optional().isISO8601()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const periodEnd = req.body.period_end
+      ? new Date(req.body.period_end).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+    const periodStart = new Date(periodEnd);
+    periodStart.setDate(periodStart.getDate() - 13);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const { rows: existingRun } = await client.query(
+        'SELECT id FROM hr_accrual_runs WHERE period_end = $1',
+        [periodEnd]
+      );
+      if (existingRun.length) {
+        await client.query('ROLLBACK');
+        res.status(409).json({ message: `Accrual for the period ending ${periodEnd} has already been run.` });
+        return;
+      }
+
+      const { credited, reset } = await runLeaveAccrual(client, { periodEnd, actorId: req.user.id });
+
+      await client.query(
+        'INSERT INTO hr_accrual_runs (period_end, credited, run_by) VALUES ($1, $2, $3)',
+        [periodEnd, credited, req.user.id]
+      );
+      await client.query('COMMIT');
+
+      await recordAudit({
+        actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+        action: 'hr.accrual.run',
+        entityType: 'hr_accrual_run',
+        entityId: null,
+        after: { period_start: periodStart.toISOString().slice(0, 10), period_end: periodEnd, credited, reset },
+      });
+
+      res.status(201).json({
+        message: `Accrual complete: ${credited} balance(s) credited, ${reset} balance(s) reset.`,
+        period_end: periodEnd,
+        credited,
+        reset,
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Failed to run leave accrual', err);
+      res.status(500).json({ message: 'Unable to run leave accrual.' });
+    } finally {
+      client.release();
+    }
   }
 );
 
@@ -848,11 +983,11 @@ router.get(
       // Stock, not flow: how many unused days are currently sitting on the
       // books per leave type, across active staff, this calendar year. A
       // type never touched for a given employee has no balance row yet
-      // (ensureBalance seeds it lazily) so it falls back to default_days,
-      // the same number a first touch would seed.
+      // (ensureBalance seeds it lazily) so it falls back to default_days (or
+      // zero for accruable types), the same number a first touch would seed.
       pool.query(
         `SELECT t.name AS leave_type,
-                SUM(GREATEST(COALESCE(b.balance, t.default_days) - COALESCE(b.pending, 0), 0)) AS available_days
+                SUM(GREATEST(COALESCE(b.balance, CASE WHEN t.is_accruable THEN 0 ELSE t.default_days END) - COALESCE(b.pending, 0), 0)) AS available_days
            FROM hr_leave_types t
            CROSS JOIN hr_employees e
            LEFT JOIN hr_leave_balances b

@@ -1,18 +1,30 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
+import { useConfirm } from '../../contexts/useConfirm';
 import { LoadingState } from '../../components/Ui';
-import type { LeaveType } from '../../features/hr/types';
+import type { LeaveType, ResetPeriod } from '../../features/hr/types';
+
+const RESET_OPTIONS: { value: ResetPeriod; label: string }[] = [
+    { value: 'none', label: 'Never reset' },
+    { value: 'financial_year', label: 'End of financial year' },
+    { value: 'anniversary', label: 'Service anniversary' },
+];
 
 export function Policies() {
     const { addToast } = useToast();
+    const { confirm } = useConfirm();
     const [types, setTypes] = useState<LeaveType[]>([]);
     const [loading, setLoading] = useState(true);
+
     const [name, setName] = useState('');
     const [defaultDays, setDefaultDays] = useState('');
+    const [accrualPerFortnight, setAccrualPerFortnight] = useState('');
+    const [resetPeriod, setResetPeriod] = useState<ResetPeriod>('none');
     const [requiresNote, setRequiresNote] = useState(false);
     const [isAccruable, setIsAccruable] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [runningAccrual, setRunningAccrual] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -39,12 +51,16 @@ export function Policies() {
             await apiClient.post('/hr/policies', {
                 name: name.trim(),
                 default_days: Number(defaultDays) || 0,
+                accrual_days_per_fortnight: Number(accrualPerFortnight) || 0,
+                reset_period: resetPeriod,
                 requires_note: requiresNote,
                 is_accruable: isAccruable,
             });
             addToast('Leave type created.', 'success');
             setName('');
             setDefaultDays('');
+            setAccrualPerFortnight('');
+            setResetPeriod('none');
             setRequiresNote(false);
             setIsAccruable(false);
             await load();
@@ -64,10 +80,55 @@ export function Policies() {
         }
     };
 
+    const remove = async (type: LeaveType) => {
+        if (!(await confirm(`Delete "${type.name}"? This is only allowed while the leave type has never been used.`))) {
+            return;
+        }
+        try {
+            await apiClient.delete(`/hr/policies/${type.id}`);
+            addToast('Leave type deleted.', 'success');
+            await load();
+        } catch (err) {
+            addToast((err as Error)?.message || 'Unable to delete the leave type.', 'error');
+        }
+    };
+
+    const runAccrual = async () => {
+        setRunningAccrual(true);
+        try {
+            const result = await apiClient.post<{ message: string }>('/hr/accrual/run', {});
+            addToast(result?.message || 'Accrual complete.', 'success');
+        } catch (err) {
+            addToast((err as Error)?.message || 'Unable to run accrual.', 'error');
+        } finally {
+            setRunningAccrual(false);
+        }
+    };
+
     if (loading) return <LoadingState label="Loading leave policies…" />;
 
     return (
         <div className="space-y-4">
+            <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 className="text-sm font-semibold text-zinc-900">Fortnightly accrual</h2>
+                        <p className="mt-1 text-xs text-zinc-500">
+                            Payroll runs every fortnight. Run this after each pay to credit accruable leave types and
+                            apply any due balance resets. Each period is only credited once.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={runAccrual}
+                        disabled={runningAccrual}
+                        className="rounded-md bg-[#E8842C] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#d4761f] disabled:opacity-50"
+                    >
+                        {runningAccrual ? 'Running…' : 'Run fortnightly accrual'}
+                    </button>
+                </div>
+            </div>
+
             <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
                 <h2 className="border-b border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-900">Leave types</h2>
                 <div className="overflow-x-auto">
@@ -76,16 +137,72 @@ export function Policies() {
                             <tr>
                                 <th className="px-4 py-2">Name</th>
                                 <th className="px-4 py-2">Days / year</th>
+                                <th className="px-4 py-2">Accrual / fortnight</th>
+                                <th className="px-4 py-2">Reset</th>
                                 <th className="px-4 py-2">Reason required</th>
                                 <th className="px-4 py-2">Accruable</th>
                                 <th className="px-4 py-2">Active</th>
+                                <th className="px-4 py-2" />
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-zinc-100">
                             {types.map((type) => (
                                 <tr key={type.id}>
-                                    <td className="px-4 py-2 font-medium text-zinc-900">{type.name}</td>
-                                    <td className="px-4 py-2 text-zinc-600">{type.default_days}</td>
+                                    <td className="px-4 py-2">
+                                        <input
+                                            defaultValue={type.name}
+                                            onBlur={(e) => {
+                                                const value = e.target.value.trim();
+                                                if (value && value !== type.name) update(type, { name: value });
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') e.currentTarget.blur();
+                                            }}
+                                            className="w-full min-w-40 rounded-md border border-zinc-300 px-2 py-1 font-medium text-zinc-900"
+                                        />
+                                    </td>
+                                    <td className="px-4 py-2">
+                                        <input
+                                            type="number"
+                                            step="0.5"
+                                            min="0"
+                                            defaultValue={type.default_days}
+                                            onBlur={(e) => {
+                                                const value = Number(e.target.value);
+                                                if (Number.isFinite(value) && value !== Number(type.default_days)) {
+                                                    update(type, { default_days: value });
+                                                }
+                                            }}
+                                            className="w-20 rounded-md border border-zinc-300 px-2 py-1 text-zinc-600"
+                                        />
+                                    </td>
+                                    <td className="px-4 py-2">
+                                        <input
+                                            type="number"
+                                            step="0.25"
+                                            min="0"
+                                            defaultValue={type.accrual_days_per_fortnight}
+                                            disabled={!type.is_accruable}
+                                            onBlur={(e) => {
+                                                const value = Number(e.target.value);
+                                                if (Number.isFinite(value) && value !== Number(type.accrual_days_per_fortnight)) {
+                                                    update(type, { accrual_days_per_fortnight: value });
+                                                }
+                                            }}
+                                            className="w-20 rounded-md border border-zinc-300 px-2 py-1 text-zinc-600 disabled:bg-zinc-100 disabled:text-zinc-400"
+                                        />
+                                    </td>
+                                    <td className="px-4 py-2">
+                                        <select
+                                            value={type.reset_period}
+                                            onChange={(e) => update(type, { reset_period: e.target.value })}
+                                            className="rounded-md border border-zinc-300 px-2 py-1 text-zinc-600"
+                                        >
+                                            {RESET_OPTIONS.map((option) => (
+                                                <option key={option.value} value={option.value}>{option.label}</option>
+                                            ))}
+                                        </select>
+                                    </td>
                                     <td className="px-4 py-2">
                                         <input
                                             type="checkbox"
@@ -106,6 +223,17 @@ export function Policies() {
                                             checked={type.is_active}
                                             onChange={(e) => update(type, { is_active: e.target.checked })}
                                         />
+                                    </td>
+                                    <td className="px-4 py-2 text-right">
+                                        <button
+                                            type="button"
+                                            onClick={() => remove(type)}
+                                            disabled={(type.usage_count ?? 0) > 0}
+                                            title={(type.usage_count ?? 0) > 0 ? 'This type is in use and cannot be deleted. Deactivate it instead.' : 'Delete'}
+                                            className="text-sm font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:text-zinc-300"
+                                        >
+                                            Delete
+                                        </button>
                                     </td>
                                 </tr>
                             ))}
@@ -131,6 +259,24 @@ export function Policies() {
                         placeholder="Days per year"
                         className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
                     />
+                    <input
+                        type="number"
+                        step="0.25"
+                        value={accrualPerFortnight}
+                        onChange={(e) => setAccrualPerFortnight(e.target.value)}
+                        placeholder="Accrual days per fortnight (accruable types only)"
+                        disabled={!isAccruable}
+                        className="rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
+                    />
+                    <select
+                        value={resetPeriod}
+                        onChange={(e) => setResetPeriod(e.target.value as ResetPeriod)}
+                        className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                    >
+                        {RESET_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                    </select>
                 </div>
                 <div className="flex flex-wrap gap-4 text-sm text-zinc-700">
                     <label className="flex items-center gap-2">

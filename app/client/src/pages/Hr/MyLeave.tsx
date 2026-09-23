@@ -51,6 +51,9 @@ export function MyLeave() {
 
     const selectedType = types.find((t) => t.id === leaveTypeId);
     const previewDays = calculateWorkingDays(startDate, endDate);
+    const selectedBalance = summary?.balances.find((b) => b.leave_type_id === leaveTypeId);
+    const availableDays = selectedBalance ? Number(selectedBalance.balance) - Number(selectedBalance.pending) : 0;
+    const insufficient = previewDays > 0 && previewDays > availableDays;
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
@@ -118,7 +121,7 @@ export function MyLeave() {
                         {summary.balances.map((balance) => {
                             const available = Number(balance.balance) - Number(balance.pending);
                             return (
-                                <div key={balance.id} className="rounded-lg border border-zinc-200 p-3">
+                                <div key={balance.leave_type_id} className="rounded-lg border border-zinc-200 p-3">
                                     <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
                                         {balance.leave_type_name}
                                     </p>
@@ -195,16 +198,18 @@ export function MyLeave() {
                 <div className="flex flex-wrap items-center gap-3">
                     <button
                         type="submit"
-                        disabled={submitting || previewDays <= 0}
+                        disabled={submitting || previewDays <= 0 || insufficient}
                         className="rounded-md bg-[#E8842C] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#d4761f] disabled:opacity-50"
                     >
                         {submitting ? 'Submitting…' : 'Submit application'}
                     </button>
                     {startDate && endDate && (
-                        <p className="text-sm text-zinc-600">
-                            {previewDays > 0
-                                ? `${previewDays} working day${previewDays === 1 ? '' : 's'} (weekends excluded)`
-                                : 'No working days in this range'}
+                        <p className={`text-sm ${insufficient ? 'font-medium text-red-600' : 'text-zinc-600'}`}>
+                            {insufficient
+                                ? `Insufficient balance: ${previewDays} working day${previewDays === 1 ? '' : 's'} requested, ${availableDays} available.`
+                                : previewDays > 0
+                                    ? `${previewDays} working day${previewDays === 1 ? '' : 's'} (weekends excluded)`
+                                    : 'No working days in this range'}
                         </p>
                     )}
                 </div>

@@ -15,10 +15,6 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import forexTTRouter from './routes/forexTT.js';
-import healthRouter from './routes/health.js';
-import publicHealthRouter from './routes/public-health.js';
-import hrRouter from './routes/hr.js';
 import { setTestingMode } from './services/notificationService.js';
 import { runDueLeaveAccruals } from './services/leaveAccrual.js';
 import {
@@ -43,6 +39,12 @@ import {
   setCapabilities,
 } from './services/authService.js';
 import { recordAudit } from './services/auditService.js';
+import {
+  enableAsyncErrors,
+  errorHandler,
+  installProcessGuards,
+  notFoundHandler,
+} from './middleware/errors.js';
 import {
   GoogleSignInResult,
   googleSignInEnabled,
@@ -92,6 +94,31 @@ import {
 } from './config.js';
 
 dotenv.config();
+
+// Express 4 drops a rejected promise from an async handler on the floor: the
+// request hangs and nothing is logged. `enableAsyncErrors()` routes those to
+// the error handler at the bottom of the middleware stack instead.
+//
+// It works by patching the route-registration methods, so it has to run before
+// any route is registered. The routes in this file are registered further down,
+// but a router registers its own while its module is evaluated — which for a
+// static `import` is before this line. The four routers are therefore loaded
+// here, after the patch. Add new routers to this block, not to the imports
+// above.
+enableAsyncErrors();
+installProcessGuards();
+
+const [
+  { default: forexTTRouter },
+  { default: healthRouter },
+  { default: publicHealthRouter },
+  { default: hrRouter },
+] = await Promise.all([
+  import('./routes/forexTT.js'),
+  import('./routes/health.js'),
+  import('./routes/public-health.js'),
+  import('./routes/hr.js'),
+]);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '../../..');
@@ -4159,6 +4186,13 @@ FORMATTING RULES:
     res.status(500).json({ message: 'Failed to get AI response', error: error.message });
   }
 });
+
+// ===== Error handling =====
+// Mounted last so every route above has had its chance: an unmatched /api path
+// answers JSON rather than Express's HTML page, and anything that threw or
+// rejected lands in one place with a reference the user can quote.
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 initSchema()
   .then(async () => {

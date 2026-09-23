@@ -83,48 +83,63 @@ Phase 1 is complete.
 
 ## Phase 2 — Next sprint
 
-Structural. Item 6 gates the rest: nothing else here is safe to refactor
-without it. Its runner is already in place (`npm test` in `app/backend`), and
-`lib/` now holds the first pure, dependency-free modules to build on.
+Complete.
 
-- [ ] **5. Extract `services/leaveService.js`.** `routes/hr.js` is 1,149 lines
-      of HTTP, authorization, SQL, transactions and notification fan-out
-      interleaved. Pull `applyForLeave`, `decideLeave`, `adjustBalance` out as
-      functions taking an open client. Routes become thin.
-- [ ] **6. Stand up a backend test runner** (`node --test`, no new dependency)
-      and cover the accrual/reset matrix first: fortnightly accrual,
-      anniversary vs financial-year boundaries, carryover on
-      `reset_period='none'`, working-day counting, pending hold/release.
-      These numbers decide what people are paid out and none of them are
-      tested today.
-- [ ] **7. Frontend structure and design system.** Split the 956-line
-      `Staff.tsx` into `features/hr/`. Extract shared `StatTile`, `Card` and
-      `DataTable` into `components/Ui.tsx` — `Overview.tsx:65` and
-      `Staff.tsx:94` currently define near-identical tiles separately. Replace
-      the 27 hand-typed `rounded-xl border border-zinc-200 bg-white shadow-sm`
-      occurrences in `pages/Hr/` with the existing `.app-panel` class. Settle
-      on one icon system (local `Icon` vs raw `lucide-react`). Lazy-load
-      `HrApp` like Banking/Payroll/Admin already are.
-- [ ] **8. Move accrual off `setInterval`.** `server.js:4193-4202` runs the
-      scheduler in-process, so it stops whenever the API is down over a pay
-      date and double-runs on a second replica (the `period_end` UNIQUE
-      constraint prevents double-credit, but one replica's transaction will
-      crash). `scripts/run-accrual.js` and `npm run accrual` already exist —
-      this is mostly a matter of moving to cron and deleting the interval, or
-      taking a `pg_advisory_lock`.
+- [x] **5. Extract `services/leaveService.js`.** *Done.* `applyForLeave`,
+      `cancelLeave`, `decideLeave`, `adjustBalance` and `setOpeningBalance` hold
+      the workflow; routes do auth and response shape and nothing else — there
+      is no longer a single `pool.connect()` in the router. `withTransaction()`
+      replaced the BEGIN/COMMIT/ROLLBACK/release ladder each write path
+      repeated, and `ServiceError` lets a service refuse something without
+      knowing HTTP exists. Who may approve whose leave stays in the route, as a
+      predicate passed in.
+- [x] **6. Backend test coverage of the leave arithmetic.** *Done.* The
+      decisions moved to `lib/accrualRules.js` and are unit-tested; the engine
+      and the workflow are covered against a real Postgres. 112 tests.
+      `npm test` runs the unit tests with no dependencies; `npm run test:db`
+      starts a throwaway Postgres in Docker and runs everything.
+- [x] **7. Frontend structure and design system.** *Done.* 26 hand-typed card
+      surfaces collapsed onto `.app-panel`; `Card`, `CardHeading` and `StatTile`
+      added to `Ui.tsx`, replacing the duplicate tile in Overview and Staff;
+      `Staff.tsx` 956 → 763 lines with CSV, shapes and the balances report moved
+      to `features/hr/`; `csvCell` deduplicated; `HrApp` lazy-loaded (a 61 kB
+      chunk, off the main bundle).
+- [x] **8. Accrual off the bare `setInterval`.** *Done.* The scheduled run takes
+      a Postgres advisory lock, so scaling the API out no longer has two
+      containers racing to credit the same fortnight. `ACCRUAL_SCHEDULER=off`
+      plus `npm run accrual -- --due` moves it to cron; both take the same lock,
+      so the two can overlap during a migration. Documented in
+      `.env.prod.example`.
 
-Also in this phase, as capacity allows:
+### Found by the Phase 2 tests — needs a decision
 
-- Set-based accrual. `leaveAccrual.js:88-104` issues ~3 queries per employee
-  per leave type inside one transaction (~4,500 sequential queries at 500
-  staff), and should be two `INSERT … SELECT … ON CONFLICT DO UPDATE`
-  statements.
+- **`reset_period = 'financial_year'` resets on 1 January**, i.e. the calendar
+  year, despite the name. Naoero's financial year runs July to June. Balances
+  are also keyed by calendar year, so this is not a one-line change — it is a
+  policy question about when leave should actually be forfeited. Left exactly
+  as it was; current behaviour is pinned by a test that says so.
+- **Resets use today's date, not the period being run.** A catch-up run for a
+  period three months ago applies today's reset boundary. The net balances come
+  out right because `last_reset_at` stops a second application, but the
+  attribution is wrong. Using `periodEnd` would be more correct.
+- **Leave spanning 31 December** is charged wholly to the year it began, and
+  `balanceYearFor` in `leaveService.js` is the single place that decides it.
+
+### Still open from this phase
+
+- Set-based accrual. `leaveAccrual.js` still issues ~3 queries per employee per
+  leave type inside one transaction (~4,500 sequential queries at 500 staff).
+  Now safe to attempt: the behaviour is pinned by tests.
 - Pagination on `/employees`, `/leaves`, `/team`, `/calendar`, `/report`,
-  `/employees/balances` — all currently return full result sets.
-- Reconcile duplicate employee records. `hr.js:37` auto-creates a row keyed on
+  `/employees/balances` — all still return full result sets.
+- Reconcile duplicate employee records: `hr.js` auto-creates a row keyed on
   `reviewer_id` on any `hr_access` request, while `/employees/import` creates
-  unlinked rows matched only by name, so an imported staff member who later
-  logs in gets a second, empty record with a fresh balance.
+  unlinked rows matched only by name.
+- One icon system. `lucide-react` is an app-wide dependency used by `apps.ts`,
+  `Login`, `Admin` and `Staff`, while `Ui.tsx` has a hand-rolled `Icon`. HR is
+  internally consistent; converging the whole app is a separate change.
+- `PUT /policies/:id` still uses COALESCE, so a leave type's `description`
+  cannot be cleared (carried over from item 3).
 
 ## Phase 3 — The enterprise lift
 

@@ -6,6 +6,7 @@ import { recordAudit } from '../services/auditService.js';
 import { notifyLeaveDecision, notifyLeaveSubmitted } from '../services/notificationService.js';
 import { ensureBalance, runLeaveAccrual } from '../services/leaveAccrual.js';
 import { PERMISSIONS } from '../config.js';
+import { buildUpdateAssignments, changedFields, collectUpdates } from '../lib/sqlUpdate.js';
 
 const router = express.Router();
 
@@ -496,63 +497,99 @@ router.post(
   }
 );
 
+/**
+ * Columns an employment record update may touch. Also the allowlist the SET
+ * clause is built from, so a request body can never name a column.
+ *
+ * `nullable` marks the ones that can be cleared: a field is only written when
+ * the request actually carries it, so `null` means "clear this" rather than
+ * "leave it alone". That distinction is why this does not use COALESCE — with
+ * COALESCE a manager could be set but never removed, and a wrong join date
+ * never blanked.
+ */
+const EMPLOYEE_UPDATABLE = {
+  manager_id: { nullable: true },
+  department_code: { nullable: true },
+  join_date: { nullable: true },
+  reviewer_id: { nullable: true },
+  status: { nullable: false },
+  leave_entitled: { nullable: false },
+};
+
+/**
+ * A cleared `<input type="date">` or `<select>` posts an empty string, which
+ * means "no value". Normalising it to null before validation lets it clear the
+ * column instead of failing the format check.
+ */
+function blankToNull(req, _res, next) {
+  for (const [field, { nullable }] of Object.entries(EMPLOYEE_UPDATABLE)) {
+    if (nullable && req.body?.[field] === '') req.body[field] = null;
+  }
+  next();
+}
+
 router.put(
   '/employees/:id',
   requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
+  blankToNull,
   [
     param('id').isUUID(),
     body('manager_id').optional({ nullable: true }).isUUID(),
     body('department_code').optional({ nullable: true }).isString().isLength({ max: 10 }),
     body('join_date').optional({ nullable: true }).isISO8601(),
-    body('status').optional().isIn(['active', 'inactive']),
     body('reviewer_id').optional({ nullable: true }).isUUID(),
+    // Both columns are NOT NULL, so null is rejected rather than treated as a clear.
+    body('status').optional().isIn(['active', 'inactive']),
     body('leave_entitled').optional().isBoolean(),
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
-    if (req.body.manager_id === req.params.id) {
+
+    // Only the fields the caller actually sent, so an unmentioned field keeps
+    // its value and an explicit null clears it.
+    const updates = collectUpdates(req.body, Object.keys(EMPLOYEE_UPDATABLE));
+    if (!Object.keys(updates).length) {
+      res.status(400).json({ message: 'No changes were supplied.' });
+      return;
+    }
+    if (updates.manager_id === req.params.id) {
       res.status(400).json({ message: 'An employee cannot be their own manager.' });
       return;
     }
-    let linkedEmail = null;
-    if (req.body.reviewer_id) {
-      const { rows: reviewerRows } = await pool.query('SELECT id, display_name, email FROM reviewers WHERE id = $1', [req.body.reviewer_id]);
-      if (!reviewerRows.length) {
-        res.status(400).json({ message: 'No such account.' });
-        return;
-      }
-      linkedEmail = reviewerRows[0].email;
+
+    const { rows: existing } = await pool.query('SELECT * FROM hr_employees WHERE id = $1', [req.params.id]);
+    if (!existing.length) {
+      res.status(404).json({ message: 'Employee not found.' });
+      return;
     }
+
+    // The contact address follows the linked login: linking adopts the
+    // account's address, unlinking drops it so notifications cannot keep going
+    // to a login that is no longer this person's.
+    if (Object.hasOwn(updates, 'reviewer_id')) {
+      if (updates.reviewer_id === null) {
+        updates.email = null;
+      } else {
+        const { rows: account } = await pool.query('SELECT email FROM reviewers WHERE id = $1', [updates.reviewer_id]);
+        if (!account.length) {
+          res.status(400).json({ message: 'No such account.' });
+          return;
+        }
+        updates.email = account[0].email;
+      }
+    }
+
+    // $1 is the id in the WHERE clause, so the assignments start at $2.
+    const { clause, values } = buildUpdateAssignments(updates, 1);
+
+    let updated;
     try {
       const { rows } = await pool.query(
-        `UPDATE hr_employees
-            SET manager_id = COALESCE($2, manager_id),
-                department_code = COALESCE($3, department_code),
-                join_date = COALESCE($4, join_date),
-                status = COALESCE($5, status),
-                reviewer_id = COALESCE($6, reviewer_id),
-                email = COALESCE($7, email),
-                leave_entitled = COALESCE($8, leave_entitled),
-                updated_at = NOW()
+        `UPDATE hr_employees SET ${clause}, updated_at = NOW()
           WHERE id = $1 RETURNING *`,
-        [req.params.id, req.body.manager_id ?? null, req.body.department_code ?? null,
-         req.body.join_date ?? null, req.body.status ?? null, req.body.reviewer_id ?? null, linkedEmail,
-         req.body.leave_entitled ?? null]
+        [req.params.id, ...values]
       );
-      if (!rows.length) {
-        res.status(404).json({ message: 'Employee not found.' });
-        return;
-      }
-      if (req.body.reviewer_id) {
-        await recordAudit({
-          actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-          action: 'hr.employee.linked',
-          entityType: 'hr_employee',
-          entityId: rows[0].id,
-          after: { reviewer_id: req.body.reviewer_id },
-        });
-      }
-      res.json(rows[0]);
+      updated = rows[0];
     } catch (err) {
       if (err.code === '23505') {
         res.status(409).json({ message: 'That login is already linked to a different staff record.' });
@@ -560,6 +597,22 @@ router.put(
       }
       throw err;
     }
+
+    // Record what actually changed, so a balance or a reporting line can always
+    // be explained later.
+    const changed = changedFields(existing[0], updated, Object.keys(updates));
+    if (changed.length) {
+      await recordAudit({
+        actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+        action: Object.hasOwn(updates, 'reviewer_id') ? 'hr.employee.linked' : 'hr.employee.updated',
+        entityType: 'hr_employee',
+        entityId: updated.id,
+        before: Object.fromEntries(changed.map((field) => [field, existing[0][field]])),
+        after: Object.fromEntries(changed.map((field) => [field, updated[field]])),
+      });
+    }
+
+    res.json(updated);
   }
 );
 

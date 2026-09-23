@@ -29,15 +29,29 @@ Small, independent, each one a user-visible or operational defect.
       `src/middleware/errors.test.js` — which also brings item 6's runner
       forward: `npm test` in `app/backend` now runs `node --test`, no new
       dependency.
-- [ ] **2. UTC date bug.** `Overview.tsx:35` and `Report.tsx:18` build ISO dates
-      with `toISOString().slice(0,10)`, converting local midnight to UTC. At
-      UTC+12 every preset lands one day early — "This year" asks for 31 Dec.
-      `Staff.tsx:12-25` already has the correct local-safe helper; promote that
-      one to `lib/date.ts` and delete the other two.
-- [ ] **3. `PUT /employees/:id` cannot clear a field.** `hr.js:529-540` uses
-      `COALESCE($n, existing)` on every column, so HR can set a manager but
-      never remove one, and cannot blank a wrong join date. Build the `SET`
-      list from the keys actually present in the request body.
+- [x] **2. UTC date bug.** *Done.* `lib/date.ts` now holds `toIsoDate`,
+      `todayIsoDate` and `toDateInputValue`, and the four call sites use them.
+      The review found two instances; there was a **third**, `Calendar.tsx:21`,
+      where `monthBounds` shifted the whole query window back a day, so leave on
+      the last day of any month never appeared on the calendar.
+
+      The suite's timezone is pinned to `Pacific/Nauru` in `vite.config.ts`, so
+      this class of bug now fails in `npm test` rather than in production.
+      Covered by `lib/date.test.ts`.
+- [x] **3. `PUT /employees/:id` cannot clear a field.** *Done.* The handler
+      builds its `SET` list from the keys the body actually carries, via the new
+      `lib/sqlUpdate.js` (`collectUpdates`, `buildUpdateAssignments`,
+      `changedFields`), so an unmentioned field keeps its value and an explicit
+      null clears it. A `blankToNull` step maps the empty string a cleared date
+      or select posts onto null before validation. Unlinking a login now also
+      drops the adopted email, so notifications cannot keep reaching an account
+      that is no longer that person's. The audit row records exactly which
+      fields moved, rather than only recording links.
+
+      No client change was needed: all four callers already send a single field
+      at a time, and `Staff.tsx` was already written as
+      `manager_id: managerId || null`, expecting a clear that silently did
+      nothing. Covered by `lib/sqlUpdate.test.js`.
 - [ ] **4. Overview KPIs do not reconcile.** Three different definitions of
       "leave in this period" run on one screen: application tiles filter on
       `applied_at` (`hr.js:988`), the type/department bars filter on range
@@ -112,6 +126,16 @@ activity; none of them carry a comparison or imply an action.
       calculation. `calculateWorkingDays` is currently hand-maintained twice,
       in `hr.js:17` and `types.ts:78`, in two languages — they will drift the
       moment holidays are added.
+
+## Follow-ups found while doing the work
+
+- `Generator.tsx:320` and `Generator.tsx:354` build ABA download filenames with
+  `toISOString().slice(0, 10)` — the same UTC bug as item 2, naming a file with
+  yesterday's date at UTC+12. Left alone deliberately: that is the payment-file
+  flow, not HR, and `lib/date.ts` is now there whenever it is picked up.
+- `PUT /policies/:id` uses the same COALESCE shape as item 3, so a leave type's
+  `description` cannot be cleared. Harmless today only because the Policies form
+  never sends `description` at all — worth folding into item 5.
 
 ## Smaller gaps noted during the review
 

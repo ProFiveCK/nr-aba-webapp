@@ -783,6 +783,15 @@ export async function initSchema() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
+    // Accrual and reset rules, configurable per leave type. Accruable types
+    // earn `accrual_days_per_fortnight` on each fortnightly pay run instead of
+    // being granted `default_days` upfront; `reset_period` decides whether an
+    // unused balance is forfeited at the end of the financial year, on the
+    // employee's service anniversary, or never.
+    await client.query('ALTER TABLE hr_leave_types ADD COLUMN IF NOT EXISTS accrual_days_per_fortnight NUMERIC(6,2) NOT NULL DEFAULT 0');
+    await client.query("ALTER TABLE hr_leave_types ADD COLUMN IF NOT EXISTS reset_period TEXT NOT NULL DEFAULT 'none'");
+    await client.query('ALTER TABLE hr_leave_types DROP CONSTRAINT IF EXISTS hr_leave_types_reset_period_check');
+    await client.query("ALTER TABLE hr_leave_types ADD CONSTRAINT hr_leave_types_reset_period_check CHECK (reset_period IN ('none','financial_year','anniversary'))");
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS hr_leave_balances (
@@ -795,6 +804,7 @@ export async function initSchema() {
         UNIQUE (employee_id, leave_type_id, year)
       );
     `);
+    await client.query('ALTER TABLE hr_leave_balances ADD COLUMN IF NOT EXISTS last_reset_at TIMESTAMPTZ');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS hr_leave_applications (
@@ -832,6 +842,18 @@ export async function initSchema() {
       );
     `);
     await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_adjustments_employee ON hr_leave_adjustments(employee_id)');
+
+    // One row per completed accrual run, keyed by period end so a fortnight is
+    // never credited twice. `credited` records how many balances were updated.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_accrual_runs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        period_end DATE NOT NULL UNIQUE,
+        credited INT NOT NULL DEFAULT 0,
+        run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        run_by UUID REFERENCES reviewers(id) ON DELETE SET NULL
+      );
+    `);
 
     // Seed the standard Naoero Treasury leave types (no-op once present).
     await client.query(`

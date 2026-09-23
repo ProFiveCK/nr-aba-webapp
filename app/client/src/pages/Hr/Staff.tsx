@@ -313,6 +313,7 @@ export function Staff() {
     const setManager = async (employee: Employee, managerId: string) => {
         try {
             await apiClient.put(`/hr/employees/${employee.id}`, { manager_id: managerId || null });
+            setSelected((prev) => (prev && prev.id === employee.id ? { ...prev, manager_id: managerId || null } : prev));
             addToast('Reporting line updated.', 'success');
             await load();
         } catch (err) {
@@ -730,7 +731,6 @@ export function Staff() {
                                         <th className="px-4 py-2">Name</th>
                                         <th className="px-4 py-2">Login</th>
                                         <th className="px-4 py-2">Dept</th>
-                                        <th className="px-4 py-2">Reports to</th>
                                         <th className="px-4 py-2">Joined</th>
                                     </tr>
                                 </thead>
@@ -757,22 +757,6 @@ export function Staff() {
                                                 )}
                                             </td>
                                             <td className="px-4 py-2 text-zinc-600">{employee.department_code || '—'}</td>
-                                            <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
-                                                <select
-                                                    value={employee.manager_id || ''}
-                                                    onChange={(e) => setManager(employee, e.target.value)}
-                                                    className="rounded-md border border-zinc-300 px-2 py-1 text-sm"
-                                                >
-                                                    <option value="">— none —</option>
-                                                    {employees
-                                                        .filter((candidate) => candidate.id !== employee.id)
-                                                        .map((candidate) => (
-                                                            <option key={candidate.id} value={candidate.id}>
-                                                                {candidate.display_name}
-                                                            </option>
-                                                        ))}
-                                                </select>
-                                            </td>
                                             <td className="px-4 py-2 text-zinc-600">{formatDate(employee.join_date)}</td>
                                         </tr>
                                     ))}
@@ -814,6 +798,24 @@ export function Staff() {
                         </div>
 
                         <div className="flex-1 space-y-5 p-5">
+                            <div className="space-y-2">
+                                <h3 className="text-sm font-semibold text-zinc-900">Reporting line</h3>
+                                <select
+                                    value={selected.manager_id || ''}
+                                    onChange={(e) => setManager(selected, e.target.value)}
+                                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                                >
+                                    <option value="">Reports to — none —</option>
+                                    {employees
+                                        .filter((candidate) => candidate.id !== selected.id)
+                                        .map((candidate) => (
+                                            <option key={candidate.id} value={candidate.id}>
+                                                {candidate.display_name}
+                                            </option>
+                                        ))}
+                                </select>
+                            </div>
+
                             <div>
                                 <h3 className="text-sm font-semibold text-zinc-900">Balances</h3>
                                 {balances.length ? (

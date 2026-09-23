@@ -1,5 +1,7 @@
 export type LeaveStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 
+export type ResetPeriod = 'none' | 'financial_year' | 'anniversary';
+
 export interface LeaveType {
     id: string;
     name: string;
@@ -8,6 +10,9 @@ export interface LeaveType {
     is_accruable: boolean;
     requires_note: boolean;
     is_active: boolean;
+    accrual_days_per_fortnight: string;
+    reset_period: ResetPeriod;
+    usage_count?: number;
 }
 
 export interface LeaveBalance {

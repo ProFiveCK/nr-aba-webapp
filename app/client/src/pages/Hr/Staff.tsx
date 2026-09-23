@@ -8,6 +8,23 @@ import type { Employee, LeaveBalance, LeaveType } from '../../features/hr/types'
 
 const FIXED_COLUMNS = ['display_name', 'department_code', 'join_date'];
 
+/** Normalise a join_date (string or Date) to a `YYYY-MM-DD` value for an
+ *  `<input type="date">`. Extracts the date part verbatim for strings so a
+ *  timezone shift can never move the day. */
+function toDateInputValue(value: string | Date | null): string {
+    if (!value) return '';
+    if (typeof value === 'string') {
+        const match = /^(\d{4}-\d{2}-\d{2})/.exec(value);
+        if (match) return match[1];
+    }
+    const d = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(d.getTime())) return '';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
 type ViewMode = 'directory' | 'report';
 type LoginFilter = 'all' | 'linked' | 'unlinked';
 
@@ -329,6 +346,17 @@ export function Staff() {
             await load();
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to update leave entitlement.', 'error');
+        }
+    };
+
+    const setJoinDate = async (employee: Employee, date: string) => {
+        try {
+            await apiClient.put(`/hr/employees/${employee.id}`, { join_date: date || null });
+            setSelected((prev) => (prev && prev.id === employee.id ? { ...prev, join_date: date || null } : prev));
+            addToast('Joining date updated.', 'success');
+            await load();
+        } catch (err) {
+            addToast((err as Error)?.message || 'Unable to update the joining date.', 'error');
         }
     };
 
@@ -843,6 +871,16 @@ export function Staff() {
                                             </option>
                                         ))}
                                 </select>
+                            </div>
+
+                            <div className="space-y-2">
+                                <h3 className="text-sm font-semibold text-zinc-900">Joining date</h3>
+                                <input
+                                    type="date"
+                                    value={toDateInputValue(selected.join_date)}
+                                    onChange={(e) => setJoinDate(selected, e.target.value)}
+                                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                                />
                             </div>
 
                             <div>

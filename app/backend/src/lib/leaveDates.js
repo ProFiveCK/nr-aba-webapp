@@ -47,3 +47,32 @@ export function monthsBetween(from, to) {
   }
   return months;
 }
+
+/**
+ * Reads a calendar day from whatever the database or a request hands over, as
+ * a local Date at midnight. Returns null for anything unusable.
+ *
+ * `pg` parses a DATE column into a JS Date, not a string, so code that assumes
+ * `YYYY-MM-DD` and splits on "-" gets NaN and silently does nothing. That is
+ * what stopped the fortnightly accrual scheduler from ever running.
+ */
+export function parseDateOnly(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value));
+  if (!match) return null;
+  const [, year, month, day] = match.map(Number);
+  const parsed = new Date(year, month - 1, day);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/** Formats a Date as `YYYY-MM-DD` from its local calendar day. */
+export function toIsoDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}

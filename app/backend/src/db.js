@@ -82,6 +82,14 @@ if (!process.env.DATABASE_URL) {
   }
 }
 
+// A DATE column is a calendar day, not an instant. Left to itself pg parses
+// one into a JS Date at local midnight, which then serialises to JSON as a UTC
+// timestamp — so a leave date written as 2026-08-27 can reach the browser as
+// "2026-08-26T12:00:00.000Z" and be read as the day before, and any code that
+// expects "YYYY-MM-DD" silently gets nothing usable. Handing DATE back as the
+// string Postgres already stores removes that whole class of bug.
+pg.types.setTypeParser(pg.types.builtins.DATE, (value) => value);
+
 const connectionConfig = process.env.DATABASE_URL
   ? { connectionString: process.env.DATABASE_URL }
   : {

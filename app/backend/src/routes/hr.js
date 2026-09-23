@@ -7,7 +7,7 @@ import { notifyLeaveDecision, notifyLeaveSubmitted } from '../services/notificat
 import { ensureBalance, runLeaveAccrual } from '../services/leaveAccrual.js';
 import { PERMISSIONS } from '../config.js';
 import { buildUpdateAssignments, changedFields, collectUpdates } from '../lib/sqlUpdate.js';
-import { calculateWorkingDays, monthsBetween } from '../lib/leaveDates.js';
+import { calculateWorkingDays, monthsBetween, parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 
 const router = express.Router();
 
@@ -242,7 +242,7 @@ router.post(
 
 /** Releases the pending hold created when the application was submitted. */
 async function releasePending(client, application) {
-  const year = new Date(application.start_date).getFullYear();
+  const year = parseDateOnly(application.start_date).getFullYear();
   await client.query(
     `UPDATE hr_leave_balances
         SET pending = GREATEST(0, pending - $1)
@@ -350,7 +350,7 @@ router.post(
 
       await releasePending(client, application);
       if (decision === 'approved') {
-        const year = new Date(application.start_date).getFullYear();
+        const year = parseDateOnly(application.start_date).getFullYear();
         await client.query(
           `UPDATE hr_leave_balances SET balance = balance - $1
             WHERE employee_id = $2 AND leave_type_id = $3 AND year = $4`,
@@ -910,8 +910,8 @@ router.post(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const periodEnd = req.body.period_end
-      ? new Date(req.body.period_end).toISOString().slice(0, 10)
-      : new Date().toISOString().slice(0, 10);
+      ? toIsoDate(parseDateOnly(req.body.period_end))
+      : toIsoDate(new Date());
     const periodStart = new Date(periodEnd);
     periodStart.setDate(periodStart.getDate() - 13);
 
@@ -977,7 +977,7 @@ router.put(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const value = req.body.accrual_anchor_date
-      ? new Date(req.body.accrual_anchor_date).toISOString().slice(0, 10)
+      ? toIsoDate(parseDateOnly(req.body.accrual_anchor_date))
       : null;
     await pool.query(
       `INSERT INTO reviewer_settings (id, accrual_anchor_date)

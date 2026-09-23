@@ -4,6 +4,7 @@ import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
 import { EmptyState, LoadingState } from '../../components/Ui';
 import { formatDate } from '../../features/hr/types';
+import { toIsoDate } from '../../lib/date';
 
 // A single, muted-blue hue throughout: every chart here compares one measure
 // (days taken) by magnitude, not several series by identity, so a categorical
@@ -31,32 +32,28 @@ interface OverviewResponse {
 
 type Preset = '30d' | '6m' | '12m' | 'ytd' | 'custom';
 
-function isoDate(d: Date): string {
-    return d.toISOString().slice(0, 10);
-}
-
 function rangeForPreset(preset: Preset): { from: string; to: string } {
     const today = new Date();
-    const to = isoDate(today);
+    const to = toIsoDate(today);
     switch (preset) {
         case '30d': {
             const from = new Date(today);
             from.setDate(from.getDate() - 30);
-            return { from: isoDate(from), to };
+            return { from: toIsoDate(from), to };
         }
         case '6m': {
             const from = new Date(today);
             from.setMonth(from.getMonth() - 6);
-            return { from: isoDate(from), to };
+            return { from: toIsoDate(from), to };
         }
         case 'ytd':
-            return { from: isoDate(new Date(today.getFullYear(), 0, 1)), to };
+            return { from: toIsoDate(new Date(today.getFullYear(), 0, 1)), to };
         case '12m':
         default: {
             const from = new Date(today);
             from.setFullYear(from.getFullYear() - 1);
             from.setDate(from.getDate() + 1);
-            return { from: isoDate(from), to };
+            return { from: toIsoDate(from), to };
         }
     }
 }

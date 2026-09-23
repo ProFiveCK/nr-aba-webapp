@@ -316,6 +316,12 @@ export async function initSchema() {
       UPDATE reviewer_settings
          SET testing_mode = COALESCE(testing_mode, FALSE)
     `);
+    // First date the fortnightly leave accrual should run. Once set, the
+    // scheduler runs accrual on this date and every 14 days after it.
+    await client.query(`
+      ALTER TABLE reviewer_settings
+        ADD COLUMN IF NOT EXISTS accrual_anchor_date DATE
+    `);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS batch_reviews (
@@ -770,6 +776,10 @@ export async function initSchema() {
     `);
     await client.query('CREATE INDEX IF NOT EXISTS idx_hr_employees_manager ON hr_employees(manager_id)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_hr_employees_reviewer ON hr_employees(reviewer_id)');
+    // Whether a staff member is entitled to accrue and take leave at all. On by
+    // default; HR can switch it off for individuals who are not covered by the
+    // leave rules (e.g. casual or contract staff).
+    await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS leave_entitled BOOLEAN NOT NULL DEFAULT TRUE');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS hr_leave_types (

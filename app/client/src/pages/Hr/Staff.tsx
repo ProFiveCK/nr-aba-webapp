@@ -321,6 +321,17 @@ export function Staff() {
         }
     };
 
+    const setLeaveEntitled = async (employee: Employee, entitled: boolean) => {
+        try {
+            await apiClient.put(`/hr/employees/${employee.id}`, { leave_entitled: entitled });
+            setSelected((prev) => (prev && prev.id === employee.id ? { ...prev, leave_entitled: entitled } : prev));
+            addToast(entitled ? 'Staff marked as entitled to leave.' : 'Staff marked as not entitled to leave.', 'success');
+            await load();
+        } catch (err) {
+            addToast((err as Error)?.message || 'Unable to update leave entitlement.', 'error');
+        }
+    };
+
     const downloadTemplate = () => {
         const header = [...FIXED_COLUMNS, ...types.map((t) => t.name)];
         const example = ['Jane Example', '16', '2024-01-15', ...types.map(() => '')];
@@ -743,6 +754,9 @@ export function Staff() {
                                         >
                                             <td className="px-4 py-2">
                                                 <span className="font-medium text-zinc-900">{employee.display_name}</span>
+                                                {employee.leave_entitled === false && (
+                                                    <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500">no leave</span>
+                                                )}
                                                 {employee.status === 'inactive' && (
                                                     <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500">inactive</span>
                                                 )}
@@ -798,6 +812,21 @@ export function Staff() {
                         </div>
 
                         <div className="flex-1 space-y-5 p-5">
+                            <label className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 p-3">
+                                <span className="text-sm text-zinc-700">
+                                    Entitled to leave
+                                    <span className="mt-0.5 block text-xs text-zinc-500">
+                                        Off means they accrue nothing and cannot apply.
+                                    </span>
+                                </span>
+                                <input
+                                    type="checkbox"
+                                    checked={selected.leave_entitled !== false}
+                                    onChange={(e) => setLeaveEntitled(selected, e.target.checked)}
+                                    className="h-4 w-4"
+                                />
+                            </label>
+
                             <div className="space-y-2">
                                 <h3 className="text-sm font-semibold text-zinc-900">Reporting line</h3>
                                 <select

@@ -79,7 +79,7 @@ export async function runLeaveAccrual(client, { periodEnd, actorId }) {
     client.query(
       "SELECT id, name, reset_period, default_days, is_accruable FROM hr_leave_types WHERE is_active = TRUE AND reset_period <> 'none'"
     ),
-    client.query("SELECT id, join_date FROM hr_employees WHERE status = 'active'"),
+    client.query("SELECT id, join_date FROM hr_employees WHERE status = 'active' AND leave_entitled = TRUE"),
   ]);
 
   let credited = 0;
@@ -129,4 +129,62 @@ export async function runLeaveAccrual(client, { periodEnd, actorId }) {
   }
 
   return { periodEnd, credited, reset };
+}
+
+function toISODateLocal(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Runs every accrued period that is now due but has not been processed yet.
+ * The anchor date (the first pay date) is stored in reviewer_settings; from it
+ * the schedule steps forward 14 days at a time. Each period is idempotent via
+ * the accrual-runs table, so this is safe to call on startup and on a timer.
+ *
+ * Returns `{ ran }` — the list of period-end dates that were processed.
+ */
+export async function runDueLeaveAccruals(pool) {
+  const { rows } = await pool.query(
+    'SELECT accrual_anchor_date FROM reviewer_settings WHERE id = TRUE'
+  );
+  const anchor = rows[0]?.accrual_anchor_date;
+  if (!anchor) return { ran: [] };
+
+  const [y, m, d] = String(anchor).split('-').map(Number);
+  if (!y || !m || !d) return { ran: [] };
+  const anchorDate = new Date(y, m - 1, d);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const ran = [];
+  const client = await pool.connect();
+  try {
+    for (let cursor = new Date(anchorDate); cursor <= today; cursor.setDate(cursor.getDate() + 14)) {
+      const periodEnd = toISODateLocal(cursor);
+      const { rows: existing } = await client.query(
+        'SELECT id FROM hr_accrual_runs WHERE period_end = $1',
+        [periodEnd]
+      );
+      if (existing.length) continue;
+      await client.query('BEGIN');
+      try {
+        const { credited, reset } = await runLeaveAccrual(client, { periodEnd, actorId: null });
+        await client.query(
+          'INSERT INTO hr_accrual_runs (period_end, credited, run_by) VALUES ($1, $2, $3)',
+          [periodEnd, credited, null]
+        );
+        await client.query('COMMIT');
+        ran.push(periodEnd);
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      }
+    }
+  } finally {
+    client.release();
+  }
+  return { ran };
 }

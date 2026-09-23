@@ -76,6 +76,15 @@ router.get('/leave-types', requirePermission(PERMISSIONS.HR_ACCESS), async (_req
 router.get('/me', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res) => {
   const employee = await currentEmployee(req);
   const year = new Date().getFullYear();
+  // Staff who are not entitled to leave have no balances to show.
+  if (employee.leave_entitled === false) {
+    const { rows: manager } = await pool.query(
+      'SELECT id, display_name, email FROM hr_employees WHERE id = $1',
+      [employee.manager_id]
+    );
+    res.json({ employee, year, balances: [], manager: manager[0] || null });
+    return;
+  }
   // Return every active leave type, not just the ones the employee has touched,
   // so the form can show a zero (or not-yet-accrued) balance instead of hiding
   // the type entirely. Untouched accruable types read as zero; upfront types
@@ -128,6 +137,10 @@ router.post(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const employee = await currentEmployee(req);
+    if (employee.leave_entitled === false) {
+      res.status(403).json({ message: 'You are not entitled to leave.' });
+      return;
+    }
     const { leave_type_id: leaveTypeId, start_date: startDate, end_date: endDate } = req.body;
     const days = calculateWorkingDays(startDate, endDate);
     if (days <= 0) {
@@ -427,7 +440,7 @@ router.get(
     const [{ rows: employees }, { rows: types }, { rows: balances }] = await Promise.all([
       pool.query(
         `SELECT id, display_name, department_code, status, reviewer_id, email, join_date
-           FROM hr_employees WHERE status = 'active' ORDER BY display_name`
+           FROM hr_employees WHERE status = 'active' AND leave_entitled = TRUE ORDER BY display_name`
       ),
       pool.query('SELECT id, name, default_days, is_accruable FROM hr_leave_types WHERE is_active = TRUE ORDER BY name'),
       pool.query('SELECT employee_id, leave_type_id, balance, pending FROM hr_leave_balances WHERE year = $1', [year]),
@@ -462,13 +475,15 @@ router.post(
     body('department_code').optional({ nullable: true }).isString().isLength({ max: 10 }),
     body('manager_id').optional({ nullable: true }).isUUID(),
     body('join_date').optional({ nullable: true }).isISO8601(),
+    body('leave_entitled').optional().isBoolean(),
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const { rows } = await pool.query(
-      `INSERT INTO hr_employees (display_name, department_code, manager_id, join_date)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [req.body.display_name, req.body.department_code || null, req.body.manager_id || null, req.body.join_date || null]
+      `INSERT INTO hr_employees (display_name, department_code, manager_id, join_date, leave_entitled)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [req.body.display_name, req.body.department_code || null, req.body.manager_id || null,
+       req.body.join_date || null, req.body.leave_entitled ?? true]
     );
     await recordAudit({
       actor: { id: req.user.id, email: req.user.email, ip: req.ip },
@@ -491,6 +506,7 @@ router.put(
     body('join_date').optional({ nullable: true }).isISO8601(),
     body('status').optional().isIn(['active', 'inactive']),
     body('reviewer_id').optional({ nullable: true }).isUUID(),
+    body('leave_entitled').optional().isBoolean(),
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -516,10 +532,12 @@ router.put(
                 status = COALESCE($5, status),
                 reviewer_id = COALESCE($6, reviewer_id),
                 email = COALESCE($7, email),
+                leave_entitled = COALESCE($8, leave_entitled),
                 updated_at = NOW()
           WHERE id = $1 RETURNING *`,
         [req.params.id, req.body.manager_id ?? null, req.body.department_code ?? null,
-         req.body.join_date ?? null, req.body.status ?? null, req.body.reviewer_id ?? null, linkedEmail]
+         req.body.join_date ?? null, req.body.status ?? null, req.body.reviewer_id ?? null, linkedEmail,
+         req.body.leave_entitled ?? null]
       );
       if (!rows.length) {
         res.status(404).json({ message: 'Employee not found.' });
@@ -905,6 +923,41 @@ router.post(
   }
 );
 
+// The first pay date of the fortnightly accrual schedule. Once set, the server
+// runs accrual on this date and every 14 days after it, automatically.
+router.get('/accrual/settings', requirePermission(PERMISSIONS.HR_ADMIN), async (_req, res) => {
+  const { rows } = await pool.query(
+    'SELECT accrual_anchor_date FROM reviewer_settings WHERE id = TRUE'
+  );
+  res.json({ accrual_anchor_date: rows[0]?.accrual_anchor_date || null });
+});
+
+router.put(
+  '/accrual/settings',
+  requirePermission(PERMISSIONS.HR_ADMIN),
+  [body('accrual_anchor_date').optional({ nullable: true }).isISO8601()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const value = req.body.accrual_anchor_date
+      ? new Date(req.body.accrual_anchor_date).toISOString().slice(0, 10)
+      : null;
+    await pool.query(
+      `INSERT INTO reviewer_settings (id, accrual_anchor_date)
+       VALUES (TRUE, $1)
+       ON CONFLICT (id) DO UPDATE SET accrual_anchor_date = EXCLUDED.accrual_anchor_date`,
+      [value]
+    );
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.accrual.settings.updated',
+      entityType: 'reviewer_settings',
+      entityId: 'hr_accrual_anchor_date',
+      after: { accrual_anchor_date: value },
+    });
+    res.json({ accrual_anchor_date: value });
+  }
+);
+
 // ===== Senior management overview =====
 
 // Aggregate KPIs for leadership: headcount, application throughput, usage by
@@ -992,7 +1045,7 @@ router.get(
            CROSS JOIN hr_employees e
            LEFT JOIN hr_leave_balances b
              ON b.employee_id = e.id AND b.leave_type_id = t.id AND b.year = $1
-          WHERE t.is_active = TRUE AND e.status = 'active'
+          WHERE t.is_active = TRUE AND e.status = 'active' AND e.leave_entitled = TRUE
           GROUP BY t.name
           ORDER BY available_days DESC`,
         [today.getFullYear()]

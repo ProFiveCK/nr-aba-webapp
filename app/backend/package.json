@@ -7,7 +7,8 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "archive:batches": "node scripts/archive-old-batches.js",
-    "accrual": "node scripts/run-accrual.js"
+    "accrual": "node scripts/run-accrual.js",
+    "test": "node --test \"src/**/*.test.js\""
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

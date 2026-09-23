@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -11,5 +12,11 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  test: {
+    // The portal runs in Naoero (UTC+12). Pinning the suite there means a
+    // UTC-versus-local date bug fails here rather than in production, where
+    // every such bug is off by a full day.
+    env: { TZ: 'Pacific/Nauru' },
   },
 })

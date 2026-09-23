@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
 import { EmptyState } from '../../components/Ui';
+import { toIsoDate } from '../../lib/date';
 
 interface ReportRow {
     employee_name: string;
@@ -15,8 +16,7 @@ function defaultRange() {
     const now = new Date();
     const first = new Date(now.getFullYear(), now.getMonth(), 1);
     const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    const iso = (d: Date) => d.toISOString().slice(0, 10);
-    return { from: iso(first), to: iso(last) };
+    return { from: toIsoDate(first), to: toIsoDate(last) };
 }
 
 /** Quotes a CSV field so commas, quotes and newlines survive Excel. */

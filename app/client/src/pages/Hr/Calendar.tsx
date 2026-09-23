@@ -3,6 +3,7 @@ import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
 import { EmptyState, LoadingState } from '../../components/Ui';
 import { formatDate } from '../../features/hr/types';
+import { toIsoDate } from '../../lib/date';
 
 interface CalendarEntry {
     id: string;
@@ -18,8 +19,7 @@ function monthBounds(offset: number) {
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth() + offset, 1);
     const end = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
-    const iso = (d: Date) => d.toISOString().slice(0, 10);
-    return { from: iso(start), to: iso(end), start, end };
+    return { from: toIsoDate(start), to: toIsoDate(end), start, end };
 }
 
 export function Calendar() {

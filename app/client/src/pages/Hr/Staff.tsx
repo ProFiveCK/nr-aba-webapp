@@ -4,26 +4,10 @@ import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
 import { EmptyState, LoadingState } from '../../components/Ui';
 import { formatDate } from '../../features/hr/types';
+import { toDateInputValue } from '../../lib/date';
 import type { Employee, LeaveBalance, LeaveType } from '../../features/hr/types';
 
 const FIXED_COLUMNS = ['display_name', 'department_code', 'join_date'];
-
-/** Normalise a join_date (string or Date) to a `YYYY-MM-DD` value for an
- *  `<input type="date">`. Extracts the date part verbatim for strings so a
- *  timezone shift can never move the day. */
-function toDateInputValue(value: string | Date | null): string {
-    if (!value) return '';
-    if (typeof value === 'string') {
-        const match = /^(\d{4}-\d{2}-\d{2})/.exec(value);
-        if (match) return match[1];
-    }
-    const d = value instanceof Date ? value : new Date(value);
-    if (Number.isNaN(d.getTime())) return '';
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-}
 
 type ViewMode = 'directory' | 'report';
 type LoginFilter = 'all' | 'linked' | 'unlinked';

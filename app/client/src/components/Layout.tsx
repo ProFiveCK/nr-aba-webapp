@@ -48,6 +48,7 @@ export function Layout({ children, activeApp, onAppChange }: LayoutProps) {
     return (
         <>
         <div className="min-h-screen bg-[#f4f6fa]">
+            <header className="sticky top-0 z-40 shadow-sm">
             <div className="border-b border-white/10 bg-[#002B7F] px-4 py-4 text-white sm:px-6 lg:px-8">
                 <div className="relative mx-auto flex max-w-7xl items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
@@ -104,7 +105,7 @@ export function Layout({ children, activeApp, onAppChange }: LayoutProps) {
                 </div>
             </div>
             <div className="border-b border-slate-200 bg-white px-4 shadow-sm sm:px-6 lg:px-8">
-                <nav id="primary-navigation" aria-label="Applications" className={`mx-auto max-w-7xl ${navOpen ? 'block' : 'hidden sm:block'}`}>
+                <nav id="primary-navigation" aria-label="Applications" className={`mx-auto max-h-[60dvh] max-w-7xl overflow-y-auto sm:max-h-none sm:overflow-visible ${navOpen ? 'block' : 'hidden sm:block'}`}>
                     <div className="flex flex-wrap gap-1 py-2">
                         {navItems.map((item) => (
                             <button
@@ -123,6 +124,7 @@ export function Layout({ children, activeApp, onAppChange }: LayoutProps) {
                     </div>
                 </nav>
             </div>
+            </header>
             <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
                 <div className="mb-6">
                     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#2a5ba5]">Treasury applications</p>

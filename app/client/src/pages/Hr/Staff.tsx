@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent, KeyboardEvent } from 'react';
 import { Search, X } from 'lucide-react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
 import { useAuth } from '../../contexts/useAuth';
+import { useConfirm } from '../../contexts/useConfirm';
 import { EmptyState, LoadingState, StatTile } from '../../components/Ui';
 import { formatDate } from '../../features/hr/types';
 import { toDateInputValue } from '../../lib/date';
@@ -19,9 +21,27 @@ const FIXED_COLUMNS = ['display_name', 'department_code', 'join_date'];
 
 type ViewMode = 'directory' | 'report';
 type LoginFilter = 'all' | 'linked' | 'unlinked';
+type EmployeeDraft = {
+    departmentCode: string;
+    managerId: string;
+    joinDate: string;
+    leaveEntitled: boolean;
+    dailyRate: string;
+};
+
+function draftFor(employee: Employee): EmployeeDraft {
+    return {
+        departmentCode: employee.department_code || '',
+        managerId: employee.manager_id || '',
+        joinDate: toDateInputValue(employee.join_date),
+        leaveEntitled: employee.leave_entitled !== false,
+        dailyRate: String(employee.daily_rate ?? ''),
+    };
+}
 
 export function Staff() {
     const { addToast } = useToast();
+    const { confirm } = useConfirm();
     const { user } = useAuth();
     // Only an administrator may see or set what someone is paid; the API
     // enforces it too and withholds the field from everyone else.
@@ -35,7 +55,10 @@ export function Staff() {
     const [deptFilter, setDeptFilter] = useState('all');
 
     const [selected, setSelected] = useState<Employee | null>(null);
+    const [draft, setDraft] = useState<EmployeeDraft | null>(null);
+    const [savingDetails, setSavingDetails] = useState(false);
     const [balances, setBalances] = useState<LeaveBalance[]>([]);
+    const [balancesLoading, setBalancesLoading] = useState(false);
     const [adjustType, setAdjustType] = useState('');
     const [adjustAmount, setAdjustAmount] = useState('');
     const [adjustReason, setAdjustReason] = useState('');
@@ -58,6 +81,21 @@ export function Staff() {
 
     const [report, setReport] = useState<StaffBalancesResponse | null>(null);
     const [reportLoading, setReportLoading] = useState(false);
+    const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+    const dialogRef = useRef<HTMLElement | null>(null);
+    const selectedId = selected?.id;
+
+    useEffect(() => {
+        if (!selectedId) return;
+        const previousOverflow = document.body.style.overflow;
+        const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        document.body.style.overflow = 'hidden';
+        closeButtonRef.current?.focus();
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            previousFocus?.focus();
+        };
+    }, [selectedId]);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -125,12 +163,18 @@ export function Staff() {
 
     const openEmployee = async (employee: Employee) => {
         setSelected(employee);
+        setDraft(draftFor(employee));
         setBalances([]);
+        setBalancesLoading(true);
+        setAdjustAmount('');
+        setAdjustReason('');
         try {
             const data = await apiClient.get<{ balances: LeaveBalance[] }>(`/hr/employees/${employee.id}/balances`);
             setBalances(data?.balances || []);
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to load balances.', 'error');
+        } finally {
+            setBalancesLoading(false);
         }
     };
 
@@ -139,52 +183,74 @@ export function Staff() {
         if (employee) openEmployee(employee);
     };
 
-    const setManager = async (employee: Employee, managerId: string) => {
-        try {
-            await apiClient.put(`/hr/employees/${employee.id}`, { manager_id: managerId || null });
-            setSelected((prev) => (prev && prev.id === employee.id ? { ...prev, manager_id: managerId || null } : prev));
-            addToast('Reporting line updated.', 'success');
-            await load();
-        } catch (err) {
-            addToast((err as Error)?.message || 'Unable to update the reporting line.', 'error');
+    const detailsDirty = selected && draft
+        ? Object.entries(draftFor(selected)).some(([key, value]) => draft[key as keyof EmployeeDraft] !== value)
+        : false;
+
+    const closeEditor = async () => {
+        if (savingDetails || saving) return;
+        if ((detailsDirty || adjustAmount || adjustReason) && !(await confirm('Discard your unsaved employee changes?'))) return;
+        setSelected(null);
+        setDraft(null);
+    };
+
+    const handleEditorKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.key === 'Escape') {
+            event.stopPropagation();
+            void closeEditor();
+        }
+        if (event.key !== 'Tab' || !dialogRef.current) return;
+        const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+        ));
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
         }
     };
 
-    const setLeaveEntitled = async (employee: Employee, entitled: boolean) => {
-        try {
-            await apiClient.put(`/hr/employees/${employee.id}`, { leave_entitled: entitled });
-            setSelected((prev) => (prev && prev.id === employee.id ? { ...prev, leave_entitled: entitled } : prev));
-            addToast(entitled ? 'Staff marked as entitled to leave.' : 'Staff marked as not entitled to leave.', 'success');
-            await load();
-        } catch (err) {
-            addToast((err as Error)?.message || 'Unable to update leave entitlement.', 'error');
-        }
-    };
-
-    const setJoinDate = async (employee: Employee, date: string) => {
-        try {
-            await apiClient.put(`/hr/employees/${employee.id}`, { join_date: date || null });
-            setSelected((prev) => (prev && prev.id === employee.id ? { ...prev, join_date: date || null } : prev));
-            addToast('Joining date updated.', 'success');
-            await load();
-        } catch (err) {
-            addToast((err as Error)?.message || 'Unable to update the joining date.', 'error');
-        }
-    };
-
-    const setDailyRate = async (employee: Employee, rate: string) => {
-        const value = rate.trim() === '' ? null : Number(rate);
-        if (value !== null && (!Number.isFinite(value) || value < 0)) {
-            addToast('Enter a daily rate as a number, or leave it blank.', 'error');
+    const saveDetails = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!selected || !draft) return;
+        const updates: Record<string, string | number | boolean | null> = {};
+        const departmentCode = draft.departmentCode.trim();
+        if (departmentCode.length > 10) {
+            addToast('Department code must be 10 characters or fewer.', 'error');
             return;
         }
+        if (departmentCode !== (selected.department_code || '')) updates.department_code = departmentCode || null;
+        if (draft.managerId !== (selected.manager_id || '')) updates.manager_id = draft.managerId || null;
+        if (draft.joinDate !== toDateInputValue(selected.join_date)) updates.join_date = draft.joinDate || null;
+        if (draft.leaveEntitled !== (selected.leave_entitled !== false)) updates.leave_entitled = draft.leaveEntitled;
+        if (canSeePay && draft.dailyRate !== String(selected.daily_rate ?? '')) {
+            const rate = draft.dailyRate.trim() === '' ? null : Number(draft.dailyRate);
+            if (rate !== null && (!Number.isFinite(rate) || rate < 0 || rate > 100000)) {
+                addToast('Enter a daily rate between 0 and 100,000, or leave it blank.', 'error');
+                return;
+            }
+            updates.daily_rate = rate;
+        }
+        if (!Object.keys(updates).length) {
+            setDraft(draftFor(selected));
+            return;
+        }
+        setSavingDetails(true);
         try {
-            await apiClient.put(`/hr/employees/${employee.id}`, { daily_rate: value });
-            setSelected((prev) => (prev && prev.id === employee.id ? { ...prev, daily_rate: value } : prev));
-            addToast('Daily rate updated.', 'success');
-            await load();
+            const updated = await apiClient.put<Employee>(`/hr/employees/${selected.id}`, updates);
+            setSelected(updated);
+            setDraft(draftFor(updated));
+            setEmployees((current) => current.map((employee) => employee.id === updated.id ? updated : employee));
+            addToast('Employee details saved.', 'success');
         } catch (err) {
-            addToast((err as Error)?.message || 'Unable to update the daily rate.', 'error');
+            addToast((err as Error)?.message || 'Unable to save employee details.', 'error');
+        } finally {
+            setSavingDetails(false);
         }
     };
 
@@ -325,6 +391,10 @@ export function Staff() {
 
     const adjust = async () => {
         if (!selected) return;
+        if (detailsDirty) {
+            addToast('Save employee details before adjusting a balance.', 'error');
+            return;
+        }
         const amount = Number(adjustAmount);
         if (!amount) {
             addToast('Enter a non-zero adjustment.', 'error');
@@ -644,109 +714,106 @@ export function Staff() {
                 </div>
             )}
 
-            {selected && (
-                <div className="fixed inset-0 z-50 flex justify-end">
-                    <div className="absolute inset-0 bg-zinc-900/40" onClick={() => setSelected(null)} />
-                    <div className="relative flex h-full w-full max-w-md flex-col overflow-y-auto bg-white shadow-2xl">
-                        <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4">
-                            <div>
-                                <h2 className="text-base font-semibold text-zinc-900">{selected.display_name}</h2>
-                                <p className="text-xs text-zinc-500">
-                                    {selected.department_code ? `Dept ${selected.department_code}` : 'No department'}
-                                    {' · '}
-                                    {selected.reviewer_id ? (selected.email || 'Linked login') : 'No login'}
-                                </p>
+            {selected && draft && (
+                <div className="fixed inset-0 z-50 flex justify-end" onKeyDown={handleEditorKeyDown}>
+                    <button type="button" className="absolute inset-0 bg-slate-950/55" onClick={() => void closeEditor()} aria-label="Close employee editor" />
+                    <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="employee-editor-title" className="relative flex h-dvh w-full max-w-2xl flex-col bg-[#f4f6fa] shadow-2xl sm:my-4 sm:h-[calc(100dvh-2rem)] sm:rounded-2xl">
+                        <header className="flex shrink-0 items-start justify-between gap-4 bg-[#002B7F] px-5 py-5 text-white sm:rounded-t-2xl sm:px-7">
+                            <div className="flex min-w-0 items-center gap-4">
+                                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/15 text-lg font-bold" aria-hidden="true">
+                                    {selected.display_name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}
+                                </div>
+                                <div className="min-w-0">
+                                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-200">Employee record</p>
+                                    <h2 id="employee-editor-title" className="truncate text-xl font-bold tracking-tight">{selected.display_name}</h2>
+                                    <p className="truncate text-sm text-blue-100">{selected.reviewer_id ? (selected.email || 'Linked login') : 'No portal login linked'}</p>
+                                </div>
                             </div>
-                            <button
-                                type="button"
-                                onClick={() => setSelected(null)}
-                                className="rounded-full p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
-                                aria-label="Close"
-                            >
+                            <button ref={closeButtonRef} type="button" onClick={() => void closeEditor()} className="rounded-lg border border-white/25 p-2 text-white hover:bg-white/10" aria-label="Close employee editor">
                                 <X className="h-5 w-5" />
                             </button>
-                        </div>
+                        </header>
 
-                        <div className="flex-1 space-y-5 p-5">
-                            <label className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 p-3">
-                                <span className="text-sm text-zinc-700">
-                                    Entitled to leave
-                                    <span className="mt-0.5 block text-xs text-zinc-500">
-                                        Off means they accrue nothing and cannot apply.
-                                    </span>
-                                </span>
-                                <input
-                                    type="checkbox"
-                                    checked={selected.leave_entitled !== false}
-                                    onChange={(e) => setLeaveEntitled(selected, e.target.checked)}
-                                    className="h-4 w-4"
-                                />
-                            </label>
-
-                            <div className="space-y-2">
-                                <h3 className="text-sm font-semibold text-zinc-900">Reporting line</h3>
-                                <select
-                                    value={selected.manager_id || ''}
-                                    onChange={(e) => setManager(selected, e.target.value)}
-                                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                                >
-                                    <option value="">Reports to — none —</option>
-                                    {employees
-                                        .filter((candidate) => candidate.id !== selected.id)
-                                        .map((candidate) => (
-                                            <option key={candidate.id} value={candidate.id}>
-                                                {candidate.display_name}
-                                            </option>
-                                        ))}
-                                </select>
-                            </div>
-
-                            <div className="space-y-2">
-                                <h3 className="text-sm font-semibold text-zinc-900">Joining date</h3>
-                                <input
-                                    type="date"
-                                    value={toDateInputValue(selected.join_date)}
-                                    onChange={(e) => setJoinDate(selected, e.target.value)}
-                                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                                />
-                            </div>
-
-                            {canSeePay && (
+                        <div className="flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-7">
+                            <form id="employee-details-form" onSubmit={saveDetails} className="app-panel space-y-5 p-5 sm:p-6">
                                 <div>
-                                    <label className="text-sm font-semibold text-zinc-900" htmlFor="daily-rate">
-                                        Daily rate
-                                    </label>
-                                    <p className="mb-1 text-xs text-zinc-500">
-                                        Used to value unused earned leave as a liability. Leave blank if unknown —
-                                        blank is excluded from the total rather than counted as nil.
-                                    </p>
-                                    <input
-                                        id="daily-rate"
-                                        type="number"
-                                        min={0}
-                                        step="0.01"
-                                        defaultValue={selected.daily_rate ?? ''}
-                                        onBlur={(e) => {
-                                            const next = e.target.value.trim() === '' ? null : Number(e.target.value);
-                                            if (next !== (selected.daily_rate ?? null)) setDailyRate(selected, e.target.value);
-                                        }}
-                                        placeholder="Not recorded"
-                                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                                    />
+                                    <h3 className="text-lg font-semibold text-slate-950">Employment details</h3>
+                                    <p className="mt-1 text-sm text-slate-500">Update the reporting line and leave settings, then save them together.</p>
                                 </div>
-                            )}
+                                <div className="grid gap-4 sm:grid-cols-2">
+                                    <label className="text-sm font-medium text-slate-700">
+                                        Department code
+                                        <input
+                                            type="text"
+                                            maxLength={10}
+                                            value={draft.departmentCode}
+                                            onChange={(event) => setDraft({ ...draft, departmentCode: event.target.value })}
+                                            placeholder="Unassigned"
+                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                        />
+                                    </label>
+                                    <label className="text-sm font-medium text-slate-700">
+                                        Joining date
+                                        <input
+                                            type="date"
+                                            value={draft.joinDate}
+                                            onChange={(event) => setDraft({ ...draft, joinDate: event.target.value })}
+                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                        />
+                                    </label>
+                                </div>
+                                <label className="block text-sm font-medium text-slate-700">
+                                    Reports to
+                                    <select
+                                        value={draft.managerId}
+                                        onChange={(event) => setDraft({ ...draft, managerId: event.target.value })}
+                                        className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                    >
+                                        <option value="">No manager assigned</option>
+                                        {employees.filter((candidate) => candidate.id !== selected.id).map((candidate) => (
+                                            <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <label className="flex items-center justify-between gap-4 rounded-xl border border-blue-100 bg-[#f5f8ff] p-4">
+                                    <span>
+                                        <span className="block text-sm font-semibold text-[#002B7F]">Entitled to leave</span>
+                                        <span className="mt-1 block text-xs leading-5 text-slate-600">If turned off, this person cannot accrue or apply for leave.</span>
+                                    </span>
+                                    <input type="checkbox" checked={draft.leaveEntitled} onChange={(event) => setDraft({ ...draft, leaveEntitled: event.target.checked })} className="h-5 w-5 shrink-0 accent-[#002B7F]" />
+                                </label>
+                                {canSeePay && (
+                                    <label className="block text-sm font-medium text-slate-700">
+                                        Daily rate
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            max={100000}
+                                            step="0.01"
+                                            value={draft.dailyRate}
+                                            onChange={(event) => setDraft({ ...draft, dailyRate: event.target.value })}
+                                            placeholder="Not recorded"
+                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                        />
+                                        <span className="mt-1.5 block text-xs font-normal leading-5 text-slate-500">Used for leave liability. Leave blank if the rate is unknown.</span>
+                                    </label>
+                                )}
+                            </form>
 
-                            <div>
-                                <h3 className="text-sm font-semibold text-zinc-900">Balances</h3>
-                                {balances.length ? (
-                                    <ul className="mt-2 divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+                            <section className="app-panel p-5 sm:p-6">
+                                <h3 className="text-lg font-semibold text-slate-950">Leave balances</h3>
+                                <p className="mt-1 text-sm text-slate-500">Available days after pending requests.</p>
+                                {balancesLoading ? (
+                                    <p className="mt-4 text-sm text-slate-500" role="status">Loading balances…</p>
+                                ) : balances.length ? (
+                                    <ul className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-200">
                                         {balances.map((balance) => {
                                             const available = Number(balance.balance) - Number(balance.pending);
                                             return (
-                                                <li key={balance.id} className="flex items-center justify-between px-3 py-2 text-sm">
-                                                    <span className="text-zinc-600">{balance.leave_type_name}</span>
+                                                <li key={balance.id} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
+                                                    <span className="text-slate-600">{balance.leave_type_name}</span>
                                                     <span className={`font-medium ${available < 0 ? 'text-red-600' : 'text-zinc-900'}`}>
-                                                        {available}
+                                                        {available} days
                                                         {Number(balance.pending) > 0 && (
                                                             <span className="ml-1 text-xs font-normal text-amber-600">
                                                                 ({balance.pending} pending)
@@ -758,50 +825,64 @@ export function Staff() {
                                         })}
                                     </ul>
                                 ) : (
-                                    <p className="mt-2 text-sm text-zinc-500">No balances for this year yet.</p>
+                                    <p className="mt-4 text-sm text-slate-500">No balances for this year yet.</p>
                                 )}
-                            </div>
+                            </section>
 
-                            <div className="space-y-2 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-                                <h3 className="text-sm font-semibold text-zinc-900">Adjust balance</h3>
-                                <p className="text-xs text-zinc-500">
+                            <section className="app-panel space-y-3 p-5 sm:p-6">
+                                <h3 className="text-lg font-semibold text-slate-950">Adjust a balance</h3>
+                                <p className="text-sm text-slate-500">
                                     Use a negative amount to deduct. Every adjustment is kept with its reason.
                                 </p>
+                                {detailsDirty && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Save employee details before adjusting a balance.</p>}
+                                <label className="block text-sm font-medium text-slate-700">Leave type
                                 <select
                                     value={adjustType}
                                     onChange={(e) => setAdjustType(e.target.value)}
-                                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
                                 >
                                     {types.map((type) => (
                                         <option key={type.id} value={type.id}>{type.name}</option>
                                     ))}
                                 </select>
+                                </label>
+                                <label className="block text-sm font-medium text-slate-700">Days to add or deduct
                                 <input
                                     type="number"
                                     step="0.5"
                                     value={adjustAmount}
                                     onChange={(e) => setAdjustAmount(e.target.value)}
                                     placeholder="e.g. 2 or -1.5"
-                                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
                                 />
+                                </label>
+                                <label className="block text-sm font-medium text-slate-700">Reason
                                 <textarea
                                     value={adjustReason}
                                     onChange={(e) => setAdjustReason(e.target.value)}
                                     rows={2}
-                                    placeholder="Reason (required)"
-                                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                                    placeholder="Why is this adjustment needed?"
+                                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
                                 />
+                                </label>
                                 <button
                                     type="button"
                                     onClick={adjust}
-                                    disabled={saving}
-                                    className="w-full rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50"
+                                    disabled={saving || detailsDirty}
+                                    className="w-full rounded-lg border border-[#002B7F] bg-white px-4 py-2.5 text-sm font-semibold text-[#002B7F] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                     {saving ? 'Saving…' : 'Apply adjustment'}
                                 </button>
-                            </div>
+                            </section>
                         </div>
-                    </div>
+                        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 py-4 sm:rounded-b-2xl sm:px-7">
+                            <p className="text-xs text-slate-500">{detailsDirty ? 'You have unsaved changes' : 'All employee details saved'}</p>
+                            <div className="flex w-full gap-2 sm:w-auto">
+                                <button type="button" onClick={() => void closeEditor()} disabled={savingDetails || saving} className="flex-1 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:flex-none">Close</button>
+                                <button type="submit" form="employee-details-form" disabled={!detailsDirty || savingDetails} className="flex-1 rounded-lg bg-[#002B7F] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#174495] disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none">{savingDetails ? 'Saving…' : 'Save changes'}</button>
+                            </div>
+                        </footer>
+                    </section>
                 </div>
             )}
         </div>

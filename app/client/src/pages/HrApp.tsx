@@ -64,7 +64,7 @@ export function HrApp() {
         </div>
       </div>
 
-      {tab === 'overview' && <Overview />}
+      {tab === 'overview' && <Overview onNavigate={changeTab} />}
       {tab === 'my-leave' && <MyLeave />}
       {tab === 'approvals' && <Approvals />}
       {tab === 'calendar' && <Calendar />}

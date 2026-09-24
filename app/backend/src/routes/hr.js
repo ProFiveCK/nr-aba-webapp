@@ -57,6 +57,26 @@ async function canActOnEmployee(req, employeeId) {
   return rows.length > 0;
 }
 
+/**
+ * An employee row with the pay rate removed unless the caller may see it.
+ *
+ * `daily_rate` is remuneration — the only such field in this database — and
+ * several endpoints select whole employee rows. Stripping it at the response
+ * boundary means a new endpoint cannot leak it by selecting `e.*`, which is the
+ * mistake that would otherwise be one careless query away.
+ */
+function canSeePay(req) {
+  return req.user.permissions?.[PERMISSIONS.HR_ADMIN] === true;
+}
+
+function visibleEmployee(req, row) {
+  if (!row || canSeePay(req)) return row;
+  const { daily_rate: _withheld, ...rest } = row;
+  return rest;
+}
+
+const visibleEmployees = (req, rows) => rows.map((row) => visibleEmployee(req, row));
+
 // ===== Reference data =====
 
 router.get('/leave-types', requirePermission(PERMISSIONS.HR_ACCESS), async (_req, res) => {
@@ -77,7 +97,7 @@ router.get('/me', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res) => 
       'SELECT id, display_name, email FROM hr_employees WHERE id = $1',
       [employee.manager_id]
     );
-    res.json({ employee, year, balances: [], manager: manager[0] || null });
+    res.json({ employee: visibleEmployee(req, employee), year, balances: [], manager: manager[0] || null });
     return;
   }
   // Return every active leave type, not just the ones the employee has touched,
@@ -103,7 +123,7 @@ router.get('/me', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res) => 
     'SELECT id, display_name, email FROM hr_employees WHERE id = $1',
     [employee.manager_id]
   );
-  res.json({ employee, year, balances, manager: manager[0] || null });
+  res.json({ employee: visibleEmployee(req, employee), year, balances, manager: manager[0] || null });
 });
 
 router.get('/leaves', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res) => {
@@ -207,7 +227,7 @@ router.get('/team', requirePermission(PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.
           WHERE e.manager_id = $1 AND e.status = 'active' ORDER BY e.display_name`,
     seesEveryone ? [] : [me.id]
   );
-  res.json(rows);
+  res.json(visibleEmployees(req, rows));
 });
 
 router.get('/approvals', requirePermission(PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_ADMIN), async (req, res) => {
@@ -279,7 +299,7 @@ router.get('/employees', requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSI
        LEFT JOIN hr_employees m ON m.id = e.manager_id
       ORDER BY e.status, e.display_name`
   );
-  res.json(rows);
+  res.json(visibleEmployees(req, rows));
 });
 
 // One-call matrix for the "balances report": every active staff member
@@ -369,6 +389,7 @@ const EMPLOYEE_UPDATABLE = {
   department_code: { nullable: true },
   join_date: { nullable: true },
   reviewer_id: { nullable: true },
+  daily_rate: { nullable: true },
   status: { nullable: false },
   leave_entitled: { nullable: false },
 };
@@ -395,6 +416,7 @@ router.put(
     body('department_code').optional({ nullable: true }).isString().isLength({ max: 10 }),
     body('join_date').optional({ nullable: true }).isISO8601(),
     body('reviewer_id').optional({ nullable: true }).isUUID(),
+    body('daily_rate').optional({ nullable: true }).isFloat({ min: 0, max: 100000 }),
     // Both columns are NOT NULL, so null is rejected rather than treated as a clear.
     body('status').optional().isIn(['active', 'inactive']),
     body('leave_entitled').optional().isBoolean(),
@@ -411,6 +433,12 @@ router.put(
     }
     if (updates.manager_id === req.params.id) {
       res.status(400).json({ message: 'An employee cannot be their own manager.' });
+      return;
+    }
+    // Managing staff records and setting what they are paid are different
+    // powers; HR_STAFF_MANAGE grants the first, not the second.
+    if (Object.hasOwn(updates, 'daily_rate') && !canSeePay(req)) {
+      res.status(403).json({ message: 'Only an administrator can set a pay rate.' });
       return;
     }
 
@@ -469,7 +497,7 @@ router.put(
       });
     }
 
-    res.json(updated);
+    res.json(visibleEmployee(req, updated));
   }
 );
 
@@ -949,7 +977,10 @@ router.get(
     const from = req.query.from || new Date(today.getFullYear() - 1, today.getMonth(), today.getDate() + 1)
       .toISOString().slice(0, 10);
 
-    const [headcount, applications, turnaround, byType, byDepartment, monthly, upcoming, balanceByType] = await Promise.all([
+    const [
+      headcount, applications, turnaround, byType, byDepartment, monthly, upcoming,
+      pendingAge, negative, excess, coverage, liability, balanceByType,
+    ] = await Promise.all([
       pool.query(
         `SELECT
            (SELECT COUNT(*) FROM hr_employees WHERE status = 'active') AS active_employees,
@@ -1015,6 +1046,98 @@ router.get(
           ORDER BY a.start_date
           LIMIT 10`
       ),
+      // ---- Exceptions: the things a manager should act on ----
+      //
+      // How long approvals have been waiting. "24 pending" is a workload;
+      // "3 waiting over five days" is something somebody has to do today.
+      pool.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE applied_at < NOW() - INTERVAL '5 days') AS over_five_days,
+           COALESCE(MAX(EXTRACT(EPOCH FROM (NOW() - applied_at)) / 86400), 0) AS oldest_days
+           FROM hr_leave_applications WHERE status = 'pending'`
+      ),
+      // Balances that have gone below zero. The staff report already paints
+      // these red, so they happen; the overview never said so.
+      pool.query(
+        `SELECT COUNT(DISTINCT e.id) AS count
+           FROM hr_leave_balances b
+           JOIN hr_employees e ON e.id = b.employee_id
+          WHERE e.status = 'active' AND b.year = $1 AND (b.balance - b.pending) < 0`,
+        [today.getFullYear()]
+      ),
+      // Staff sitting on more than twice their annual entitlement of an earned
+      // type. Both a growing liability and a wellbeing signal: people who
+      // never take leave.
+      pool.query(
+        `SELECT COUNT(DISTINCT e.id) AS count
+           FROM hr_leave_balances b
+           JOIN hr_leave_types t ON t.id = b.leave_type_id
+           JOIN hr_employees e ON e.id = b.employee_id
+          WHERE e.status = 'active' AND e.leave_entitled = TRUE AND b.year = $1
+            AND t.is_active = TRUE AND t.is_accruable = TRUE AND t.default_days > 0
+            AND (b.balance - b.pending) > 2 * t.default_days`,
+        [today.getFullYear()]
+      ),
+      // Coverage risk: a department with more than a third of its people away
+      // on the same working day in the next month. This is the question a
+      // roster cannot answer at a glance but a schedule depends on.
+      pool.query(
+        `WITH department_size AS (
+           SELECT COALESCE(department_code, 'Unassigned') AS department_code, COUNT(*) AS headcount
+             FROM hr_employees WHERE status = 'active'
+            GROUP BY 1
+         ),
+         away AS (
+           SELECT COALESCE(e.department_code, 'Unassigned') AS department_code,
+                  day::date AS day,
+                  COUNT(DISTINCT a.employee_id) AS people_out
+             FROM hr_leave_applications a
+             JOIN hr_employees e ON e.id = a.employee_id
+             CROSS JOIN LATERAL generate_series(
+               GREATEST(a.start_date, CURRENT_DATE),
+               LEAST(a.end_date, CURRENT_DATE + INTERVAL '30 days'),
+               INTERVAL '1 day'
+             ) AS day
+            WHERE a.status = 'approved'
+              AND a.start_date <= CURRENT_DATE + INTERVAL '30 days' AND a.end_date >= CURRENT_DATE
+              AND EXTRACT(ISODOW FROM day) < 6
+              AND NOT EXISTS (SELECT 1 FROM hr_public_holidays h WHERE h.holiday_date = day::date)
+            GROUP BY 1, 2
+         )
+         SELECT away.department_code, to_char(away.day, 'YYYY-MM-DD') AS day,
+                away.people_out, d.headcount,
+                ROUND(away.people_out * 100.0 / d.headcount) AS percent_out
+           FROM away JOIN department_size d USING (department_code)
+          WHERE d.headcount > 0 AND away.people_out * 3 > d.headcount
+          ORDER BY percent_out DESC, away.day
+          LIMIT 5`
+      ),
+      // Leave liability: what the unused balances would cost to pay out.
+      //
+      // Only accruable types count. Those are *earned* — untaken days are owed
+      // and are a provision on the books. An upfront grant like sick leave is
+      // an allowance, not something owed on separation, so including it would
+      // overstate the figure badly.
+      //
+      // Staff with no rate recorded are left out rather than counted at zero,
+      // and are reported alongside so the number is read with its coverage.
+      pool.query(
+        `SELECT
+           COALESCE(SUM(available * e.daily_rate), 0) AS liability,
+           COALESCE(SUM(available) FILTER (WHERE e.daily_rate IS NOT NULL), 0) AS valued_days,
+           COUNT(DISTINCT e.id) FILTER (WHERE e.daily_rate IS NULL) AS staff_without_rate,
+           COUNT(DISTINCT e.id) AS staff_total
+           FROM hr_leave_types t
+           CROSS JOIN hr_employees e
+           LEFT JOIN hr_leave_balances b
+             ON b.employee_id = e.id AND b.leave_type_id = t.id AND b.year = $1
+           CROSS JOIN LATERAL (
+             SELECT GREATEST(COALESCE(b.balance, 0) - COALESCE(b.pending, 0), 0) AS available
+           ) AS v
+          WHERE t.is_active = TRUE AND t.is_accruable = TRUE
+            AND e.status = 'active' AND e.leave_entitled = TRUE`,
+        [today.getFullYear()]
+      ),
       // Stock, not flow: how many unused days are currently sitting on the
       // books per leave type, across active staff, this calendar year. A
       // type never touched for a given employee has no balance row yet
@@ -1067,6 +1190,25 @@ router.get(
       // The figure every "days taken" panel sums to. Stated outright so the
       // dashboard can be checked against itself at a glance.
       days_taken: byTypeRows.reduce((sum, r) => sum + r.days, 0),
+      exceptions: {
+        pending_over_five_days: Number(pendingAge.rows[0].over_five_days),
+        oldest_pending_days: Number(pendingAge.rows[0].oldest_days),
+        negative_balances: Number(negative.rows[0].count),
+        excess_balances: Number(excess.rows[0].count),
+        coverage_risks: coverage.rows.map((r) => ({
+          department_code: r.department_code,
+          day: r.day,
+          people_out: Number(r.people_out),
+          headcount: Number(r.headcount),
+          percent_out: Number(r.percent_out),
+        })),
+      },
+      liability: {
+        value: Number(liability.rows[0].liability),
+        days: Number(liability.rows[0].valued_days),
+        staff_without_rate: Number(liability.rows[0].staff_without_rate),
+        staff_total: Number(liability.rows[0].staff_total),
+      },
       by_type: byTypeRows,
       by_department: byDepartment.rows.map((r) => ({
         department_code: r.department_code, days: Number(r.days), count: Number(r.count),
@@ -1076,6 +1218,48 @@ router.get(
       balance_by_type: balanceByType.rows.map((r) => ({
         leave_type: r.leave_type, available_days: Number(r.available_days),
       })),
+    });
+  }
+);
+
+// Who is behind a bar on the overview.
+//
+// The dashboard used to be a poster: a department could be shown taking twice
+// as much leave as any other with no way to ask who. This answers that, using
+// the same windowed measure as the chart so the rows add up to the bar.
+router.get(
+  '/overview/breakdown',
+  requirePermission(PERMISSIONS.HR_ADMIN),
+  [
+    query('dimension').isIn(['department', 'leave_type']),
+    query('value').isString().isLength({ min: 1, max: 200 }),
+    query('from').isISO8601(),
+    query('to').isISO8601(),
+  ],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const byDepartment = req.query.dimension === 'department';
+    const { rows } = await pool.query(
+      `SELECT e.display_name AS employee_name,
+              COALESCE(e.department_code, 'Unassigned') AS department_code,
+              t.name AS leave_type_name,
+              SUM(w.days) AS days,
+              COUNT(*) FILTER (WHERE w.days > 0) AS applications
+         FROM hr_leave_applications a
+         JOIN hr_employees e ON e.id = a.employee_id
+         JOIN hr_leave_types t ON t.id = a.leave_type_id
+         CROSS JOIN LATERAL ${WORKING_DAYS_IN_RANGE} w
+        WHERE a.status = 'approved' AND a.start_date <= $2 AND a.end_date >= $1
+          AND ${byDepartment ? "COALESCE(e.department_code, 'Unassigned') = $3" : 't.name = $3'}
+        GROUP BY e.display_name, department_code, t.name
+       HAVING SUM(w.days) > 0
+        ORDER BY days DESC, e.display_name`,
+      [req.query.from, req.query.to, req.query.value]
+    );
+    res.json({
+      dimension: req.query.dimension,
+      value: req.query.value,
+      rows: rows.map((r) => ({ ...r, days: Number(r.days), applications: Number(r.applications) })),
     });
   }
 );

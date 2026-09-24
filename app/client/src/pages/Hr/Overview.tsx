@@ -29,6 +29,73 @@ interface OverviewResponse {
     monthly_trend: { month: string; days: number; count: number }[];
     upcoming: { employee_name: string; leave_type_name: string; start_date: string; end_date: string; days: number }[];
     balance_by_type: { leave_type: string; available_days: number }[];
+    liability: {
+        value: number;
+        days: number;
+        staff_without_rate: number;
+        staff_total: number;
+    };
+    exceptions: {
+        pending_over_five_days: number;
+        oldest_pending_days: number;
+        negative_balances: number;
+        excess_balances: number;
+        coverage_risks: {
+            department_code: string;
+            day: string;
+            people_out: number;
+            headcount: number;
+            percent_out: number;
+        }[];
+    };
+}
+
+interface BreakdownRow {
+    employee_name: string;
+    department_code: string;
+    leave_type_name: string;
+    days: number;
+    applications: number;
+}
+
+type Dimension = 'department' | 'leave_type';
+
+const AUD = new Intl.NumberFormat('en-AU', {
+    style: 'currency', currency: 'AUD', maximumFractionDigits: 0,
+});
+
+/**
+ * An exception worth acting on, or a reassuring zero.
+ *
+ * Deliberately not styled as an alert when the count is zero: a wall of red
+ * that is usually wrong teaches people to ignore it.
+ */
+function ExceptionTile({
+    label, count, detail, tone = 'warn', onClick,
+}: {
+    label: string;
+    count: number;
+    detail: string;
+    tone?: 'warn' | 'danger';
+    onClick?: () => void;
+}) {
+    const raised = count > 0;
+    const palette = !raised
+        ? 'border-zinc-200 text-zinc-500'
+        : tone === 'danger'
+            ? 'border-red-300 bg-red-50 text-red-800'
+            : 'border-amber-300 bg-amber-50 text-amber-900';
+    const Tag = onClick ? 'button' : 'div';
+    return (
+        <Tag
+            {...(onClick ? { type: 'button' as const, onClick } : {})}
+            className={`app-panel w-full p-4 text-left ${palette} ${onClick && raised ? 'hover:brightness-95' : ''}`}
+        >
+            <p className="text-xs font-medium">{label}</p>
+            <p className={`mt-1 text-2xl font-semibold tabular-nums ${raised ? '' : 'text-zinc-400'}`}>{count}</p>
+            <p className="mt-1 text-xs opacity-80">{raised ? detail : 'Nothing to action'}</p>
+        </Tag>
+    );
 }
 
 type Preset = '30d' | '6m' | '12m' | 'ytd' | 'custom';
@@ -131,13 +198,28 @@ function ChartCard({
 
 // Magnitude comparison across named categories: thin bars, one hue, value at
 // the tip, sorted by the backend so the largest reads first.
-function HorizontalBars({ data }: { data: { label: string; value: number }[] }) {
+function HorizontalBars({
+    data, onSelect, selected,
+}: {
+    data: { label: string; value: number }[];
+    onSelect?: (label: string) => void;
+    selected?: string | null;
+}) {
     if (!data.length) return <EmptyState title="No data for this period" />;
     const max = Math.max(...data.map((d) => d.value), 1);
     return (
         <div className="space-y-3">
             {data.map((d) => (
-                <div key={d.label} className="flex items-center gap-3">
+                <div
+                    key={d.label}
+                    role={onSelect ? 'button' : undefined}
+                    tabIndex={onSelect ? 0 : undefined}
+                    onClick={onSelect ? () => onSelect(d.label) : undefined}
+                    onKeyDown={onSelect ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(d.label); } } : undefined}
+                    className={`flex items-center gap-3 rounded ${onSelect ? 'cursor-pointer px-1 py-0.5 hover:bg-zinc-50' : ''} ${
+                        selected === d.label ? 'bg-zinc-100' : ''
+                    }`}
+                >
                     <div className="w-32 shrink-0 truncate text-xs text-zinc-600" title={d.label}>
                         {d.label}
                     </div>
@@ -214,13 +296,17 @@ const PRESETS: { id: Preset; label: string }[] = [
     { id: 'ytd', label: 'This year' },
 ];
 
-export function Overview() {
+export type HrTab = 'overview' | 'my-leave' | 'approvals' | 'calendar' | 'staff' | 'report' | 'policies';
+
+export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) {
     const { addToast } = useToast();
     const [preset, setPreset] = useState<Preset>('12m');
     const [customFrom, setCustomFrom] = useState(() => rangeForPreset('12m').from);
     const [customTo, setCustomTo] = useState(() => rangeForPreset('12m').to);
     const [data, setData] = useState<OverviewResponse | null>(null);
     const [loading, setLoading] = useState(true);
+    const [drill, setDrill] = useState<{ dimension: Dimension; value: string; rows: BreakdownRow[] } | null>(null);
+    const [drilling, setDrilling] = useState(false);
 
     const activeRange = preset === 'custom' ? { from: customFrom, to: customTo } : rangeForPreset(preset);
 
@@ -234,9 +320,31 @@ export function Overview() {
                 if (!cancelled) addToast((err as Error)?.message || 'Unable to load the overview.', 'error');
             })
             .finally(() => { if (!cancelled) setLoading(false); });
+        setDrill(null);
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeRange.from, activeRange.to]);
+
+    // Who is behind a bar. Uses the same windowed measure as the chart, so the
+    // rows add up to the bar that was clicked.
+    const openBreakdown = async (dimension: Dimension, value: string) => {
+        if (drill?.dimension === dimension && drill.value === value) {
+            setDrill(null);
+            return;
+        }
+        setDrilling(true);
+        try {
+            const params = new URLSearchParams({
+                dimension, value, from: activeRange.from, to: activeRange.to,
+            });
+            const result = await apiClient.get<{ rows: BreakdownRow[] }>(`/hr/overview/breakdown?${params}`);
+            setDrill({ dimension, value, rows: result?.rows || [] });
+        } catch (err) {
+            addToast((err as Error)?.message || 'Unable to load the breakdown.', 'error');
+        } finally {
+            setDrilling(false);
+        }
+    };
 
     return (
         <div className="space-y-4">
@@ -279,36 +387,103 @@ export function Overview() {
                 <EmptyState title="Unable to load the overview" />
             ) : (
                 <>
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                        <StatTile
-                            label="Days taken"
-                            value={data.days_taken.toFixed(1)}
-                            hint="Working days falling in this period"
-                            emphasis
+                    {/* The one number the Treasury actually carries: earned
+                        leave not yet taken is a provision on the books. */}
+                    <div className="grid gap-4 lg:grid-cols-3">
+                        <div className="lg:col-span-1">
+                            <StatTile
+                                label="Leave liability"
+                                value={AUD.format(data.liability.value)}
+                                hint={
+                                    data.liability.staff_without_rate > 0
+                                        ? `${data.liability.days.toFixed(1)} earned days · no rate for ${data.liability.staff_without_rate} of ${data.liability.staff_total} staff`
+                                        : `${data.liability.days.toFixed(1)} earned days across ${data.liability.staff_total} staff`
+                                }
+                                emphasis
+                            />
+                        </div>
+                        <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2">
+                            <StatTile label="Active staff" value={String(data.headcount.active_employees)} />
+                            <StatTile label="On leave today" value={String(data.headcount.on_leave_today)} />
+                            <StatTile
+                                label="Days taken"
+                                value={data.days_taken.toFixed(1)}
+                                hint="Working days falling in this period"
+                            />
+                            <StatTile
+                                label="Avg. approval turnaround"
+                                value={data.applications.avg_turnaround_hours === null
+                                    ? '—'
+                                    : data.applications.avg_turnaround_hours < 24
+                                        ? `${data.applications.avg_turnaround_hours.toFixed(1)}h`
+                                        : `${(data.applications.avg_turnaround_hours / 24).toFixed(1)}d`}
+                                hint="From applied to decided"
+                            />
+                        </div>
+                    </div>
+
+                    {data.liability.staff_without_rate > 0 && (
+                        <p className="px-1 text-xs text-zinc-500">
+                            Liability counts earned (accruable) leave only — an upfront allowance such as sick
+                            leave is not owed on separation. Staff with no daily rate recorded are left out of
+                            the total rather than counted as nil, so this figure is a floor.
+                        </p>
+                    )}
+
+                    {/* Exceptions: the things somebody has to do something about. */}
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                        <ExceptionTile
+                            label="Approvals waiting over 5 days"
+                            count={data.exceptions.pending_over_five_days}
+                            detail={`Oldest has waited ${data.exceptions.oldest_pending_days.toFixed(0)} days`}
+                            onClick={onNavigate ? () => onNavigate('approvals') : undefined}
                         />
-                        <StatTile label="Active staff" value={String(data.headcount.active_employees)} />
-                        <StatTile label="On leave today" value={String(data.headcount.on_leave_today)} />
-                        <StatTile label="Pending approvals" value={String(data.applications.pending)} />
-                        <StatTile
-                            label="Applications submitted"
-                            value={String(data.applications.total)}
-                            hint={`${data.applications.approved} approved · ${data.applications.rejected} rejected · ${data.applications.cancelled} cancelled`}
+                        <ExceptionTile
+                            label="Negative balances"
+                            count={data.exceptions.negative_balances}
+                            detail="More leave taken than earned"
+                            tone="danger"
+                            onClick={onNavigate ? () => onNavigate('report') : undefined}
                         />
-                        <StatTile
-                            label="Avg. approval turnaround"
-                            value={data.applications.avg_turnaround_hours === null
-                                ? '—'
-                                : data.applications.avg_turnaround_hours < 24
-                                    ? `${data.applications.avg_turnaround_hours.toFixed(1)}h`
-                                    : `${(data.applications.avg_turnaround_hours / 24).toFixed(1)}d`}
-                            hint="From applied to decided"
+                        <ExceptionTile
+                            label="Excess balances"
+                            count={data.exceptions.excess_balances}
+                            detail="Holding over twice their entitlement"
+                            onClick={onNavigate ? () => onNavigate('staff') : undefined}
+                        />
+                        <ExceptionTile
+                            label="Coverage risks"
+                            count={data.exceptions.coverage_risks.length}
+                            detail="A third of a team away on one day"
+                            onClick={onNavigate ? () => onNavigate('calendar') : undefined}
                         />
                     </div>
+
+                    {data.exceptions.coverage_risks.length > 0 && (
+                        <div className="app-panel p-5">
+                            <h3 className="text-sm font-semibold text-zinc-900">Coverage risk — next 30 days</h3>
+                            <p className="mt-0.5 text-xs text-zinc-500">
+                                Working days where more than a third of a department is on approved leave.
+                            </p>
+                            <div className="mt-3 divide-y divide-zinc-100">
+                                {data.exceptions.coverage_risks.map((risk) => (
+                                    <div key={`${risk.department_code}-${risk.day}`} className="flex items-center justify-between gap-3 py-2 text-sm">
+                                        <span className="font-medium text-zinc-900">{risk.department_code}</span>
+                                        <span className="text-zinc-600">{formatDate(risk.day)}</span>
+                                        <span className="tabular-nums text-amber-800">
+                                            {risk.people_out} of {risk.headcount} away ({risk.percent_out}%)
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     <p className="px-1 text-xs text-zinc-500">
                         Days taken counts working days that fall inside the selected period, so the three
                         panels below add up to {data.days_taken.toFixed(1)} days. Applications submitted
-                        counts by the date applied, which is a different measure and will not match.
+                        ({data.applications.total} this period) counts by the date applied, which is a
+                        different measure and will not match.
                     </p>
 
                     <ChartCard
@@ -327,7 +502,11 @@ export function Overview() {
                             tableHeaders={['Leave type', 'Days', 'Applications']}
                             tableRows={data.by_type.map((t) => [t.leave_type, t.days.toFixed(1), t.count])}
                         >
-                            <HorizontalBars data={data.by_type.map((t) => ({ label: t.leave_type, value: t.days }))} />
+                            <HorizontalBars
+                                data={data.by_type.map((t) => ({ label: t.leave_type, value: t.days }))}
+                                onSelect={(label) => openBreakdown('leave_type', label)}
+                                selected={drill?.dimension === 'leave_type' ? drill.value : null}
+                            />
                         </ChartCard>
 
                         <ChartCard
@@ -336,9 +515,67 @@ export function Overview() {
                             tableHeaders={['Department', 'Days', 'Applications']}
                             tableRows={data.by_department.map((d) => [d.department_code, d.days.toFixed(1), d.count])}
                         >
-                            <HorizontalBars data={data.by_department.map((d) => ({ label: d.department_code, value: d.days }))} />
+                            <HorizontalBars
+                                data={data.by_department.map((d) => ({ label: d.department_code, value: d.days }))}
+                                onSelect={(label) => openBreakdown('department', label)}
+                                selected={drill?.dimension === 'department' ? drill.value : null}
+                            />
                         </ChartCard>
                     </div>
+
+                    {(drilling || drill) && (
+                        <div className="app-panel p-5">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                    <h3 className="text-sm font-semibold text-zinc-900">
+                                        {drill ? `Who is behind “${drill.value}”` : 'Loading…'}
+                                    </h3>
+                                    <p className="mt-0.5 text-xs text-zinc-500">
+                                        Same measure as the chart, so these rows add up to the bar.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setDrill(null)}
+                                    className="shrink-0 rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                            {drilling ? (
+                                <LoadingState label="Loading breakdown…" />
+                            ) : !drill?.rows.length ? (
+                                <EmptyState title="Nothing in this period" />
+                            ) : (
+                                <div className="mt-3 overflow-x-auto">
+                                    <table className="min-w-full divide-y divide-zinc-200 text-sm">
+                                        <thead className="text-left text-xs font-semibold uppercase text-zinc-500">
+                                            <tr>
+                                                <th className="px-2 py-1.5">Staff member</th>
+                                                <th className="px-2 py-1.5">
+                                                    {drill.dimension === 'department' ? 'Leave type' : 'Department'}
+                                                </th>
+                                                <th className="px-2 py-1.5 text-right">Days</th>
+                                                <th className="px-2 py-1.5 text-right">Applications</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-zinc-100">
+                                            {drill.rows.map((row, i) => (
+                                                <tr key={`${row.employee_name}-${row.leave_type_name}-${i}`}>
+                                                    <td className="px-2 py-1.5 font-medium text-zinc-900">{row.employee_name}</td>
+                                                    <td className="px-2 py-1.5 text-zinc-600">
+                                                        {drill.dimension === 'department' ? row.leave_type_name : row.department_code}
+                                                    </td>
+                                                    <td className="px-2 py-1.5 text-right tabular-nums text-zinc-700">{row.days.toFixed(1)}</td>
+                                                    <td className="px-2 py-1.5 text-right tabular-nums text-zinc-700">{row.applications}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     <ChartCard
                         title="Unused leave balance by type"

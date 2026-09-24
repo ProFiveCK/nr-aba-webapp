@@ -36,6 +36,8 @@ export interface Employee {
     join_date: string | null;
     status: 'active' | 'inactive';
     leave_entitled: boolean;
+    /** Withheld by the API unless the caller is an HR administrator. */
+    daily_rate?: number | string | null;
 }
 
 export interface LeaveApplication {

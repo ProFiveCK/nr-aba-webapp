@@ -183,7 +183,7 @@ export function Policies() {
 
     return (
         <div className="space-y-4">
-            <div className="space-y-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="space-y-3 app-panel p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                         <h2 className="text-sm font-semibold text-zinc-900">Fortnightly accrual</h2>
@@ -222,7 +222,7 @@ export function Policies() {
                 </div>
             </div>
 
-            <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+            <div className="app-panel">
                 <h2 className="border-b border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-900">Leave types</h2>
                 <div className="overflow-x-auto">
                     <table className="min-w-full text-sm">
@@ -273,7 +273,7 @@ export function Policies() {
                 </div>
             </div>
 
-            <div className="space-y-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="space-y-3 app-panel p-4">
                 <h2 className="text-sm font-semibold text-zinc-900">Add a leave type</h2>
                 <div className="grid gap-3 sm:grid-cols-2">
                     <input

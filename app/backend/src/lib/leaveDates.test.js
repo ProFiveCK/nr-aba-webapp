@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import { calculateWorkingDays, monthsBetween } from '../lib/leaveDates.js';
+import { calculateWorkingDays, monthsBetween, parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 
 describe('monthsBetween', () => {
   test('covers both ends inclusively', () => {
@@ -56,5 +56,38 @@ describe('calculateWorkingDays', () => {
 
   test('counts a single working day as one', () => {
     assert.equal(calculateWorkingDays('2026-02-09', '2026-02-09'), 1);
+  });
+});
+
+describe('parseDateOnly', () => {
+  test('reads the Date object pg returns for a DATE column', () => {
+    // The regression this exists for: pg parses DATE into a Date, and code
+    // that split String(value) on "-" got NaN and silently did nothing, which
+    // is why the fortnightly accrual scheduler never ran.
+    const fromPg = new Date(2026, 7, 27);
+    const parsed = parseDateOnly(fromPg);
+    assert.equal(toIsoDate(parsed), '2026-08-27');
+  });
+
+  test('reads a plain YYYY-MM-DD string', () => {
+    assert.equal(toIsoDate(parseDateOnly('2026-08-27')), '2026-08-27');
+  });
+
+  test('reads the date part of a timestamp without shifting it', () => {
+    assert.equal(toIsoDate(parseDateOnly('2026-08-27T00:00:00.000Z')), '2026-08-27');
+  });
+
+  test('normalises to local midnight so date arithmetic is stable', () => {
+    const parsed = parseDateOnly(new Date(2026, 7, 27, 23, 59, 59));
+    assert.equal(parsed.getHours(), 0);
+    assert.equal(toIsoDate(parsed), '2026-08-27');
+  });
+
+  test('returns null for anything unusable', () => {
+    assert.equal(parseDateOnly(null), null);
+    assert.equal(parseDateOnly(undefined), null);
+    assert.equal(parseDateOnly(''), null);
+    assert.equal(parseDateOnly('not a date'), null);
+    assert.equal(parseDateOnly(new Date('nonsense')), null);
   });
 });

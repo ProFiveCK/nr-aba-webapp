@@ -3,7 +3,20 @@
  * the fortnightly cron script so both stay in lock-step. Functions here expect
  * an open database client (from `pool.connect()`) and do not manage
  * transactions themselves.
+ *
+ * The decisions — what a balance seeds at, what carries over, when a reset is
+ * due — live in `lib/accrualRules.js` so they can be tested without a database.
+ * This file is the SQL around them.
  */
+
+import {
+  isResetDue,
+  openingBalanceFor,
+  resetBoundaryFor,
+  resetDelta,
+  seedBalanceFor,
+} from '../lib/accrualRules.js';
+import { parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 
 /**
  * Lazily create (or fetch) an employee's balance row for a leave type and year.
@@ -22,43 +35,25 @@ export async function ensureBalance(client, employeeId, leaveTypeId, year) {
     [leaveTypeId]
   );
   const type = typeRows[0];
-  const fresh = type && !type.is_accruable ? Number(type.default_days) : 0;
 
-  // A type configured to never reset carries any unused balance from the most
-  // recent prior year into the new one, on top of the fresh grant.
-  let carryover = 0;
-  if (type && type.reset_period === 'none') {
-    const { rows: prior } = await client.query(
-      `SELECT balance, pending FROM hr_leave_balances
-        WHERE employee_id = $1 AND leave_type_id = $2 AND year < $3
-        ORDER BY year DESC LIMIT 1`,
-      [employeeId, leaveTypeId, year]
-    );
-    if (prior.length) carryover = Math.max(0, Number(prior[0].balance) - Number(prior[0].pending));
-  }
+  // The opening balance depends on the year before it, because an entitlement
+  // period is not always a calendar year — see openingBalanceFor.
+  const { rows: prior } = await client.query(
+    `SELECT balance, pending FROM hr_leave_balances
+      WHERE employee_id = $1 AND leave_type_id = $2 AND year < $3
+      ORDER BY year DESC LIMIT 1`,
+    [employeeId, leaveTypeId, year]
+  );
+  const opening = openingBalanceFor(type, prior[0]);
 
   const { rows: created } = await client.query(
     `INSERT INTO hr_leave_balances (employee_id, leave_type_id, year, balance, pending, last_reset_at)
      VALUES ($1, $2, $3, $4, 0, NOW())
      ON CONFLICT (employee_id, leave_type_id, year) DO UPDATE SET year = EXCLUDED.year
      RETURNING *`,
-    [employeeId, leaveTypeId, year, fresh + carryover]
+    [employeeId, leaveTypeId, year, opening]
   );
   return created[0];
-}
-
-function resetBoundary(employee, resetPeriod, now) {
-  if (resetPeriod === 'financial_year') {
-    return new Date(now.getFullYear(), 0, 1);
-  }
-  if (resetPeriod === 'anniversary') {
-    if (!employee.join_date) return null;
-    const joined = new Date(employee.join_date);
-    let anniversary = new Date(now.getFullYear(), joined.getMonth(), joined.getDate());
-    if (anniversary > now) anniversary = new Date(now.getFullYear() - 1, joined.getMonth(), joined.getDate());
-    return anniversary;
-  }
-  return null;
 }
 
 /**
@@ -98,30 +93,38 @@ export async function runLeaveAccrual(client, { periodEnd, actorId }) {
   }
 
   let reset = 0;
-  const now = new Date();
+  // Judged against the period being run, not against the clock. A catch-up run
+  // for an old period has to apply that period's boundary: using today's would
+  // let one late run stamp every balance as current and swallow a forfeiture
+  // that belonged to a period in between.
+  const asAt = parseDateOnly(periodEnd);
   for (const type of resetTypes) {
-    const fresh = type.is_accruable ? 0 : Number(type.default_days);
+    const fresh = seedBalanceFor(type);
     for (const employee of employees) {
-      const boundary = resetBoundary(employee, type.reset_period, now);
+      const boundary = resetBoundaryFor(employee, type.reset_period, asAt);
       if (!boundary) continue;
       const { rows } = await client.query(
-        'SELECT * FROM hr_leave_balances WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3 FOR UPDATE',
+        `SELECT *, to_char(last_reset_at, 'YYYY-MM-DD') AS last_reset_date
+           FROM hr_leave_balances
+          WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3 FOR UPDATE`,
         [employee.id, type.id, year]
       );
       if (!rows.length) continue;
       const balance = rows[0];
-      const lastReset = balance.last_reset_at ? new Date(balance.last_reset_at) : null;
-      if (lastReset && lastReset >= boundary) continue;
-      const delta = fresh - Number(balance.balance);
+      const boundaryDate = toIsoDate(boundary);
+      if (!isResetDue(balance.last_reset_date, boundaryDate)) continue;
+      const delta = resetDelta(type, balance.balance);
+      // Stamped with the boundary rather than the clock, so a later catch-up
+      // run can still tell that a newer boundary has not been applied yet.
       await client.query(
-        'UPDATE hr_leave_balances SET balance = $1, last_reset_at = NOW() WHERE id = $2',
-        [fresh, balance.id]
+        'UPDATE hr_leave_balances SET balance = $1, last_reset_at = $2 WHERE id = $3',
+        [fresh, boundaryDate, balance.id]
       );
       if (delta !== 0) {
         await client.query(
           `INSERT INTO hr_leave_adjustments (employee_id, leave_type_id, amount, reason, adjusted_by)
            VALUES ($1, $2, $3, $4, $5)`,
-          [employee.id, type.id, delta, `Balance reset (${type.reset_period})`, actorId]
+          [employee.id, type.id, delta, `Balance reset (${type.reset_period} boundary ${boundaryDate})`, actorId]
         );
       }
       reset += 1;
@@ -129,13 +132,6 @@ export async function runLeaveAccrual(client, { periodEnd, actorId }) {
   }
 
   return { periodEnd, credited, reset };
-}
-
-function toISODateLocal(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
 }
 
 /**
@@ -150,12 +146,11 @@ export async function runDueLeaveAccruals(pool) {
   const { rows } = await pool.query(
     'SELECT accrual_anchor_date FROM reviewer_settings WHERE id = TRUE'
   );
-  const anchor = rows[0]?.accrual_anchor_date;
-  if (!anchor) return { ran: [] };
+  // pg hands a DATE column back as a Date, not a YYYY-MM-DD string, so this
+  // has to accept both. Getting that wrong made the scheduler a silent no-op.
+  const anchorDate = parseDateOnly(rows[0]?.accrual_anchor_date);
+  if (!anchorDate) return { ran: [] };
 
-  const [y, m, d] = String(anchor).split('-').map(Number);
-  if (!y || !m || !d) return { ran: [] };
-  const anchorDate = new Date(y, m - 1, d);
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
@@ -163,7 +158,7 @@ export async function runDueLeaveAccruals(pool) {
   const client = await pool.connect();
   try {
     for (let cursor = new Date(anchorDate); cursor <= today; cursor.setDate(cursor.getDate() + 14)) {
-      const periodEnd = toISODateLocal(cursor);
+      const periodEnd = toIsoDate(cursor);
       const { rows: existing } = await client.query(
         'SELECT id FROM hr_accrual_runs WHERE period_end = $1',
         [periodEnd]

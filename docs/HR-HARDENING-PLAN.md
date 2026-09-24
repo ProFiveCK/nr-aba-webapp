@@ -83,48 +83,102 @@ Phase 1 is complete.
 
 ## Phase 2 — Next sprint
 
-Structural. Item 6 gates the rest: nothing else here is safe to refactor
-without it. Its runner is already in place (`npm test` in `app/backend`), and
-`lib/` now holds the first pure, dependency-free modules to build on.
+Complete.
 
-- [ ] **5. Extract `services/leaveService.js`.** `routes/hr.js` is 1,149 lines
-      of HTTP, authorization, SQL, transactions and notification fan-out
-      interleaved. Pull `applyForLeave`, `decideLeave`, `adjustBalance` out as
-      functions taking an open client. Routes become thin.
-- [ ] **6. Stand up a backend test runner** (`node --test`, no new dependency)
-      and cover the accrual/reset matrix first: fortnightly accrual,
-      anniversary vs financial-year boundaries, carryover on
-      `reset_period='none'`, working-day counting, pending hold/release.
-      These numbers decide what people are paid out and none of them are
-      tested today.
-- [ ] **7. Frontend structure and design system.** Split the 956-line
-      `Staff.tsx` into `features/hr/`. Extract shared `StatTile`, `Card` and
-      `DataTable` into `components/Ui.tsx` — `Overview.tsx:65` and
-      `Staff.tsx:94` currently define near-identical tiles separately. Replace
-      the 27 hand-typed `rounded-xl border border-zinc-200 bg-white shadow-sm`
-      occurrences in `pages/Hr/` with the existing `.app-panel` class. Settle
-      on one icon system (local `Icon` vs raw `lucide-react`). Lazy-load
-      `HrApp` like Banking/Payroll/Admin already are.
-- [ ] **8. Move accrual off `setInterval`.** `server.js:4193-4202` runs the
-      scheduler in-process, so it stops whenever the API is down over a pay
-      date and double-runs on a second replica (the `period_end` UNIQUE
-      constraint prevents double-credit, but one replica's transaction will
-      crash). `scripts/run-accrual.js` and `npm run accrual` already exist —
-      this is mostly a matter of moving to cron and deleting the interval, or
-      taking a `pg_advisory_lock`.
+- [x] **5. Extract `services/leaveService.js`.** *Done.* `applyForLeave`,
+      `cancelLeave`, `decideLeave`, `adjustBalance` and `setOpeningBalance` hold
+      the workflow; routes do auth and response shape and nothing else — there
+      is no longer a single `pool.connect()` in the router. `withTransaction()`
+      replaced the BEGIN/COMMIT/ROLLBACK/release ladder each write path
+      repeated, and `ServiceError` lets a service refuse something without
+      knowing HTTP exists. Who may approve whose leave stays in the route, as a
+      predicate passed in.
+- [x] **6. Backend test coverage of the leave arithmetic.** *Done.* The
+      decisions moved to `lib/accrualRules.js` and are unit-tested; the engine
+      and the workflow are covered against a real Postgres. 112 tests.
+      `npm test` runs the unit tests with no dependencies; `npm run test:db`
+      starts a throwaway Postgres in Docker and runs everything.
+- [x] **7. Frontend structure and design system.** *Done.* 26 hand-typed card
+      surfaces collapsed onto `.app-panel`; `Card`, `CardHeading` and `StatTile`
+      added to `Ui.tsx`, replacing the duplicate tile in Overview and Staff;
+      `Staff.tsx` 956 → 763 lines with CSV, shapes and the balances report moved
+      to `features/hr/`; `csvCell` deduplicated; `HrApp` lazy-loaded (a 61 kB
+      chunk, off the main bundle).
+- [x] **8. Accrual off the bare `setInterval`.** *Done.* The scheduled run takes
+      a Postgres advisory lock, so scaling the API out no longer has two
+      containers racing to credit the same fortnight. `ACCRUAL_SCHEDULER=off`
+      plus `npm run accrual -- --due` moves it to cron; both take the same lock,
+      so the two can overlap during a migration. Documented in
+      `.env.prod.example`.
 
-Also in this phase, as capacity allows:
+### Decisions taken after Phase 2
 
-- Set-based accrual. `leaveAccrual.js:88-104` issues ~3 queries per employee
-  per leave type inside one transaction (~4,500 sequential queries at 500
-  staff), and should be two `INSERT … SELECT … ON CONFLICT DO UPDATE`
-  statements.
+- **The financial year now begins 1 July.** `reset_period = 'financial_year'`
+  forfeits on the most recent 1 July rather than 1 January, matching Naoero's
+  financial year. `FINANCIAL_YEAR_START_MONTH` in `lib/accrualRules.js` is the
+  single place that says so.
+
+  Moving the boundary off 1 January exposed a second, hidden forfeiture.
+  Balances are keyed by calendar year, and a new year's row was opened without
+  carrying anything for a resetting type — so the balance went to zero every
+  1 January regardless. With the boundary also on 1 January the two coincided
+  and it looked deliberate. With a July boundary staff would have lost their
+  leave **twice a year**. `openingBalanceFor` now continues the entitlement
+  period across 1 January: a resetting type carries its unused days and does
+  *not* get a second grant, and the forfeit-and-regrant happens at the real
+  boundary. A type set to never reset is unchanged.
+
+- **Resets are judged against the period being run, not the clock.** A
+  catch-up run for an old period applies that period's boundary, and
+  `last_reset_at` is stamped with the boundary rather than the time of the run.
+  Without this, one late run stamped every balance as current and swallowed a
+  forfeiture that belonged to a period in between.
+
+  While doing it, the comparison became date-only (`YYYY-MM-DD` strings rather
+  than Date objects). A boundary is a calendar day, and an hour either side of
+  midnight should not decide whether someone loses their leave.
+
+- **Leave spanning 31 December** is still charged wholly to the year it began.
+  Left alone pending a decision; `balanceYearFor` in `leaveService.js` is the
+  single place that decides it. See the note below.
+
+### Before deploying the July boundary
+
+Check whether any leave type is actually configured to reset:
+
+```sql
+SELECT name, reset_period, is_accruable, default_days
+  FROM hr_leave_types WHERE reset_period <> 'none';
+```
+
+If that returns nothing, the change is inert — the seeded types all use
+`none`. If it returns rows, the first accrual run after deploying **will apply
+the 1 July boundary**, because it genuinely passed and was never applied. That
+is the correct outcome, but it will forfeit balances, so it should not be a
+surprise. To start the clock from now instead, stamp the affected balances
+before the first run:
+
+```sql
+UPDATE hr_leave_balances b SET last_reset_at = NOW()
+  FROM hr_leave_types t
+ WHERE t.id = b.leave_type_id AND t.reset_period <> 'none';
+```
+
+### Still open from this phase
+
+- Set-based accrual. `leaveAccrual.js` still issues ~3 queries per employee per
+  leave type inside one transaction (~4,500 sequential queries at 500 staff).
+  Now safe to attempt: the behaviour is pinned by tests.
 - Pagination on `/employees`, `/leaves`, `/team`, `/calendar`, `/report`,
-  `/employees/balances` — all currently return full result sets.
-- Reconcile duplicate employee records. `hr.js:37` auto-creates a row keyed on
+  `/employees/balances` — all still return full result sets.
+- Reconcile duplicate employee records: `hr.js` auto-creates a row keyed on
   `reviewer_id` on any `hr_access` request, while `/employees/import` creates
-  unlinked rows matched only by name, so an imported staff member who later
-  logs in gets a second, empty record with a fresh balance.
+  unlinked rows matched only by name.
+- One icon system. `lucide-react` is an app-wide dependency used by `apps.ts`,
+  `Login`, `Admin` and `Staff`, while `Ui.tsx` has a hand-rolled `Icon`. HR is
+  internally consistent; converging the whole app is a separate change.
+- `PUT /policies/:id` still uses COALESCE, so a leave type's `description`
+  cannot be cleared (carried over from item 3).
 
 ## Phase 3 — The enterprise lift
 

@@ -123,3 +123,56 @@ export function EmptyState({ title, detail }: { title: string; detail?: string }
         </div>
     );
 }
+
+/**
+ * The standard surface everything sits on. `.app-panel` already carried these
+ * styles in index.css but the pages hand-typed them instead, so the border and
+ * shadow had 27 separate definitions to keep in step.
+ *
+ * `padded` is the common case; pass false when the content manages its own
+ * padding, such as a table that needs its header flush to the edge.
+ */
+export function Card({
+    children, padded = true, className = '',
+}: { children: ReactNode; padded?: boolean; className?: string }) {
+    return (
+        <div className={`app-panel ${padded ? 'p-4' : ''} ${className}`.trim()}>
+            {children}
+        </div>
+    );
+}
+
+/** A card's title row, with optional supporting text and controls on the right. */
+export function CardHeading({
+    title, subtitle, children,
+}: { title: string; subtitle?: string; children?: ReactNode }) {
+    return (
+        <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+                <h2 className="text-sm font-semibold text-zinc-900">{title}</h2>
+                {subtitle && <p className="mt-0.5 text-xs text-zinc-500">{subtitle}</p>}
+            </div>
+            {children}
+        </div>
+    );
+}
+
+/**
+ * A single headline figure.
+ *
+ * `emphasis` marks the one number a screen is really about, so a dashboard can
+ * have a subject rather than a row of equally loud tiles.
+ */
+export function StatTile({
+    label, value, hint, emphasis = false,
+}: { label: string; value: string; hint?: string; emphasis?: boolean }) {
+    return (
+        <div className={`app-panel p-4 ${emphasis ? 'border-[#002B7F]/25 bg-[#002B7F]/[0.03]' : ''}`.trim()}>
+            <p className="text-xs font-medium text-zinc-500">{label}</p>
+            <p className={`mt-1 font-semibold tabular-nums ${emphasis ? 'text-4xl text-[#002B7F]' : 'text-2xl text-zinc-900'}`}>
+                {value}
+            </p>
+            {hint && <p className="mt-1 text-xs text-zinc-500">{hint}</p>}
+        </div>
+    );
+}

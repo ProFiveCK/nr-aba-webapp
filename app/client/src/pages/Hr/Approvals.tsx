@@ -63,7 +63,7 @@ export function Approvals() {
 
     if (!items.length) {
         return (
-            <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="app-panel p-4">
                 <EmptyState title="Nothing awaiting approval" detail="Leave from the people who report to you will appear here." />
             </div>
         );
@@ -72,7 +72,7 @@ export function Approvals() {
     return (
         <div className="space-y-3">
             {items.map((application) => (
-                <div key={application.id} className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+                <div key={application.id} className="app-panel p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                             <p className="font-semibold text-zinc-900">{application.employee_name}</p>

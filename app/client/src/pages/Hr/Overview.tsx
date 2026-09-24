@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
-import { EmptyState, LoadingState } from '../../components/Ui';
+import { EmptyState, LoadingState, StatTile } from '../../components/Ui';
 import { formatDate } from '../../features/hr/types';
 import { toIsoDate } from '../../lib/date';
 
@@ -64,16 +64,6 @@ function monthLabel(month: string): string {
     return new Date(year, m - 1, 1).toLocaleDateString('en-GB', { month: 'short' });
 }
 
-function StatTile({ label, value, hint }: { label: string; value: string; hint?: string }) {
-    return (
-        <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-            <p className="text-xs font-medium text-zinc-500">{label}</p>
-            <p className="mt-1 text-3xl font-semibold text-zinc-900">{value}</p>
-            {hint && <p className="mt-1 text-xs text-zinc-500">{hint}</p>}
-        </div>
-    );
-}
-
 // Every chart's accessible twin: a plain table showing the same numbers, so
 // nothing here is only reachable by reading bar lengths.
 function ChartCard({
@@ -87,7 +77,7 @@ function ChartCard({
 }) {
     const [showTable, setShowTable] = useState(false);
     return (
-        <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+        <div className="app-panel p-5">
             <div className="flex items-start justify-between gap-3">
                 <div>
                     <h3 className="text-sm font-semibold text-zinc-900">{title}</h3>
@@ -250,7 +240,7 @@ export function Overview() {
 
     return (
         <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm">
+            <div className="flex flex-wrap items-center gap-2 app-panel p-3">
                 {PRESETS.map((p) => (
                     <button
                         key={p.id}
@@ -294,6 +284,7 @@ export function Overview() {
                             label="Days taken"
                             value={data.days_taken.toFixed(1)}
                             hint="Working days falling in this period"
+                            emphasis
                         />
                         <StatTile label="Active staff" value={String(data.headcount.active_employees)} />
                         <StatTile label="On leave today" value={String(data.headcount.on_leave_today)} />
@@ -358,7 +349,7 @@ export function Overview() {
                         <HorizontalBars data={data.balance_by_type.map((b) => ({ label: b.leave_type, value: b.available_days }))} />
                     </ChartCard>
 
-                    <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+                    <div className="app-panel p-5">
                         <h3 className="text-sm font-semibold text-zinc-900">Upcoming leave — next 30 days</h3>
                         {data.upcoming.length === 0 ? (
                             <p className="mt-3 text-sm text-zinc-500">Nobody has approved leave starting in the next 30 days.</p>

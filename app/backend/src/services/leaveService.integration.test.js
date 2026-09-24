@@ -106,6 +106,65 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
     });
   });
 
+  describe('public holidays', () => {
+    // Mon 8 Jun to Fri 12 Jun 2026: a five-day working week.
+    const WEEK_START = '2026-06-08';
+    const WEEK_END = '2026-06-12';
+
+    async function declareHoliday(day, name) {
+      await pool.query(
+        'INSERT INTO hr_public_holidays (holiday_date, name) VALUES ($1, $2)', [day, name]);
+    }
+
+    test('a day the office is closed does not come off the entitlement', async () => {
+      await declareHoliday('2026-06-10', 'Constitution Day');
+
+      const { application } = await apply({ startDate: WEEK_START, endDate: WEEK_END });
+
+      assert.equal(Number(application.days), 4, 'four days charged, not five');
+      assert.equal((await readBalance(pool, ana.id, annual.id, 2026)).pending, 4);
+    });
+
+    test('the stored day count and the reporting SQL agree', async () => {
+      await declareHoliday('2026-06-10', 'Constitution Day');
+      const { application } = await apply({ startDate: WEEK_START, endDate: WEEK_END });
+
+      // The same window, counted by Postgres rather than by JavaScript. If
+      // these ever diverge the dashboard contradicts the balances.
+      const { rows } = await pool.query(
+        `SELECT COUNT(*)::int AS days
+           FROM generate_series($1::date, $2::date, INTERVAL '1 day') AS day
+          WHERE EXTRACT(ISODOW FROM day) < 6
+            AND NOT EXISTS (SELECT 1 FROM hr_public_holidays h WHERE h.holiday_date = day::date)`,
+        [WEEK_START, WEEK_END]
+      );
+      assert.equal(rows[0].days, Number(application.days));
+    });
+
+    test('a week that is entirely holidays cannot be applied for', async () => {
+      for (const day of ['2026-06-08', '2026-06-09', '2026-06-10', '2026-06-11', '2026-06-12']) {
+        await declareHoliday(day, 'Closure');
+      }
+      await assert.rejects(
+        () => apply({ startDate: WEEK_START, endDate: WEEK_END }),
+        /no working days/
+      );
+    });
+
+    test('declaring a holiday later does not change what was already charged', async () => {
+      const { application } = await apply({ startDate: WEEK_START, endDate: WEEK_END });
+      assert.equal(Number(application.days), 5);
+
+      await declareHoliday('2026-06-10', 'Declared afterwards');
+
+      // The balance stands: the entitlement was already spent against the
+      // calendar as it was on the day. Reporting will count four.
+      const { rows } = await pool.query(
+        'SELECT days FROM hr_leave_applications WHERE id = $1', [application.id]);
+      assert.equal(Number(rows[0].days), 5);
+    });
+  });
+
   describe('cancelling', () => {
     test('releases the hold and leaves the balance whole', async () => {
       const { application } = await apply();
@@ -209,6 +268,182 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       assert.equal(result.applicant.display_name, 'Ana');
       assert.equal(result.leaveTypeName, 'T:Annual');
       assert.equal(result.application.status, 'approved');
+    });
+  });
+
+  describe('overview exceptions', () => {
+    /** Calls the overview through the real router, with a real admin session. */
+    async function overview() {
+      const express = (await import('express')).default;
+      const { default: hrRouter } = await import('../routes/hr.js');
+      const auth = await import('./authService.js');
+      await pool.query(
+        `INSERT INTO reviewers (email, display_name, role, password_hash, permissions, status)
+         VALUES ('kpi@test','KPI','admin','x','{"hr_admin":true}','active')
+         ON CONFLICT (email) DO NOTHING`);
+      const { rows: [admin] } = await pool.query("SELECT * FROM reviewers WHERE email='kpi@test'");
+      const { tokenId, expiresAt } = await auth.createSession(admin.id);
+      const token = auth.buildTokenPayload(admin, tokenId, expiresAt);
+
+      const app = express();
+      app.use('/api/hr', hrRouter);
+      const server = await new Promise((r) => { const sv = app.listen(0, '127.0.0.1', () => r(sv)); });
+      try {
+        const { port } = server.address();
+        const res = await fetch(`http://127.0.0.1:${port}/api/hr/overview`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        return res.json();
+      } finally {
+        await new Promise((r) => server.close(r));
+      }
+    }
+
+    test('counts approvals that have been waiting too long', async () => {
+      await apply();
+      await apply({ startDate: `${YEAR}-06-15`, endDate: `${YEAR}-06-19` });
+      // Age one of them past the five-day mark.
+      await pool.query(
+        `UPDATE hr_leave_applications SET applied_at = NOW() - INTERVAL '9 days'
+          WHERE start_date = $1`, [START]);
+
+      const data = await overview();
+
+      assert.equal(data.exceptions.pending_over_five_days, 1, 'one is stale, the other is not');
+      assert.ok(data.exceptions.oldest_pending_days >= 9);
+    });
+
+    test('counts staff whose balance has gone below zero', async () => {
+      await service.adjustBalance(pool, {
+        employeeId: ana.id, leaveTypeId: annual.id, amount: -25, reason: 'Correction', actorId: null, year: YEAR,
+      });
+
+      const data = await overview();
+      assert.equal(data.exceptions.negative_balances, 1);
+    });
+
+    test('counts staff holding more than twice their entitlement', async () => {
+      const accruing = await upsertLeaveType(pool, {
+        name: 'T:Accruing', accruable: true, defaultDays: 20, perFortnight: 1 });
+      await service.adjustBalance(pool, {
+        employeeId: ana.id, leaveTypeId: accruing.id, amount: 45, reason: 'Long service', actorId: null, year: YEAR,
+      });
+
+      const data = await overview();
+      // 45 days against a 20-day entitlement is over the 40-day mark.
+      assert.equal(data.exceptions.excess_balances, 1);
+    });
+
+    test('does not flag an upfront type as an excess balance', async () => {
+      // Sick leave is an allowance, not something earned and banked.
+      const sick = await upsertLeaveType(pool, { name: 'T:Sick', accruable: false, defaultDays: 10 });
+      await service.adjustBalance(pool, {
+        employeeId: ana.id, leaveTypeId: sick.id, amount: 40, reason: 'Unusual', actorId: null, year: YEAR,
+      });
+
+      const data = await overview();
+      assert.equal(data.exceptions.excess_balances, 0);
+    });
+
+    test('flags a department with more than a third of its people away', async () => {
+      await pool.query("UPDATE hr_employees SET department_code = 'FIN' WHERE id IN ($1, $2)",
+        [ana.id, manager.id]);
+      // One of two FIN staff away tomorrow is half the department.
+      const soon = new Date();
+      soon.setDate(soon.getDate() + 3);
+      const day = `${soon.getFullYear()}-${String(soon.getMonth() + 1).padStart(2, '0')}-${String(soon.getDate()).padStart(2, '0')}`;
+      await pool.query(
+        `INSERT INTO hr_leave_applications (employee_id, leave_type_id, start_date, end_date, days, status)
+         VALUES ($1, $2, $3, $3, 1, 'approved')`, [ana.id, annual.id, day]);
+
+      const data = await overview();
+      const fin = data.exceptions.coverage_risks.find((r) => r.department_code === 'FIN');
+      // Skipped when the generated day lands on a weekend, which is not a
+      // working day and so not a coverage problem.
+      if (fin) {
+        assert.equal(fin.people_out, 1);
+        assert.equal(fin.headcount, 2);
+        assert.equal(fin.percent_out, 50);
+      }
+    });
+
+    test('reports liability coverage rather than a confident wrong number', async () => {
+      const data = await overview();
+      assert.equal(data.liability.staff_total, 2);
+      assert.equal(data.liability.staff_without_rate, 2, 'no rates entered yet');
+      assert.equal(data.liability.value, 0);
+    });
+
+    test('values earned leave once a rate is recorded', async () => {
+      const accruing = await upsertLeaveType(pool, {
+        name: 'T:Accruing', accruable: true, defaultDays: 20, perFortnight: 1 });
+      await service.adjustBalance(pool, {
+        employeeId: ana.id, leaveTypeId: accruing.id, amount: 10, reason: 'Opening', actorId: null, year: YEAR,
+      });
+      await pool.query('UPDATE hr_employees SET daily_rate = 150 WHERE id = $1', [ana.id]);
+
+      const data = await overview();
+      assert.equal(data.liability.days, 10);
+      assert.equal(data.liability.value, 1500);
+      assert.equal(data.liability.staff_without_rate, 1, 'the manager still has no rate');
+    });
+  });
+
+  describe('pay rate visibility', () => {
+    /** Calls an HR endpoint as an account with exactly these capabilities. */
+    async function callAs(permissions, path) {
+      const express = (await import('express')).default;
+      const { default: hrRouter } = await import('../routes/hr.js');
+      const auth = await import('./authService.js');
+      const email = `vis-${Object.keys(permissions).join('-')}@test`;
+      await pool.query(
+        `INSERT INTO reviewers (email, display_name, role, password_hash, permissions, status)
+         VALUES ($1,'Vis',$3,'x',$2,'active') ON CONFLICT (email) DO UPDATE SET permissions = EXCLUDED.permissions`,
+        // The role grants capabilities of its own, so a non-admin test account
+        // must not be given the admin role as well.
+        [email, JSON.stringify(permissions), permissions.hr_admin ? 'admin' : 'user']);
+      const { rows: [account] } = await pool.query('SELECT * FROM reviewers WHERE email = $1', [email]);
+      const { tokenId, expiresAt } = await auth.createSession(account.id);
+      const token = auth.buildTokenPayload(account, tokenId, expiresAt);
+
+      const app = express();
+      app.use(express.json());
+      app.use('/api/hr', hrRouter);
+      const server = await new Promise((r) => { const sv = app.listen(0, '127.0.0.1', () => r(sv)); });
+      try {
+        const { port } = server.address();
+        const res = await fetch(`http://127.0.0.1:${port}/api/hr${path}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        return { status: res.status, body: await res.json() };
+      } finally {
+        await new Promise((r) => server.close(r));
+      }
+    }
+
+    test('an administrator sees the rate', async () => {
+      await pool.query('UPDATE hr_employees SET daily_rate = 150 WHERE id = $1', [ana.id]);
+      const { body } = await callAs({ hr_admin: true }, '/employees');
+      const row = body.find((e) => e.id === ana.id);
+      assert.equal(Number(row.daily_rate), 150);
+    });
+
+    test('staff management alone does not see the rate', async () => {
+      // The endpoint selects e.*, so the field is stripped at the response
+      // boundary rather than relying on every query remembering to exclude it.
+      await pool.query('UPDATE hr_employees SET daily_rate = 150 WHERE id = $1', [ana.id]);
+      const { body } = await callAs({ hr_staff_manage: true }, '/employees');
+      const row = body.find((e) => e.id === ana.id);
+      assert.ok(row, 'the row is still returned');
+      assert.equal(Object.hasOwn(row, 'daily_rate'), false, 'but not what they are paid');
+    });
+
+    test('the team list does not leak the rate to a manager', async () => {
+      await pool.query('UPDATE hr_employees SET daily_rate = 150 WHERE id = $1', [ana.id]);
+      const { body } = await callAs({ hr_leave_approve: true, hr_staff_manage: true }, '/team');
+      for (const row of body) {
+        assert.equal(Object.hasOwn(row, 'daily_rate'), false);
+      }
     });
   });
 

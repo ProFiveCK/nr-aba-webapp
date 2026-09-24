@@ -30,6 +30,19 @@ function balanceYearFor(startDate) {
   return parsed.getFullYear();
 }
 
+/**
+ * The public holidays in force, as a Set of `YYYY-MM-DD`.
+ *
+ * Loaded inside the caller's transaction so the day count and the balance it
+ * is charged against are decided from the same snapshot of the calendar.
+ */
+export async function loadHolidays(client) {
+  const { rows } = await client.query(
+    "SELECT to_char(holiday_date, 'YYYY-MM-DD') AS day FROM hr_public_holidays"
+  );
+  return new Set(rows.map((r) => r.day));
+}
+
 /** Releases the hold an application placed on a balance when it was submitted. */
 async function releasePending(client, application) {
   await client.query(
@@ -50,12 +63,14 @@ export async function applyForLeave(pool, { employee, leaveTypeId, startDate, en
   if (employee.leave_entitled === false) {
     throw forbidden('You are not entitled to leave.');
   }
-  const days = calculateWorkingDays(startDate, endDate);
-  if (days <= 0) {
-    throw badRequest('The selected dates contain no working days.');
-  }
-
   return withTransaction(pool, async (client) => {
+    // Public holidays are not leave: a day the office is closed does not come
+    // off anyone's entitlement.
+    const days = calculateWorkingDays(startDate, endDate, await loadHolidays(client));
+    if (days <= 0) {
+      throw badRequest('The selected dates contain no working days.');
+    }
+
     const { rows: types } = await client.query(
       'SELECT * FROM hr_leave_types WHERE id = $1 AND is_active = TRUE',
       [leaveTypeId]

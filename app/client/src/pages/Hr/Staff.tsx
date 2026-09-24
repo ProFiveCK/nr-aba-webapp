@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
+import { useAuth } from '../../contexts/useAuth';
 import { EmptyState, LoadingState, StatTile } from '../../components/Ui';
 import { formatDate } from '../../features/hr/types';
 import { toDateInputValue } from '../../lib/date';
@@ -21,6 +22,10 @@ type LoginFilter = 'all' | 'linked' | 'unlinked';
 
 export function Staff() {
     const { addToast } = useToast();
+    const { user } = useAuth();
+    // Only an administrator may see or set what someone is paid; the API
+    // enforces it too and withholds the field from everyone else.
+    const canSeePay = user?.permissions?.hr_admin === true;
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [types, setTypes] = useState<LeaveType[]>([]);
     const [loading, setLoading] = useState(true);
@@ -164,6 +169,22 @@ export function Staff() {
             await load();
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to update the joining date.', 'error');
+        }
+    };
+
+    const setDailyRate = async (employee: Employee, rate: string) => {
+        const value = rate.trim() === '' ? null : Number(rate);
+        if (value !== null && (!Number.isFinite(value) || value < 0)) {
+            addToast('Enter a daily rate as a number, or leave it blank.', 'error');
+            return;
+        }
+        try {
+            await apiClient.put(`/hr/employees/${employee.id}`, { daily_rate: value });
+            setSelected((prev) => (prev && prev.id === employee.id ? { ...prev, daily_rate: value } : prev));
+            addToast('Daily rate updated.', 'success');
+            await load();
+        } catch (err) {
+            addToast((err as Error)?.message || 'Unable to update the daily rate.', 'error');
         }
     };
 
@@ -689,6 +710,31 @@ export function Staff() {
                                     className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
                                 />
                             </div>
+
+                            {canSeePay && (
+                                <div>
+                                    <label className="text-sm font-semibold text-zinc-900" htmlFor="daily-rate">
+                                        Daily rate
+                                    </label>
+                                    <p className="mb-1 text-xs text-zinc-500">
+                                        Used to value unused earned leave as a liability. Leave blank if unknown —
+                                        blank is excluded from the total rather than counted as nil.
+                                    </p>
+                                    <input
+                                        id="daily-rate"
+                                        type="number"
+                                        min={0}
+                                        step="0.01"
+                                        defaultValue={selected.daily_rate ?? ''}
+                                        onBlur={(e) => {
+                                            const next = e.target.value.trim() === '' ? null : Number(e.target.value);
+                                            if (next !== (selected.daily_rate ?? null)) setDailyRate(selected, e.target.value);
+                                        }}
+                                        placeholder="Not recorded"
+                                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                                    />
+                                </div>
+                            )}
 
                             <div>
                                 <h3 className="text-sm font-semibold text-zinc-900">Balances</h3>

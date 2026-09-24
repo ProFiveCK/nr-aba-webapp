@@ -747,6 +747,82 @@ router.delete(
   }
 );
 
+// ===== Public holidays =====
+
+// Days the office is closed. Everyone needs to read them — the application
+// form previews a day count with them applied — but only an administrator sets
+// them.
+router.get('/public-holidays', requirePermission(PERMISSIONS.HR_ACCESS), async (_req, res) => {
+  const { rows } = await pool.query(
+    `SELECT id, to_char(holiday_date, 'YYYY-MM-DD') AS holiday_date, name
+       FROM hr_public_holidays ORDER BY holiday_date`
+  );
+  res.json(rows);
+});
+
+router.post(
+  '/public-holidays',
+  requirePermission(PERMISSIONS.HR_ADMIN),
+  [
+    body('holiday_date').isISO8601(),
+    body('name').isString().trim().isLength({ min: 1, max: 120 }),
+  ],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const day = toIsoDate(parseDateOnly(req.body.holiday_date));
+    let created;
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO hr_public_holidays (holiday_date, name, created_by)
+         VALUES ($1, $2, $3)
+         RETURNING id, to_char(holiday_date, 'YYYY-MM-DD') AS holiday_date, name`,
+        [day, req.body.name.trim(), req.user.id]
+      );
+      created = rows[0];
+    } catch (err) {
+      if (err.code === '23505') {
+        res.status(409).json({ message: 'That date is already a public holiday.' });
+        return;
+      }
+      throw err;
+    }
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.public_holiday.created',
+      entityType: 'hr_public_holiday',
+      entityId: created.id,
+      after: { holiday_date: created.holiday_date, name: created.name },
+    });
+    res.status(201).json(created);
+  }
+);
+
+router.delete(
+  '/public-holidays/:id',
+  requirePermission(PERMISSIONS.HR_ADMIN),
+  [param('id').isUUID()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const { rows } = await pool.query(
+      `DELETE FROM hr_public_holidays WHERE id = $1
+       RETURNING to_char(holiday_date, 'YYYY-MM-DD') AS holiday_date, name`,
+      [req.params.id]
+    );
+    if (!rows.length) {
+      res.status(404).json({ message: 'Public holiday not found.' });
+      return;
+    }
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.public_holiday.deleted',
+      entityType: 'hr_public_holiday',
+      entityId: req.params.id,
+      after: { holiday_date: rows[0].holiday_date, name: rows[0].name },
+    });
+    res.json({ message: 'Public holiday removed.' });
+  }
+);
+
 // ===== Accrual & reset =====
 
 /**
@@ -856,6 +932,7 @@ const WORKING_DAYS_IN_RANGE = `(
       GREATEST(a.start_date, $1::date), LEAST(a.end_date, $2::date), INTERVAL '1 day'
     ) AS day
    WHERE EXTRACT(ISODOW FROM day) < 6
+     AND NOT EXISTS (SELECT 1 FROM hr_public_holidays h WHERE h.holiday_date = day::date)
 )`;
 
 // Aggregate KPIs for leadership: headcount, application throughput, usage by
@@ -922,6 +999,7 @@ router.get(
            ) AS day
           WHERE a.status = 'approved' AND a.start_date <= $2 AND a.end_date >= $1
             AND EXTRACT(ISODOW FROM day) < 6
+            AND NOT EXISTS (SELECT 1 FROM hr_public_holidays h WHERE h.holiday_date = day::date)
           GROUP BY month
           ORDER BY month`,
         [from, to]

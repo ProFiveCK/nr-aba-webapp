@@ -36,6 +36,43 @@ describe('monthsBetween', () => {
   });
 });
 
+describe('calculateWorkingDays with public holidays', () => {
+  // Mon 8 Jun to Fri 12 Jun 2026 is a five-day working week.
+  const WEEK = ['2026-06-08', '2026-06-12'];
+
+  test('a holiday mid-week does not come off an entitlement', () => {
+    assert.equal(calculateWorkingDays(...WEEK, ['2026-06-10']), 4);
+  });
+
+  test('several holidays in one week each count once', () => {
+    assert.equal(calculateWorkingDays(...WEEK, ['2026-06-09', '2026-06-11']), 3);
+  });
+
+  test('a holiday falling on a weekend changes nothing', () => {
+    // 13 Jun 2026 is a Saturday; it was already not a working day.
+    assert.equal(calculateWorkingDays('2026-06-08', '2026-06-14', ['2026-06-13']), 5);
+  });
+
+  test('a holiday outside the range is ignored', () => {
+    assert.equal(calculateWorkingDays(...WEEK, ['2026-07-01']), 5);
+  });
+
+  test('a week that is entirely holidays costs nothing', () => {
+    const everyDay = ['2026-06-08', '2026-06-09', '2026-06-10', '2026-06-11', '2026-06-12'];
+    assert.equal(calculateWorkingDays(...WEEK, everyDay), 0);
+  });
+
+  test('accepts a Set as well as an array', () => {
+    assert.equal(calculateWorkingDays(...WEEK, new Set(['2026-06-10'])), 4);
+  });
+
+  test('omitting the calendar excludes weekends only', () => {
+    assert.equal(calculateWorkingDays(...WEEK), 5);
+    assert.equal(calculateWorkingDays(...WEEK, null), 5);
+    assert.equal(calculateWorkingDays(...WEEK, []), 5);
+  });
+});
+
 describe('calculateWorkingDays', () => {
   test('counts Monday to Friday inclusive', () => {
     assert.equal(calculateWorkingDays('2026-02-09', '2026-02-13'), 5);

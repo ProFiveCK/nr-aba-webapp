@@ -873,6 +873,30 @@ export async function initSchema() {
       );
     `);
 
+    // Days the office is closed. Leave taken over one does not consume an
+    // entitlement day, so this table is part of the working-day calculation
+    // rather than a display concern.
+    //
+    // Declaring a holiday after leave has been approved does not change what
+    // was already deducted from a balance — the stored `days` stands — but it
+    // does change what the reporting counts, so holidays should be entered
+    // ahead of the year they apply to.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_public_holidays (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        holiday_date DATE NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_by UUID REFERENCES reviewers(id) ON DELETE SET NULL
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_public_holidays_date ON hr_public_holidays(holiday_date)');
+
+    // What a staff member is paid per working day, used to value unused leave
+    // as a balance-sheet provision. Nullable: a rate that has not been entered
+    // is left out of the total rather than counted as zero.
+    await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS daily_rate NUMERIC(10,2)');
+
     // Seed the standard Naoero Treasury leave types (no-op once present).
     await client.query(`
       INSERT INTO hr_leave_types (name, description, default_days, is_accruable, requires_note)

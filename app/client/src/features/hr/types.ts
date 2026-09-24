@@ -75,17 +75,40 @@ export function formatDate(value: string | null): string {
     return new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-/** Working days (Mon-Fri) inclusive — mirrors the server calculation so the
- *  form can preview the figure before submitting. */
-export function calculateWorkingDays(start: string, end: string): number {
+export interface PublicHoliday {
+    id: string;
+    holiday_date: string;
+    name: string;
+}
+
+/**
+ * Working days between two dates, inclusive: weekdays that are not public
+ * holidays.
+ *
+ * Mirrors `calculateWorkingDays` in the backend's `lib/leaveDates.js` so the
+ * form can preview the figure the server will charge. The two must agree — if
+ * they drift, the preview promises one number and the balance loses another.
+ *
+ * Dates are stepped as local calendar days, never through `toISOString`, which
+ * would shift the day at UTC+12.
+ */
+export function calculateWorkingDays(start: string, end: string, holidays?: Iterable<string>): number {
     if (!start || !end) return 0;
-    const from = new Date(start);
-    const to = new Date(end);
+    const [fromY, fromM, fromD] = start.split('-').map(Number);
+    const [toY, toM, toD] = end.split('-').map(Number);
+    if (!fromY || !toY) return 0;
+    const from = new Date(fromY, fromM - 1, fromD);
+    const to = new Date(toY, toM - 1, toD);
     if (to < from) return 0;
+
+    const closed = holidays instanceof Set ? holidays : new Set(holidays ?? []);
     let days = 0;
     for (const cursor = new Date(from); cursor <= to; cursor.setDate(cursor.getDate() + 1)) {
         const weekday = cursor.getDay();
-        if (weekday !== 0 && weekday !== 6) days += 1;
+        if (weekday === 0 || weekday === 6) continue;
+        const iso = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+        if (closed.has(iso)) continue;
+        days += 1;
     }
     return days;
 }

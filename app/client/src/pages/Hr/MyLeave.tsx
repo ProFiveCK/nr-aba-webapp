@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
@@ -9,7 +9,7 @@ import {
     formatDate,
     STATUS_STYLES,
 } from '../../features/hr/types';
-import type { LeaveApplication, LeaveType, MyLeaveResponse } from '../../features/hr/types';
+import type { LeaveApplication, LeaveType, MyLeaveResponse, PublicHoliday } from '../../features/hr/types';
 
 export function MyLeave() {
     const { addToast } = useToast();
@@ -17,6 +17,7 @@ export function MyLeave() {
     const [summary, setSummary] = useState<MyLeaveResponse | null>(null);
     const [types, setTypes] = useState<LeaveType[]>([]);
     const [applications, setApplications] = useState<LeaveApplication[]>([]);
+    const [holidays, setHolidays] = useState<PublicHoliday[]>([]);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
 
@@ -28,14 +29,16 @@ export function MyLeave() {
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [me, leaveTypes, leaves] = await Promise.all([
+            const [me, leaveTypes, leaves, publicHolidays] = await Promise.all([
                 apiClient.get<MyLeaveResponse>('/hr/me'),
                 apiClient.get<LeaveType[]>('/hr/leave-types'),
                 apiClient.get<LeaveApplication[]>('/hr/leaves'),
+                apiClient.get<PublicHoliday[]>('/hr/public-holidays'),
             ]);
             setSummary(me);
             setTypes(leaveTypes || []);
             setApplications(leaves || []);
+            setHolidays(publicHolidays || []);
             if (!leaveTypeId && leaveTypes?.length) setLeaveTypeId(leaveTypes[0].id);
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to load your leave.', 'error');
@@ -51,7 +54,16 @@ export function MyLeave() {
 
     const notEntitled = summary?.employee.leave_entitled === false;
     const selectedType = types.find((t) => t.id === leaveTypeId);
-    const previewDays = calculateWorkingDays(startDate, endDate);
+    // Previewed with the same calendar the server will charge against, so the
+    // figure shown is the figure deducted.
+    const holidayDates = useMemo(() => new Set(holidays.map((h) => h.holiday_date)), [holidays]);
+    const previewDays = calculateWorkingDays(startDate, endDate, holidayDates);
+    const holidaysInRange = useMemo(
+        () => (startDate && endDate
+            ? holidays.filter((h) => h.holiday_date >= startDate && h.holiday_date <= endDate)
+            : []),
+        [holidays, startDate, endDate]
+    );
     const selectedBalance = summary?.balances.find((b) => b.leave_type_id === leaveTypeId);
     const availableDays = selectedBalance ? Number(selectedBalance.balance) - Number(selectedBalance.pending) : 0;
     const insufficient = previewDays > 0 && previewDays > availableDays;
@@ -217,11 +229,16 @@ export function MyLeave() {
                             {insufficient
                                 ? `Insufficient balance: ${previewDays} working day${previewDays === 1 ? '' : 's'} requested, ${availableDays} available.`
                                 : previewDays > 0
-                                    ? `${previewDays} working day${previewDays === 1 ? '' : 's'} (weekends excluded)`
+                                    ? `${previewDays} working day${previewDays === 1 ? '' : 's'} (weekends${holidaysInRange.length ? ' and public holidays' : ''} excluded)`
                                     : 'No working days in this range'}
                         </p>
                     )}
                 </div>
+                {holidaysInRange.length > 0 && (
+                    <p className="text-xs text-zinc-500">
+                        Not charged as leave: {holidaysInRange.map((h) => `${formatDate(h.holiday_date)} (${h.name})`).join(', ')}
+                    </p>
+                )}
             </form>
             )}
 

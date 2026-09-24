@@ -106,6 +106,65 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
     });
   });
 
+  describe('public holidays', () => {
+    // Mon 8 Jun to Fri 12 Jun 2026: a five-day working week.
+    const WEEK_START = '2026-06-08';
+    const WEEK_END = '2026-06-12';
+
+    async function declareHoliday(day, name) {
+      await pool.query(
+        'INSERT INTO hr_public_holidays (holiday_date, name) VALUES ($1, $2)', [day, name]);
+    }
+
+    test('a day the office is closed does not come off the entitlement', async () => {
+      await declareHoliday('2026-06-10', 'Constitution Day');
+
+      const { application } = await apply({ startDate: WEEK_START, endDate: WEEK_END });
+
+      assert.equal(Number(application.days), 4, 'four days charged, not five');
+      assert.equal((await readBalance(pool, ana.id, annual.id, 2026)).pending, 4);
+    });
+
+    test('the stored day count and the reporting SQL agree', async () => {
+      await declareHoliday('2026-06-10', 'Constitution Day');
+      const { application } = await apply({ startDate: WEEK_START, endDate: WEEK_END });
+
+      // The same window, counted by Postgres rather than by JavaScript. If
+      // these ever diverge the dashboard contradicts the balances.
+      const { rows } = await pool.query(
+        `SELECT COUNT(*)::int AS days
+           FROM generate_series($1::date, $2::date, INTERVAL '1 day') AS day
+          WHERE EXTRACT(ISODOW FROM day) < 6
+            AND NOT EXISTS (SELECT 1 FROM hr_public_holidays h WHERE h.holiday_date = day::date)`,
+        [WEEK_START, WEEK_END]
+      );
+      assert.equal(rows[0].days, Number(application.days));
+    });
+
+    test('a week that is entirely holidays cannot be applied for', async () => {
+      for (const day of ['2026-06-08', '2026-06-09', '2026-06-10', '2026-06-11', '2026-06-12']) {
+        await declareHoliday(day, 'Closure');
+      }
+      await assert.rejects(
+        () => apply({ startDate: WEEK_START, endDate: WEEK_END }),
+        /no working days/
+      );
+    });
+
+    test('declaring a holiday later does not change what was already charged', async () => {
+      const { application } = await apply({ startDate: WEEK_START, endDate: WEEK_END });
+      assert.equal(Number(application.days), 5);
+
+      await declareHoliday('2026-06-10', 'Declared afterwards');
+
+      // The balance stands: the entitlement was already spent against the
+      // calendar as it was on the day. Reporting will count four.
+      const { rows } = await pool.query(
+        'SELECT days FROM hr_leave_applications WHERE id = $1', [application.id]);
+      assert.equal(Number(rows[0].days), 5);
+    });
+  });
+
   describe('cancelling', () => {
     test('releases the hold and leaves the balance whole', async () => {
       const { application } = await apply();

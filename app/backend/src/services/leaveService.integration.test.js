@@ -309,6 +309,7 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
 
       const data = await overview();
 
+      assert.equal(data.exceptions.pending_approvals, 2, 'current queue includes both applications');
       assert.equal(data.exceptions.pending_over_five_days, 1, 'one is stale, the other is not');
       assert.ok(data.exceptions.oldest_pending_days >= 9);
     });

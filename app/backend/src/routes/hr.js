@@ -1052,6 +1052,7 @@ router.get(
       // "3 waiting over five days" is something somebody has to do today.
       pool.query(
         `SELECT
+           COUNT(*) AS pending_approvals,
            COUNT(*) FILTER (WHERE applied_at < NOW() - INTERVAL '5 days') AS over_five_days,
            COALESCE(MAX(EXTRACT(EPOCH FROM (NOW() - applied_at)) / 86400), 0) AS oldest_days
            FROM hr_leave_applications WHERE status = 'pending'`
@@ -1191,6 +1192,7 @@ router.get(
       // dashboard can be checked against itself at a glance.
       days_taken: byTypeRows.reduce((sum, r) => sum + r.days, 0),
       exceptions: {
+        pending_approvals: Number(pendingAge.rows[0].pending_approvals),
         pending_over_five_days: Number(pendingAge.rows[0].over_five_days),
         oldest_pending_days: Number(pendingAge.rows[0].oldest_days),
         negative_balances: Number(negative.rows[0].count),

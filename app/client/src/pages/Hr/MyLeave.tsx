@@ -29,16 +29,24 @@ export function MyLeave() {
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [me, leaveTypes, leaves, publicHolidays] = await Promise.all([
+            const [me, leaveTypes, leaves] = await Promise.all([
                 apiClient.get<MyLeaveResponse>('/hr/me'),
                 apiClient.get<LeaveType[]>('/hr/leave-types'),
                 apiClient.get<LeaveApplication[]>('/hr/leaves'),
-                apiClient.get<PublicHoliday[]>('/hr/public-holidays'),
             ]);
             setSummary(me);
             setTypes(leaveTypes || []);
             setApplications(leaves || []);
-            setHolidays(publicHolidays || []);
+
+            // Fetched separately and allowed to fail: the calendar refines the
+            // day count, it is not what the page is for. Folding it into the
+            // Promise.all above would let one missing endpoint — an older
+            // backend during a deploy — take the whole page down.
+            try {
+                setHolidays((await apiClient.get<PublicHoliday[]>('/hr/public-holidays')) || []);
+            } catch {
+                setHolidays([]);
+            }
             if (!leaveTypeId && leaveTypes?.length) setLeaveTypeId(leaveTypes[0].id);
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to load your leave.', 'error');

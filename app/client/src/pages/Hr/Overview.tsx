@@ -29,13 +29,16 @@ interface OverviewResponse {
     monthly_trend: { month: string; days: number; count: number }[];
     upcoming: { employee_name: string; leave_type_name: string; start_date: string; end_date: string; days: number }[];
     balance_by_type: { leave_type: string; available_days: number }[];
-    liability: {
+    // Optional so the page survives a backend that predates them — during any
+    // deploy the two are briefly out of step, and a dashboard that white-screens
+    // on a missing field is worse than one that shows a little less.
+    liability?: {
         value: number;
         days: number;
         staff_without_rate: number;
         staff_total: number;
     };
-    exceptions: {
+    exceptions?: {
         pending_over_five_days: number;
         oldest_pending_days: number;
         negative_balances: number;
@@ -49,6 +52,15 @@ interface OverviewResponse {
         }[];
     };
 }
+
+const NO_LIABILITY = { value: 0, days: 0, staff_without_rate: 0, staff_total: 0 };
+const NO_EXCEPTIONS = {
+    pending_over_five_days: 0,
+    oldest_pending_days: 0,
+    negative_balances: 0,
+    excess_balances: 0,
+    coverage_risks: [],
+};
 
 interface BreakdownRow {
     employee_name: string;
@@ -346,6 +358,12 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
         }
     };
 
+    const liability = data?.liability ?? NO_LIABILITY;
+    const exceptions = data?.exceptions ?? NO_EXCEPTIONS;
+    // An older backend has no liability figure to show; hide the panel rather
+    // than assert a confident zero.
+    const hasLiability = Boolean(data?.liability);
+
     return (
         <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2 app-panel p-3">
@@ -390,19 +408,21 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                     {/* The one number the Treasury actually carries: earned
                         leave not yet taken is a provision on the books. */}
                     <div className="grid gap-4 lg:grid-cols-3">
+                        {hasLiability && (
                         <div className="lg:col-span-1">
                             <StatTile
                                 label="Leave liability"
-                                value={AUD.format(data.liability.value)}
+                                value={AUD.format(liability.value)}
                                 hint={
-                                    data.liability.staff_without_rate > 0
-                                        ? `${data.liability.days.toFixed(1)} earned days · no rate for ${data.liability.staff_without_rate} of ${data.liability.staff_total} staff`
-                                        : `${data.liability.days.toFixed(1)} earned days across ${data.liability.staff_total} staff`
+                                    liability.staff_without_rate > 0
+                                        ? `${liability.days.toFixed(1)} earned days · no rate for ${liability.staff_without_rate} of ${liability.staff_total} staff`
+                                        : `${liability.days.toFixed(1)} earned days across ${liability.staff_total} staff`
                                 }
                                 emphasis
                             />
                         </div>
-                        <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2">
+                        )}
+                        <div className={`grid gap-4 sm:grid-cols-2 ${hasLiability ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
                             <StatTile label="Active staff" value={String(data.headcount.active_employees)} />
                             <StatTile label="On leave today" value={String(data.headcount.on_leave_today)} />
                             <StatTile
@@ -422,7 +442,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                         </div>
                     </div>
 
-                    {data.liability.staff_without_rate > 0 && (
+                    {hasLiability && liability.staff_without_rate > 0 && (
                         <p className="px-1 text-xs text-zinc-500">
                             Liability counts earned (accruable) leave only — an upfront allowance such as sick
                             leave is not owed on separation. Staff with no daily rate recorded are left out of
@@ -434,39 +454,39 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                         <ExceptionTile
                             label="Approvals waiting over 5 days"
-                            count={data.exceptions.pending_over_five_days}
-                            detail={`Oldest has waited ${data.exceptions.oldest_pending_days.toFixed(0)} days`}
+                            count={exceptions.pending_over_five_days}
+                            detail={`Oldest has waited ${exceptions.oldest_pending_days.toFixed(0)} days`}
                             onClick={onNavigate ? () => onNavigate('approvals') : undefined}
                         />
                         <ExceptionTile
                             label="Negative balances"
-                            count={data.exceptions.negative_balances}
+                            count={exceptions.negative_balances}
                             detail="More leave taken than earned"
                             tone="danger"
                             onClick={onNavigate ? () => onNavigate('report') : undefined}
                         />
                         <ExceptionTile
                             label="Excess balances"
-                            count={data.exceptions.excess_balances}
+                            count={exceptions.excess_balances}
                             detail="Holding over twice their entitlement"
                             onClick={onNavigate ? () => onNavigate('staff') : undefined}
                         />
                         <ExceptionTile
                             label="Coverage risks"
-                            count={data.exceptions.coverage_risks.length}
+                            count={exceptions.coverage_risks.length}
                             detail="A third of a team away on one day"
                             onClick={onNavigate ? () => onNavigate('calendar') : undefined}
                         />
                     </div>
 
-                    {data.exceptions.coverage_risks.length > 0 && (
+                    {exceptions.coverage_risks.length > 0 && (
                         <div className="app-panel p-5">
                             <h3 className="text-sm font-semibold text-zinc-900">Coverage risk — next 30 days</h3>
                             <p className="mt-0.5 text-xs text-zinc-500">
                                 Working days where more than a third of a department is on approved leave.
                             </p>
                             <div className="mt-3 divide-y divide-zinc-100">
-                                {data.exceptions.coverage_risks.map((risk) => (
+                                {exceptions.coverage_risks.map((risk) => (
                                     <div key={`${risk.department_code}-${risk.day}`} className="flex items-center justify-between gap-3 py-2 text-sm">
                                         <span className="font-medium text-zinc-900">{risk.department_code}</span>
                                         <span className="text-zinc-600">{formatDate(risk.day)}</span>

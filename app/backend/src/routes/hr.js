@@ -140,6 +140,72 @@ router.get('/leaves', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res)
   res.json(rows);
 });
 
+// A printable payroll record is available only after approval. The snapshot
+// fixes balances and personnel details at the decision; older approvals have
+// no balance snapshot and must not be presented with today's figures.
+router.get(
+  '/leaves/:id/payroll-form',
+  requirePermission(PERMISSIONS.HR_ACCESS, PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
+  [param('id').isUUID()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const { rows } = await pool.query(
+      `SELECT a.id, a.employee_id, a.reviewed_by, a.start_date, a.end_date, a.days, a.reason,
+              a.applied_at, a.reviewed_at, a.payroll_form_snapshot,
+              e.reviewer_id, e.manager_id, e.display_name AS current_employee_name,
+              e.position_title AS current_position_title, e.department_code AS current_department_code,
+              m.display_name AS current_supervisor_name, t.name AS current_leave_type_name,
+              r.display_name AS current_approver_name
+         FROM hr_leave_applications a
+         JOIN hr_employees e ON e.id = a.employee_id
+         JOIN hr_leave_types t ON t.id = a.leave_type_id
+         LEFT JOIN hr_employees m ON m.id = e.manager_id
+         LEFT JOIN reviewers r ON r.id = a.reviewed_by
+        WHERE a.id = $1 AND a.status = 'approved'`,
+      [req.params.id]
+    );
+    if (!rows.length) {
+      res.status(404).json({ message: 'Approved leave form not found.' });
+      return;
+    }
+    const application = rows[0];
+    const isOwner = application.reviewer_id === req.user.id;
+    const isHr = req.user.permissions?.[PERMISSIONS.HR_ADMIN] || req.user.permissions?.[PERMISSIONS.HR_STAFF_MANAGE];
+    const isOriginalApprover = req.user.permissions?.[PERMISSIONS.HR_LEAVE_APPROVE]
+      && application.reviewed_by === req.user.id;
+    let isSupervisor = false;
+    if (!isOwner && !isHr && !isOriginalApprover && req.user.permissions?.[PERMISSIONS.HR_LEAVE_APPROVE]) {
+      const { rows: manager } = await pool.query('SELECT id FROM hr_employees WHERE reviewer_id = $1', [req.user.id]);
+      isSupervisor = manager[0]?.id === application.manager_id;
+    }
+    if (!isOwner && !isHr && !isOriginalApprover && !isSupervisor) {
+      res.status(404).json({ message: 'Approved leave form not found.' });
+      return;
+    }
+
+    const snapshot = application.payroll_form_snapshot;
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      id: application.id,
+      employee_name: snapshot?.employee_name || application.current_employee_name,
+      position_title: snapshot ? snapshot.position_title : application.current_position_title,
+      department_code: snapshot ? snapshot.department_code : application.current_department_code,
+      supervisor_name: snapshot ? snapshot.supervisor_name : application.current_supervisor_name,
+      approved_by_name: snapshot ? snapshot.approved_by_name : application.current_approver_name,
+      leave_type_name: snapshot?.leave_type_name || application.current_leave_type_name,
+      start_date: application.start_date,
+      end_date: application.end_date,
+      days: Number(application.days),
+      reason: application.reason,
+      applied_at: application.applied_at,
+      approved_at: application.reviewed_at,
+      balance_year: snapshot?.balance_year || null,
+      balances: snapshot?.balances || null,
+      approval_snapshot_available: Boolean(snapshot),
+    });
+  }
+);
+
 router.post(
   '/leaves',
   requirePermission(PERMISSIONS.HR_LEAVE_APPLY),
@@ -230,17 +296,23 @@ router.get('/team', requirePermission(PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.
   res.json(visibleEmployees(req, rows));
 });
 
-router.get('/approvals', requirePermission(PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_ADMIN), async (req, res) => {
+router.get('/approvals', requirePermission(PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_ADMIN),
+  [query('status').optional().isIn(['pending', 'approved'])], async (req, res) => {
+  if (!handleValidation(req, res)) return;
   const me = await currentEmployee(req);
   const seesEveryone = Boolean(req.user.permissions?.[PERMISSIONS.HR_ADMIN]);
+  const status = req.query.status === 'approved' ? 'approved' : 'pending';
   const { rows } = await pool.query(
-    `SELECT a.*, t.name AS leave_type_name, e.display_name AS employee_name, e.department_code
+    `SELECT a.id, a.employee_id, a.leave_type_id, a.start_date, a.end_date,
+            a.days, a.reason, a.status, a.applied_at, a.reviewed_at, a.reviewer_note,
+            t.name AS leave_type_name, e.display_name AS employee_name, e.department_code
        FROM hr_leave_applications a
        JOIN hr_leave_types t ON t.id = a.leave_type_id
        JOIN hr_employees e ON e.id = a.employee_id
-      WHERE a.status = 'pending' ${seesEveryone ? '' : 'AND e.manager_id = $1'}
-      ORDER BY a.applied_at`,
-    seesEveryone ? [] : [me.id]
+      WHERE a.status = $1 ${seesEveryone ? '' : 'AND e.manager_id = $2'}
+      ORDER BY ${status === 'pending' ? 'a.applied_at' : 'a.reviewed_at DESC'}
+      ${status === 'approved' ? 'LIMIT 20' : ''}`,
+    seesEveryone ? [status] : [status, me.id]
   );
   res.json(rows);
 });
@@ -350,6 +422,7 @@ router.post(
   requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
   [
     body('display_name').isString().trim().isLength({ min: 1, max: 200 }),
+    body('position_title').optional({ nullable: true }).isString().trim().isLength({ max: 120 }),
     body('department_code').optional({ nullable: true }).isString().isLength({ max: 10 }),
     body('manager_id').optional({ nullable: true }).isUUID(),
     body('join_date').optional({ nullable: true }).isISO8601(),
@@ -358,10 +431,10 @@ router.post(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const { rows } = await pool.query(
-      `INSERT INTO hr_employees (display_name, department_code, manager_id, join_date, leave_entitled)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.body.display_name, req.body.department_code || null, req.body.manager_id || null,
-       req.body.join_date || null, req.body.leave_entitled ?? true]
+      `INSERT INTO hr_employees (display_name, position_title, department_code, manager_id, join_date, leave_entitled)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [req.body.display_name, req.body.position_title || null, req.body.department_code || null,
+       req.body.manager_id || null, req.body.join_date || null, req.body.leave_entitled ?? true]
     );
     await recordAudit({
       actor: { id: req.user.id, email: req.user.email, ip: req.ip },
@@ -386,6 +459,7 @@ router.post(
  */
 const EMPLOYEE_UPDATABLE = {
   manager_id: { nullable: true },
+  position_title: { nullable: true },
   department_code: { nullable: true },
   join_date: { nullable: true },
   reviewer_id: { nullable: true },
@@ -413,6 +487,7 @@ router.put(
   [
     param('id').isUUID(),
     body('manager_id').optional({ nullable: true }).isUUID(),
+    body('position_title').optional({ nullable: true }).isString().trim().isLength({ max: 120 }),
     body('department_code').optional({ nullable: true }).isString().isLength({ max: 10 }),
     body('join_date').optional({ nullable: true }).isISO8601(),
     body('reviewer_id').optional({ nullable: true }).isUUID(),

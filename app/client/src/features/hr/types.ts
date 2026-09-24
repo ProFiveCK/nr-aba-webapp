@@ -29,6 +29,7 @@ export interface Employee {
     id: string;
     reviewer_id: string | null;
     display_name: string;
+    position_title: string | null;
     email: string | null;
     manager_id: string | null;
     manager_name?: string | null;

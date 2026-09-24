@@ -788,6 +788,7 @@ export async function initSchema() {
     // default; HR can switch it off for individuals who are not covered by the
     // leave rules (e.g. casual or contract staff).
     await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS leave_entitled BOOLEAN NOT NULL DEFAULT TRUE');
+    await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS position_title TEXT');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS hr_leave_types (
@@ -846,6 +847,8 @@ export async function initSchema() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_apps_employee_status ON hr_leave_applications(employee_id, status)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_apps_status_dates ON hr_leave_applications(status, start_date, end_date)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_apps_employee_applied ON hr_leave_applications(employee_id, applied_at DESC)');
+    // Preserve the figures and staff details at approval for payroll reprints.
+    await client.query('ALTER TABLE hr_leave_applications ADD COLUMN IF NOT EXISTS payroll_form_snapshot JSONB');
 
     // Manual balance corrections. reason is required: every adjustment must say why.
     await client.query(`

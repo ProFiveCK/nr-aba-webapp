@@ -22,6 +22,7 @@ const FIXED_COLUMNS = ['display_name', 'department_code', 'join_date'];
 type ViewMode = 'directory' | 'report';
 type LoginFilter = 'all' | 'linked' | 'unlinked';
 type EmployeeDraft = {
+    positionTitle: string;
     departmentCode: string;
     managerId: string;
     joinDate: string;
@@ -31,6 +32,7 @@ type EmployeeDraft = {
 
 function draftFor(employee: Employee): EmployeeDraft {
     return {
+        positionTitle: employee.position_title || '',
         departmentCode: employee.department_code || '',
         managerId: employee.manager_id || '',
         joinDate: toDateInputValue(employee.join_date),
@@ -66,6 +68,7 @@ export function Staff() {
 
     const [showAddForm, setShowAddForm] = useState(false);
     const [newName, setNewName] = useState('');
+    const [newPosition, setNewPosition] = useState('');
     const [newDept, setNewDept] = useState('');
     const [newManagerId, setNewManagerId] = useState('');
     const [newJoinDate, setNewJoinDate] = useState('');
@@ -219,6 +222,12 @@ export function Staff() {
         event.preventDefault();
         if (!selected || !draft) return;
         const updates: Record<string, string | number | boolean | null> = {};
+        const positionTitle = draft.positionTitle.trim();
+        if (positionTitle.length > 120) {
+            addToast('Position must be 120 characters or fewer.', 'error');
+            return;
+        }
+        if (positionTitle !== (selected.position_title || '')) updates.position_title = positionTitle || null;
         const departmentCode = draft.departmentCode.trim();
         if (departmentCode.length > 10) {
             addToast('Department code must be 10 characters or fewer.', 'error');
@@ -370,12 +379,14 @@ export function Staff() {
         try {
             await apiClient.post('/hr/employees', {
                 display_name: newName.trim(),
+                position_title: newPosition.trim() || null,
                 department_code: newDept.trim() || null,
                 manager_id: newManagerId || null,
                 join_date: newJoinDate || null,
             });
             addToast('Staff record created. Link a login for them in User Management when their account is ready.', 'success');
             setNewName('');
+            setNewPosition('');
             setNewDept('');
             setNewManagerId('');
             setNewJoinDate('');
@@ -588,6 +599,14 @@ export function Staff() {
                             maxLength={10}
                             className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
                         />
+                        <input
+                            type="text"
+                            value={newPosition}
+                            onChange={(e) => setNewPosition(e.target.value)}
+                            placeholder="Position / job title"
+                            maxLength={120}
+                            className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        />
                         <select
                             value={newManagerId}
                             onChange={(e) => setNewManagerId(e.target.value)}
@@ -740,6 +759,17 @@ export function Staff() {
                                     <h3 className="text-lg font-semibold text-slate-950">Employment details</h3>
                                     <p className="mt-1 text-sm text-slate-500">Update the reporting line and leave settings, then save them together.</p>
                                 </div>
+                                <label className="block text-sm font-medium text-slate-700">
+                                    Position / job title
+                                    <input
+                                        type="text"
+                                        maxLength={120}
+                                        value={draft.positionTitle}
+                                        onChange={(event) => setDraft({ ...draft, positionTitle: event.target.value })}
+                                        placeholder="Not recorded"
+                                        className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                    />
+                                </label>
                                 <div className="grid gap-4 sm:grid-cols-2">
                                     <label className="text-sm font-medium text-slate-700">
                                         Department code

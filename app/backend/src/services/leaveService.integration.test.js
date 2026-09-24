@@ -211,6 +211,80 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       assert.equal(balance.pending, 0, 'and no longer held');
     });
 
+    test('freezes payroll form balances and personnel details at approval', async () => {
+      await pool.query("UPDATE hr_employees SET position_title = 'Analyst' WHERE id = $1", [ana.id]);
+      const { application } = await apply();
+      const result = await service.decideLeave(pool, {
+        applicationId: application.id, decision: 'approved', note: '', actorId: null, canAct: allowAll,
+      });
+      const snapshot = result.application.payroll_form_snapshot;
+      assert.equal(snapshot.employee_name, 'Ana');
+      assert.equal(snapshot.position_title, 'Analyst');
+      assert.equal(snapshot.supervisor_name, 'Manager');
+      assert.equal(snapshot.balance_year, YEAR);
+      assert.deepEqual(snapshot.balances.find((balance) => balance.leave_type_id === annual.id), {
+        leave_type_id: annual.id, leave_type_name: 'T:Annual', before: 20, after: 15,
+      });
+
+      await service.adjustBalance(pool, {
+        employeeId: ana.id, leaveTypeId: annual.id, amount: -2, reason: 'Later correction', actorId: null, year: YEAR,
+      });
+      assert.equal((await readBalance(pool, ana.id, annual.id, YEAR)).balance, 13);
+      const { rows: [saved] } = await pool.query(
+        'SELECT payroll_form_snapshot FROM hr_leave_applications WHERE id = $1', [application.id]
+      );
+      assert.equal(saved.payroll_form_snapshot.balances.find((balance) => balance.leave_type_id === annual.id).after, 15);
+    });
+
+    test('serves an approved payroll form only to its employee or authorized HR', async () => {
+      const express = (await import('express')).default;
+      const { default: hrRouter } = await import('../routes/hr.js');
+      const auth = await import('./authService.js');
+      const createLogin = async (email, employeeId, permissions = { hr_access: true }) => {
+        const { rows: [reviewer] } = await pool.query(
+          `INSERT INTO reviewers (email, display_name, role, password_hash, permissions, status)
+           VALUES ($1, $1, 'user', 'x', $2, 'active') RETURNING *`, [email, permissions]
+        );
+        await pool.query('UPDATE hr_employees SET reviewer_id = $1 WHERE id = $2', [reviewer.id, employeeId]);
+        const { tokenId, expiresAt } = await auth.createSession(reviewer.id);
+        return { id: reviewer.id, token: auth.buildTokenPayload(reviewer, tokenId, expiresAt) };
+      };
+
+      const owner = await createLogin('leave-owner@test', ana.id);
+      const supervisor = await createLogin('leave-supervisor@test', manager.id, { hr_leave_approve: true });
+      const outsider = await createEmployee(pool, { name: 'Outsider' });
+      const other = await createLogin('leave-outsider@test', outsider.id);
+      const { application } = await apply();
+      await service.decideLeave(pool, {
+        applicationId: application.id, decision: 'approved', note: '', actorId: supervisor.id, canAct: allowAll,
+      });
+      const { application: pending } = await apply();
+
+      const app = express();
+      app.use('/api/hr', hrRouter);
+      const server = await new Promise((resolve) => { const value = app.listen(0, '127.0.0.1', () => resolve(value)); });
+      try {
+        const { port } = server.address();
+        const getForm = (id, token) => fetch(`http://127.0.0.1:${port}/api/hr/leaves/${id}/payroll-form`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const own = await getForm(application.id, owner.token);
+        assert.equal(own.status, 200);
+        assert.equal(own.headers.get('cache-control'), 'no-store');
+        const data = await own.json();
+        assert.equal(data.balances.find((balance) => balance.leave_type_id === annual.id).after, 15);
+        assert.equal((await getForm(application.id, supervisor.token)).status, 200);
+        assert.equal((await getForm(application.id, other.token)).status, 404);
+        assert.equal((await getForm(pending.id, owner.token)).status, 404);
+        await pool.query('UPDATE hr_leave_applications SET payroll_form_snapshot = NULL WHERE id = $1', [application.id]);
+        const legacy = await (await getForm(application.id, owner.token)).json();
+        assert.equal(legacy.approval_snapshot_available, false);
+        assert.equal(legacy.balances, null, 'older approvals must not use current balances');
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    });
+
     test('rejection gives the days back', async () => {
       const { application } = await apply();
       await service.decideLeave(pool, {

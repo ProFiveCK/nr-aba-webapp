@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/useAuth';
 import { readHash, setHash } from '../lib/hash';
 import { Overview } from './Hr/Overview';
@@ -26,12 +26,26 @@ export function HrApp() {
   ];
   const visible = tabs.filter((t) => t.show);
   const validIds = visible.map((t) => t.id);
+  const visibleKey = validIds.join('|');
   const [tab, setTab] = useState<Tab>(() => {
     const fromHash = readHash().tab as Tab;
     return validIds.includes(fromHash) ? fromHash : (validIds[0] ?? 'my-leave');
   });
 
+  useEffect(() => {
+    const syncTab = () => {
+      const requested = readHash().tab as Tab;
+      const allowed = visibleKey.split('|');
+      setTab(allowed.includes(requested) ? requested : ((allowed[0] || 'my-leave') as Tab));
+    };
+    syncTab();
+    window.addEventListener('hashchange', syncTab);
+    return () => window.removeEventListener('hashchange', syncTab);
+  }, [visibleKey]);
+
+  const activeTab = validIds.includes(tab) ? tab : validIds[0];
   const changeTab = (next: Tab) => {
+    if (!validIds.includes(next)) return;
     setTab(next);
     setHash('hr', next);
   };
@@ -47,30 +61,37 @@ export function HrApp() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
-        <div className="flex flex-wrap gap-1">
+    <div className="space-y-6">
+      <div className="overflow-hidden rounded-2xl bg-[#002B7F] px-5 py-6 text-white shadow-sm sm:px-7">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-200">People & leave</p>
+        <h3 className="mt-2 text-2xl font-bold tracking-tight">Manage time away with confidence</h3>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-100">Review balances, submit requests and keep the team calendar in one place.</p>
+      </div>
+      <nav aria-label="HR sections" className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+        <div className="flex gap-1 overflow-x-auto">
           {visible.map((t) => (
             <button
               key={t.id}
+              type="button"
               onClick={() => changeTab(t.id)}
-              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                tab === t.id ? 'bg-[#002B7F] text-white' : 'text-zinc-600 hover:bg-zinc-50'
+              aria-current={activeTab === t.id ? 'page' : undefined}
+              className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors ${
+                activeTab === t.id ? 'bg-[#002B7F] text-white shadow-sm' : 'text-slate-600 hover:bg-blue-50 hover:text-[#002B7F]'
               }`}
             >
               {t.label}
             </button>
           ))}
         </div>
-      </div>
+      </nav>
 
-      {tab === 'overview' && <Overview onNavigate={changeTab} />}
-      {tab === 'my-leave' && <MyLeave />}
-      {tab === 'approvals' && <Approvals />}
-      {tab === 'calendar' && <Calendar />}
-      {tab === 'staff' && <Staff />}
-      {tab === 'report' && <Report />}
-      {tab === 'policies' && <Policies />}
+      {activeTab === 'overview' && <Overview onNavigate={changeTab} />}
+      {activeTab === 'my-leave' && <MyLeave />}
+      {activeTab === 'approvals' && <Approvals />}
+      {activeTab === 'calendar' && <Calendar />}
+      {activeTab === 'staff' && <Staff />}
+      {activeTab === 'report' && <Report />}
+      {activeTab === 'policies' && <Policies />}
     </div>
   );
 }

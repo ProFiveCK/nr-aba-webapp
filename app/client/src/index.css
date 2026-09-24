@@ -2,11 +2,11 @@
 
 @layer components {
   .app-panel {
-    @apply rounded-xl border border-zinc-200 bg-white shadow-sm;
+    @apply rounded-2xl border border-slate-200 bg-white shadow-sm;
   }
 
   .data-table-wrap {
-    @apply overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm;
+    @apply overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm;
   }
 
   .data-table-scroll {
@@ -34,7 +34,7 @@
   }
 
   .data-table tbody tr {
-    @apply transition-colors hover:bg-amber-50/45;
+    @apply transition-colors hover:bg-blue-50/50;
   }
 
   .toolbar-button {
@@ -42,11 +42,11 @@
   }
 
   .toolbar-button-primary {
-    @apply border-amber-500 bg-amber-500 text-white hover:bg-amber-600;
+    @apply border-[#002B7F] bg-[#002B7F] text-white hover:bg-[#174495];
   }
 
   .icon-button {
-    @apply inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-600 transition hover:border-amber-200 hover:bg-amber-50 hover:text-amber-700 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-[#002B7F] disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .state-surface {

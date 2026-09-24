@@ -43,61 +43,55 @@ export function Layout({ children, activeApp, onAppChange }: LayoutProps) {
 
     return (
         <>
-        <div className="min-h-screen bg-zinc-100 px-3 py-4 sm:px-6 lg:px-8">
-            <div className="mx-auto max-w-7xl">
-                <div className="mb-4 flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-4 shadow-sm sm:flex-row sm:items-start sm:justify-between sm:px-5">
-                    <div>
-                        <div className="flex items-center gap-2">
-                            <h1 className="text-2xl sm:text-3xl font-bold text-gray-950">Treasury Portal</h1>
-                            <button
-                                type="button"
-                                onClick={() => setNavOpen((v) => !v)}
-                                className="ml-1 rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 sm:hidden"
-                                aria-label="Toggle navigation"
-                            >
-                                ☰
-                            </button>
+        <div className="min-h-screen bg-[#f4f6fa]">
+            <div className="border-b border-white/10 bg-[#002B7F] px-4 py-4 text-white sm:px-6 lg:px-8">
+                <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                        <img src="/logo.png" alt="Republic of Naoero coat of arms" className="h-12 w-12 rounded-lg bg-white p-1 object-contain" />
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-200">Republic of Naoero</p>
+                            <h1 className="text-lg font-bold tracking-tight sm:text-xl">Treasury Portal</h1>
                         </div>
-                        <p className="text-sm text-gray-600 mt-1">
-                            {activeApp === 'dashboard'
-                                ? 'Choose an app to get started'
-                                : app?.description || app?.label || 'App'}
-                            {' · '}
-                            Welcome back, <span className="font-medium">{displayName}</span>
-                            {user?.role && (
-                                <span className="ml-2 inline-flex items-center rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
-                                    {user.role}
-                                </span>
-                            )}
-                        </p>
+                        <button
+                            type="button"
+                            onClick={() => setNavOpen((v) => !v)}
+                            className="ml-1 rounded-lg border border-white/30 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-white/10 sm:hidden"
+                            aria-label="Toggle navigation"
+                            aria-expanded={navOpen}
+                            aria-controls="primary-navigation"
+                        >
+                            ☰
+                        </button>
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="mr-2 max-w-40 truncate text-sm text-blue-100">{displayName}</span>
                         <button
                             onClick={handleChangePassword}
-                            className="rounded-md bg-amber-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-600"
+                            className="rounded-lg border border-white/25 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-white/10"
                         >
                             Change Password
                         </button>
                         <button
                             onClick={handleSignOut}
-                            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
+                            className="rounded-lg bg-white px-3 py-2 text-sm font-semibold text-[#002B7F] transition-colors hover:bg-blue-50"
                         >
                             Sign Out
                         </button>
                     </div>
                 </div>
-
-                {/* Persistent navigation menu */}
-                <nav className={`mb-4 ${navOpen ? 'block' : 'hidden sm:block'}`}>
-                    <div className="flex flex-wrap gap-1 rounded-lg border border-zinc-200 bg-white p-1 shadow-sm">
+            </div>
+            <div className="border-b border-slate-200 bg-white px-4 shadow-sm sm:px-6 lg:px-8">
+                <nav id="primary-navigation" aria-label="Applications" className={`mx-auto max-w-7xl ${navOpen ? 'block' : 'hidden sm:block'}`}>
+                    <div className="flex flex-wrap gap-1 py-2">
                         {navItems.map((item) => (
                             <button
                                 key={item.id}
                                 onClick={() => { onAppChange(item.id); setNavOpen(false); }}
-                                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                                aria-current={activeApp === item.id ? 'page' : undefined}
+                                className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                                     activeApp === item.id
-                                        ? 'bg-amber-500 text-white'
-                                        : 'text-zinc-600 hover:bg-zinc-100'
+                                        ? 'bg-[#002B7F] text-white shadow-sm'
+                                        : 'text-slate-600 hover:bg-blue-50 hover:text-[#002B7F]'
                                 }`}
                             >
                                 {item.label}
@@ -105,7 +99,13 @@ export function Layout({ children, activeApp, onAppChange }: LayoutProps) {
                         ))}
                     </div>
                 </nav>
-
+            </div>
+            <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+                <div className="mb-6">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#2a5ba5]">Treasury applications</p>
+                    <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{activeApp === 'dashboard' ? 'Dashboard' : app?.label || 'App'}</h2>
+                    <p className="mt-1 text-sm text-slate-500">{activeApp === 'dashboard' ? 'Choose an app to get started' : app?.description || app?.label || 'App'}</p>
+                </div>
                 <main>{children}</main>
             </div>
         </div>

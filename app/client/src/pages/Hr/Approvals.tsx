@@ -63,19 +63,24 @@ export function Approvals() {
 
     if (!items.length) {
         return (
-            <div className="app-panel p-4">
+            <div className="app-panel p-6">
                 <EmptyState title="Nothing awaiting approval" detail="Leave from the people who report to you will appear here." />
             </div>
         );
     }
 
     return (
-        <div className="space-y-3">
+        <div className="space-y-5">
+            <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#2a5ba5]">Manager queue</p>
+                <h2 className="mt-1 text-xl font-bold text-slate-950">Leave approvals</h2>
+                <p className="mt-1 text-sm text-slate-500">{items.length} request{items.length === 1 ? '' : 's'} awaiting your decision.</p>
+            </div>
             {items.map((application) => (
-                <div key={application.id} className="app-panel p-4">
+                <div key={application.id} className="app-panel p-5 sm:p-6">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
-                            <p className="font-semibold text-zinc-900">{application.employee_name}</p>
+                            <p className="text-lg font-semibold text-slate-950">{application.employee_name}</p>
                             <p className="text-sm text-zinc-600">
                                 {application.leave_type_name} · {formatDate(application.start_date)} – {formatDate(application.end_date)} ·{' '}
                                 <span className="font-medium">{application.days} working days</span>
@@ -85,12 +90,12 @@ export function Approvals() {
                             )}
                             <p className="mt-2 text-xs text-zinc-400">Applied {formatDate(application.applied_at)}</p>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex w-full gap-2 sm:w-auto">
                             <button
                                 type="button"
                                 disabled={busyId === application.id}
                                 onClick={() => decide(application, 'approved')}
-                                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                className="flex-1 rounded-lg bg-[#002B7F] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#174495] disabled:opacity-50 sm:flex-none"
                             >
                                 Approve
                             </button>
@@ -98,7 +103,7 @@ export function Approvals() {
                                 type="button"
                                 disabled={busyId === application.id}
                                 onClick={() => decide(application, 'rejected')}
-                                className="rounded-md border border-red-300 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                                className="flex-1 rounded-lg border border-red-300 px-4 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50 sm:flex-none"
                             >
                                 Reject
                             </button>

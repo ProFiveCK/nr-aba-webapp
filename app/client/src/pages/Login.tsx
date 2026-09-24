@@ -95,6 +95,7 @@ export function Login() {
     useEffect(() => {
         if (!isLogin) return;
         let cancelled = false;
+        const googleButton = googleButtonRef.current;
 
         (async () => {
             try {
@@ -122,8 +123,8 @@ export function Login() {
                 });
 
                 setGoogleEnabled(true);
-                if (googleButtonRef.current) {
-                    api.renderButton(googleButtonRef.current, {
+                if (googleButton) {
+                    api.renderButton(googleButton, {
                         type: 'standard',
                         theme: 'outline',
                         size: 'large',
@@ -144,8 +145,8 @@ export function Login() {
             // Google injects its button/iframe straight into this container outside
             // React's tree; clear it explicitly so it can never survive a switch
             // away from the login view (e.g. onto the signup form).
-            if (googleButtonRef.current) {
-                googleButtonRef.current.innerHTML = '';
+            if (googleButton) {
+                googleButton.innerHTML = '';
             }
         };
     }, [isLogin, loginWithGoogle]);

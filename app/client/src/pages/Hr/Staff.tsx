@@ -358,7 +358,7 @@ export function Staff() {
 
     return (
         <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 <StatTile label="Total staff" value={String(employees.length)} />
                 <StatTile
                     label="No login yet"
@@ -390,18 +390,18 @@ export function Staff() {
                         Balances report
                     </button>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex w-full flex-col gap-2 min-[360px]:w-auto min-[360px]:flex-row">
                     <button
                         type="button"
                         onClick={() => { setShowImport((s) => !s); setShowAddForm(false); }}
-                        className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
+                        className="whitespace-nowrap rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
                     >
                         {showImport ? 'Cancel' : 'Import from spreadsheet'}
                     </button>
                     <button
                         type="button"
                         onClick={() => { setShowAddForm((s) => !s); setShowImport(false); }}
-                        className="rounded-full bg-[#002B7F] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#001f5c]"
+                        className="whitespace-nowrap rounded-full bg-[#002B7F] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#001f5c]"
                     >
                         {showAddForm ? 'Cancel' : '+ Add staff'}
                     </button>

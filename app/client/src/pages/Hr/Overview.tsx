@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import { ArrowUpRight, CircleCheck } from 'lucide-react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
-import { EmptyState, LoadingState, StatTile } from '../../components/Ui';
+import { EmptyState, LoadingState } from '../../components/Ui';
 import { formatDate } from '../../features/hr/types';
 import { toIsoDate } from '../../lib/date';
 
@@ -73,12 +74,26 @@ interface BreakdownRow {
 
 type Dimension = 'department' | 'leave_type';
 
-/**
- * An exception worth acting on, or a reassuring zero.
- *
- * Deliberately not styled as an alert when the count is zero: a wall of red
- * that is usually wrong teaches people to ignore it.
- */
+function MetricCard({ label, value, detail, attention = false }: {
+    label: string;
+    value: string;
+    detail: string;
+    attention?: boolean;
+}) {
+    return (
+        <div className={`flex min-h-32 flex-col rounded-2xl border p-3.5 shadow-sm sm:p-4 ${
+            attention ? 'border-amber-300 bg-amber-50/70' : 'border-slate-200 bg-white'
+        }`}>
+            <p className="text-xs font-medium text-slate-600 sm:text-sm">{label}</p>
+            <p className={`mt-3 text-2xl font-semibold leading-none tabular-nums tracking-tight sm:text-3xl ${
+                attention ? 'text-amber-900' : 'text-[#002B7F]'
+            }`}>{value}</p>
+            <p className="mt-auto pt-3 text-xs leading-4 text-slate-500">{detail}</p>
+        </div>
+    );
+}
+
+/** An actionable exception, only shown when its count is above zero. */
 function ExceptionTile({
     label, count, detail, tone = 'warn', onClick,
 }: {
@@ -88,21 +103,22 @@ function ExceptionTile({
     tone?: 'warn' | 'danger';
     onClick?: () => void;
 }) {
-    const raised = count > 0;
-    const palette = !raised
-        ? 'border-zinc-200 text-zinc-500'
-        : tone === 'danger'
-            ? 'border-red-300 bg-red-50 text-red-800'
-            : 'border-amber-300 bg-amber-50 text-amber-900';
+    const palette = tone === 'danger'
+        ? 'border-red-200 bg-red-50/70 text-red-900'
+        : 'border-amber-200 bg-amber-50/70 text-amber-900';
     const Tag = onClick ? 'button' : 'div';
     return (
         <Tag
             {...(onClick ? { type: 'button' as const, onClick } : {})}
-            className={`app-panel w-full p-4 text-left ${palette} ${onClick && raised ? 'hover:brightness-95' : ''}`}
+            className={`flex w-full items-start justify-between gap-3 rounded-xl border p-3.5 text-left transition-colors ${palette} ${onClick ? 'hover:brightness-95' : ''}`}
         >
-            <p className="text-xs font-medium">{label}</p>
-            <p className={`mt-1 text-2xl font-semibold tabular-nums ${raised ? '' : 'text-zinc-400'}`}>{count}</p>
-            <p className="mt-1 text-xs opacity-80">{raised ? detail : 'Nothing to action'}</p>
+            <span>
+                <span className="block text-sm font-semibold">{label}</span>
+                <span className="mt-1 block text-xs opacity-75">{detail}</span>
+            </span>
+            <span className="flex shrink-0 items-center gap-1 text-xl font-semibold tabular-nums">
+                {count}{onClick && <ArrowUpRight size={14} aria-hidden="true" />}
+            </span>
         </Tag>
     );
 }
@@ -252,6 +268,9 @@ function HorizontalBars({
 // tooltip; the table-view toggle on the card is the full accessible twin.
 function TrendLine({ data }: { data: { month: string; days: number }[] }) {
     if (!data.length) return <EmptyState title="No data for this period" />;
+    if (data.every((item) => item.days === 0)) {
+        return <EmptyState title="No approved leave days in this period" detail="The monthly trend will appear when approved leave falls within these dates." />;
+    }
     const width = 640;
     const height = 160;
     const padTop = 12;
@@ -356,6 +375,14 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
     };
 
     const exceptions = data?.exceptions ?? NO_EXCEPTIONS;
+    const checksAvailable = Boolean(data?.exceptions);
+    const exceptionCount = exceptions.pending_over_five_days + exceptions.negative_balances
+        + exceptions.excess_balances + exceptions.coverage_risks.length;
+    const turnaround = data?.applications.avg_turnaround_hours === null || data?.applications.avg_turnaround_hours === undefined
+        ? null
+        : data.applications.avg_turnaround_hours < 24
+            ? `${data.applications.avg_turnaround_hours.toFixed(1)} hours`
+            : `${(data.applications.avg_turnaround_hours / 24).toFixed(1)} days`;
 
     return (
         <div className="space-y-4">
@@ -423,65 +450,66 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                         </div>
                         <span className="text-xs font-medium text-slate-500">{formatDate(data.from)} – {formatDate(data.to)}</span>
                     </div>
-                    <div className="grid gap-4 lg:grid-cols-3">
-                        <div className="lg:col-span-1">
-                            <StatTile
-                                label="Pending approvals"
-                                value={exceptions.pending_approvals === undefined ? '—' : String(exceptions.pending_approvals)}
-                                hint={exceptions.pending_approvals === undefined
-                                    ? 'Queue count unavailable'
+                    <div className="grid grid-cols-2 gap-2.5 sm:gap-3 xl:grid-cols-4">
+                        <MetricCard
+                            label="Pending approvals"
+                            value={exceptions.pending_approvals === undefined ? '—' : String(exceptions.pending_approvals)}
+                            detail={exceptions.pending_approvals === undefined
+                                ? 'Queue count unavailable'
+                                : exceptions.pending_approvals === 0
+                                    ? 'Queue is clear'
                                     : `${exceptions.pending_over_five_days} waiting over 5 days`}
-                                emphasis
-                            />
-                        </div>
-                        <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2">
-                            <StatTile label="Active staff" value={String(data.headcount.active_employees)} />
-                            <StatTile label="On leave today" value={String(data.headcount.on_leave_today)} />
-                            <StatTile
-                                label="Approved leave days"
-                                value={data.days_taken.toFixed(1)}
-                                hint="Working days in selected period"
-                            />
-                            <StatTile
-                                label="Avg. approval turnaround"
-                                value={data.applications.avg_turnaround_hours === null
-                                    ? '—'
-                                    : data.applications.avg_turnaround_hours < 24
-                                        ? `${data.applications.avg_turnaround_hours.toFixed(1)}h`
-                                        : `${(data.applications.avg_turnaround_hours / 24).toFixed(1)}d`}
-                                hint="From applied to decided"
-                            />
-                        </div>
+                            attention={Boolean(exceptions.pending_approvals)}
+                        />
+                        <MetricCard label="Active staff" value={String(data.headcount.active_employees)} detail="Current workforce" />
+                        <MetricCard label="On leave today" value={String(data.headcount.on_leave_today)} detail="Approved absences today" />
+                        <MetricCard label="Approved leave days" value={data.days_taken.toFixed(1)} detail="Working days in selected period" />
                     </div>
 
-                    {/* Exceptions: the things somebody has to do something about. */}
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                        <ExceptionTile
-                            label="Approvals waiting over 5 days"
-                            count={exceptions.pending_over_five_days}
-                            detail={`Oldest has waited ${exceptions.oldest_pending_days.toFixed(0)} days`}
-                            onClick={onNavigate ? () => onNavigate('approvals') : undefined}
-                        />
-                        <ExceptionTile
-                            label="Negative balances"
-                            count={exceptions.negative_balances}
-                            detail="More leave taken than earned"
-                            tone="danger"
-                            onClick={onNavigate ? () => onNavigate('report') : undefined}
-                        />
-                        <ExceptionTile
-                            label="Excess balances"
-                            count={exceptions.excess_balances}
-                            detail="Holding over twice their entitlement"
-                            onClick={onNavigate ? () => onNavigate('staff') : undefined}
-                        />
-                        <ExceptionTile
-                            label="Coverage risks"
-                            count={exceptions.coverage_risks.length}
-                            detail="A third of a team away on one day"
-                            onClick={onNavigate ? () => onNavigate('calendar') : undefined}
-                        />
+                    <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm">
+                        <div className={`flex items-center gap-2 font-medium ${exceptionCount ? 'text-amber-800' : checksAvailable ? 'text-emerald-700' : 'text-slate-600'}`}>
+                            {!exceptionCount && checksAvailable && <CircleCheck size={18} aria-hidden="true" />}
+                            {!checksAvailable
+                                ? 'Leave checks unavailable'
+                                : exceptionCount
+                                    ? `${exceptionCount} leave ${exceptionCount === 1 ? 'issue needs' : 'issues need'} attention`
+                                    : 'No reported leave issues need attention'}
+                        </div>
+                        <p className="text-slate-600">Avg. approval turnaround: <span className="font-semibold text-slate-900">{turnaround ?? 'No decisions in this period'}</span></p>
                     </div>
+
+                    {exceptionCount > 0 && (
+                        <div className="space-y-3">
+                            <h3 className="px-1 text-sm font-semibold text-slate-900">Needs attention</h3>
+                            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                                {exceptions.pending_over_five_days > 0 && <ExceptionTile
+                                    label="Approvals waiting over 5 days"
+                                    count={exceptions.pending_over_five_days}
+                                    detail={`Oldest has waited ${exceptions.oldest_pending_days.toFixed(0)} days`}
+                                    onClick={onNavigate ? () => onNavigate('approvals') : undefined}
+                                />}
+                                {exceptions.negative_balances > 0 && <ExceptionTile
+                                    label="Negative balances"
+                                    count={exceptions.negative_balances}
+                                    detail="More leave taken than earned"
+                                    tone="danger"
+                                    onClick={onNavigate ? () => onNavigate('report') : undefined}
+                                />}
+                                {exceptions.excess_balances > 0 && <ExceptionTile
+                                    label="Excess balances"
+                                    count={exceptions.excess_balances}
+                                    detail="Holding over twice their entitlement"
+                                    onClick={onNavigate ? () => onNavigate('staff') : undefined}
+                                />}
+                                {exceptions.coverage_risks.length > 0 && <ExceptionTile
+                                    label="Coverage risks"
+                                    count={exceptions.coverage_risks.length}
+                                    detail="A third of a team away on one day"
+                                    onClick={onNavigate ? () => onNavigate('calendar') : undefined}
+                                />}
+                            </div>
+                        </div>
+                    )}
 
                     {exceptions.coverage_risks.length > 0 && (
                         <div className="app-panel p-5">
@@ -503,11 +531,9 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                         </div>
                     )}
 
-                    <p className="px-1 text-xs text-zinc-500">
-                        Days taken counts working days that fall inside the selected period, so the three
-                        panels below add up to {data.days_taken.toFixed(1)} days. Applications submitted
-                        ({data.applications.total} this period) counts by the date applied, which is a
-                        different measure and will not match.
+                    <p className="px-1 text-xs leading-5 text-zinc-500">
+                        Period charts count working days within the selected dates. Submitted applications
+                        ({data.applications.total}) are counted by application date.
                     </p>
 
                     <ChartCard

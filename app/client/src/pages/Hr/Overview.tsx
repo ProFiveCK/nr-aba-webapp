@@ -39,6 +39,7 @@ interface OverviewResponse {
         staff_total: number;
     };
     exceptions?: {
+        pending_approvals?: number;
         pending_over_five_days: number;
         oldest_pending_days: number;
         negative_balances: number;
@@ -53,8 +54,8 @@ interface OverviewResponse {
     };
 }
 
-const NO_LIABILITY = { value: 0, days: 0, staff_without_rate: 0, staff_total: 0 };
 const NO_EXCEPTIONS = {
+    pending_approvals: undefined,
     pending_over_five_days: 0,
     oldest_pending_days: 0,
     negative_balances: 0,
@@ -71,10 +72,6 @@ interface BreakdownRow {
 }
 
 type Dimension = 'department' | 'leave_type';
-
-const AUD = new Intl.NumberFormat('en-AU', {
-    style: 'currency', currency: 'AUD', maximumFractionDigits: 0,
-});
 
 /**
  * An exception worth acting on, or a reassuring zero.
@@ -358,43 +355,57 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
         }
     };
 
-    const liability = data?.liability ?? NO_LIABILITY;
     const exceptions = data?.exceptions ?? NO_EXCEPTIONS;
-    // An older backend has no liability figure to show; hide the panel rather
-    // than assert a confident zero.
-    const hasLiability = Boolean(data?.liability);
 
     return (
         <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2 app-panel p-3">
-                {PRESETS.map((p) => (
+            <div className="app-panel p-2 sm:p-3">
+                <label className="flex items-center gap-3 px-2 text-sm font-medium text-slate-600 sm:hidden">
+                    Period
+                    <select
+                        value={preset}
+                        onChange={(event) => setPreset(event.target.value as Preset)}
+                        className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    >
+                        {PRESETS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                        <option value="custom">Custom</option>
+                    </select>
+                </label>
+                <div className="hidden gap-1 sm:flex" aria-label="Overview date range">
+                    {PRESETS.map((p) => (
+                        <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => setPreset(p.id)}
+                            aria-pressed={preset === p.id}
+                            className={`shrink-0 rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+                                preset === p.id ? 'bg-[#002B7F] text-white' : 'text-zinc-600 hover:bg-zinc-50'
+                            }`}
+                        >
+                            {p.label}
+                        </button>
+                    ))}
                     <button
-                        key={p.id}
                         type="button"
-                        onClick={() => setPreset(p.id)}
-                        className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-                            preset === p.id ? 'bg-[#002B7F] text-white' : 'text-zinc-600 hover:bg-zinc-50'
+                        onClick={() => setPreset('custom')}
+                        aria-pressed={preset === 'custom'}
+                        className={`shrink-0 rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+                            preset === 'custom' ? 'bg-[#002B7F] text-white' : 'text-zinc-600 hover:bg-zinc-50'
                         }`}
                     >
-                        {p.label}
+                        Custom
                     </button>
-                ))}
-                <button
-                    type="button"
-                    onClick={() => setPreset('custom')}
-                    className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-                        preset === 'custom' ? 'bg-[#002B7F] text-white' : 'text-zinc-600 hover:bg-zinc-50'
-                    }`}
-                >
-                    Custom
-                </button>
+                </div>
                 {preset === 'custom' && (
-                    <div className="flex items-center gap-2 border-l border-zinc-200 pl-3">
-                        <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
-                            className="rounded-md border border-zinc-300 px-2 py-1 text-sm" />
-                        <span className="text-sm text-zinc-500">to</span>
-                        <input type="date" value={customTo} min={customFrom} onChange={(e) => setCustomTo(e.target.value)}
-                            className="rounded-md border border-zinc-300 px-2 py-1 text-sm" />
+                    <div className="mt-3 grid gap-3 border-t border-slate-200 pt-3 sm:grid-cols-2">
+                        <label className="text-xs font-medium text-slate-600">From
+                            <input type="date" value={customFrom} max={customTo} onChange={(e) => setCustomFrom(e.target.value)}
+                                className="mt-1 block w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-sm" />
+                        </label>
+                        <label className="text-xs font-medium text-slate-600">To
+                            <input type="date" value={customTo} min={customFrom} onChange={(e) => setCustomTo(e.target.value)}
+                                className="mt-1 block w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-sm" />
+                        </label>
                     </div>
                 )}
             </div>
@@ -405,30 +416,31 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                 <EmptyState title="Unable to load the overview" />
             ) : (
                 <>
-                    {/* The one number the Treasury actually carries: earned
-                        leave not yet taken is a provision on the books. */}
+                    <div className="flex flex-wrap items-end justify-between gap-2 px-1">
+                        <div>
+                            <h2 className="text-lg font-semibold text-slate-950">Leave at a glance</h2>
+                            <p className="text-sm text-slate-500">Current staffing and approvals, with leave activity for the selected period.</p>
+                        </div>
+                        <span className="text-xs font-medium text-slate-500">{formatDate(data.from)} – {formatDate(data.to)}</span>
+                    </div>
                     <div className="grid gap-4 lg:grid-cols-3">
-                        {hasLiability && (
                         <div className="lg:col-span-1">
                             <StatTile
-                                label="Leave liability"
-                                value={AUD.format(liability.value)}
-                                hint={
-                                    liability.staff_without_rate > 0
-                                        ? `${liability.days.toFixed(1)} earned days · no rate for ${liability.staff_without_rate} of ${liability.staff_total} staff`
-                                        : `${liability.days.toFixed(1)} earned days across ${liability.staff_total} staff`
-                                }
+                                label="Pending approvals"
+                                value={exceptions.pending_approvals === undefined ? '—' : String(exceptions.pending_approvals)}
+                                hint={exceptions.pending_approvals === undefined
+                                    ? 'Queue count unavailable'
+                                    : `${exceptions.pending_over_five_days} waiting over 5 days`}
                                 emphasis
                             />
                         </div>
-                        )}
-                        <div className={`grid gap-4 sm:grid-cols-2 ${hasLiability ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
+                        <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2">
                             <StatTile label="Active staff" value={String(data.headcount.active_employees)} />
                             <StatTile label="On leave today" value={String(data.headcount.on_leave_today)} />
                             <StatTile
-                                label="Days taken"
+                                label="Approved leave days"
                                 value={data.days_taken.toFixed(1)}
-                                hint="Working days falling in this period"
+                                hint="Working days in selected period"
                             />
                             <StatTile
                                 label="Avg. approval turnaround"
@@ -441,14 +453,6 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                             />
                         </div>
                     </div>
-
-                    {hasLiability && liability.staff_without_rate > 0 && (
-                        <p className="px-1 text-xs text-zinc-500">
-                            Liability counts earned (accruable) leave only — an upfront allowance such as sick
-                            leave is not owed on separation. Staff with no daily rate recorded are left out of
-                            the total rather than counted as nil, so this figure is a floor.
-                        </p>
-                    )}
 
                     {/* Exceptions: the things somebody has to do something about. */}
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

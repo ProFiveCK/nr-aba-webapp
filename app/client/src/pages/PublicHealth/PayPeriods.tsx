@@ -199,8 +199,8 @@ export function PayPeriods() {
         <section className="app-panel p-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">Pay Run — {selected.paid_date}</h1>
-              <p className="text-sm text-gray-600">
+              <h2 className="wellness-section-title">Pay run · {selected.paid_date}</h2>
+              <p className="wellness-section-subtitle">
                 {activeCount} active · ${total.toFixed(2)} total · {selected.status}
               </p>
             </div>
@@ -208,7 +208,7 @@ export function PayPeriods() {
               <button onClick={() => setSelected(null)} className="toolbar-button">Back</button>
               <button onClick={saveEntries} disabled={!dirty || saving} className="toolbar-button">Save changes</button>
               <button onClick={handlePrintSummary} className="toolbar-button">Print Summary</button>
-              <button onClick={generateAba} disabled={generating || selected.status !== 'draft'} className="toolbar-button bg-teal-600 text-white border-teal-600 hover:bg-teal-700 disabled:opacity-60">
+              <button onClick={generateAba} disabled={generating || selected.status !== 'draft'} className="toolbar-button wellness-primary">
                 {generating ? 'Generating…' : 'Generate ABA'}
               </button>
             </div>
@@ -321,13 +321,20 @@ export function PayPeriods() {
       <section className="app-panel p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Pay Runs</h1>
-            <p className="text-sm text-gray-600">Create a pay run for a paid date and generate the ABA file.</p>
-          </div>
-          <button onClick={() => setCreateOpen(true)} className="toolbar-button bg-teal-600 text-white border-teal-600 hover:bg-teal-700">New Pay Run</button>
+              <h2 className="wellness-section-title">Pay runs</h2>
+              <p className="wellness-section-subtitle">Prepare a dated allowance schedule and send its ABA file for review.</p>
+            </div>
+          <button onClick={() => setCreateOpen(true)} className="toolbar-button wellness-primary self-start">New pay run</button>
         </div>
         {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
-        <div className="data-table-wrap mt-4">
+        {!loading && !error && (
+          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="wellness-stat"><div className="wellness-stat-label">Total runs</div><div className="wellness-stat-value text-[#002b7f]">{periods.length}</div></div>
+            <div className="wellness-stat"><div className="wellness-stat-label">Draft</div><div className="wellness-stat-value text-slate-700">{periods.filter((p) => p.status === 'draft').length}</div></div>
+            <div className="wellness-stat"><div className="wellness-stat-label">Awaiting review</div><div className="wellness-stat-value text-amber-700">{periods.filter((p) => p.status === 'submitted').length}</div></div>
+          </div>
+        )}
+        <div className="data-table-wrap mt-4 hidden sm:block">
           <div className="data-table-scroll">
             <table className="data-table">
               <thead>
@@ -352,7 +359,7 @@ export function PayPeriods() {
                       </td>
                       <td className="px-3 py-2">{p.active_count ?? 0}/{p.entry_count ?? 0}</td>
                       <td className="px-3 py-2 text-right">
-                        <button onClick={() => openPeriod(p)} className="px-3 py-1.5 rounded-md bg-teal-600 text-xs font-medium text-white hover:bg-teal-700">Open</button>
+                        <button onClick={() => openPeriod(p)} className="wellness-row-action">Open run</button>
                       </td>
                     </tr>
                   ))
@@ -360,6 +367,22 @@ export function PayPeriods() {
               </tbody>
             </table>
           </div>
+        </div>
+        <div className="mt-4 space-y-2 sm:hidden">
+          {loading ? <LoadingState label="Loading pay runs…" /> : periods.length === 0 ? (
+            <EmptyState title="No pay runs yet." detail="Create your first pay run to begin." />
+          ) : periods.map((p) => (
+            <article key={p.id} className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Paid date</p><h3 className="mt-1 font-semibold text-slate-900">{p.paid_date}</h3></div>
+                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${statusClass(p.status)}`}>{p.status}</span>
+              </div>
+              <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
+                <span className="text-sm text-slate-600">{p.active_count ?? 0} of {p.entry_count ?? 0} included</span>
+                <button onClick={() => openPeriod(p)} className="wellness-row-action">Open run</button>
+              </div>
+            </article>
+          ))}
         </div>
       </section>
 

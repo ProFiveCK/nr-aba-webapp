@@ -54,8 +54,8 @@ export function SettingsPanel() {
   return (
     <div className="space-y-6">
       <section className="app-panel p-6">
-        <h1 className="text-2xl font-bold text-gray-900">Wellness Program Settings</h1>
-        <p className="text-sm text-gray-600">Configure allowance tiers and payment details.</p>
+        <h2 className="wellness-section-title">Program settings</h2>
+        <p className="wellness-section-subtitle">Configure monthly allowance tiers and view the payment source.</p>
       </section>
 
       <section className="app-panel p-6">
@@ -88,7 +88,7 @@ export function SettingsPanel() {
           })}
         </div>
         <div className="mt-4 flex justify-end">
-          <button onClick={saveTiers} disabled={saving} className="toolbar-button bg-teal-600 text-white border-teal-600 hover:bg-teal-700 disabled:opacity-60">Save Tiers</button>
+          <button onClick={saveTiers} disabled={saving} className="toolbar-button wellness-primary">{saving ? 'Saving…' : 'Save tiers'}</button>
         </div>
       </section>
 

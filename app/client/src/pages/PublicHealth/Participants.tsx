@@ -258,36 +258,15 @@ export function Participants() {
   return (
     <div className="space-y-6">
       <section className="app-panel p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Wellness Program Participants</h1>
-            <p className="text-sm text-gray-600">Manage recipients, their bank details, village, and allowance level.</p>
+            <h2 className="wellness-section-title">Participants</h2>
+            <p className="wellness-section-subtitle">Manage recipients, bank details and allowance levels.</p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name, village, account"
-              className="rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
-            />
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="rounded-lg border border-zinc-300 px-2 py-2 text-sm bg-white">
-              <option value="all">All statuses</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-            </select>
-            <select value={levelFilter} onChange={(e) => setLevelFilter(e.target.value as typeof levelFilter)} className="rounded-lg border border-zinc-300 px-2 py-2 text-sm bg-white">
-              <option value="all">All levels</option>
-              {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
-            </select>
-            <button onClick={handlePrint} className="toolbar-button">Print Report</button>
-            <button onClick={() => fileRef.current?.click()} className="toolbar-button">Import CSV</button>
-            <button onClick={openCreate} className="toolbar-button bg-teal-600 text-white border-teal-600 hover:bg-teal-700">Add Participant</button>
-            <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => e.target.files?.[0] && onImportFile(e.target.files[0])} />
-          </div>
+          <button onClick={openCreate} className="toolbar-button wellness-primary self-start">Add participant</button>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+        <div className="mt-5 grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3 lg:grid-cols-7">
           <Stat label="Total" value={stats.total} />
           <Stat label="Active" value={stats.active} tone="emerald" />
           <Stat label="Inactive" value={stats.inactive} tone="zinc" />
@@ -297,8 +276,31 @@ export function Participants() {
           <Stat label="LV3" value={stats.LV3} tone="purple" />
         </div>
 
+        <div className="wellness-filterbar mt-4 border-t border-slate-200">
+            <input
+              type="search"
+              aria-label="Search participants"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name, village, account"
+              className="wellness-input min-w-0 flex-1 sm:max-w-xs"
+            />
+            <select aria-label="Filter by status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="wellness-input">
+              <option value="all">All statuses</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+            <select aria-label="Filter by level" value={levelFilter} onChange={(e) => setLevelFilter(e.target.value as typeof levelFilter)} className="wellness-input">
+              <option value="all">All levels</option>
+              {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
+            </select>
+            <button onClick={handlePrint} className="toolbar-button">Print report</button>
+            <button onClick={() => fileRef.current?.click()} className="toolbar-button">Import CSV</button>
+            <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => e.target.files?.[0] && onImportFile(e.target.files[0])} />
+        </div>
+
         {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
-        <div className="data-table-wrap mt-4">
+        <div className="data-table-wrap mt-2 hidden sm:block">
           <div className="data-table-scroll max-h-[600px]">
             <table className="data-table">
               <thead>
@@ -338,9 +340,9 @@ export function Participants() {
                         <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${p.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-600'}`}>{p.status}</span>
                       </td>
                       <td className="px-3 py-2 text-right whitespace-nowrap">
-                        <button onClick={() => openLevel(p)} className="px-3 py-1.5 rounded-md bg-amber-500 text-xs font-semibold text-white hover:bg-amber-600">Change Level</button>
-                        <button onClick={() => openEdit(p)} className="ml-1 px-3 py-1.5 rounded-md bg-teal-600 text-xs font-medium text-white hover:bg-teal-700">Edit</button>
-                        <button onClick={() => deactivate(p)} className="ml-1 px-3 py-1.5 rounded-md border border-zinc-200 text-xs font-medium text-zinc-600 hover:bg-zinc-50">Deactivate</button>
+                        <button onClick={() => openLevel(p)} className="wellness-row-action">Change level</button>
+                        <button onClick={() => openEdit(p)} className="wellness-row-action ml-1">Edit</button>
+                        <button onClick={() => deactivate(p)} className="wellness-row-action ml-1 text-rose-700">Deactivate</button>
                       </td>
                     </tr>
                   ))
@@ -349,14 +351,37 @@ export function Participants() {
             </table>
           </div>
         </div>
+        <div className="mt-2 space-y-2 sm:hidden">
+          {loading ? <LoadingState label="Loading participants…" /> : filtered.length === 0 ? (
+            <EmptyState title="No participants match your filters." detail="Adjust the filters or add a participant." />
+          ) : filtered.map((p) => (
+            <article key={p.id} className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="truncate font-semibold text-slate-900">{p.full_name}</h3>
+                  <p className="mt-0.5 text-xs text-slate-500">{p.village || 'Village not set'}</p>
+                </div>
+                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${p.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-600'}`}>{p.status}</span>
+              </div>
+              <div className="mt-3 flex items-center justify-between border-y border-slate-100 py-2.5 text-sm">
+                <span className="text-slate-500">Allowance level</span>
+                <button onClick={() => openLevel(p)} className={`rounded-full px-2.5 py-1 text-xs font-bold ${levelClass(p.current_level)}`}>{p.current_level || 'LV1'} ▾</button>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button onClick={() => openEdit(p)} className="wellness-row-action flex-1">Edit details</button>
+                <button onClick={() => deactivate(p)} className="wellness-row-action text-rose-700">Deactivate</button>
+              </div>
+            </article>
+          ))}
+        </div>
       </section>
 
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setModalOpen(false)}>
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl sm:p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between">
               <h2 className="text-xl font-semibold text-gray-900">{editing ? 'Edit Participant' : 'Add Participant'}</h2>
-              <button onClick={() => setModalOpen(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+              <button onClick={() => setModalOpen(false)} aria-label="Close participant form" className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
             </div>
             <div className="mt-4 space-y-3">
               <Field label="Full name *">
@@ -390,10 +415,10 @@ export function Participants() {
 
       {levelOpen && levelParticipant && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setLevelOpen(false)}>
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl sm:p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between">
               <h2 className="text-xl font-semibold text-gray-900">Change Level</h2>
-              <button onClick={() => setLevelOpen(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+              <button onClick={() => setLevelOpen(false)} aria-label="Close level form" className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
             </div>
             <p className="mt-1 text-sm text-gray-500">Current level: <span className="font-medium">{levelParticipant.current_level || 'LV1'}</span></p>
             <div className="mt-4 space-y-3">
@@ -426,9 +451,9 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: str
     purple: 'text-purple-700',
   };
   return (
-    <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 px-3 py-2">
-      <div className="text-xs uppercase tracking-wide text-gray-500">{label}</div>
-      <div className={`text-lg font-semibold ${tones[tone || ''] || 'text-gray-900'}`}>{value}</div>
+    <div className="wellness-stat">
+      <div className="wellness-stat-label">{label}</div>
+      <div className={`wellness-stat-value ${tones[tone || ''] || 'text-gray-900'}`}>{value}</div>
     </div>
   );
 }

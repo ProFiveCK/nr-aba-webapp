@@ -173,18 +173,58 @@ export async function decideLeave(pool, { applicationId, decision, note, actorId
          balanceYearFor(application.start_date)]
       );
     }
-    const { rows: decided } = await client.query(
-      `UPDATE hr_leave_applications
-          SET status = $1, reviewed_by = $2, reviewed_at = NOW(), reviewer_note = $3, updated_at = NOW()
-        WHERE id = $4 RETURNING *`,
-      [decision, actorId, reviewerNote || null, application.id]
+    const { rows: context } = await client.query(
+      `SELECT e.display_name, e.email, e.position_title, e.department_code,
+              m.display_name AS supervisor_name, t.name AS leave_type_name,
+              r.display_name AS approved_by_name
+         FROM hr_employees e
+         JOIN hr_leave_types t ON t.id = $2
+         LEFT JOIN hr_employees m ON m.id = e.manager_id
+         LEFT JOIN reviewers r ON r.id = $3
+        WHERE e.id = $1`,
+      [application.employee_id, application.leave_type_id, actorId]
     );
 
-    const { rows: context } = await client.query(
-      `SELECT e.display_name, e.email, t.name AS leave_type_name
-         FROM hr_employees e, hr_leave_types t
-        WHERE e.id = $1 AND t.id = $2`,
-      [application.employee_id, application.leave_type_id]
+    let payrollFormSnapshot = null;
+    if (decision === 'approved') {
+      const year = balanceYearFor(application.start_date);
+      const { rows: balances } = await client.query(
+        `SELECT t.id AS leave_type_id, t.name AS leave_type_name,
+                COALESCE(b.balance, CASE WHEN t.is_accruable THEN 0 ELSE t.default_days END) AS balance_after
+           FROM hr_leave_types t
+           LEFT JOIN hr_leave_balances b
+             ON b.leave_type_id = t.id AND b.employee_id = $1 AND b.year = $2
+          WHERE t.is_active = TRUE OR t.id = $3
+          ORDER BY t.name`,
+        [application.employee_id, year, application.leave_type_id]
+      );
+      payrollFormSnapshot = {
+        employee_name: context[0]?.display_name || null,
+        position_title: context[0]?.position_title || null,
+        department_code: context[0]?.department_code || null,
+        supervisor_name: context[0]?.supervisor_name || null,
+        approved_by_name: context[0]?.approved_by_name || null,
+        leave_type_name: context[0]?.leave_type_name || null,
+        balance_year: year,
+        balances: balances.map((row) => {
+          const after = Number(row.balance_after);
+          const before = row.leave_type_id === application.leave_type_id
+            ? after + Number(application.days) : after;
+          return {
+            leave_type_id: row.leave_type_id,
+            leave_type_name: row.leave_type_name,
+            before: Number(before.toFixed(2)),
+            after: Number(after.toFixed(2)),
+          };
+        }),
+      };
+    }
+    const { rows: decided } = await client.query(
+      `UPDATE hr_leave_applications
+          SET status = $1, reviewed_by = $2, reviewed_at = NOW(), reviewer_note = $3,
+              payroll_form_snapshot = $5, updated_at = NOW()
+        WHERE id = $4 RETURNING *`,
+      [decision, actorId, reviewerNote || null, application.id, payrollFormSnapshot]
     );
     return {
       application: decided[0],

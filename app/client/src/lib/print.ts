@@ -2,8 +2,8 @@
  * Opens a printable report in a new window. The caller supplies a title and the
  * inner HTML (typically a table), and this wraps it in minimal print styling.
  */
-export function printReport(title: string, bodyHtml: string): void {
-  const win = window.open('', '_blank', 'noopener,width=1000,height=800');
+export function printReport(title: string, bodyHtml: string, targetWindow?: Window): void {
+  const win = targetWindow || window.open('', '_blank', 'noopener,width=1000,height=800');
   if (!win) return;
   const styles = `
     body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 28px; color: #111827; }
@@ -17,16 +17,18 @@ export function printReport(title: string, bodyHtml: string): void {
     .totals h2 { font-size: 15px; margin: 0 0 6px; }
     @media print { body { margin: 0; } }
   `;
+  win.document.open();
   win.document.write(
     `<!doctype html><html><head><title>${escapeHtml(title)}</title><style>${styles}</style></head><body>${bodyHtml}<script>window.addEventListener('load', () => setTimeout(() => window.print(), 250));</script></body></html>`
   );
   win.document.close();
 }
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

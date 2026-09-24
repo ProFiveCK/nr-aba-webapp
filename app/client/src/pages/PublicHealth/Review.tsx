@@ -89,15 +89,22 @@ export function Review() {
   return (
     <div className="space-y-6">
       <section className="app-panel p-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Review Queue</h1>
-            <p className="text-sm text-gray-600">Approve or reject Public Health allowance payments for FMIS loading.</p>
+            <h2 className="wellness-section-title">Payment reviews</h2>
+            <p className="wellness-section-subtitle">Approve allowance payments before FMIS loading.</p>
           </div>
-          <button onClick={load} className="toolbar-button">Refresh</button>
+          <button onClick={load} className="toolbar-button self-start">Refresh</button>
         </div>
         {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
-        <div className="data-table-wrap mt-4">
+        {!loading && !error && (
+          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="wellness-stat"><div className="wellness-stat-label">Total batches</div><div className="wellness-stat-value text-[#002b7f]">{items.length}</div></div>
+            <div className="wellness-stat"><div className="wellness-stat-label">Awaiting decision</div><div className="wellness-stat-value text-amber-700">{items.filter((item) => item.stage === 'submitted').length}</div></div>
+            <div className="wellness-stat"><div className="wellness-stat-label">Approved</div><div className="wellness-stat-value text-emerald-700">{items.filter((item) => item.stage === 'approved').length}</div></div>
+          </div>
+        )}
+        <div className="data-table-wrap mt-4 hidden sm:block">
           <div className="data-table-scroll max-h-[420px]">
             <table className="data-table">
               <thead>
@@ -124,7 +131,7 @@ export function Review() {
                       <td className="px-3 py-2">{b.pd_number ? formatPdNumber(b.pd_number) : '—'}</td>
                       <td className="px-3 py-2 text-sm text-gray-500">{formatIsoDateTime(b.created_at)}</td>
                       <td className="px-3 py-2 text-right">
-                        <button onClick={() => openBatch(b.code)} className="px-3 py-1.5 rounded-md bg-teal-600 text-xs font-medium text-white hover:bg-teal-700">Review</button>
+                        <button onClick={() => openBatch(b.code)} className="wellness-row-action">View batch</button>
                       </td>
                     </tr>
                   ))
@@ -132,6 +139,22 @@ export function Review() {
               </tbody>
             </table>
           </div>
+        </div>
+        <div className="mt-4 space-y-2 sm:hidden">
+          {loading ? <LoadingState label="Loading review queue…" /> : items.length === 0 ? (
+            <EmptyState title="No public health batches awaiting review." />
+          ) : items.map((b) => (
+            <article key={b.code} className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div><p className="font-mono text-sm font-semibold text-[#002b7f]">{formatBatchCode(b.code)}</p><p className="mt-1 text-xs text-slate-500">{formatIsoDateTime(b.created_at)}</p></div>
+                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${getBatchStageBadgeClasses(b.stage)}`}>{STAGE_META[b.stage]?.label || b.stage}</span>
+              </div>
+              <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
+                <span className="text-sm text-slate-600">Ref {b.pd_number ? formatPdNumber(b.pd_number) : '—'}</span>
+                <button onClick={() => openBatch(b.code)} className="wellness-row-action">View batch</button>
+              </div>
+            </article>
+          ))}
         </div>
       </section>
 

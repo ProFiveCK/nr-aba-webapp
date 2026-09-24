@@ -4,6 +4,7 @@ import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
 import { useConfirm } from '../../contexts/useConfirm';
 import { EmptyState, LoadingState } from '../../components/Ui';
+import { printApprovedLeaveForm } from '../../features/hr/payrollForm';
 import {
     calculateWorkingDays,
     formatDate,
@@ -118,6 +119,14 @@ export function MyLeave() {
             await load();
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to archive the application.', 'error');
+        }
+    };
+
+    const printForm = async (application: LeaveApplication) => {
+        try {
+            await printApprovedLeaveForm(application.id);
+        } catch (err) {
+            addToast((err as Error)?.message || 'Unable to prepare the payroll form.', 'error');
         }
     };
 
@@ -312,6 +321,7 @@ export function MyLeave() {
                                 </div>
                                 <p className="text-sm text-slate-600">{application.days} working days</p>
                                 {application.reviewer_note && <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{application.reviewer_note}</p>}
+                                {application.status === 'approved' && <button type="button" onClick={() => void printForm(application)} className="text-sm font-semibold text-[#002B7F]">Print payroll form</button>}
                                 {application.status === 'pending' && <button type="button" onClick={() => cancel(application)} className="text-sm font-semibold text-red-700">Cancel request</button>}
                                 {(application.status === 'cancelled' || application.status === 'rejected') && <button type="button" onClick={() => archive(application)} className="text-sm font-semibold text-slate-600">Archive</button>}
                             </article>
@@ -346,6 +356,11 @@ export function MyLeave() {
                                             {application.reviewer_note || (application.reviewed_at ? '—' : '')}
                                         </td>
                                         <td className="px-4 py-2 text-right">
+                                            {application.status === 'approved' && (
+                                                <button type="button" onClick={() => void printForm(application)} className="text-sm font-medium text-[#002B7F] hover:underline">
+                                                    Print payroll form
+                                                </button>
+                                            )}
                                             {application.status === 'pending' && (
                                                 <button
                                                     type="button"

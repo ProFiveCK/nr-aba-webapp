@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { CalendarDays, ChartNoAxesCombined, ClipboardCheck, FileChartColumn, FileText, Palmtree, UsersRound } from 'lucide-react';
+import { AppSectionNav } from '../components/AppSectionNav';
 import { useAuth } from '../contexts/useAuth';
 import { readHash, setHash } from '../lib/hash';
 import { Overview } from './Hr/Overview';
@@ -13,17 +15,16 @@ type Tab = 'overview' | 'my-leave' | 'approvals' | 'calendar' | 'staff' | 'repor
 
 export function HrApp() {
   const { user } = useAuth();
-  const tabBarRef = useRef<HTMLDivElement>(null);
   const can = (capability: string) => user?.permissions?.[capability] === true;
 
-  const tabs: { id: Tab; label: string; show: boolean }[] = [
-    { id: 'overview', label: 'Overview', show: can('hr_admin') },
-    { id: 'my-leave', label: 'My Leave', show: can('hr_leave_apply') },
-    { id: 'approvals', label: 'Approvals', show: can('hr_leave_approve') || can('hr_admin') },
-    { id: 'calendar', label: 'Calendar', show: can('hr_access') },
-    { id: 'staff', label: 'Staff', show: can('hr_staff_manage') || can('hr_admin') },
-    { id: 'report', label: 'Report', show: can('hr_staff_manage') || can('hr_admin') },
-    { id: 'policies', label: 'Leave Policies', show: can('hr_admin') },
+  const tabs: { id: Tab; label: string; detail: string; icon: typeof CalendarDays; show: boolean }[] = [
+    { id: 'overview', label: 'Overview', detail: 'Leave at a glance', icon: ChartNoAxesCombined, show: can('hr_admin') },
+    { id: 'my-leave', label: 'My Leave', detail: 'Balances and requests', icon: Palmtree, show: can('hr_leave_apply') },
+    { id: 'approvals', label: 'Approvals', detail: 'Review requests', icon: ClipboardCheck, show: can('hr_leave_approve') || can('hr_admin') },
+    { id: 'calendar', label: 'Calendar', detail: 'Who is away', icon: CalendarDays, show: can('hr_access') },
+    { id: 'staff', label: 'Staff', detail: 'People and balances', icon: UsersRound, show: can('hr_staff_manage') || can('hr_admin') },
+    { id: 'report', label: 'Report', detail: 'Leave reporting', icon: FileChartColumn, show: can('hr_staff_manage') || can('hr_admin') },
+    { id: 'policies', label: 'Leave Policies', detail: 'Rules and entitlements', icon: FileText, show: can('hr_admin') },
   ];
   const visible = tabs.filter((t) => t.show);
   const validIds = visible.map((t) => t.id);
@@ -45,9 +46,6 @@ export function HrApp() {
   }, [visibleKey]);
 
   const activeTab = validIds.includes(tab) ? tab : validIds[0];
-  useEffect(() => {
-    tabBarRef.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'center' });
-  }, [activeTab]);
   const changeTab = (next: Tab) => {
     if (!validIds.includes(next)) return;
     setTab(next);
@@ -65,29 +63,8 @@ export function HrApp() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="hidden overflow-hidden rounded-2xl bg-[#002B7F] px-5 py-6 text-white shadow-sm sm:block sm:px-7">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-200">People & leave</p>
-        <h3 className="mt-2 text-2xl font-bold tracking-tight">Manage time away with confidence</h3>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-100">Review balances, submit requests and keep the team calendar in one place.</p>
-      </div>
-      <nav aria-label="HR sections" className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
-        <div ref={tabBarRef} className="flex gap-1 overflow-x-auto">
-          {visible.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => changeTab(t.id)}
-              aria-current={activeTab === t.id ? 'page' : undefined}
-              className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors ${
-                activeTab === t.id ? 'bg-[#002B7F] text-white shadow-sm' : 'text-slate-600 hover:bg-blue-50 hover:text-[#002B7F]'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </nav>
+    <div className="space-y-5">
+      <AppSectionNav label="Leave sections" sections={visible} activeId={activeTab} onChange={changeTab} />
 
       {activeTab === 'overview' && <Overview onNavigate={changeTab} />}
       {activeTab === 'my-leave' && <MyLeave />}

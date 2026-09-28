@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ClipboardCheck, Settings2, UsersRound, WalletCards } from 'lucide-react';
+import { AppSectionNav } from '../components/AppSectionNav';
 import { useAuth } from '../contexts/useAuth';
 import { readHash, setHash } from '../lib/hash';
 import { Participants } from './PublicHealth/Participants';
@@ -23,39 +24,38 @@ export function PublicHealthApp() {
   ];
   const visible = tabs.filter((t) => t.show);
   const validIds = visible.map((t) => t.id);
+  const visibleKey = validIds.join('|');
   const [tab, setTab] = useState<Tab>(() => {
     const fromHash = readHash().tab as Tab;
     return validIds.includes(fromHash) ? fromHash : (validIds[0] ?? 'review');
   });
 
+  useEffect(() => {
+    const syncTab = () => {
+      const requested = readHash().tab as Tab;
+      const allowed = visibleKey.split('|');
+      setTab(allowed.includes(requested) ? requested : ((allowed[0] || 'review') as Tab));
+    };
+    syncTab();
+    window.addEventListener('hashchange', syncTab);
+    return () => window.removeEventListener('hashchange', syncTab);
+  }, [visibleKey]);
+
+  const activeTab = validIds.includes(tab) ? tab : validIds[0];
   const changeTab = (next: Tab) => {
+    if (!validIds.includes(next)) return;
     setTab(next);
     setHash('public-health', next);
   };
 
   return (
     <div className="wellness space-y-5">
-      <nav className="wellness-nav" aria-label="Wellness Program sections">
-        <div className="wellness-nav-list">
-          {visible.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              aria-current={tab === t.id ? 'page' : undefined}
-              onClick={() => changeTab(t.id)}
-              className={`wellness-nav-item ${tab === t.id ? 'is-active' : ''}`}
-            >
-              <t.icon size={19} strokeWidth={1.8} aria-hidden="true" />
-              <span><strong>{t.label}</strong><small>{t.detail}</small></span>
-            </button>
-          ))}
-        </div>
-      </nav>
+      <AppSectionNav label="Wellness Program sections" sections={visible} activeId={activeTab} onChange={changeTab} />
 
-      {tab === 'participants' && <Participants />}
-      {tab === 'periods' && <PayPeriods />}
-      {tab === 'settings' && <SettingsPanel />}
-      {tab === 'review' && <Review />}
+      {activeTab === 'participants' && <Participants />}
+      {activeTab === 'periods' && <PayPeriods />}
+      {activeTab === 'settings' && <SettingsPanel />}
+      {activeTab === 'review' && <Review />}
     </div>
   );
 }

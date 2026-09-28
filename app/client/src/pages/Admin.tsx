@@ -799,7 +799,7 @@ function UserManagementPanel() {
                     await apiClient.put(`/hr/employees/${form.hr_employee_id}`, { reviewer_id: accountId });
                     loadHrEmployees();
                 } catch (linkErr) {
-                    addToast((linkErr as Error)?.message || 'Account saved, but linking the HR staff record failed.', 'error');
+                    addToast((linkErr as Error)?.message || 'Account saved, but linking the staff record failed.', 'error');
                 }
             }
 
@@ -857,7 +857,7 @@ function UserManagementPanel() {
                             <option value="user">User</option>
                             <option value="banking">Banking</option>
                             <option value="payroll">Payroll</option>
-                            <option value="public_health">Public Health</option>
+                            <option value="public_health">Wellness Program</option>
                             <option value="reviewer">Reviewer</option>
                             <option value="admin">Admin</option>
                         </select>
@@ -1081,7 +1081,7 @@ function UserManagementPanel() {
                                 <option value="user">User</option>
                                 <option value="banking">Banking</option>
                                 <option value="payroll">Payroll</option>
-                                <option value="public_health">Public Health</option>
+                                <option value="public_health">Wellness Program</option>
                                 <option value="reviewer">Reviewer</option>
                                 <option value="admin">Admin</option>
                             </select>
@@ -1196,7 +1196,7 @@ function UserManagementPanel() {
                     </div>
 
                     <label className="block text-sm font-medium text-gray-700">
-                        Leave &amp; HR staff record (optional)
+                        Leave staff record (optional)
                         <select
                             value={form.hr_employee_id}
                             onChange={(e) => setForm({ ...form, hr_employee_id: e.target.value })}
@@ -1210,8 +1210,8 @@ function UserManagementPanel() {
                             ))}
                         </select>
                         <p className="mt-1 text-xs text-gray-500">
-                            Link this login to a staff record HR already set up (department, manager, balance) in
-                            Leave &amp; HR &rarr; Staff. Leave unset and one is created the first time they open the Leave app themselves.
+                            Link this login to an existing staff record (department, manager, balance) in
+                            Leave &rarr; Staff. Leave unset and one is created the first time they open the Leave app themselves.
                         </p>
                     </label>
 

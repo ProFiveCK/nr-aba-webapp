@@ -86,7 +86,7 @@ export const APPS: AppDef[] = [
   {
     id: 'public-health',
     label: 'Wellness Program',
-    shortLabel: 'Public Health',
+    shortLabel: 'Wellness Program',
     icon: Activity,
     capability: 'public_health_access',
     description: 'Manage wellness allowance participants and payment runs.',
@@ -94,11 +94,11 @@ export const APPS: AppDef[] = [
   },
   {
     id: 'hr',
-    label: 'Leave & HR',
+    label: 'Leave',
     shortLabel: 'Leave',
     icon: CalendarDays,
     capability: 'hr_access',
-    description: 'Apply for leave, approve your team, and manage staff records.',
+    description: 'Request leave, review approvals, and manage team availability.',
     color: 'bg-[#002B7F]',
   },
 ];

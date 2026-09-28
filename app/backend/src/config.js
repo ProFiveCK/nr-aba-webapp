@@ -149,14 +149,14 @@ export const CAPABILITY_CATALOGUE = [
     app: 'public-health',
     label: 'Wellness Program',
     capabilities: [
-      { key: PERMISSIONS.PUBLIC_HEALTH_ACCESS, label: 'Open the Wellness app' },
+      { key: PERMISSIONS.PUBLIC_HEALTH_ACCESS, label: 'Open the Wellness Program app' },
       { key: PERMISSIONS.PUBLIC_HEALTH_MANAGE, label: 'Manage participants and pay periods' },
       { key: PERMISSIONS.PUBLIC_HEALTH_REVIEW, label: 'Review wellness batches' },
     ],
   },
   {
     app: 'hr',
-    label: 'Leave & HR',
+    label: 'Leave',
     capabilities: [
       { key: PERMISSIONS.HR_ACCESS, label: 'Open the Leave app' },
       { key: PERMISSIONS.HR_LEAVE_APPLY, label: 'Apply for leave' },
@@ -187,7 +187,7 @@ export const SIGNUP_APPS = [
   { id: 'banking', label: 'Banking', grants: [PERMISSIONS.BANKING_ACCESS] },
   { id: 'payroll', label: 'Payroll', grants: [PERMISSIONS.PAYROLL_ACCESS] },
   { id: 'public-health', label: 'Wellness Program', grants: [PERMISSIONS.PUBLIC_HEALTH_ACCESS] },
-  { id: 'hr', label: 'Leave & HR', grants: [PERMISSIONS.HR_ACCESS, PERMISSIONS.HR_LEAVE_APPLY] },
+  { id: 'hr', label: 'Leave', grants: [PERMISSIONS.HR_ACCESS, PERMISSIONS.HR_LEAVE_APPLY] },
 ];
 
 export const SIGNUP_APP_IDS = SIGNUP_APPS.map((a) => a.id);

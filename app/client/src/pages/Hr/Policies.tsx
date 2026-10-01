@@ -17,7 +17,6 @@ interface EditDraft {
     default_days: string;
     accrual_days_per_fortnight: string;
     reset_period: ResetPeriod;
-    requires_note: boolean;
     is_accruable: boolean;
     is_active: boolean;
 }
@@ -40,7 +39,6 @@ export function Policies() {
     const [defaultDays, setDefaultDays] = useState('');
     const [accrualPerFortnight, setAccrualPerFortnight] = useState('');
     const [resetPeriod, setResetPeriod] = useState<ResetPeriod>('none');
-    const [requiresNote, setRequiresNote] = useState(false);
     const [isAccruable, setIsAccruable] = useState(false);
     const [saving, setSaving] = useState(false);
     const [runningAccrual, setRunningAccrual] = useState(false);
@@ -83,7 +81,6 @@ export function Policies() {
                 default_days: Number(defaultDays) || 0,
                 accrual_days_per_fortnight: Number(accrualPerFortnight) || 0,
                 reset_period: resetPeriod,
-                requires_note: requiresNote,
                 is_accruable: isAccruable,
             });
             addToast('Leave type created.', 'success');
@@ -91,7 +88,6 @@ export function Policies() {
             setDefaultDays('');
             setAccrualPerFortnight('');
             setResetPeriod('none');
-            setRequiresNote(false);
             setIsAccruable(false);
             await load();
         } catch (err) {
@@ -146,7 +142,6 @@ export function Policies() {
             default_days: type.default_days,
             accrual_days_per_fortnight: type.accrual_days_per_fortnight,
             reset_period: type.reset_period,
-            requires_note: type.requires_note,
             is_accruable: type.is_accruable,
             is_active: type.is_active,
         });
@@ -165,7 +160,6 @@ export function Policies() {
                 default_days: Number(draft.default_days) || 0,
                 accrual_days_per_fortnight: Number(draft.accrual_days_per_fortnight) || 0,
                 reset_period: draft.reset_period,
-                requires_note: draft.requires_note,
                 is_accruable: draft.is_accruable,
                 is_active: draft.is_active,
             });
@@ -227,6 +221,7 @@ export function Policies() {
 
             <div className="app-panel">
                 <h2 className="border-b border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-900">Leave types</h2>
+                <p className="px-4 pt-3 text-sm text-zinc-600">Every leave application requires an explanation.</p>
                 <div className="overflow-x-auto">
                     <table className="min-w-full text-sm">
                         <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
@@ -235,7 +230,6 @@ export function Policies() {
                                 <th className="px-4 py-2">Days / year</th>
                                 <th className="px-4 py-2">Accrual / fortnight</th>
                                 <th className="px-4 py-2">Reset</th>
-                                <th className="px-4 py-2">Reason required</th>
                                 <th className="px-4 py-2">Accruable</th>
                                 <th className="px-4 py-2">Active</th>
                                 <th className="px-4 py-2" />
@@ -248,7 +242,6 @@ export function Policies() {
                                     <td className="px-4 py-2 text-zinc-600">{type.default_days}</td>
                                     <td className="px-4 py-2 text-zinc-600">{type.accrual_days_per_fortnight}</td>
                                     <td className="px-4 py-2 text-zinc-600">{resetLabel(type.reset_period)}</td>
-                                    <td className="px-4 py-2"><YesNo value={type.requires_note} /></td>
                                     <td className="px-4 py-2"><YesNo value={type.is_accruable} /></td>
                                     <td className="px-4 py-2"><YesNo value={type.is_active} /></td>
                                     <td className="px-4 py-2 text-right whitespace-nowrap">
@@ -313,10 +306,6 @@ export function Policies() {
                     </select>
                 </div>
                 <div className="flex flex-wrap gap-4 text-sm text-zinc-700">
-                    <label className="flex items-center gap-2">
-                        <input type="checkbox" checked={requiresNote} onChange={(e) => setRequiresNote(e.target.checked)} />
-                        Reason required
-                    </label>
                     <label className="flex items-center gap-2">
                         <input type="checkbox" checked={isAccruable} onChange={(e) => setIsAccruable(e.target.checked)} />
                         Accruable
@@ -392,14 +381,6 @@ export function Policies() {
                                 </select>
                             </label>
                             <div className="space-y-2 text-sm text-zinc-700">
-                                <label className="flex items-center gap-2">
-                                    <input
-                                        type="checkbox"
-                                        checked={draft.requires_note}
-                                        onChange={(e) => setDraft({ ...draft, requires_note: e.target.checked })}
-                                    />
-                                    Reason required
-                                </label>
                                 <label className="flex items-center gap-2">
                                     <input
                                         type="checkbox"

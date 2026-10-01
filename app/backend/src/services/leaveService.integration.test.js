@@ -89,13 +89,11 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       await assert.rejects(() => apply({ leaveTypeId: retired.id }), /Unknown leave type/);
     });
 
-    test('requires a reason where the type demands one', async () => {
-      await pool.query('UPDATE hr_leave_types SET requires_note = TRUE WHERE id = $1', [annual.id]);
-      await assert.rejects(() => apply({ reason: '   ' }), /requires a reason/);
+    test('requires a reason for every leave type', async () => {
+      await assert.rejects(() => apply({ reason: '   ' }), /reason is required/);
     });
 
     test('leaves nothing behind when it refuses', async () => {
-      await pool.query('UPDATE hr_leave_types SET requires_note = TRUE WHERE id = $1', [annual.id]);
       await assert.rejects(() => apply({ reason: '' }));
 
       // The transaction rolled back, so no hold and no application survive.
@@ -200,6 +198,17 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
   });
 
   describe('deciding', () => {
+    test('an older request without an explanation cannot be approved', async () => {
+      const { application } = await apply();
+      await pool.query('UPDATE hr_leave_applications SET reason = NULL WHERE id = $1', [application.id]);
+      await assert.rejects(() => service.decideLeave(pool, {
+        applicationId: application.id, decision: 'approved', note: '', actorId: null, canAct: allowAll,
+      }), /no explanation/);
+      const balance = await readBalance(pool, ana.id, annual.id, YEAR);
+      assert.equal(balance.pending, 5);
+      assert.equal(balance.balance, 20);
+    });
+
     test('approval moves the days out of the balance and clears the hold', async () => {
       const { application } = await apply();
       await service.decideLeave(pool, {
@@ -273,9 +282,19 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
         assert.equal(own.headers.get('cache-control'), 'no-store');
         const data = await own.json();
         assert.equal(data.balances.find((balance) => balance.leave_type_id === annual.id).after, 15);
+        const pdfResponse = await fetch(`http://127.0.0.1:${port}/api/hr/leaves/${application.id}/application.pdf`, {
+          headers: { Authorization: `Bearer ${owner.token}` },
+        });
+        assert.equal(pdfResponse.status, 200);
+        assert.match(pdfResponse.headers.get('content-type'), /application\/pdf/);
+        assert.equal(pdfResponse.headers.get('cache-control'), 'no-store');
+        assert.equal(Buffer.from(await pdfResponse.arrayBuffer()).subarray(0, 5).toString(), '%PDF-');
         assert.equal((await getForm(application.id, supervisor.token)).status, 200);
         assert.equal((await getForm(application.id, other.token)).status, 404);
         assert.equal((await getForm(pending.id, owner.token)).status, 404);
+        assert.equal((await fetch(`http://127.0.0.1:${port}/api/hr/leaves/${application.id}/application.pdf`, {
+          headers: { Authorization: `Bearer ${other.token}` },
+        })).status, 404);
         await pool.query('UPDATE hr_leave_applications SET payroll_form_snapshot = NULL WHERE id = $1', [application.id]);
         const legacy = await (await getForm(application.id, owner.token)).json();
         assert.equal(legacy.approval_snapshot_available, false);

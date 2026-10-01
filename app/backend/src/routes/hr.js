@@ -17,6 +17,7 @@ import { ServiceError } from '../lib/serviceError.js';
 import { PERMISSIONS } from '../config.js';
 import { buildUpdateAssignments, changedFields, collectUpdates } from '../lib/sqlUpdate.js';
 import { calculateWorkingDays, monthsBetween, parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
+import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js';
 
 const router = express.Router();
 
@@ -140,16 +141,10 @@ router.get('/leaves', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res)
   res.json(rows);
 });
 
-// A printable payroll record is available only after approval. The snapshot
-// fixes balances and personnel details at the decision; older approvals have
-// no balance snapshot and must not be presented with today's figures.
-router.get(
-  '/leaves/:id/payroll-form',
-  requirePermission(PERMISSIONS.HR_ACCESS, PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
-  [param('id').isUUID()],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const { rows } = await pool.query(
+// Approval-time balances and staff details are frozen for reliable reprints.
+// Older approvals lack a snapshot and must not be shown with today's balance.
+async function approvedLeaveForm(req, id) {
+  const { rows } = await pool.query(
       `SELECT a.id, a.employee_id, a.reviewed_by, a.start_date, a.end_date, a.days, a.reason,
               a.applied_at, a.reviewed_at, a.payroll_form_snapshot,
               e.reviewer_id, e.manager_id, e.display_name AS current_employee_name,
@@ -162,12 +157,9 @@ router.get(
          LEFT JOIN hr_employees m ON m.id = e.manager_id
          LEFT JOIN reviewers r ON r.id = a.reviewed_by
         WHERE a.id = $1 AND a.status = 'approved'`,
-      [req.params.id]
+      [id]
     );
-    if (!rows.length) {
-      res.status(404).json({ message: 'Approved leave form not found.' });
-      return;
-    }
+    if (!rows.length) return null;
     const application = rows[0];
     const isOwner = application.reviewer_id === req.user.id;
     const isHr = req.user.permissions?.[PERMISSIONS.HR_ADMIN] || req.user.permissions?.[PERMISSIONS.HR_STAFF_MANAGE];
@@ -178,14 +170,10 @@ router.get(
       const { rows: manager } = await pool.query('SELECT id FROM hr_employees WHERE reviewer_id = $1', [req.user.id]);
       isSupervisor = manager[0]?.id === application.manager_id;
     }
-    if (!isOwner && !isHr && !isOriginalApprover && !isSupervisor) {
-      res.status(404).json({ message: 'Approved leave form not found.' });
-      return;
-    }
+    if (!isOwner && !isHr && !isOriginalApprover && !isSupervisor) return null;
 
     const snapshot = application.payroll_form_snapshot;
-    res.set('Cache-Control', 'no-store');
-    res.json({
+    return {
       id: application.id,
       employee_name: snapshot?.employee_name || application.current_employee_name,
       position_title: snapshot ? snapshot.position_title : application.current_position_title,
@@ -202,7 +190,46 @@ router.get(
       balance_year: snapshot?.balance_year || null,
       balances: snapshot?.balances || null,
       approval_snapshot_available: Boolean(snapshot),
-    });
+    };
+}
+
+const leaveFormAccess = requirePermission(
+  PERMISSIONS.HR_ACCESS, PERMISSIONS.HR_LEAVE_APPROVE,
+  PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN
+);
+
+router.get(
+  '/leaves/:id/payroll-form',
+  leaveFormAccess,
+  [param('id').isUUID()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const form = await approvedLeaveForm(req, req.params.id);
+    if (!form) {
+      res.status(404).json({ message: 'Approved leave form not found.' });
+      return;
+    }
+    res.set('Cache-Control', 'no-store');
+    res.json(form);
+  }
+);
+
+router.get(
+  '/leaves/:id/application.pdf',
+  leaveFormAccess,
+  [param('id').isUUID()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const form = await approvedLeaveForm(req, req.params.id);
+    if (!form) {
+      res.status(404).json({ message: 'Approved leave form not found.' });
+      return;
+    }
+    const bytes = await generateLeaveApplicationPdf(form);
+    res.set('Cache-Control', 'no-store');
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="leave-application-${form.id}.pdf"`);
+    res.send(Buffer.from(bytes));
   }
 );
 
@@ -213,7 +240,7 @@ router.post(
     body('leave_type_id').isUUID(),
     body('start_date').isISO8601(),
     body('end_date').isISO8601(),
-    body('reason').optional({ nullable: true }).isString().isLength({ max: 2000 }),
+    body('reason').isString().trim().notEmpty().isLength({ max: 2000 }),
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;

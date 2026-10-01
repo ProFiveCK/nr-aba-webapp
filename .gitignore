@@ -38,6 +38,7 @@ dist/
 build/
 .next/
 out/
+output/pdf/
 
 # NPM cache
 .npm/

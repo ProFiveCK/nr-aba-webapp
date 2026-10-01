@@ -148,6 +148,22 @@ class ApiClient {
         return this.request<T>(path, { ...options, method: 'GET' });
     }
 
+    /** GET a binary response while preserving the session and API error handling. */
+    async getBlob(path: string): Promise<Blob> {
+        const headers: Record<string, string> = {};
+        if (this.authToken) headers.Authorization = `Bearer ${this.authToken}`;
+        const response = await fetch(`${this.baseURL}${path}`, { method: 'GET', headers, credentials: 'include' });
+        if (response.status === 401) {
+            this.clearAuthToken();
+            window.handleAuthExpired?.();
+        }
+        if (!response.ok) {
+            const payload = await response.json().catch(() => null) as ApiErrorPayload | null;
+            throw new Error(payload?.message || payload?.error || response.statusText || 'Unable to download file');
+        }
+        return response.blob();
+    }
+
     /**
      * POST request
      */

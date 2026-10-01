@@ -295,6 +295,12 @@ export function Staff() {
     // Only succeeds for a record with no leave history, no linked login and no
     // reports — see the guard in DELETE /hr/employees/:id. Anything else comes
     // back as a 409 explaining why, with inactive (above) as the alternative.
+    //
+    // A 409 that's blocked only by balance history offers a second, stronger
+    // path (administrators only): force the delete and destroy that history
+    // too. Worth it only when the history itself was a mistake — an opening
+    // balance set on a record that shouldn't have existed — not when it
+    // reflects a real entitlement that happens to sit on the wrong record.
     const deleteEmployee = async () => {
         if (!selected) return;
         if (!(await confirm(`Permanently delete the staff record for "${selected.display_name}"? This cannot be undone.`))) return;
@@ -306,7 +312,25 @@ export function Staff() {
             setDraft(null);
             addToast('Staff record deleted.', 'success');
         } catch (err) {
-            addToast((err as Error)?.message || 'Unable to delete this staff record.', 'error');
+            const details = (err as { details?: { force_available?: boolean } })?.details;
+            const message = (err as Error)?.message || 'Unable to delete this staff record.';
+            if (details?.force_available && canSeePay) {
+                if (await confirm(
+                    `${message} If that balance was only ever set on this duplicate by mistake, you can force the delete and permanently destroy it along with the record. This cannot be undone — proceed?`
+                )) {
+                    try {
+                        await apiClient.delete(`/hr/employees/${selected.id}`, { body: JSON.stringify({ force: true }) });
+                        setEmployees((current) => current.filter((employee) => employee.id !== selected.id));
+                        setSelected(null);
+                        setDraft(null);
+                        addToast('Staff record and its balance history deleted.', 'success');
+                    } catch (forceErr) {
+                        addToast((forceErr as Error)?.message || 'Unable to delete this staff record.', 'error');
+                    }
+                }
+            } else {
+                addToast(message, 'error');
+            }
         } finally {
             setSavingDetails(false);
         }

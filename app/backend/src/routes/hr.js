@@ -693,10 +693,20 @@ router.put(
 // adjustment, or a direct report pointing at it as their manager. A true
 // duplicate — created moments ago, untouched — has none of those and is safe
 // to remove; anything else should be set inactive instead (see PUT above).
+//
+// `force` lifts only the balance-adjustment guard, and only for an
+// administrator: an opening balance set on a record that was itself created
+// by mistake (the duplicate-staff scenario this route exists for) isn't real
+// payroll history worth preserving — it's an artifact of the same error. The
+// other three guards never lift, even forced: they'd either orphan a login,
+// destroy an actual leave record, or strand someone's reporting line, none of
+// which "this record shouldn't exist" excuses. What force deletes is written
+// to the audit log before it goes, so the action stays accountable even
+// though the row doesn't survive it.
 router.delete(
   '/employees/:id',
   requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
-  [param('id').isUUID()],
+  [param('id').isUUID(), body('force').optional().isBoolean()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const { rows: existing } = await pool.query('SELECT * FROM hr_employees WHERE id = $1', [req.params.id]);
@@ -705,21 +715,23 @@ router.delete(
       return;
     }
     const employee = existing[0];
+    const forcing = req.body.force === true && req.user.permissions?.hr_admin === true;
 
     const reasons = [];
     if (employee.reviewer_id) reasons.push('it is linked to a portal login');
     const [{ rows: applications }, { rows: adjustments }, { rows: reports }] = await Promise.all([
       pool.query('SELECT 1 FROM hr_leave_applications WHERE employee_id = $1 LIMIT 1', [req.params.id]),
-      pool.query('SELECT 1 FROM hr_leave_adjustments WHERE employee_id = $1 LIMIT 1', [req.params.id]),
+      pool.query('SELECT * FROM hr_leave_adjustments WHERE employee_id = $1', [req.params.id]),
       pool.query('SELECT 1 FROM hr_employees WHERE manager_id = $1 LIMIT 1', [req.params.id]),
     ]);
     if (applications.length) reasons.push('it has leave applications on file');
-    if (adjustments.length) reasons.push('it has balance history on file');
+    if (adjustments.length && !forcing) reasons.push('it has balance history on file');
     if (reports.length) reasons.push('someone reports to it');
 
     if (reasons.length) {
       res.status(409).json({
         message: `"${employee.display_name}" can't be deleted because ${reasons.join(' and ')}. Set it to inactive instead.`,
+        force_available: !forcing && adjustments.length > 0 && !applications.length && !reports.length && !employee.reviewer_id,
       });
       return;
     }
@@ -727,10 +739,14 @@ router.delete(
     await pool.query('DELETE FROM hr_employees WHERE id = $1', [req.params.id]);
     await recordAudit({
       actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-      action: 'hr.employee.deleted',
+      action: adjustments.length ? 'hr.employee.force_deleted' : 'hr.employee.deleted',
       entityType: 'hr_employee',
       entityId: req.params.id,
-      before: { display_name: employee.display_name, department_code: employee.department_code },
+      before: {
+        display_name: employee.display_name,
+        department_code: employee.department_code,
+        ...(adjustments.length ? { adjustments_destroyed: adjustments } : {}),
+      },
     });
     res.status(204).end();
   }

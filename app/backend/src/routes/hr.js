@@ -514,6 +514,26 @@ router.post(
         });
         return;
       }
+
+      // Catches the other direction: someone already has a portal login (set
+      // up through User Management) but no staff record yet, and this form is
+      // about to create one blind instead of linking the login that is
+      // sitting right there. Creating it here means it can never carry that
+      // login's own name variant forward — the two records stay permanently
+      // split the moment the person signs in (see currentEmployee() above).
+      const { rows: unlinkedLogins } = await pool.query(
+        `SELECT r.id, r.display_name, r.email FROM reviewers r
+          LEFT JOIN hr_employees e ON e.reviewer_id = r.id
+          WHERE r.status = 'active' AND e.id IS NULL`
+      );
+      const loginMatch = unlinkedLogins.find((row) => normalizeNameKey(row.display_name || row.email) === key);
+      if (loginMatch) {
+        res.status(409).json({
+          message: `"${loginMatch.display_name || loginMatch.email}" already has a portal login without a staff record. Link it from User Management (the "Leave staff record" field) instead of creating a new one here — otherwise they'll end up with two records the moment they sign in.`,
+          existing_reviewer_id: loginMatch.id,
+        });
+        return;
+      }
     }
 
     const { rows } = await pool.query(
@@ -664,6 +684,58 @@ router.put(
   }
 );
 
+// Removes a staff record outright. The foreign keys from leave applications,
+// balances and adjustments are ON DELETE CASCADE at the database level (so an
+// org chart with managers can still delete cleanly), which means Postgres
+// itself will not stop this from silently destroying real leave history —
+// that guard has to live here. Deletion is refused once the record carries
+// anything worth keeping: a linked login, any leave application, any balance
+// adjustment, or a direct report pointing at it as their manager. A true
+// duplicate — created moments ago, untouched — has none of those and is safe
+// to remove; anything else should be set inactive instead (see PUT above).
+router.delete(
+  '/employees/:id',
+  requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
+  [param('id').isUUID()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const { rows: existing } = await pool.query('SELECT * FROM hr_employees WHERE id = $1', [req.params.id]);
+    if (!existing.length) {
+      res.status(404).json({ message: 'Employee not found.' });
+      return;
+    }
+    const employee = existing[0];
+
+    const reasons = [];
+    if (employee.reviewer_id) reasons.push('it is linked to a portal login');
+    const [{ rows: applications }, { rows: adjustments }, { rows: reports }] = await Promise.all([
+      pool.query('SELECT 1 FROM hr_leave_applications WHERE employee_id = $1 LIMIT 1', [req.params.id]),
+      pool.query('SELECT 1 FROM hr_leave_adjustments WHERE employee_id = $1 LIMIT 1', [req.params.id]),
+      pool.query('SELECT 1 FROM hr_employees WHERE manager_id = $1 LIMIT 1', [req.params.id]),
+    ]);
+    if (applications.length) reasons.push('it has leave applications on file');
+    if (adjustments.length) reasons.push('it has balance history on file');
+    if (reports.length) reasons.push('someone reports to it');
+
+    if (reasons.length) {
+      res.status(409).json({
+        message: `"${employee.display_name}" can't be deleted because ${reasons.join(' and ')}. Set it to inactive instead.`,
+      });
+      return;
+    }
+
+    await pool.query('DELETE FROM hr_employees WHERE id = $1', [req.params.id]);
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.employee.deleted',
+      entityType: 'hr_employee',
+      entityId: req.params.id,
+      before: { display_name: employee.display_name, department_code: employee.department_code },
+    });
+    res.status(204).end();
+  }
+);
+
 // Bulk-creates unlinked staff records (like POST /employees, repeated) and
 // sets each one's opening balance per leave type in the same call. Reuses
 // ensureBalance's default-seed-then-adjust path so an import produces the
@@ -683,21 +755,35 @@ router.post(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const year = new Date().getFullYear();
-    const [{ rows: existing }, { rows: types }] = await Promise.all([
+    const [{ rows: existing }, { rows: types }, { rows: unlinkedLogins }] = await Promise.all([
       pool.query('SELECT display_name FROM hr_employees'),
       pool.query('SELECT id, name FROM hr_leave_types'),
+      // Same cross-check as POST /employees: a login set up through User
+      // Management, with no staff record yet, that this row is about to
+      // duplicate under a differently-typed name instead of being linked to.
+      pool.query(
+        `SELECT r.display_name, r.email FROM reviewers r
+          LEFT JOIN hr_employees e ON e.reviewer_id = r.id
+          WHERE r.status = 'active' AND e.id IS NULL`
+      ),
     ]);
     // Normalized (punctuation/spacing-insensitive) so "Val-cade" in a CSV
     // doesn't slip past a "Valcade" already on file — see normalizeNameKey.
     const existingNames = new Set(existing.map((r) => normalizeNameKey(r.display_name)));
+    const unlinkedLoginNames = new Set(unlinkedLogins.map((r) => normalizeNameKey(r.display_name || r.email)));
     const typeByName = new Map(types.map((t) => [t.name.toLowerCase(), t]));
 
     const created = [];
     const skipped = [];
     for (const row of req.body.rows) {
       const name = row.display_name.trim();
-      if (existingNames.has(normalizeNameKey(name))) {
+      const key = normalizeNameKey(name);
+      if (existingNames.has(key)) {
         skipped.push({ display_name: name, reason: 'A staff record with this name (or a close match) already exists.' });
+        continue;
+      }
+      if (unlinkedLoginNames.has(key)) {
+        skipped.push({ display_name: name, reason: 'A portal login with this name already exists without a staff record. Link it from User Management instead of importing it here.' });
         continue;
       }
       try {
@@ -723,7 +809,7 @@ router.post(
           }
           return id;
         });
-        existingNames.add(normalizeNameKey(name));
+        existingNames.add(key);
         created.push({ id: employeeId, display_name: name });
       } catch (err) {
         console.error(`Bulk import failed for "${name}"`, err);

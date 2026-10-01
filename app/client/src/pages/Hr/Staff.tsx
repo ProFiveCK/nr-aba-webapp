@@ -22,6 +22,7 @@ const FIXED_COLUMNS = ['display_name', 'department_code', 'join_date'];
 type ViewMode = 'directory' | 'report';
 type LoginFilter = 'all' | 'linked' | 'unlinked';
 type EmployeeDraft = {
+    displayName: string;
     positionTitle: string;
     departmentCode: string;
     managerId: string;
@@ -32,6 +33,7 @@ type EmployeeDraft = {
 
 function draftFor(employee: Employee): EmployeeDraft {
     return {
+        displayName: employee.display_name,
         positionTitle: employee.position_title || '',
         departmentCode: employee.department_code || '',
         managerId: employee.manager_id || '',
@@ -143,6 +145,20 @@ export function Staff() {
         [employees]
     );
     const noLoginCount = useMemo(() => employees.filter((e) => !e.reviewer_id).length, [employees]);
+    // Flags names that collapse to the same key once punctuation/spacing is
+    // ignored — e.g. "Val-cade" and "Valcade" — which is how two records for
+    // the same person end up on file (see currentEmployee() on the backend).
+    // Mirrors normalizeNameKey in app/backend/src/lib/names.js.
+    const duplicateNameGroups = useMemo(() => {
+        const byKey = new Map<string, Employee[]>();
+        for (const e of employees) {
+            if (e.status === 'inactive') continue;
+            const key = e.display_name.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (!key) continue;
+            byKey.set(key, [...(byKey.get(key) || []), e]);
+        }
+        return Array.from(byKey.values()).filter((group) => group.length > 1);
+    }, [employees]);
     const avgTenureYears = useMemo(() => {
         const withJoinDate = employees.filter((e) => e.join_date);
         if (!withJoinDate.length) return null;
@@ -222,6 +238,16 @@ export function Staff() {
         event.preventDefault();
         if (!selected || !draft) return;
         const updates: Record<string, string | number | boolean | null> = {};
+        const displayName = draft.displayName.trim();
+        if (!displayName) {
+            addToast('Enter a name.', 'error');
+            return;
+        }
+        if (displayName.length > 200) {
+            addToast('Name must be 200 characters or fewer.', 'error');
+            return;
+        }
+        if (displayName !== selected.display_name) updates.display_name = displayName;
         const positionTitle = draft.positionTitle.trim();
         if (positionTitle.length > 120) {
             addToast('Position must be 120 characters or fewer.', 'error');
@@ -449,6 +475,35 @@ export function Staff() {
                 <StatTile label="Departments" value={String(departmentOptions.length)} />
                 <StatTile label="Avg. tenure" value={avgTenureYears === null ? '—' : `${avgTenureYears.toFixed(1)}y`} />
             </div>
+
+            {duplicateNameGroups.length > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                    <p className="font-semibold">
+                        {duplicateNameGroups.length} possible duplicate name{duplicateNameGroups.length === 1 ? '' : 's'} on file
+                    </p>
+                    <p className="mt-1 text-amber-800">
+                        These look like the same person entered twice with a slightly different spelling. Open each one, correct the name under &ldquo;Full name&rdquo;, and set the extra record to inactive once its history is confirmed to belong to the one you keep.
+                    </p>
+                    <ul className="mt-2 flex flex-wrap gap-2">
+                        {duplicateNameGroups.map((group) => (
+                            <li key={group[0].id} className="flex items-center gap-1 rounded-full border border-amber-300 bg-white px-1 py-1">
+                                {group.map((e, i) => (
+                                    <span key={e.id} className="flex items-center gap-1">
+                                        {i > 0 && <span className="text-amber-400">/</span>}
+                                        <button
+                                            type="button"
+                                            onClick={() => { setViewMode('directory'); void openEmployee(e); }}
+                                            className="rounded-full px-2 py-0.5 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+                                        >
+                                            {e.display_name}
+                                        </button>
+                                    </span>
+                                ))}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
 
             <div className="flex flex-wrap items-center justify-between gap-3 app-panel p-3">
                 <div className="flex items-center gap-1 rounded-full bg-zinc-100 p-1">
@@ -759,6 +814,20 @@ export function Staff() {
                                     <h3 className="text-lg font-semibold text-slate-950">Employment details</h3>
                                     <p className="mt-1 text-sm text-slate-500">Update the reporting line and leave settings, then save them together.</p>
                                 </div>
+                                <label className="block text-sm font-medium text-slate-700">
+                                    Full name
+                                    <input
+                                        type="text"
+                                        maxLength={200}
+                                        value={draft.displayName}
+                                        onChange={(event) => setDraft({ ...draft, displayName: event.target.value })}
+                                        className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                        required
+                                    />
+                                    <span className="mt-1 block text-xs text-slate-500">
+                                        Fixes a typo or a duplicate spelling — e.g. two records for the same person created with slightly different names.
+                                    </span>
+                                </label>
                                 <label className="block text-sm font-medium text-slate-700">
                                     Position / job title
                                     <input

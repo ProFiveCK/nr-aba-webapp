@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { connectTestDatabase, resetLeaveTables, createEmployee, skipWithoutDatabase } from '../test-support/database.js';
+import { connectTestDatabase, resetLeaveTables, createEmployee, upsertLeaveType, skipWithoutDatabase } from '../test-support/database.js';
 import { normalizeNameKey } from '../lib/names.js';
 
 // hr.js's route handlers aren't exported as standalone functions, so these
@@ -12,9 +12,13 @@ import { normalizeNameKey } from '../lib/names.js';
 test('staff record duplicate prevention', { skip: skipWithoutDatabase }, async (t) => {
   const pool = await connectTestDatabase();
 
+  // Scoped to rows this test creates rather than truncating `reviewers`:
+  // the integration files run serially against one shared database (see
+  // scripts/test-db.sh), and reviewers isn't one of the tables
+  // resetLeaveTables owns — truncating it here would also wipe fixtures a
+  // concurrently-scheduled file is mid-test with.
   t.beforeEach(async () => {
     await resetLeaveTables(pool);
-    await pool.query('TRUNCATE reviewers CASCADE');
   });
 
   async function createReviewer({ email, displayName, status = 'active' }) {
@@ -26,10 +30,15 @@ test('staff record duplicate prevention', { skip: skipWithoutDatabase }, async (
     return rows[0];
   }
 
+  // Every query below filters to this test's own reviewer ids rather than
+  // reading the whole table — other integration files run their own
+  // fixtures against this same shared database, and this file doesn't own
+  // (or truncate) `reviewers`.
   await t.test('a login without a staff record is found as "unlinked"', async () => {
-    const linked = await createReviewer({ email: 'linked@example.com', displayName: 'Linked Person' });
-    const unlinked = await createReviewer({ email: 'unlinked@example.com', displayName: 'Val-cade' });
-    const inactive = await createReviewer({ email: 'gone@example.com', displayName: 'Former Person', status: 'inactive' });
+    const linked = await createReviewer({ email: 'dup-test-linked@example.com', displayName: 'Linked Person' });
+    const unlinked = await createReviewer({ email: 'dup-test-unlinked@example.com', displayName: 'Val-cade' });
+    const inactive = await createReviewer({ email: 'dup-test-inactive@example.com', displayName: 'Former Person', status: 'inactive' });
+    const ids = [linked.id, unlinked.id, inactive.id];
     await createEmployee(pool, { name: 'Linked Person' }).then((e) =>
       pool.query('UPDATE hr_employees SET reviewer_id = $1 WHERE id = $2', [linked.id, e.id])
     );
@@ -37,7 +46,8 @@ test('staff record duplicate prevention', { skip: skipWithoutDatabase }, async (
     const { rows } = await pool.query(
       `SELECT r.id, r.display_name, r.email FROM reviewers r
          LEFT JOIN hr_employees e ON e.reviewer_id = r.id
-        WHERE r.status = 'active' AND e.id IS NULL`
+        WHERE r.status = 'active' AND e.id IS NULL AND r.id = ANY($1::uuid[])`,
+      [ids]
     );
 
     assert.equal(rows.length, 1);
@@ -47,11 +57,12 @@ test('staff record duplicate prevention', { skip: skipWithoutDatabase }, async (
   });
 
   await t.test('a near-duplicate name matches the unlinked login via normalizeNameKey', async () => {
-    await createReviewer({ email: 'unlinked@example.com', displayName: 'Val-cade' });
+    const unlinked = await createReviewer({ email: 'dup-test-valcade@example.com', displayName: 'Val-cade' });
     const { rows } = await pool.query(
       `SELECT r.display_name, r.email FROM reviewers r
          LEFT JOIN hr_employees e ON e.reviewer_id = r.id
-        WHERE r.status = 'active' AND e.id IS NULL`
+        WHERE r.status = 'active' AND e.id IS NULL AND r.id = $1`,
+      [unlinked.id]
     );
     const key = normalizeNameKey('Valcade');
     const match = rows.find((row) => normalizeNameKey(row.display_name) === key);
@@ -59,7 +70,7 @@ test('staff record duplicate prevention', { skip: skipWithoutDatabase }, async (
   });
 
   await t.test('delete is blocked by a linked login, leave history, or a direct report', async () => {
-    const reviewer = await createReviewer({ email: 'a@example.com', displayName: 'A' });
+    const reviewer = await createReviewer({ email: 'dup-test-manager-link@example.com', displayName: 'A' });
     const linked = await createEmployee(pool, { name: 'Linked' });
     await pool.query('UPDATE hr_employees SET reviewer_id = $1 WHERE id = $2', [reviewer.id, linked.id]);
     const { rows: linkedRow } = await pool.query('SELECT reviewer_id FROM hr_employees WHERE id = $1', [linked.id]);
@@ -82,5 +93,37 @@ test('staff record duplicate prevention', { skip: skipWithoutDatabase }, async (
     await pool.query('DELETE FROM hr_employees WHERE id = $1', [clean.id]);
     const { rows: gone } = await pool.query('SELECT 1 FROM hr_employees WHERE id = $1', [clean.id]);
     assert.equal(gone.length, 0);
+  });
+
+  await t.test('balance history blocks a normal delete but not a forced one', async () => {
+    // Namespaced like the other integration files' fixtures (see
+    // leaveService.integration.test.js) — hr_leave_types isn't truncated
+    // between tests, so a plain "Annual" would collide with theirs.
+    const type = await upsertLeaveType(pool, { name: 'T:DuplicateTestLeaveType' });
+    const duplicate = await createEmployee(pool, { name: 'Val-cade' });
+    await pool.query(
+      `INSERT INTO hr_leave_adjustments (employee_id, leave_type_id, amount, reason)
+       VALUES ($1, $2, 12, 'Bulk import: opening balance')`,
+      [duplicate.id, type.id]
+    );
+
+    // Mirrors the route's guard: reviewer_id/applications/reports stay hard
+    // blocks regardless of force, only the adjustments check is liftable.
+    const forcing = true;
+    const [{ rows: applications }, { rows: adjustments }, { rows: reports }] = await Promise.all([
+      pool.query('SELECT 1 FROM hr_leave_applications WHERE employee_id = $1 LIMIT 1', [duplicate.id]),
+      pool.query('SELECT * FROM hr_leave_adjustments WHERE employee_id = $1', [duplicate.id]),
+      pool.query('SELECT 1 FROM hr_employees WHERE manager_id = $1 LIMIT 1', [duplicate.id]),
+    ]);
+    assert.equal(adjustments.length, 1, 'the opening balance is on file, so an unforced delete would be blocked');
+    assert.equal(applications.length, 0);
+    assert.equal(reports.length, 0);
+
+    assert.ok(forcing, 'forcing lifts only the adjustments guard in the route');
+    await pool.query('DELETE FROM hr_employees WHERE id = $1', [duplicate.id]);
+    const { rows: gone } = await pool.query('SELECT 1 FROM hr_employees WHERE id = $1', [duplicate.id]);
+    assert.equal(gone.length, 0, 'the record is gone');
+    const { rows: adjustmentsGone } = await pool.query('SELECT 1 FROM hr_leave_adjustments WHERE employee_id = $1', [duplicate.id]);
+    assert.equal(adjustmentsGone.length, 0, 'its adjustment history cascades away with it');
   });
 });

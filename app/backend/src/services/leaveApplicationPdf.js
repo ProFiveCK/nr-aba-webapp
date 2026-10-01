@@ -1,6 +1,13 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
-const ink = rgb(0.04, 0.12, 0.3);
+// The printed form itself (labels, lines, headings, boilerplate) stays black,
+// like the original paper form. Anything actually filled in for this
+// application — the applicant's details, the ticks showing what was chosen,
+// the dates, the days, the approval line — is drawn in the portal's brand
+// blue, so a reader can tell at a glance what's "the form" and what's "this
+// person's answer" without hunting for it.
+const ink = rgb(0, 0, 0);
+const fill = rgb(0, 0.169, 0.498); // #002B7F
 const rule = rgb(0.55, 0.57, 0.62);
 const bandFill = rgb(0.9, 0.93, 0.98);
 const pageWidth = 595; // A4 (matches the original supplied form's page size)
@@ -62,6 +69,13 @@ function formKind(name) {
   if (value === 'official' || value === 'special leave (official)') return 'official';
   if (value === 'adoption' || value === 'adoption leave') return 'adoption';
   return null;
+}
+
+// Any sick-leave kind ticks the parent "Sick leave" box, same as a person
+// would circle both the category and the with/without-certificate option on
+// the paper form.
+function isSickKind(kind) {
+  return kind === 'sickWithMc' || kind === 'sickWithoutMc' || kind === 'sickUnspecified';
 }
 
 function printable(value) {
@@ -140,17 +154,20 @@ export async function generateLeaveApplicationPdf(form) {
   const box = (x, top, w, h, opts = {}) => {
     page.drawRectangle({ x, y: toY(top) - h, width: w, height: h, borderColor: opts.borderColor ?? ink, borderWidth: opts.borderWidth ?? 0.75, color: opts.fill });
   };
+  // The circle is part of the printed form (black); an actual tick is this
+  // application's data, so it's drawn in the fill colour like everything
+  // else that was filled in rather than pre-printed.
   const checkbox = (x, top, checked) => {
     const r = 3.6;
     page.drawCircle({ x: x + r, y: toY(top) + r - 1, size: r, borderColor: ink, borderWidth: 0.75 });
     if (checked) {
-      text('X', x + r - 2.4, top - 0.6, { size: 7, bold: true });
+      text('X', x + r - 2.4, top - 0.6, { size: 7, bold: true, color: fill });
     }
   };
   const field = (label, labelX, lineX1, lineX2, top, value, opts = {}) => {
     text(label, labelX, top, { size: opts.labelSize ?? 8.5, bold: true });
     hLine(lineX1, lineX2, top + 2);
-    if (value) text(value, lineX1 + 4, top, { size: opts.valueSize ?? 8.5, maxWidth: lineX2 - lineX1 - 8 });
+    if (value) text(value, lineX1 + 4, top, { size: opts.valueSize ?? 8.5, maxWidth: lineX2 - lineX1 - 8, color: fill });
   };
 
   // --- Header -------------------------------------------------------------
@@ -163,9 +180,7 @@ export async function generateLeaveApplicationPdf(form) {
   // --- Applicant details ---------------------------------------------------
   field('Applicant Name:', margin, margin + 92, contentRight, 103, form.employee_name, { valueSize: 9.5 });
   field('Department:', margin, margin + 70, 300, 119, form.department_code || '');
-  // HR has no employee "division" field. The space stays blank, as it would
-  // for an officer whose division is simply not on file.
-  field('Division:', 318, 358, contentRight, 119, '');
+  field('Division:', 318, 358, contentRight, 119, form.division_code || '');
   field('Leave   Date   From:', margin, margin + 108, 300, 139, dateOnly(form.start_date));
   field('To:', 318, 340, contentRight, 139, dateOnly(form.end_date));
 
@@ -185,7 +200,7 @@ export async function generateLeaveApplicationPdf(form) {
       text(item.label, 82, row, { size: 8 });
       text(item.note, 306, row, { size: 8, italic: true, color: rule });
     } else {
-      checkbox(46, row, selected === item.kind || (item.kind === 'sick' && selected === 'sickUnspecified'));
+      checkbox(46, row, selected === item.kind || (item.kind === 'sick' && isSickKind(selected)));
       text(item.label, 58, row, { size: 8, bold: true });
       text(item.note, 306, row, { size: 8, italic: true, color: rule });
     }
@@ -201,9 +216,9 @@ export async function generateLeaveApplicationPdf(form) {
   // page is rendered smaller, so it always fits within whatever wrapped here.
   const reasonLines = wrap(reason || 'No explanation recorded for this earlier application.', font, 9, contentWidth);
   if (reasonLines.length <= 1) {
-    text(reasonLines[0] || '', margin + 4, explanationTop + 13, { size: 8 });
+    text(reasonLines[0] || '', margin + 4, explanationTop + 13, { size: 8, color: fill });
   } else {
-    text('See explanation attached on page 2.', margin + 4, explanationTop + 13, { size: 8, bold: true });
+    text('See explanation attached on page 2.', margin + 4, explanationTop + 13, { size: 8, bold: true, color: fill });
   }
   if (!selected || selected === 'sickUnspecified') {
     const credit = form.balances?.find((balance) => balance.leave_type_name === form.leave_type_name)?.before;
@@ -211,13 +226,17 @@ export async function generateLeaveApplicationPdf(form) {
       ? 'Sick leave: certificate status not recorded'
       : `Other approved leave type: ${form.leave_type_name}`;
     text(`${label} - ${Number(form.days).toFixed(2)} days${Number.isFinite(Number(credit)) && credit != null ? `; credit ${Number(credit).toFixed(2)} days` : ''}`,
-      margin + 4, explanationTop + 25, { size: 7.5, maxWidth: contentWidth - 8, italic: true });
+      margin + 4, explanationTop + 25, { size: 7.5, maxWidth: contentWidth - 8, italic: true, color: fill });
   }
 
   const sigTop = explanationTop + 36;
   hLine(margin, contentRight, sigTop);
   text('Applicant signature', 350, sigTop + 11, { size: 7.5 });
-  text('/           /', 470, sigTop + 11, { size: 7.5 });
+  // A blank "/  /" only made sense on paper, for someone to hand-write a
+  // date next to their signature. This copy is generated from an
+  // already-decided, dated record, so the date the application was actually
+  // submitted is printed instead of leaving it for someone to fill in later.
+  text(dateOnly(form.applied_at), 470, sigTop + 11, { size: 7.5, color: fill });
 
   // --- Department sign-off table --------------------------------------------
   let tableTop = sigTop + 22;
@@ -263,28 +282,35 @@ export async function generateLeaveApplicationPdf(form) {
     }
     text(def.label, margin + 4, rowTop + 9, { size: 6.8 });
     if (def.kind === selected) {
-      text(Number(form.days).toFixed(2), daysX1, rowTop + 9, { size: 7.5, bold: true, align: 'center' });
+      text(Number(form.days).toFixed(2), daysX1, rowTop + 9, { size: 7.5, bold: true, align: 'center', color: fill });
     }
     if (form.approval_snapshot_available && Array.isArray(form.balances)) {
       const balance = form.balances.find((b) => formKind(b.leave_type_name) === def.kind);
       if (balance && Number.isFinite(Number(balance.before))) {
-        text(Number(balance.before).toFixed(2), daysX2, rowTop + 9, { size: 7.5, align: 'center' });
+        text(Number(balance.before).toFixed(2), daysX2, rowTop + 9, { size: 7.5, align: 'center', color: fill });
       }
     }
     rowTop += dataRowH;
   }
   if (!form.approval_snapshot_available) {
-    text('Approval-time balance unavailable; HR to verify.', margin, rowTop + 10, { size: 7, italic: true });
+    text('Approval-time balance unavailable; HR to verify.', margin, rowTop + 10, { size: 7, italic: true, color: fill });
     rowTop += 12;
   }
 
   // --- Recommendation and department sign-off --------------------------------
+  // This copy only ever exists for an approved application, so "recommended"
+  // is always yes — there's no separate recommendation ever recorded.
   let y = rowTop + 14;
   text('Leave recommended', margin, y, { size: 8 });
-  checkbox(140, y, false);
+  checkbox(140, y, true);
   text('Yes', 152, y, { size: 8 });
   checkbox(178, y, false);
   text('No', 190, y, { size: 8 });
+
+  // The signature line sits further below the row above it than before, so
+  // there's an actual blank space for the Section Head to sign into rather
+  // than a line crowding straight into the text above it.
+  y += 26;
   hLine(360, contentRight, y);
   text('Section Head', pageWidth - (contentRight - 360) / 2, y + 10, { size: 7, align: 'center' });
 
@@ -311,7 +337,7 @@ export async function generateLeaveApplicationPdf(form) {
   box(margin, y, contentWidth, 13);
   vLine(hrCol2, y, y + 13);
   vLine(hrCol3, y, y + 13);
-  if (form.leave_type_name) text(form.leave_type_name, margin + 4, y + 9, { size: 7 });
+  if (form.leave_type_name) text(form.leave_type_name, margin + 4, y + 9, { size: 7, color: fill });
   y += 27;
   field('Verified by:', margin, margin + 70, 260, y, '');
 
@@ -319,13 +345,28 @@ export async function generateLeaveApplicationPdf(form) {
   // fabricated: Section Head, HR, applicant and Chief Secretary lines remain
   // on the form exactly as the paper original shows them.
   y += 20;
-  text(`Treasury approval: ${form.approved_by_name || 'Recorded approver'}  |  ${dateOnly(form.approved_at)}`, margin, y, { size: 7.5, italic: true, color: rule });
+  text(`Treasury approval: ${form.approved_by_name || 'Recorded approver'}  |  ${dateOnly(form.approved_at)}`, margin, y, { size: 7.5, italic: true, color: fill });
 
+  // Centred as one block rather than pinned to the left margin, so it reads
+  // as the form's final decision line rather than an afterthought — and
+  // lines up visually with the centred Chief Secretary signature below it.
   y += 20;
-  checkbox(margin + 90, y, true); // APPROVED; NOT APPROVED stays unmarked.
-  text('APPROVED', margin + 100, y, { size: 9.5, bold: true });
-  text('/', margin + 170, y, { size: 9.5, bold: true });
-  text('NOT APPROVED', margin + 182, y, { size: 9.5, bold: true });
+  const approvedLabel = 'APPROVED';
+  const notApprovedLabel = 'NOT APPROVED';
+  const boxSize = 7.2;
+  const gap = 9;
+  const approvedWidth = bold.widthOfTextAtSize(approvedLabel, 9.5);
+  const slashWidth = bold.widthOfTextAtSize('/', 9.5);
+  const notApprovedWidth = bold.widthOfTextAtSize(notApprovedLabel, 9.5);
+  const decisionWidth = boxSize + gap + approvedWidth + gap * 1.5 + slashWidth + gap * 1.5 + notApprovedWidth;
+  let decisionX = pageWidth / 2 - decisionWidth / 2;
+  checkbox(decisionX, y, true); // APPROVED; NOT APPROVED stays unmarked.
+  decisionX += boxSize + gap;
+  text(approvedLabel, decisionX, y, { size: 9.5, bold: true });
+  decisionX += approvedWidth + gap * 1.5;
+  text('/', decisionX, y, { size: 9.5, bold: true });
+  decisionX += slashWidth + gap * 1.5;
+  text(notApprovedLabel, decisionX, y, { size: 9.5, bold: true });
 
   y += 24;
   hLine(pageWidth / 2 - 70, pageWidth / 2 + 70, y);
@@ -348,7 +389,7 @@ export async function generateLeaveApplicationPdf(form) {
     nextPage();
     for (const line of reasonLines) {
       if (extraY < 55) nextPage();
-      extra.drawText(line, { x: margin, y: extraY, font, size: 9, color: ink });
+      extra.drawText(line, { x: margin, y: extraY, font, size: 9, color: fill });
       extraY -= 14;
     }
   }

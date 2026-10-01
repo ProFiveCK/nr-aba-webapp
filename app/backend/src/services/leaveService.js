@@ -177,7 +177,7 @@ export async function decideLeave(pool, { applicationId, decision, note, actorId
       );
     }
     const { rows: context } = await client.query(
-      `SELECT e.display_name, e.email, e.position_title, e.department_code,
+      `SELECT e.display_name, e.email, e.position_title, e.department_code, e.division_code,
               m.display_name AS supervisor_name, t.name AS leave_type_name,
               r.display_name AS approved_by_name
          FROM hr_employees e
@@ -205,6 +205,7 @@ export async function decideLeave(pool, { applicationId, decision, note, actorId
         employee_name: context[0]?.display_name || null,
         position_title: context[0]?.position_title || null,
         department_code: context[0]?.department_code || null,
+        division_code: context[0]?.division_code || null,
         supervisor_name: context[0]?.supervisor_name || null,
         approved_by_name: context[0]?.approved_by_name || null,
         leave_type_name: context[0]?.leave_type_name || null,

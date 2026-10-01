@@ -17,7 +17,7 @@ import type {
 } from '../../features/hr/staffTypes';
 import type { Employee, LeaveBalance, LeaveType } from '../../features/hr/types';
 
-const FIXED_COLUMNS = ['display_name', 'department_code', 'join_date'];
+const FIXED_COLUMNS = ['display_name', 'department_code', 'division_code', 'join_date'];
 
 type ViewMode = 'directory' | 'report';
 type LoginFilter = 'all' | 'linked' | 'unlinked';
@@ -26,6 +26,7 @@ type EmployeeDraft = {
     status: 'active' | 'inactive';
     positionTitle: string;
     departmentCode: string;
+    divisionCode: string;
     managerId: string;
     joinDate: string;
     leaveEntitled: boolean;
@@ -38,6 +39,7 @@ function draftFor(employee: Employee): EmployeeDraft {
         status: employee.status,
         positionTitle: employee.position_title || '',
         departmentCode: employee.department_code || '',
+        divisionCode: employee.division_code || '',
         managerId: employee.manager_id || '',
         joinDate: toDateInputValue(employee.join_date),
         leaveEntitled: employee.leave_entitled !== false,
@@ -74,6 +76,7 @@ export function Staff() {
     const [newName, setNewName] = useState('');
     const [newPosition, setNewPosition] = useState('');
     const [newDept, setNewDept] = useState('');
+    const [newDivision, setNewDivision] = useState('');
     const [newManagerId, setNewManagerId] = useState('');
     const [newJoinDate, setNewJoinDate] = useState('');
     const [creating, setCreating] = useState(false);
@@ -258,11 +261,17 @@ export function Staff() {
         }
         if (positionTitle !== (selected.position_title || '')) updates.position_title = positionTitle || null;
         const departmentCode = draft.departmentCode.trim();
-        if (departmentCode.length > 10) {
-            addToast('Department code must be 10 characters or fewer.', 'error');
+        if (departmentCode.length > 60) {
+            addToast('Department must be 60 characters or fewer.', 'error');
             return;
         }
         if (departmentCode !== (selected.department_code || '')) updates.department_code = departmentCode || null;
+        const divisionCode = draft.divisionCode.trim();
+        if (divisionCode.length > 60) {
+            addToast('Division must be 60 characters or fewer.', 'error');
+            return;
+        }
+        if (divisionCode !== (selected.division_code || '')) updates.division_code = divisionCode || null;
         if (draft.managerId !== (selected.manager_id || '')) updates.manager_id = draft.managerId || null;
         if (draft.joinDate !== toDateInputValue(selected.join_date)) updates.join_date = draft.joinDate || null;
         if (draft.leaveEntitled !== (selected.leave_entitled !== false)) updates.leave_entitled = draft.leaveEntitled;
@@ -338,7 +347,7 @@ export function Staff() {
 
     const downloadTemplate = () => {
         const header = [...FIXED_COLUMNS, ...types.map((t) => t.name)];
-        const example = ['Jane Example', '16', '2024-01-15', ...types.map(() => '')];
+        const example = ['Jane Example', 'Department of Finance', 'Treasury', '2024-01-15', ...types.map(() => '')];
         const csv = [header, example].map((line) => line.map(csvCell).join(',')).join('\r\n');
         const bom = String.fromCharCode(0xfeff);
         const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
@@ -385,10 +394,11 @@ export function Staff() {
             const nameIdx = header.findIndex((h) => h.toLowerCase() === 'display_name');
             if (nameIdx === -1) throw new Error('Missing a "display_name" column.');
             const deptIdx = header.findIndex((h) => h.toLowerCase() === 'department_code');
+            const divisionIdx = header.findIndex((h) => h.toLowerCase() === 'division_code');
             const joinIdx = header.findIndex((h) => h.toLowerCase() === 'join_date');
             const typeCols = header
                 .map((h, i) => ({ h, i }))
-                .filter(({ i }) => i !== nameIdx && i !== deptIdx && i !== joinIdx);
+                .filter(({ i }) => i !== nameIdx && i !== deptIdx && i !== divisionIdx && i !== joinIdx);
 
             const rows: ImportRow[] = table.slice(1)
                 .filter((r) => r[nameIdx]?.trim())
@@ -404,6 +414,7 @@ export function Staff() {
                     return {
                         display_name: r[nameIdx].trim(),
                         department_code: deptIdx >= 0 ? (r[deptIdx] || '').trim() : '',
+                        division_code: divisionIdx >= 0 ? (r[divisionIdx] || '').trim() : '',
                         join_date: joinIdx >= 0 ? (r[joinIdx] || '').trim() : '',
                         balances,
                     };
@@ -423,6 +434,7 @@ export function Staff() {
                 rows: importRows.map((r) => ({
                     display_name: r.display_name,
                     department_code: r.department_code || null,
+                    division_code: r.division_code || null,
                     join_date: r.join_date || null,
                     balances: r.balances,
                 })),
@@ -454,6 +466,7 @@ export function Staff() {
                 display_name: newName.trim(),
                 position_title: newPosition.trim() || null,
                 department_code: newDept.trim() || null,
+                division_code: newDivision.trim() || null,
                 manager_id: newManagerId || null,
                 join_date: newJoinDate || null,
             });
@@ -461,6 +474,7 @@ export function Staff() {
             setNewName('');
             setNewPosition('');
             setNewDept('');
+            setNewDivision('');
             setNewManagerId('');
             setNewJoinDate('');
             setShowAddForm(false);
@@ -630,6 +644,7 @@ export function Staff() {
                                         <tr>
                                             <th className="px-3 py-1.5">Name</th>
                                             <th className="px-3 py-1.5">Dept</th>
+                                            <th className="px-3 py-1.5">Division</th>
                                             <th className="px-3 py-1.5">Joined</th>
                                             <th className="px-3 py-1.5">Balances set</th>
                                         </tr>
@@ -639,6 +654,7 @@ export function Staff() {
                                             <tr key={i}>
                                                 <td className="px-3 py-1.5 text-zinc-900">{r.display_name}</td>
                                                 <td className="px-3 py-1.5 text-zinc-600">{r.department_code || '—'}</td>
+                                                <td className="px-3 py-1.5 text-zinc-600">{r.division_code || '—'}</td>
                                                 <td className="px-3 py-1.5 text-zinc-600">{r.join_date || '—'}</td>
                                                 <td className="px-3 py-1.5 text-zinc-600">
                                                     {Object.keys(r.balances).length
@@ -697,8 +713,16 @@ export function Staff() {
                             type="text"
                             value={newDept}
                             onChange={(e) => setNewDept(e.target.value)}
-                            placeholder="Department code, e.g. 16"
-                            maxLength={10}
+                            placeholder="Department, e.g. Department of Finance"
+                            maxLength={60}
+                            className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        />
+                        <input
+                            type="text"
+                            value={newDivision}
+                            onChange={(e) => setNewDivision(e.target.value)}
+                            placeholder="Division, e.g. Treasury"
+                            maxLength={60}
                             className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
                         />
                         <input
@@ -924,15 +948,26 @@ export function Staff() {
                                         className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
                                     />
                                 </label>
-                                <div className="grid gap-4 sm:grid-cols-2">
+                                <div className="grid gap-4 sm:grid-cols-3">
                                     <label className="text-sm font-medium text-slate-700">
-                                        Department code
+                                        Department
                                         <input
                                             type="text"
-                                            maxLength={10}
+                                            maxLength={60}
                                             value={draft.departmentCode}
                                             onChange={(event) => setDraft({ ...draft, departmentCode: event.target.value })}
-                                            placeholder="Unassigned"
+                                            placeholder="e.g. Department of Finance"
+                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                        />
+                                    </label>
+                                    <label className="text-sm font-medium text-slate-700">
+                                        Division
+                                        <input
+                                            type="text"
+                                            maxLength={60}
+                                            value={draft.divisionCode}
+                                            onChange={(event) => setDraft({ ...draft, divisionCode: event.target.value })}
+                                            placeholder="e.g. Treasury"
                                             className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
                                         />
                                     </label>

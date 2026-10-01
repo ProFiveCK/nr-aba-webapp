@@ -16,12 +16,26 @@ import { withTransaction } from '../lib/transaction.js';
 import { ServiceError } from '../lib/serviceError.js';
 import { PERMISSIONS } from '../config.js';
 import { buildUpdateAssignments, changedFields, collectUpdates } from '../lib/sqlUpdate.js';
+import { normalizeNameKey } from '../lib/names.js';
 import { calculateWorkingDays, monthsBetween, parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js';
 
 const router = express.Router();
 
-/** The signed-in user's employee record, created on first use. */
+/**
+ * The signed-in user's employee record, created on first use.
+ *
+ * Before creating one, this looks for an unlinked staff record (no
+ * reviewer_id yet) whose name matches theirs once punctuation/spacing is
+ * ignored, and links that instead of inserting a new row. Without this, HR
+ * pre-creating a staff record ahead of someone's account (see POST
+ * /employees below) and then typing their name even slightly differently
+ * when the account was set up — "Val-cade" vs "Valcade" — produced two
+ * permanent records for the same person: the pre-created one and a second
+ * one auto-provisioned here from the login's own name. Only an unambiguous
+ * single match is linked automatically; anything less certain falls back to
+ * the old behaviour so HR can resolve it by hand in Leave -> Staff.
+ */
 async function currentEmployee(req) {
   const { rows } = await pool.query(
     'SELECT * FROM hr_employees WHERE reviewer_id = $1',
@@ -29,12 +43,36 @@ async function currentEmployee(req) {
   );
   if (rows.length) return rows[0];
 
+  const name = req.user.display_name || req.user.email;
+  const key = normalizeNameKey(name);
+  if (key) {
+    const { rows: unlinked } = await pool.query(
+      "SELECT id, display_name FROM hr_employees WHERE reviewer_id IS NULL AND status = 'active'"
+    );
+    const matches = unlinked.filter((candidate) => normalizeNameKey(candidate.display_name) === key);
+    if (matches.length === 1) {
+      const { rows: linked } = await pool.query(
+        `UPDATE hr_employees SET reviewer_id = $1, email = COALESCE(email, $2), updated_at = NOW()
+          WHERE id = $3 RETURNING *`,
+        [req.user.id, req.user.email, matches[0].id]
+      );
+      await recordAudit({
+        actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+        action: 'hr.employee.linked',
+        entityType: 'hr_employee',
+        entityId: matches[0].id,
+        after: { reviewer_id: req.user.id, matched_by: 'name on first login' },
+      });
+      return linked[0];
+    }
+  }
+
   const { rows: created } = await pool.query(
     `INSERT INTO hr_employees (reviewer_id, display_name, email, department_code)
      VALUES ($1, $2, $3, $4)
      ON CONFLICT (reviewer_id) DO UPDATE SET updated_at = NOW()
      RETURNING *`,
-    [req.user.id, req.user.display_name || req.user.email, req.user.email, req.user.department_code]
+    [req.user.id, name, req.user.email, req.user.department_code]
   );
   return created[0];
 }
@@ -454,9 +492,30 @@ router.post(
     body('manager_id').optional({ nullable: true }).isUUID(),
     body('join_date').optional({ nullable: true }).isISO8601(),
     body('leave_entitled').optional().isBoolean(),
+    body('confirm').optional().isBoolean(),
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
+
+    // Catches a re-typed name before it becomes a second permanent record —
+    // e.g. "Val-cade" entered here when "Valcade" already exists. Two people
+    // can legitimately share a name, so this warns rather than blocks: the
+    // caller re-submits with `confirm: true` to create it anyway.
+    if (!req.body.confirm) {
+      const key = normalizeNameKey(req.body.display_name);
+      const { rows: existing } = await pool.query(
+        "SELECT id, display_name, status FROM hr_employees WHERE status = 'active'"
+      );
+      const match = existing.find((row) => normalizeNameKey(row.display_name) === key);
+      if (match) {
+        res.status(409).json({
+          message: `A staff record for "${match.display_name}" already exists. If this is a different person, submit again to confirm.`,
+          existing_employee_id: match.id,
+        });
+        return;
+      }
+    }
+
     const { rows } = await pool.query(
       `INSERT INTO hr_employees (display_name, position_title, department_code, manager_id, join_date, leave_entitled)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
@@ -485,6 +544,7 @@ router.post(
  * never blanked.
  */
 const EMPLOYEE_UPDATABLE = {
+  display_name: { nullable: false },
   manager_id: { nullable: true },
   position_title: { nullable: true },
   department_code: { nullable: true },
@@ -513,6 +573,7 @@ router.put(
   blankToNull,
   [
     param('id').isUUID(),
+    body('display_name').optional().isString().trim().isLength({ min: 1, max: 200 }),
     body('manager_id').optional({ nullable: true }).isUUID(),
     body('position_title').optional({ nullable: true }).isString().trim().isLength({ max: 120 }),
     body('department_code').optional({ nullable: true }).isString().isLength({ max: 10 }),
@@ -626,15 +687,17 @@ router.post(
       pool.query('SELECT display_name FROM hr_employees'),
       pool.query('SELECT id, name FROM hr_leave_types'),
     ]);
-    const existingNames = new Set(existing.map((r) => r.display_name.trim().toLowerCase()));
+    // Normalized (punctuation/spacing-insensitive) so "Val-cade" in a CSV
+    // doesn't slip past a "Valcade" already on file — see normalizeNameKey.
+    const existingNames = new Set(existing.map((r) => normalizeNameKey(r.display_name)));
     const typeByName = new Map(types.map((t) => [t.name.toLowerCase(), t]));
 
     const created = [];
     const skipped = [];
     for (const row of req.body.rows) {
       const name = row.display_name.trim();
-      if (existingNames.has(name.toLowerCase())) {
-        skipped.push({ display_name: name, reason: 'A staff record with this name already exists.' });
+      if (existingNames.has(normalizeNameKey(name))) {
+        skipped.push({ display_name: name, reason: 'A staff record with this name (or a close match) already exists.' });
         continue;
       }
       try {
@@ -660,7 +723,7 @@ router.post(
           }
           return id;
         });
-        existingNames.add(name.toLowerCase());
+        existingNames.add(normalizeNameKey(name));
         created.push({ id: employeeId, display_name: name });
       } catch (err) {
         console.error(`Bulk import failed for "${name}"`, err);

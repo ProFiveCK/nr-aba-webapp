@@ -23,6 +23,7 @@ type ViewMode = 'directory' | 'report';
 type LoginFilter = 'all' | 'linked' | 'unlinked';
 type EmployeeDraft = {
     displayName: string;
+    status: 'active' | 'inactive';
     positionTitle: string;
     departmentCode: string;
     managerId: string;
@@ -34,6 +35,7 @@ type EmployeeDraft = {
 function draftFor(employee: Employee): EmployeeDraft {
     return {
         displayName: employee.display_name,
+        status: employee.status,
         positionTitle: employee.position_title || '',
         departmentCode: employee.department_code || '',
         managerId: employee.manager_id || '',
@@ -248,6 +250,7 @@ export function Staff() {
             return;
         }
         if (displayName !== selected.display_name) updates.display_name = displayName;
+        if (draft.status !== selected.status) updates.status = draft.status;
         const positionTitle = draft.positionTitle.trim();
         if (positionTitle.length > 120) {
             addToast('Position must be 120 characters or fewer.', 'error');
@@ -284,6 +287,26 @@ export function Staff() {
             addToast('Employee details saved.', 'success');
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to save employee details.', 'error');
+        } finally {
+            setSavingDetails(false);
+        }
+    };
+
+    // Only succeeds for a record with no leave history, no linked login and no
+    // reports — see the guard in DELETE /hr/employees/:id. Anything else comes
+    // back as a 409 explaining why, with inactive (above) as the alternative.
+    const deleteEmployee = async () => {
+        if (!selected) return;
+        if (!(await confirm(`Permanently delete the staff record for "${selected.display_name}"? This cannot be undone.`))) return;
+        setSavingDetails(true);
+        try {
+            await apiClient.delete(`/hr/employees/${selected.id}`);
+            setEmployees((current) => current.filter((employee) => employee.id !== selected.id));
+            setSelected(null);
+            setDraft(null);
+            addToast('Staff record deleted.', 'success');
+        } catch (err) {
+            addToast((err as Error)?.message || 'Unable to delete this staff record.', 'error');
         } finally {
             setSavingDetails(false);
         }
@@ -482,7 +505,7 @@ export function Staff() {
                         {duplicateNameGroups.length} possible duplicate name{duplicateNameGroups.length === 1 ? '' : 's'} on file
                     </p>
                     <p className="mt-1 text-amber-800">
-                        These look like the same person entered twice with a slightly different spelling. Open each one, correct the name under &ldquo;Full name&rdquo;, and set the extra record to inactive once its history is confirmed to belong to the one you keep.
+                        These look like the same person entered twice with a slightly different spelling. Open the one you want to keep and fix its name if needed. For the extra one: delete it if it has no leave history yet, or set it to inactive if it does.
                     </p>
                     <ul className="mt-2 flex flex-wrap gap-2">
                         {duplicateNameGroups.map((group) => (
@@ -739,27 +762,48 @@ export function Staff() {
                             <table className="min-w-full text-sm">
                                 <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
                                     <tr>
-                                        <th className="px-4 py-2">Name</th>
-                                        <th className="px-4 py-2">Login</th>
-                                        <th className="px-4 py-2">Dept</th>
-                                        <th className="px-4 py-2">Joined</th>
+                                        <th className="w-12 px-4 py-2.5 text-right">#</th>
+                                        <th className="px-3 py-2.5">Name</th>
+                                        <th className="px-4 py-2.5">Login</th>
+                                        <th className="px-4 py-2.5">Dept</th>
+                                        <th className="px-4 py-2.5">Joined</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-zinc-100">
-                                    {filteredEmployees.map((employee) => (
+                                    {filteredEmployees.map((employee, index) => {
+                                        const initials = employee.display_name
+                                            .trim()
+                                            .split(/\s+/)
+                                            .slice(0, 2)
+                                            .map((part) => part[0])
+                                            .join('')
+                                            .toUpperCase();
+                                        return (
                                         <tr
                                             key={employee.id}
                                             className={`cursor-pointer hover:bg-zinc-50 ${selected?.id === employee.id ? 'bg-zinc-50' : ''}`}
                                             onClick={() => openEmployee(employee)}
                                         >
-                                            <td className="px-4 py-2">
-                                                <span className="font-medium text-zinc-900">{employee.display_name}</span>
-                                                {employee.leave_entitled === false && (
-                                                    <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500">no leave</span>
-                                                )}
-                                                {employee.status === 'inactive' && (
-                                                    <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500">inactive</span>
-                                                )}
+                                            <td className="px-4 py-2 text-right tabular-nums text-xs text-zinc-400">{index + 1}</td>
+                                            <td className="py-2 pl-3 pr-4">
+                                                <div className="flex items-center gap-2.5">
+                                                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-[#002B7F]" aria-hidden="true">
+                                                        {initials}
+                                                    </span>
+                                                    <span className="min-w-0">
+                                                        <span className="block truncate font-medium text-zinc-900">{employee.display_name}</span>
+                                                        {(employee.leave_entitled === false || employee.status === 'inactive') && (
+                                                            <span className="mt-0.5 flex gap-1">
+                                                                {employee.leave_entitled === false && (
+                                                                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">no leave</span>
+                                                                )}
+                                                                {employee.status === 'inactive' && (
+                                                                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">inactive</span>
+                                                                )}
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                </div>
                                             </td>
                                             <td className="px-4 py-2">
                                                 {employee.reviewer_id ? (
@@ -773,7 +817,8 @@ export function Staff() {
                                             <td className="px-4 py-2 text-zinc-600">{employee.department_code || '—'}</td>
                                             <td className="px-4 py-2 text-zinc-600">{formatDate(employee.join_date)}</td>
                                         </tr>
-                                    ))}
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         </div>
@@ -827,6 +872,22 @@ export function Staff() {
                                     <span className="mt-1 block text-xs text-slate-500">
                                         Fixes a typo or a duplicate spelling — e.g. two records for the same person created with slightly different names.
                                     </span>
+                                </label>
+                                <label className="flex items-center justify-between gap-4 rounded-xl border border-blue-100 bg-[#f5f8ff] p-4">
+                                    <span>
+                                        <span className="block text-sm font-semibold text-[#002B7F]">Status</span>
+                                        <span className="mt-1 block text-xs leading-5 text-slate-600">
+                                            Set a duplicate or departed staff record to inactive. It keeps its leave history but drops off active lists.
+                                        </span>
+                                    </span>
+                                    <select
+                                        value={draft.status}
+                                        onChange={(event) => setDraft({ ...draft, status: event.target.value as 'active' | 'inactive' })}
+                                        className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                    >
+                                        <option value="active">Active</option>
+                                        <option value="inactive">Inactive</option>
+                                    </select>
                                 </label>
                                 <label className="block text-sm font-medium text-slate-700">
                                     Position / job title
@@ -975,7 +1036,18 @@ export function Staff() {
                             </section>
                         </div>
                         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 py-4 sm:rounded-b-2xl sm:px-7">
-                            <p className="text-xs text-slate-500">{detailsDirty ? 'You have unsaved changes' : 'All employee details saved'}</p>
+                            <div className="flex flex-col gap-1">
+                                <p className="text-xs text-slate-500">{detailsDirty ? 'You have unsaved changes' : 'All employee details saved'}</p>
+                                <button
+                                    type="button"
+                                    onClick={() => void deleteEmployee()}
+                                    disabled={savingDetails || saving || detailsDirty}
+                                    title={detailsDirty ? 'Save or discard your changes first' : 'Only works if this record has no leave history, login or reports'}
+                                    className="self-start text-xs font-semibold text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    Delete this staff record
+                                </button>
+                            </div>
                             <div className="flex w-full gap-2 sm:w-auto">
                                 <button type="button" onClick={() => void closeEditor()} disabled={savingDetails || saving} className="flex-1 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:flex-none">Close</button>
                                 <button type="submit" form="employee-details-form" disabled={!detailsDirty || savingDetails} className="flex-1 rounded-lg bg-[#002B7F] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#174495] disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none">{savingDetails ? 'Saving…' : 'Save changes'}</button>

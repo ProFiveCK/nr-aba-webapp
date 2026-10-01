@@ -10,9 +10,9 @@ export const googleSignInEnabled = Boolean(GOOGLE_CLIENT_ID);
 
 const client = googleSignInEnabled ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
-const REVIEWER_COLUMNS = `id, email, display_name, role, status, must_change_password,
-       last_login_at, created_at, updated_at, department_code, division_code,
-       notify_on_submission, permissions`;
+const REVIEWER_COLUMNS = `r.id, r.email, r.display_name, r.role, r.status, r.must_change_password,
+       r.last_login_at, r.created_at, r.updated_at, r.department_code, r.division_code,
+       r.notify_on_submission, r.permissions`;
 
 /**
  * Outcomes are deliberately coarse for the caller to map onto HTTP codes.
@@ -57,7 +57,7 @@ export async function resolveGoogleIdentity(idToken, { ip } = {}) {
 
   // Already linked: the subject is authoritative, even if the address changed.
   const linked = await pool.query(
-    `SELECT r.${REVIEWER_COLUMNS}
+    `SELECT ${REVIEWER_COLUMNS}
        FROM reviewer_identities i
        JOIN reviewers r ON r.id = i.reviewer_id
       WHERE i.provider = $1 AND i.provider_subject = $2`,
@@ -83,7 +83,7 @@ export async function resolveGoogleIdentity(idToken, { ip } = {}) {
   }
 
   const matched = await pool.query(
-    `SELECT ${REVIEWER_COLUMNS} FROM reviewers WHERE email = $1`,
+    `SELECT ${REVIEWER_COLUMNS} FROM reviewers r WHERE r.email = $1`,
     [email]
   );
   if (!matched.rows.length) {

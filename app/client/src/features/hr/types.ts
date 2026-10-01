@@ -34,6 +34,7 @@ export interface Employee {
     manager_id: string | null;
     manager_name?: string | null;
     department_code: string | null;
+    division_code: string | null;
     join_date: string | null;
     status: 'active' | 'inactive';
     leave_entitled: boolean;

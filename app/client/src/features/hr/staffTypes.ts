@@ -3,6 +3,7 @@
 export interface ImportRow {
     display_name: string;
     department_code: string;
+    division_code: string;
     join_date: string;
     balances: Record<string, number>;
 }

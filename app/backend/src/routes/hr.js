@@ -187,6 +187,7 @@ async function approvedLeaveForm(req, id) {
               a.applied_at, a.reviewed_at, a.payroll_form_snapshot,
               e.reviewer_id, e.manager_id, e.display_name AS current_employee_name,
               e.position_title AS current_position_title, e.department_code AS current_department_code,
+              e.division_code AS current_division_code,
               m.display_name AS current_supervisor_name, t.name AS current_leave_type_name,
               r.display_name AS current_approver_name
          FROM hr_leave_applications a
@@ -216,6 +217,7 @@ async function approvedLeaveForm(req, id) {
       employee_name: snapshot?.employee_name || application.current_employee_name,
       position_title: snapshot ? snapshot.position_title : application.current_position_title,
       department_code: snapshot ? snapshot.department_code : application.current_department_code,
+      division_code: snapshot ? snapshot.division_code : application.current_division_code,
       supervisor_name: snapshot ? snapshot.supervisor_name : application.current_supervisor_name,
       approved_by_name: snapshot ? snapshot.approved_by_name : application.current_approver_name,
       leave_type_name: snapshot?.leave_type_name || application.current_leave_type_name,
@@ -488,7 +490,8 @@ router.post(
   [
     body('display_name').isString().trim().isLength({ min: 1, max: 200 }),
     body('position_title').optional({ nullable: true }).isString().trim().isLength({ max: 120 }),
-    body('department_code').optional({ nullable: true }).isString().isLength({ max: 10 }),
+    body('department_code').optional({ nullable: true }).isString().isLength({ max: 60 }),
+    body('division_code').optional({ nullable: true }).isString().isLength({ max: 60 }),
     body('manager_id').optional({ nullable: true }).isUUID(),
     body('join_date').optional({ nullable: true }).isISO8601(),
     body('leave_entitled').optional().isBoolean(),
@@ -537,10 +540,10 @@ router.post(
     }
 
     const { rows } = await pool.query(
-      `INSERT INTO hr_employees (display_name, position_title, department_code, manager_id, join_date, leave_entitled)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      `INSERT INTO hr_employees (display_name, position_title, department_code, division_code, manager_id, join_date, leave_entitled)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
       [req.body.display_name, req.body.position_title || null, req.body.department_code || null,
-       req.body.manager_id || null, req.body.join_date || null, req.body.leave_entitled ?? true]
+       req.body.division_code || null, req.body.manager_id || null, req.body.join_date || null, req.body.leave_entitled ?? true]
     );
     await recordAudit({
       actor: { id: req.user.id, email: req.user.email, ip: req.ip },
@@ -568,6 +571,7 @@ const EMPLOYEE_UPDATABLE = {
   manager_id: { nullable: true },
   position_title: { nullable: true },
   department_code: { nullable: true },
+  division_code: { nullable: true },
   join_date: { nullable: true },
   reviewer_id: { nullable: true },
   daily_rate: { nullable: true },
@@ -596,7 +600,8 @@ router.put(
     body('display_name').optional().isString().trim().isLength({ min: 1, max: 200 }),
     body('manager_id').optional({ nullable: true }).isUUID(),
     body('position_title').optional({ nullable: true }).isString().trim().isLength({ max: 120 }),
-    body('department_code').optional({ nullable: true }).isString().isLength({ max: 10 }),
+    body('department_code').optional({ nullable: true }).isString().isLength({ max: 60 }),
+    body('division_code').optional({ nullable: true }).isString().isLength({ max: 60 }),
     body('join_date').optional({ nullable: true }).isISO8601(),
     body('reviewer_id').optional({ nullable: true }).isUUID(),
     body('daily_rate').optional({ nullable: true }).isFloat({ min: 0, max: 100000 }),
@@ -764,7 +769,8 @@ router.post(
   [
     body('rows').isArray({ min: 1, max: 500 }),
     body('rows.*.display_name').isString().trim().isLength({ min: 1, max: 200 }),
-    body('rows.*.department_code').optional({ nullable: true }).isString().isLength({ max: 10 }),
+    body('rows.*.department_code').optional({ nullable: true }).isString().isLength({ max: 60 }),
+    body('rows.*.division_code').optional({ nullable: true }).isString().isLength({ max: 60 }),
     body('rows.*.join_date').optional({ nullable: true }).isISO8601(),
     body('rows.*.balances').optional().isObject(),
   ],
@@ -805,9 +811,9 @@ router.post(
       try {
         const employeeId = await withTransaction(pool, async (client) => {
           const { rows: inserted } = await client.query(
-            `INSERT INTO hr_employees (display_name, department_code, join_date)
-             VALUES ($1, $2, $3) RETURNING id`,
-            [name, row.department_code || null, row.join_date || null]
+            `INSERT INTO hr_employees (display_name, department_code, division_code, join_date)
+             VALUES ($1, $2, $3, $4) RETURNING id`,
+            [name, row.department_code || null, row.division_code || null, row.join_date || null]
           );
           const id = inserted[0].id;
           for (const [typeName, rawAmount] of Object.entries(row.balances || {})) {

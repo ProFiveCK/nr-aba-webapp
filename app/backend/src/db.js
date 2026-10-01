@@ -789,6 +789,10 @@ export async function initSchema() {
     // leave rules (e.g. casual or contract staff).
     await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS leave_entitled BOOLEAN NOT NULL DEFAULT TRUE');
     await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS position_title TEXT');
+    // The division within a department (e.g. department "Department of
+    // Finance", division "Treasury") — the leave application form has a
+    // separate field for it that department_code alone can't fill.
+    await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS division_code TEXT');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS hr_leave_types (

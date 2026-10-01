@@ -79,8 +79,8 @@ export async function applyForLeave(pool, { employee, leaveTypeId, startDate, en
     const leaveType = types[0];
 
     const note = String(reason || '').trim();
-    if (leaveType.requires_note && !note) {
-      throw badRequest(`${leaveType.name} leave requires a reason.`);
+    if (!note) {
+      throw badRequest('An explanation or reason is required for every leave application.');
     }
 
     const balance = await ensureBalance(client, employee.id, leaveTypeId, balanceYearFor(startDate));
@@ -162,6 +162,9 @@ export async function decideLeave(pool, { applicationId, decision, note, actorId
     }
     if (!(await canAct(application.employee_id))) {
       throw forbidden('This person does not report to you.');
+    }
+    if (decision === 'approved' && !String(application.reason || '').trim()) {
+      throw badRequest('This application has no explanation. Ask the applicant to cancel and resubmit it with a reason.');
     }
 
     await releasePending(client, application);

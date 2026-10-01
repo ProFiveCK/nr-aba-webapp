@@ -74,7 +74,7 @@ export function Approvals() {
         try {
             await printApprovedLeaveForm(application.id);
         } catch (err) {
-            addToast((err as Error)?.message || 'Unable to prepare the payroll form.', 'error');
+            addToast((err as Error)?.message || 'Unable to prepare the leave PDF.', 'error');
         }
     };
 
@@ -89,9 +89,9 @@ export function Approvals() {
             </div>
             {lastApproved && (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                    <p className="text-sm font-medium text-emerald-950">{lastApproved.employee_name}'s leave is approved. The payroll form is ready to print.</p>
+                    <p className="text-sm font-medium text-emerald-950">{lastApproved.employee_name}'s leave is approved by Treasury. The leave PDF is ready to print and file.</p>
                     <button type="button" onClick={() => void printForm(lastApproved)} className="rounded-lg bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#174495]">
-                        Print payroll form
+                        Open approved leave PDF
                     </button>
                 </div>
             )}
@@ -112,12 +112,15 @@ export function Approvals() {
                             {application.reason && (
                                 <p className="mt-2 rounded-md bg-zinc-50 p-2 text-sm text-zinc-700">{application.reason}</p>
                             )}
+                            {!application.reason && (
+                                <p className="mt-2 rounded-md bg-amber-50 p-2 text-sm text-amber-900">No explanation recorded. Ask the applicant to cancel and resubmit this request with a reason.</p>
+                            )}
                             <p className="mt-2 text-xs text-zinc-400">Applied {formatDate(application.applied_at)}</p>
                         </div>
                         <div className="flex w-full gap-2 sm:w-auto">
                             <button
                                 type="button"
-                                disabled={busyId === application.id}
+                                disabled={busyId === application.id || !application.reason?.trim()}
                                 onClick={() => decide(application, 'approved')}
                                 className="flex-1 rounded-lg bg-[#002B7F] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#174495] disabled:opacity-50 sm:flex-none"
                             >
@@ -139,7 +142,7 @@ export function Approvals() {
                 <section className="app-panel overflow-hidden">
                     <div className="border-b border-slate-100 px-5 py-4 sm:px-6">
                         <h3 className="text-lg font-semibold text-slate-950">Recently approved</h3>
-                        <p className="text-sm text-slate-500">Reprint a payroll form when it is needed.</p>
+                        <p className="text-sm text-slate-500">Open the approved PDF for printing or the personnel file.</p>
                     </div>
                     <div className="divide-y divide-slate-100">
                         {recent.map((application) => (
@@ -149,7 +152,7 @@ export function Approvals() {
                                     <p className="text-slate-600">{application.leave_type_name} · {formatDate(application.start_date)} – {formatDate(application.end_date)} · {application.days} days</p>
                                 </div>
                                 <button type="button" onClick={() => void printForm(application)} className="rounded-lg border border-[#002B7F] px-3 py-2 text-sm font-semibold text-[#002B7F] hover:bg-blue-50">
-                                    Print payroll form
+                                    Open approved leave PDF
                                 </button>
                             </div>
                         ))}

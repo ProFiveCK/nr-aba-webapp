@@ -68,7 +68,6 @@ export function MyLeave() {
     }, [load]);
 
     const notEntitled = summary?.employee.leave_entitled === false;
-    const selectedType = types.find((t) => t.id === leaveTypeId);
     // The preview is exact only when the public holiday calendar loaded.
     const holidayDates = useMemo(() => new Set(holidays.map((h) => h.holiday_date)), [holidays]);
     const previewDays = calculateWorkingDays(startDate, endDate, holidayDates);
@@ -88,6 +87,10 @@ export function MyLeave() {
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
+        if (!reason.trim()) {
+            addToast('Explain the reason for your leave.', 'error');
+            return;
+        }
         if (previewDays <= 0) {
             addToast('The selected dates contain no working days.', 'error');
             return;
@@ -98,7 +101,7 @@ export function MyLeave() {
                 leave_type_id: leaveTypeId,
                 start_date: startDate,
                 end_date: endDate,
-                reason: reason.trim() || null,
+                reason: reason.trim(),
             });
             addToast('Leave application submitted.', 'success');
             setStartDate('');
@@ -126,7 +129,7 @@ export function MyLeave() {
         try {
             await printApprovedLeaveForm(application.id);
         } catch (err) {
-            addToast((err as Error)?.message || 'Unable to prepare the payroll form.', 'error');
+            addToast((err as Error)?.message || 'Unable to prepare the leave PDF.', 'error');
         }
     };
 
@@ -247,16 +250,18 @@ export function MyLeave() {
 
                 <label className="block text-sm">
                     <span className="mb-1 block font-medium text-zinc-700">
-                        Reason {selectedType?.requires_note && <span className="text-red-600">(required)</span>}
+                        Explanation / reason <span className="text-red-600">(required)</span>
                     </span>
                     <textarea
                         value={reason}
                         onChange={(e) => setReason(e.target.value)}
                         rows={2}
                         className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
-                        placeholder={selectedType?.requires_note ? `${selectedType.name} leave requires a reason` : 'Optional'}
-                        required={selectedType?.requires_note}
+                        placeholder="Explain why you are applying for leave"
+                        maxLength={2000}
+                        required
                     />
+                    <span className="mt-1 block text-xs text-slate-500">This explanation appears on the approved form for the personnel file.</span>
                 </label>
 
                 <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-5">
@@ -321,7 +326,7 @@ export function MyLeave() {
                                 </div>
                                 <p className="text-sm text-slate-600">{application.days} working days</p>
                                 {application.reviewer_note && <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{application.reviewer_note}</p>}
-                                {application.status === 'approved' && <button type="button" onClick={() => void printForm(application)} className="text-sm font-semibold text-[#002B7F]">Print payroll form</button>}
+                                {application.status === 'approved' && <button type="button" onClick={() => void printForm(application)} className="text-sm font-semibold text-[#002B7F]">Open approved leave PDF</button>}
                                 {application.status === 'pending' && <button type="button" onClick={() => cancel(application)} className="text-sm font-semibold text-red-700">Cancel request</button>}
                                 {(application.status === 'cancelled' || application.status === 'rejected') && <button type="button" onClick={() => archive(application)} className="text-sm font-semibold text-slate-600">Archive</button>}
                             </article>
@@ -358,7 +363,7 @@ export function MyLeave() {
                                         <td className="px-4 py-2 text-right">
                                             {application.status === 'approved' && (
                                                 <button type="button" onClick={() => void printForm(application)} className="text-sm font-medium text-[#002B7F] hover:underline">
-                                                    Print payroll form
+                                                    Open approved leave PDF
                                                 </button>
                                             )}
                                             {application.status === 'pending' && (

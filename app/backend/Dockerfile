@@ -11,6 +11,7 @@ RUN npm install --production
 RUN python3 -m pip install --break-system-packages --no-cache-dir pandas openpyxl
 
 COPY app/backend/src ./src
+COPY app/backend/assets ./assets
 COPY app/backend/scripts ./scripts
 COPY scripts/reformat_payroll.py ./scripts/reformat_payroll.py
 

@@ -126,11 +126,14 @@ export function Layout({ children, activeApp, onAppChange }: LayoutProps) {
             </div>
             </header>
             <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-                <div className="mb-6">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#2a5ba5]">Treasury applications</p>
-                    <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{activeApp === 'dashboard' ? 'Dashboard' : app?.label || 'App'}</h2>
-                    <p className="mt-1 text-sm text-slate-500">{activeApp === 'dashboard' ? 'Choose an app to get started' : app?.description || app?.label || 'App'}</p>
-                </div>
+                {/* Leave renders its own compact header with its section tabs. */}
+                {activeApp !== 'hr' && (
+                    <div className="mb-6">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#2a5ba5]">Treasury applications</p>
+                        <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{activeApp === 'dashboard' ? 'Dashboard' : app?.label || 'App'}</h2>
+                        <p className="mt-1 text-sm text-slate-500">{activeApp === 'dashboard' ? 'Choose an app to get started' : app?.description || app?.label || 'App'}</p>
+                    </div>
+                )}
                 <main>{children}</main>
             </div>
         </div>

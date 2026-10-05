@@ -1,0 +1,7 @@
+{
+  "name": "aba-stack",
+  "private": true,
+  "scripts": {
+    "ci:local": "bash scripts/ci-local.sh"
+  }
+}

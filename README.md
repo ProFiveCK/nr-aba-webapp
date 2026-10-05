@@ -84,6 +84,23 @@ docker compose --env-file .env.prod down          # stop all
 
 ---
 
+## Before You Push
+
+There is no GitHub CI (Actions minutes cost money). Run the checks locally
+instead, from the repo root, and push only when they pass:
+
+```bash
+npm run ci:local
+```
+
+[`scripts/ci-local.sh`](scripts/ci-local.sh) starts from a clean state and stops at the first
+failure: `npm ci` in backend and client, backend tests against a throwaway
+Postgres in Docker (`npm run test:db`), client lint, build (into `app/client/build`)
+and tests, then `npm audit --omit=dev --audit-level=high` on the backend.
+Docker must be running.
+
+---
+
 ## Architecture
 
 | Layer | Location | Notes |
@@ -126,7 +143,7 @@ app/
   backend/              ← Express API (Node 20)
   docker/nginx.conf     ← Nginx reverse proxy config
 backup/                 ← SQL dumps + restore-database.sh
-scripts/                ← cron helpers (backup, archive, monitoring)
+scripts/                ← cron helpers (backup, archive, monitoring), ci-local.sh
 docs/                   ← user & reviewer process guides
 windows-scripts/        ← Windows SFTP sync helpers
 ```

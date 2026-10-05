@@ -308,6 +308,31 @@ export function Modal({
     );
 }
 
+/** Previous/next controls for a list paged with usePagination; hidden when it fits on one page. */
+export function Pager({
+    page, pageCount, total, pageSize, setPage,
+}: { page: number; pageCount: number; total: number; pageSize: number; setPage: (page: number) => void }) {
+    if (pageCount <= 1) return null;
+    const from = page * pageSize + 1;
+    const to = Math.min(total, from + pageSize - 1);
+    return (
+        <nav aria-label="Pagination" className="flex flex-col gap-2 px-1 py-3 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between">
+            <span>Showing {from}-{to} of {total}</span>
+            <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setPage(page - 1)} disabled={page === 0} className="toolbar-button">
+                    <Icon name="chevronLeft" />
+                    Previous
+                </button>
+                <span className="tabular-nums">Page {page + 1} of {pageCount}</span>
+                <button type="button" onClick={() => setPage(page + 1)} disabled={page >= pageCount - 1} className="toolbar-button">
+                    Next
+                    <Icon name="chevronRight" />
+                </button>
+            </div>
+        </nav>
+    );
+}
+
 /** Right-aligned action row for the bottom of a modal; stacks on phones. */
 export function ModalActions({ children }: { children: ReactNode }) {
     return <div className="mt-6 flex flex-col-reverse first:mt-2 gap-2 sm:flex-row sm:justify-end">{children}</div>;

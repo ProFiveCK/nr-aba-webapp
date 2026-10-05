@@ -15,7 +15,8 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from '../contexts/useAuth';
 import { useToast } from '../contexts/useToast';
 import { useConfirm } from '../contexts/useConfirm';
-import { Button, EmptyState, Icon, LoadingState, Modal, ModalActions } from '../components/Ui';
+import { Button, EmptyState, Icon, LoadingState, Modal, ModalActions, Pager } from '../components/Ui';
+import { usePagination } from '../lib/usePagination';
 import { useAppSections } from '../components/appChrome';
 import { apiClient } from '../lib/api';
 import {
@@ -253,6 +254,7 @@ function SignupRequestsPanel() {
 
     const pending = useMemo(() => requests.filter((r) => r.status === 'pending'), [requests]);
     const completed = useMemo(() => requests.filter((r) => r.status !== 'pending'), [requests]);
+    const completedPages = usePagination(completed);
 
     const handleDecision = async (id: number, action: 'approve' | 'reject', role?: SignupRequest['requested_role']) => {
         let review_comment = '';
@@ -422,7 +424,7 @@ function SignupRequestsPanel() {
                                         </td>
                                     </tr>
                                 ) : (
-                                    completed.map((req) => (
+                                    completedPages.pageRows.map((req) => (
                                         <tr key={req.id}>
                                             <td className="px-3 py-2 font-medium text-gray-900">
                                                 <div>{req.name}</div>
@@ -454,6 +456,7 @@ function SignupRequestsPanel() {
                         </table>
                     </div>
                 </div>
+                <Pager {...completedPages} />
             </div>
         </section>
     );
@@ -630,6 +633,7 @@ function UserManagementPanel() {
             return haystack.includes(term);
         });
     }, [accounts, search, roleFilter, appFilter, capabilityGroups, roleCapabilities]);
+    const accountPages = usePagination(filteredAccounts, `${search}|${roleFilter}|${appFilter}`);
 
     const resetForm = () => {
         setForm({ ...EMPTY_FORM });
@@ -908,7 +912,7 @@ function UserManagementPanel() {
                                         </td>
                                     </tr>
                                 ) : (
-                                    filteredAccounts.map((account) => {
+                                    accountPages.pageRows.map((account) => {
                                         const accessGroups = accountAccessGroups(account, capabilityGroups, roleCapabilities);
                                         const notifs = notificationSummary(account);
                                         return (
@@ -999,6 +1003,7 @@ function UserManagementPanel() {
                         </table>
                     </div>
                 </div>
+                <Pager {...accountPages} />
             </div>
 
             {isFormOpen && (
@@ -1843,6 +1848,7 @@ function BlacklistPanel() {
             return haystack.includes(term);
         });
     }, [entries, search]);
+    const entryPages = usePagination(filteredEntries, search);
 
     const handleFormChange = (field: keyof BlacklistFormState) => (value: string) => {
         setForm((prev) => ({ ...prev, [field]: value }));
@@ -2202,7 +2208,7 @@ function BlacklistPanel() {
                                         </td>
                                     </tr>
                                 ) : (
-                                    filteredEntries.map((entry) => {
+                                    entryPages.pageRows.map((entry) => {
                                         const active = entry.active !== false;
                                         return (
                                             <tr key={entry.id}>
@@ -2252,6 +2258,7 @@ function BlacklistPanel() {
                         </table>
                     </div>
                 </div>
+                <Pager {...entryPages} />
             </div>
         </section>
     );

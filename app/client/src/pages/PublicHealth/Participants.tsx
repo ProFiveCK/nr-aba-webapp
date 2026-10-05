@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
 import { useConfirm } from '../../contexts/useConfirm';
-import { Button, EmptyState, LoadingState, Modal, ModalActions } from '../../components/Ui';
+import { Button, EmptyState, LoadingState, Modal, ModalActions, Pager } from '../../components/Ui';
+import { usePagination } from '../../lib/usePagination';
 import { parseCsvRows, formatBSB } from '../../lib/utils';
 import { printReport } from '../../lib/print';
 import type { PublicHealthParticipant, PublicHealthTierCode } from '../../features/public-health/types';
@@ -100,6 +101,8 @@ export function Participants() {
       return sort.dir === 'asc' ? cmp : -cmp;
     });
   }, [participants, search, statusFilter, levelFilter, sort]);
+  // Sorting covers the whole list; only the rows shown are paged.
+  const participantPages = usePagination(filtered, `${search}|${statusFilter}|${levelFilter}`);
 
   const stats = useMemo(() => {
     const s = { total: participants.length, active: 0, inactive: 0, LV0: 0, LV1: 0, LV2: 0, LV3: 0 };
@@ -320,7 +323,7 @@ export function Participants() {
                 ) : filtered.length === 0 ? (
                   <tr><td colSpan={7}><EmptyState title="No participants match your filters." detail="Adjust the search or filters, or add a participant." /></td></tr>
                 ) : (
-                  filtered.map((p) => (
+                  participantPages.pageRows.map((p) => (
                     <tr key={p.id}>
                       <td className="px-3 py-2 font-medium text-gray-900">{p.full_name}</td>
                       <td className="px-3 py-2 text-gray-700">{p.village || '—'}</td>
@@ -354,7 +357,7 @@ export function Participants() {
         <div className="mt-2 space-y-2 sm:hidden">
           {loading ? <LoadingState label="Loading participants…" /> : filtered.length === 0 ? (
             <EmptyState title="No participants match your filters." detail="Adjust the filters or add a participant." />
-          ) : filtered.map((p) => (
+          ) : participantPages.pageRows.map((p) => (
             <article key={p.id} className="rounded-xl border border-gray-200 bg-white p-3.5 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -374,6 +377,7 @@ export function Participants() {
             </article>
           ))}
         </div>
+        <Pager {...participantPages} />
       </section>
 
       {modalOpen && (

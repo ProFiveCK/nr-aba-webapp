@@ -168,3 +168,41 @@ docker exec -it ron-aba-postgres-prod psql -U postgres -c "ALTER USER postgres P
 - [ ] Verify /health and login
 - [ ] Re-enter SMTP password in Admin UI
 - [ ] Clean up backups after a few days
+---
+
+# Deploying `feat/security-hardening` (2026-10-06)
+
+Before deploying, run `npm run ci:local` (no GitHub CI; it must pass on your machine).
+
+**Before `docker compose up`**
+
+1. **Portainer agent** has moved to `docker-compose.portainer.yml` and will not start without a secret.
+   - Not using Portainer: `docker rm -f portainer-agent-ronstack`, and you're done.
+   - Using it: set the same `AGENT_SECRET` on the Portainer server's environment entry. In `.env.prod`, set `PORTAINER_AGENT_SECRET` and `PORTAINER_AGENT_BIND` (this host's LAN IP).
+   - Then: `docker rm -f portainer-agent-ronstack && docker compose -f docker-compose.portainer.yml --env-file .env.prod up -d`
+   - Check that port 9001 is no longer open to the internet.
+2. **Default admin:**
+   - Remove `DEFAULT_ADMIN_PASSWORD` from `.env.prod`.
+   - It now only matters when the database has no active admin, and the API refuses a weak value. If you keep it, make it 12+ characters.
+3. **Who will be blocked:** accounts with a pending temporary password can now do nothing until they change it. To list them:
+   `SELECT email FROM reviewers WHERE must_change_password;`
+
+**Deploy**
+
+4. Rebuild the API image, because dependencies changed (nodemailer 6 → 10, audit fixes): `docker compose --env-file .env.prod up -d --build`.
+5. Postgres and nginx containers are recreated without `.env.prod` loaded. The data volume is untouched.
+6. Publish the frontend: `cd app/client && npm run build && ../../scripts/publish-frontend.sh`.
+
+**After deploy, check**
+
+7. **Email:** Admin → SMTP settings → send a test email (nodemailer major bump).
+8. **Google sign-in:** the new Content-Security-Policy allows `accounts.google.com/gsi`, but this could not be tested locally.
+9. **Security headers:** `curl -sI https://<site>/ | grep -i content-security` should show the policy.
+10. **Payments:** submit one real ABA batch, and change the processing date on one.
+    - Files are now parsed on the server.
+    - A batch whose payload and file disagree is refused with "Generate the file again and resubmit".
+
+**Expected side effects**
+
+- Password reset links sent before the deploy stop working, because tokens are now stored hashed. They expire within an hour anyway.
+- New passwords need 12+ characters. Existing passwords still work.

@@ -38,22 +38,22 @@ export function AppBar({ app, apps, sections }: { app: AppDef; apps: AppDef[]; s
     const others = apps.filter((candidate) => candidate.id !== app.id);
 
     return (
-        <div className="border-b border-slate-200 bg-white px-4 shadow-sm sm:px-6 lg:px-8">
+        <div className="border-b border-gray-200 bg-white px-4 shadow-sm sm:px-6 lg:px-8">
             <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 py-2">
                 <div className="flex min-w-0 items-center gap-2 sm:gap-3">
                     <Link
                         to="/"
-                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-blue-50 hover:text-[#002B7F]"
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-blue-50 hover:text-brand"
                     >
                         <ArrowLeft size={16} aria-hidden="true" />
                         <span className="max-[400px]:sr-only">Dashboard</span>
                     </Link>
-                    <span aria-hidden="true" className="h-5 w-px shrink-0 bg-slate-200" />
+                    <span aria-hidden="true" className="h-5 w-px shrink-0 bg-gray-200" />
                     <span className="flex min-w-0 items-center gap-2">
                         <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-white ${app.color}`}>
                             <Icon size={16} strokeWidth={2.1} aria-hidden="true" />
                         </span>
-                        <span className="truncate text-sm font-semibold text-slate-900">{app.label}</span>
+                        <span className="truncate text-sm font-semibold text-gray-900">{app.label}</span>
                     </span>
                 </div>
 
@@ -64,14 +64,14 @@ export function AppBar({ app, apps, sections }: { app: AppDef; apps: AppDef[]; s
                             onClick={() => setOpen((value) => !value)}
                             aria-expanded={open}
                             aria-haspopup="menu"
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-blue-50 hover:text-[#002B7F]"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-2.5 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-blue-50 hover:text-brand"
                         >
                             <LayoutGrid size={15} aria-hidden="true" />
                             <span className="max-sm:sr-only">Switch app</span>
                             <ChevronDown size={14} aria-hidden="true" />
                         </button>
                         {open && (
-                            <div role="menu" className="absolute right-0 z-30 mt-2 w-60 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                            <div role="menu" className="absolute right-0 z-30 mt-2 w-60 rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl">
                                 {others.map((other) => {
                                     const OtherIcon = other.icon;
                                     return (
@@ -80,7 +80,7 @@ export function AppBar({ app, apps, sections }: { app: AppDef; apps: AppDef[]; s
                                             to={pathForApp(other)}
                                             role="menuitem"
                                             onClick={() => setOpen(false)}
-                                            className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-[#002B7F]"
+                                            className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-brand"
                                         >
                                             <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded text-white ${other.color}`}>
                                                 <OtherIcon size={14} strokeWidth={2.1} aria-hidden="true" />
@@ -106,8 +106,8 @@ export function AppBar({ app, apps, sections }: { app: AppDef; apps: AppDef[]; s
                                 to={section.to}
                                 className={({ isActive }) => `shrink-0 whitespace-nowrap border-b-2 pb-2 pt-0.5 text-sm font-medium transition-colors ${
                                     isActive
-                                        ? 'border-[#E8842C] text-[#002B7F]'
-                                        : 'border-transparent text-slate-600 hover:text-[#002B7F]'
+                                        ? 'border-accent text-brand'
+                                        : 'border-transparent text-gray-600 hover:text-brand'
                                 }`}
                             >
                                 {section.label}

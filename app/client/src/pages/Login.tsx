@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Building2, ChevronDown, LayoutGrid, Loader2, LockKeyhole, Mail, User } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Button, Modal, ModalActions } from '../components/Ui';
 import { useAuth } from '../contexts/useAuth';
 import { apiClient } from '../lib/api';
 import { loadGoogleIdentity } from '../lib/googleSignIn';
@@ -14,16 +16,19 @@ interface DepartmentOption {
 }
 
 const fieldClass =
-    'w-full h-11 pl-10 pr-3 bg-white border border-gray-300 rounded-md text-sm transition-colors focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-[#002B7F]/20 disabled:opacity-60 disabled:bg-gray-50';
+    'w-full h-11 pl-10 pr-3 bg-white border border-gray-300 rounded-md text-sm transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 disabled:opacity-60 disabled:bg-gray-50';
 const labelClass = 'block text-sm font-medium text-gray-700 mb-1.5';
 const iconClass = 'pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400';
 const submitClass =
-    'w-full h-11 inline-flex items-center justify-center rounded-md bg-[#E8842C] text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#d4761f] focus:outline-none focus:ring-2 focus:ring-[#E8842C] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50';
+    'w-full h-11 inline-flex items-center justify-center rounded-md bg-accent text-sm font-semibold text-white shadow-sm transition-colors hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50';
 const linkClass =
-    'text-sm font-medium text-[#002B7F] underline-offset-4 transition-colors hover:text-[#E8842C] hover:underline';
+    'text-sm font-medium text-brand underline-offset-4 transition-colors hover:text-accent hover:underline';
 
 export function Login() {
     const { login, loginWithGoogle } = useAuth();
+    const [searchParams] = useSearchParams();
+    // Set by App when an API call finds the session gone.
+    const sessionExpired = searchParams.get('session') === 'expired';
     const googleButtonRef = useRef<HTMLDivElement | null>(null);
     const [googleEnabled, setGoogleEnabled] = useState(false);
     const [isLogin, setIsLogin] = useState(true);
@@ -234,7 +239,7 @@ export function Login() {
                     {/* Crest + wordmark */}
                     <div className="mb-8">
                         <img src="/logo.png" alt="Republic of Naoero coat of arms" className="h-16 w-auto" />
-                        <h1 className="mt-4 text-xl font-bold tracking-tight text-[#002B7F]">
+                        <h1 className="mt-4 text-xl font-bold tracking-tight text-brand">
                             Naoero Treasury Portal
                         </h1>
                         <p className="mt-1 text-sm text-gray-500">
@@ -248,8 +253,14 @@ export function Login() {
                         {isLogin ? 'Log on using your details' : 'Create an access request'}
                     </h2>
 
+                    {sessionExpired && isLogin && !error && (
+                        <div role="status" className="mb-5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
+                            Your session expired, please sign in again.
+                        </div>
+                    )}
+
                     {error && (
-                        <div className="mb-5 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600">
+                        <div role="alert" className="mb-5 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600">
                             {error}
                         </div>
                     )}
@@ -416,7 +427,7 @@ export function Login() {
                                                 <label
                                                     key={app.id}
                                                     className={`flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm transition-colors ${
-                                                        checked ? 'bg-[#002B7F]/5 text-[#002B7F]' : 'text-gray-700 hover:bg-gray-50'
+                                                        checked ? 'bg-brand/5 text-brand' : 'text-gray-700 hover:bg-gray-50'
                                                     }`}
                                                 >
                                                     <input
@@ -424,7 +435,7 @@ export function Login() {
                                                         checked={checked}
                                                         onChange={(e) => toggleSignupApp(app.id, e.target.checked)}
                                                         disabled={isLoading}
-                                                        className="h-4 w-4 rounded border-gray-300 text-[#002B7F] focus:ring-[#002B7F]/40"
+                                                        className="h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand/40"
                                                     />
                                                     {app.label}
                                                 </label>
@@ -470,7 +481,7 @@ export function Login() {
                                         <button
                                             type="button"
                                             onClick={() => loadDepartments()}
-                                            className="font-medium text-[#002B7F] underline hover:text-[#E8842C]"
+                                            className="font-medium text-brand underline hover:text-accent"
                                             disabled={departmentsLoading}
                                         >
                                             Retry
@@ -523,10 +534,10 @@ export function Login() {
                     alt="Coral pinnacles in the shallows of Anibare Bay, Naoero"
                     className="absolute inset-0 h-full w-full object-cover"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-[#002B7F]/90 via-[#002B7F]/35 to-[#002B7F]/10" />
+                <div className="absolute inset-0 bg-gradient-to-t from-brand/90 via-brand/35 to-brand/10" />
 
                 <div className="relative flex h-full flex-col justify-end p-12 text-white">
-                    <div className="h-1 w-16 rounded-full bg-[#E8842C]" />
+                    <div className="h-1 w-16 rounded-full bg-accent" />
                     <h2 className="mt-6 text-4xl font-bold tracking-tight drop-shadow-sm">
                         Republic of Naoero
                     </h2>
@@ -549,28 +560,13 @@ export function Login() {
         </div>
 
         {resetOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setResetOpen(false)}>
-                <div
-                    className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl"
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <div className="flex items-start justify-between">
-                        <div>
-                            <h2 className="text-xl font-semibold text-[#002B7F]">Reset Password</h2>
-                            <p className="text-sm text-gray-500 mt-1">
-                                Enter your email and we’ll send reset instructions if the account exists.
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setResetOpen(false)}
-                            className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-                        >
-                            ×
-                        </button>
-                    </div>
-
-                    <form onSubmit={handleResetPassword} className="mt-4 space-y-3">
+            <Modal
+                title="Reset password"
+                description="Enter your email and we’ll send reset instructions if the account exists."
+                onClose={() => setResetOpen(false)}
+                closeDisabled={resetLoading}
+            >
+                    <form onSubmit={handleResetPassword} className="space-y-3">
                         <label className="text-sm font-medium text-gray-700">
                             Email address
                             <input
@@ -578,31 +574,17 @@ export function Login() {
                                 required
                                 value={resetEmail}
                                 onChange={(e) => setResetEmail(e.target.value)}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-1 focus:ring-[#002B7F]"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                                 placeholder="name@example.nr"
                             />
                         </label>
                         {resetMessage && <p className="text-sm text-gray-600">{resetMessage}</p>}
-                        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                            <button
-                                type="button"
-                                onClick={() => setResetOpen(false)}
-                                className="rounded-md border border-gray-300 px-5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                                disabled={resetLoading}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="submit"
-                                disabled={resetLoading}
-                                className="rounded-md bg-[#E8842C] px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#d4761f] disabled:opacity-60"
-                            >
-                                {resetLoading ? 'Sending…' : 'Send reset link'}
-                            </button>
-                        </div>
+                        <ModalActions>
+                            <Button variant="secondary" onClick={() => setResetOpen(false)} disabled={resetLoading}>Cancel</Button>
+                            <Button type="submit" loading={resetLoading}>{resetLoading ? 'Sending…' : 'Send reset link'}</Button>
+                        </ModalActions>
                     </form>
-                </div>
-            </div>
+            </Modal>
         )}
         </>
     );

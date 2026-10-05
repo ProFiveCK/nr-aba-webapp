@@ -85,13 +85,13 @@ export function Approvals() {
         <div className="space-y-5">
             <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#2a5ba5]">Manager queue</p>
-                <h2 className="mt-1 text-xl font-bold text-slate-950">Leave approvals</h2>
-                <p className="mt-1 text-sm text-slate-500">{items.length} request{items.length === 1 ? '' : 's'} awaiting your decision.</p>
+                <h2 className="mt-1 text-xl font-bold text-gray-950">Leave approvals</h2>
+                <p className="mt-1 text-sm text-gray-500">{items.length} request{items.length === 1 ? '' : 's'} awaiting your decision.</p>
             </div>
             {lastApproved && (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                     <p className="text-sm font-medium text-emerald-950">{lastApproved.employee_name}'s leave is approved by Treasury. The leave PDF is ready to print and file.</p>
-                    <button type="button" onClick={() => void printForm(lastApproved)} className="rounded-lg bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#174495]">
+                    <button type="button" onClick={() => void printForm(lastApproved)} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-hover">
                         Open approved leave PDF
                     </button>
                 </div>
@@ -105,31 +105,31 @@ export function Approvals() {
                 <div key={application.id} className="app-panel p-5 sm:p-6">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
-                            <p className="text-lg font-semibold text-slate-950">{application.employee_name}</p>
-                            <p className="text-sm text-zinc-600">
+                            <p className="text-lg font-semibold text-gray-950">{application.employee_name}</p>
+                            <p className="text-sm text-gray-600">
                                 {application.leave_type_name} · {formatDate(application.start_date)} – {formatDate(application.end_date)} ·{' '}
                                 <span className="font-medium">{application.days} working days</span>
                             </p>
                             {application.reason && (
-                                <p className="mt-2 rounded-md bg-zinc-50 p-2 text-sm text-zinc-700">{application.reason}</p>
+                                <p className="mt-2 rounded-md bg-gray-50 p-2 text-sm text-gray-700">{application.reason}</p>
                             )}
                             {!application.reason && (
                                 <p className="mt-2 rounded-md bg-amber-50 p-2 text-sm text-amber-900">No explanation recorded. Ask the applicant to cancel and resubmit this request with a reason.</p>
                             )}
                             {(application.attachments?.length ?? 0) > 0 && (
                                 <div className="mt-2">
-                                    <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Supporting documents</p>
+                                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Supporting documents</p>
                                     <LeaveAttachmentLinks application={application} onError={(message) => addToast(message, 'error')} />
                                 </div>
                             )}
-                            <p className="mt-2 text-xs text-zinc-400">Applied {formatDate(application.applied_at)}</p>
+                            <p className="mt-2 text-xs text-gray-400">Applied {formatDate(application.applied_at)}</p>
                         </div>
                         <div className="flex w-full gap-2 sm:w-auto">
                             <button
                                 type="button"
                                 disabled={busyId === application.id || !application.reason?.trim()}
                                 onClick={() => decide(application, 'approved')}
-                                className="flex-1 rounded-lg bg-[#002B7F] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#174495] disabled:opacity-50 sm:flex-none"
+                                className="flex-1 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-hover disabled:opacity-50 sm:flex-none"
                             >
                                 Approve
                             </button>
@@ -147,18 +147,18 @@ export function Approvals() {
             ))}
             {recent.length > 0 && (
                 <section className="app-panel overflow-hidden">
-                    <div className="border-b border-slate-100 px-5 py-4 sm:px-6">
-                        <h3 className="text-lg font-semibold text-slate-950">Recently approved</h3>
-                        <p className="text-sm text-slate-500">Open the approved PDF for printing or the personnel file.</p>
+                    <div className="border-b border-gray-100 px-5 py-4 sm:px-6">
+                        <h3 className="text-lg font-semibold text-gray-950">Recently approved</h3>
+                        <p className="text-sm text-gray-500">Open the approved PDF for printing or the personnel file.</p>
                     </div>
-                    <div className="divide-y divide-slate-100">
+                    <div className="divide-y divide-gray-100">
                         {recent.map((application) => (
                             <div key={application.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm sm:px-6">
                                 <div>
-                                    <p className="font-semibold text-slate-950">{application.employee_name}</p>
-                                    <p className="text-slate-600">{application.leave_type_name} · {formatDate(application.start_date)} – {formatDate(application.end_date)} · {application.days} days</p>
+                                    <p className="font-semibold text-gray-950">{application.employee_name}</p>
+                                    <p className="text-gray-600">{application.leave_type_name} · {formatDate(application.start_date)} – {formatDate(application.end_date)} · {application.days} days</p>
                                 </div>
-                                <button type="button" onClick={() => void printForm(application)} className="rounded-lg border border-[#002B7F] px-3 py-2 text-sm font-semibold text-[#002B7F] hover:bg-blue-50">
+                                <button type="button" onClick={() => void printForm(application)} className="rounded-lg border border-brand px-3 py-2 text-sm font-semibold text-brand hover:bg-blue-50">
                                     Open approved leave PDF
                                 </button>
                             </div>

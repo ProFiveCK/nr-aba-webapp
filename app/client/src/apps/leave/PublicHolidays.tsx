@@ -90,7 +90,7 @@ export function PublicHolidays() {
                     <select
                         value={year}
                         onChange={(e) => setYear(Number(e.target.value))}
-                        className="rounded-md border border-zinc-300 px-2 py-1 text-sm"
+                        className="rounded-md border border-gray-300 px-2 py-1 text-sm"
                         aria-label="Year"
                     >
                         {years.map((y) => (
@@ -102,30 +102,30 @@ export function PublicHolidays() {
 
             <div className="mt-4 flex flex-wrap items-end gap-3">
                 <label className="text-sm">
-                    <span className="mb-1 block font-medium text-zinc-700">Date</span>
+                    <span className="mb-1 block font-medium text-gray-700">Date</span>
                     <input
                         type="date"
                         value={date}
                         onChange={(e) => setDate(e.target.value)}
-                        className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        className="rounded-md border border-gray-300 px-3 py-2 text-sm"
                     />
                 </label>
                 <label className="flex-1 text-sm">
-                    <span className="mb-1 block font-medium text-zinc-700">Name</span>
+                    <span className="mb-1 block font-medium text-gray-700">Name</span>
                     <input
                         type="text"
                         value={name}
                         maxLength={120}
                         placeholder="Independence Day"
                         onChange={(e) => setName(e.target.value)}
-                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                     />
                 </label>
                 <button
                     type="button"
                     onClick={add}
                     disabled={saving}
-                    className="rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50"
+                    className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
                 >
                     {saving ? 'Adding…' : 'Add holiday'}
                 </button>
@@ -134,18 +134,18 @@ export function PublicHolidays() {
             {loading ? (
                 <LoadingState label="Loading public holidays…" />
             ) : shown.length === 0 ? (
-                <p className="mt-4 text-sm text-zinc-500">
+                <p className="mt-4 text-sm text-gray-500">
                     No public holidays recorded for {year}. Until they are entered, leave taken over them is
                     charged as ordinary working days.
                 </p>
             ) : (
-                <ul className="mt-4 divide-y divide-zinc-100">
+                <ul className="mt-4 divide-y divide-gray-100">
                     {shown.map((holiday) => (
                         <li key={holiday.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-                            <span className="w-36 shrink-0 tabular-nums text-zinc-600">
+                            <span className="w-36 shrink-0 tabular-nums text-gray-600">
                                 {formatDate(holiday.holiday_date)}
                             </span>
-                            <span className="flex-1 font-medium text-zinc-900">{holiday.name}</span>
+                            <span className="flex-1 font-medium text-gray-900">{holiday.name}</span>
                             <button
                                 type="button"
                                 onClick={() => remove(holiday)}

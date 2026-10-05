@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../../lib/api';
 import { useToast } from '../../../contexts/useToast';
 import { useConfirm } from '../../../contexts/useConfirm';
-import { LoadingState } from '../../../components/Ui';
+import { Button, LoadingState, Modal, ModalActions } from '../../../components/Ui';
 import type { LeaveType, ResetPeriod } from '../types';
 import { PublicHolidays } from '../PublicHolidays';
 import { OrgUnits } from '../OrgUnits';
@@ -30,7 +30,7 @@ function resetLabel(value: ResetPeriod): string {
 }
 
 function YesNo({ value }: { value: boolean }) {
-    return <span className={value ? 'text-zinc-700' : 'text-zinc-400'}>{value ? 'Yes' : 'No'}</span>;
+    return <span className={value ? 'text-gray-700' : 'text-gray-400'}>{value ? 'Yes' : 'No'}</span>;
 }
 
 export function Policies() {
@@ -204,8 +204,8 @@ export function Policies() {
             <div className="space-y-3 app-panel p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                        <h2 className="text-sm font-semibold text-zinc-900">Fortnightly accrual</h2>
-                        <p className="mt-1 text-xs text-zinc-500">
+                        <h2 className="text-sm font-semibold text-gray-900">Fortnightly accrual</h2>
+                        <p className="mt-1 text-xs text-gray-500">
                             Payroll runs every fortnight. Accrual runs automatically every two weeks from the first
                             date below, crediting accruable leave types and applying any due balance resets.
                         </p>
@@ -214,26 +214,26 @@ export function Policies() {
                         type="button"
                         onClick={runAccrual}
                         disabled={runningAccrual}
-                        className="rounded-md bg-[#E8842C] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#d4761f] disabled:opacity-50"
+                        className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-accent-hover disabled:opacity-50"
                     >
                         {runningAccrual ? 'Running…' : 'Run now'}
                     </button>
                 </div>
                 <div className="flex flex-wrap items-end gap-3">
                     <label className="text-sm">
-                        <span className="mb-1 block font-medium text-zinc-700">First accrual date</span>
+                        <span className="mb-1 block font-medium text-gray-700">First accrual date</span>
                         <input
                             type="date"
                             value={anchorDate}
                             onChange={(e) => setAnchorDate(e.target.value)}
-                            className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
                         />
                     </label>
                     <button
                         type="button"
                         onClick={saveAnchor}
                         disabled={savingAnchor}
-                        className="rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50"
+                        className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
                     >
                         {savingAnchor ? 'Saving…' : 'Save schedule'}
                     </button>
@@ -241,15 +241,15 @@ export function Policies() {
             </div>
 
             <div className="app-panel">
-                <h2 className="border-b border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-900">Leave types</h2>
-                <p className="px-4 pt-3 text-sm text-zinc-600">
+                <h2 className="border-b border-gray-200 px-4 py-3 text-sm font-semibold text-gray-900">Leave types</h2>
+                <p className="px-4 pt-3 text-sm text-gray-600">
                     Every leave application requires an explanation. A type with a document required will not accept
                     an application until the named document is attached — the invitation for official leave, the
                     certificate for sick leave with an M/C.
                 </p>
                 <div className="overflow-x-auto">
                     <table className="min-w-full text-sm">
-                        <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
+                        <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
                             <tr>
                                 <th className="px-4 py-2">Name</th>
                                 <th className="px-4 py-2">Days / year</th>
@@ -262,26 +262,26 @@ export function Policies() {
                                 <th className="px-4 py-2" />
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-zinc-100">
+                        <tbody className="divide-y divide-gray-100">
                             {types.map((type) => (
                                 <tr key={type.id}>
-                                    <td className="px-4 py-2 font-medium text-zinc-900">{type.name}</td>
-                                    <td className="px-4 py-2 text-zinc-600">{type.default_days}</td>
-                                    <td className="px-4 py-2 text-zinc-600">{type.accrual_days_per_fortnight}</td>
-                                    <td className="px-4 py-2 text-zinc-600">{type.max_balance ?? 'No limit'}</td>
-                                    <td className="px-4 py-2 text-zinc-600">{resetLabel(type.reset_period)}</td>
+                                    <td className="px-4 py-2 font-medium text-gray-900">{type.name}</td>
+                                    <td className="px-4 py-2 text-gray-600">{type.default_days}</td>
+                                    <td className="px-4 py-2 text-gray-600">{type.accrual_days_per_fortnight}</td>
+                                    <td className="px-4 py-2 text-gray-600">{type.max_balance ?? 'No limit'}</td>
+                                    <td className="px-4 py-2 text-gray-600">{resetLabel(type.reset_period)}</td>
                                     <td className="px-4 py-2"><YesNo value={type.is_accruable} /></td>
-                                    <td className="px-4 py-2 text-zinc-600">
+                                    <td className="px-4 py-2 text-gray-600">
                                         {type.requires_attachment
                                             ? (type.attachment_label?.trim() || 'Yes')
-                                            : <span className="text-zinc-400">No</span>}
+                                            : <span className="text-gray-400">No</span>}
                                     </td>
                                     <td className="px-4 py-2"><YesNo value={type.is_active} /></td>
                                     <td className="px-4 py-2 text-right whitespace-nowrap">
                                         <button
                                             type="button"
                                             onClick={() => openEdit(type)}
-                                            className="text-sm font-medium text-[#002B7F] hover:underline"
+                                            className="text-sm font-medium text-brand hover:underline"
                                         >
                                             Edit
                                         </button>
@@ -290,7 +290,7 @@ export function Policies() {
                                             onClick={() => remove(type)}
                                             disabled={(type.usage_count ?? 0) > 0}
                                             title={(type.usage_count ?? 0) > 0 ? 'This type is in use and cannot be deleted. Deactivate it instead.' : 'Delete'}
-                                            className="ml-3 text-sm font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:text-zinc-300"
+                                            className="ml-3 text-sm font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:text-gray-300"
                                         >
                                             Delete
                                         </button>
@@ -303,13 +303,13 @@ export function Policies() {
             </div>
 
             <div className="space-y-3 app-panel p-4">
-                <h2 className="text-sm font-semibold text-zinc-900">Add a leave type</h2>
+                <h2 className="text-sm font-semibold text-gray-900">Add a leave type</h2>
                 <div className="grid gap-3 sm:grid-cols-2">
                     <input
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         placeholder="Name, e.g. Study Leave"
-                        className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        className="rounded-md border border-gray-300 px-3 py-2 text-sm"
                     />
                     <input
                         type="number"
@@ -317,7 +317,7 @@ export function Policies() {
                         value={defaultDays}
                         onChange={(e) => setDefaultDays(e.target.value)}
                         placeholder="Days per year"
-                        className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        className="rounded-md border border-gray-300 px-3 py-2 text-sm"
                     />
                     <input
                         type="number"
@@ -326,7 +326,7 @@ export function Policies() {
                         onChange={(e) => setAccrualPerFortnight(e.target.value)}
                         placeholder="Accrual days per fortnight (accruable types only)"
                         disabled={!isAccruable}
-                        className="rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
+                        className="rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
                     />
                     <input
                         type="number"
@@ -336,19 +336,19 @@ export function Policies() {
                         onChange={(e) => setMaxBalance(e.target.value)}
                         placeholder="Maximum balance in days (blank = no limit)"
                         disabled={!isAccruable}
-                        className="rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
+                        className="rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
                     />
                     <select
                         value={resetPeriod}
                         onChange={(e) => setResetPeriod(e.target.value as ResetPeriod)}
-                        className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        className="rounded-md border border-gray-300 px-3 py-2 text-sm"
                     >
                         {RESET_OPTIONS.map((option) => (
                             <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
                     </select>
                 </div>
-                <div className="flex flex-wrap gap-4 text-sm text-zinc-700">
+                <div className="flex flex-wrap gap-4 text-sm text-gray-700">
                     <label className="flex items-center gap-2">
                         <input type="checkbox" checked={isAccruable} onChange={(e) => setIsAccruable(e.target.checked)} />
                         Accruable
@@ -368,56 +368,48 @@ export function Policies() {
                         onChange={(e) => setAttachmentLabel(e.target.value)}
                         maxLength={200}
                         placeholder="Name the document, e.g. Invitation letter from the partner organisation"
-                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm sm:max-w-xl"
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm sm:max-w-xl"
                     />
                 )}
                 <button
                     type="button"
                     onClick={create}
                     disabled={saving}
-                    className="rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50"
+                    className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
                 >
                     {saving ? 'Saving…' : 'Create leave type'}
                 </button>
             </div>
 
             {editing && draft && (
-                <div className="fixed inset-0 z-50 flex justify-end">
-                    <div className="absolute inset-0 bg-zinc-900/40" onClick={() => { setEditing(null); setDraft(null); }} />
-                    <div className="relative flex h-full w-full max-w-md flex-col overflow-y-auto bg-white shadow-2xl">
-                        <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4">
-                            <h2 className="text-base font-semibold text-zinc-900">Edit {editing.name}</h2>
-                            <button
-                                type="button"
-                                onClick={() => { setEditing(null); setDraft(null); }}
-                                className="rounded-full p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
-                                aria-label="Close"
-                            >
-                                ×
-                            </button>
-                        </div>
-                        <div className="flex-1 space-y-4 p-5">
+                <Modal
+                    title={`Edit ${editing.name}`}
+                    onClose={() => { setEditing(null); setDraft(null); }}
+                    closeDisabled={savingEdit}
+                    placement="right"
+                >
+                        <div className="space-y-4">
                             <label className="block text-sm">
-                                <span className="mb-1 block font-medium text-zinc-700">Name</span>
+                                <span className="mb-1 block font-medium text-gray-700">Name</span>
                                 <input
                                     value={draft.name}
                                     onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                                 />
                             </label>
                             <label className="block text-sm">
-                                <span className="mb-1 block font-medium text-zinc-700">Days per year</span>
+                                <span className="mb-1 block font-medium text-gray-700">Days per year</span>
                                 <input
                                     type="number"
                                     step="0.5"
                                     min="0"
                                     value={draft.default_days}
                                     onChange={(e) => setDraft({ ...draft, default_days: e.target.value })}
-                                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                                 />
                             </label>
                             <label className="block text-sm">
-                                <span className="mb-1 block font-medium text-zinc-700">Accrual days per fortnight</span>
+                                <span className="mb-1 block font-medium text-gray-700">Accrual days per fortnight</span>
                                 <input
                                     type="number"
                                     step="0.25"
@@ -425,11 +417,11 @@ export function Policies() {
                                     value={draft.accrual_days_per_fortnight}
                                     disabled={!draft.is_accruable}
                                     onChange={(e) => setDraft({ ...draft, accrual_days_per_fortnight: e.target.value })}
-                                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
                                 />
                             </label>
                             <label className="block text-sm">
-                                <span className="mb-1 block font-medium text-zinc-700">Maximum balance (days)</span>
+                                <span className="mb-1 block font-medium text-gray-700">Maximum balance (days)</span>
                                 <input
                                     type="number"
                                     step="0.5"
@@ -438,23 +430,23 @@ export function Policies() {
                                     disabled={!draft.is_accruable}
                                     placeholder="No limit"
                                     onChange={(e) => setDraft({ ...draft, max_balance: e.target.value })}
-                                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
                                 />
-                                <span className="mt-1 block text-xs text-zinc-500">Accrual stops once a balance reaches this. Leave blank for no limit.</span>
+                                <span className="mt-1 block text-xs text-gray-500">Accrual stops once a balance reaches this. Leave blank for no limit.</span>
                             </label>
                             <label className="block text-sm">
-                                <span className="mb-1 block font-medium text-zinc-700">Reset</span>
+                                <span className="mb-1 block font-medium text-gray-700">Reset</span>
                                 <select
                                     value={draft.reset_period}
                                     onChange={(e) => setDraft({ ...draft, reset_period: e.target.value as ResetPeriod })}
-                                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                                 >
                                     {RESET_OPTIONS.map((option) => (
                                         <option key={option.value} value={option.value}>{option.label}</option>
                                     ))}
                                 </select>
                             </label>
-                            <div className="space-y-2 text-sm text-zinc-700">
+                            <div className="space-y-2 text-sm text-gray-700">
                                 <label className="flex items-center gap-2">
                                     <input
                                         type="checkbox"
@@ -482,40 +474,26 @@ export function Policies() {
                             </div>
                             {draft.requires_attachment && (
                                 <label className="block text-sm">
-                                    <span className="mb-1 block font-medium text-zinc-700">Document to attach</span>
+                                    <span className="mb-1 block font-medium text-gray-700">Document to attach</span>
                                     <input
                                         value={draft.attachment_label}
                                         onChange={(e) => setDraft({ ...draft, attachment_label: e.target.value })}
                                         maxLength={200}
                                         placeholder="e.g. Medical certificate"
-                                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                                     />
-                                    <span className="mt-1 block text-xs text-zinc-500">
+                                    <span className="mt-1 block text-xs text-gray-500">
                                         Named on the application form so the applicant knows what to attach. Changing
                                         this does not affect applications already submitted.
                                     </span>
                                 </label>
                             )}
                         </div>
-                        <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4">
-                            <button
-                                type="button"
-                                onClick={() => { setEditing(null); setDraft(null); }}
-                                className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                onClick={saveEdit}
-                                disabled={savingEdit}
-                                className="rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50"
-                            >
-                                {savingEdit ? 'Saving…' : 'Save'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                        <ModalActions>
+                            <Button variant="secondary" onClick={() => { setEditing(null); setDraft(null); }} disabled={savingEdit}>Cancel</Button>
+                            <Button onClick={saveEdit} loading={savingEdit}>{savingEdit ? 'Saving…' : 'Save'}</Button>
+                        </ModalActions>
+                </Modal>
             )}
         </div>
     );

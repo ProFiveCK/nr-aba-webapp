@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { UserRound } from 'lucide-react';
 import { useAuth } from '../contexts/useAuth';
 import { ChangePasswordModal } from './ChangePasswordModal';
+import { Button, Modal, ModalActions } from './Ui';
 import { AppBar } from './AppBar';
 import { AppChromeContext, type AppSection } from './appChrome';
 import { findAppByPath, getAllowedApps, SYSTEM_PAGES, type AppDef } from '../lib/apps';
@@ -61,7 +62,7 @@ export function Layout() {
         <>
         <div className="min-h-screen bg-[#f4f6fa]">
             <header className="sticky top-0 z-40 shadow-sm">
-            <div className="border-b border-white/10 bg-[#002B7F] px-4 py-4 text-white sm:px-6 lg:px-8">
+            <div className="border-b border-white/10 bg-brand px-4 py-4 text-white sm:px-6 lg:px-8">
                 <div className="relative mx-auto flex max-w-7xl items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                         <img src="/logo.png" alt="Republic of Naoero coat of arms" className="h-12 w-12 rounded-lg bg-white p-1 object-contain" />
@@ -80,7 +81,7 @@ export function Layout() {
                         </button>
                         <button
                             onClick={handleSignOut}
-                            className="rounded-lg bg-white px-3 py-2 text-sm font-semibold text-[#002B7F] transition-colors hover:bg-blue-50"
+                            className="rounded-lg bg-white px-3 py-2 text-sm font-semibold text-brand transition-colors hover:bg-blue-50"
                         >
                             Sign Out
                         </button>
@@ -100,8 +101,8 @@ export function Layout() {
                         </button>
                     </div>
                     {showAccountMenu && (
-                        <div id="mobile-account-menu" className="absolute right-0 top-full z-30 mt-3 w-56 rounded-xl border border-slate-200 bg-white p-2 text-slate-900 shadow-xl sm:hidden">
-                            <p className="truncate border-b border-slate-100 px-3 py-2 text-sm font-semibold">{displayName}</p>
+                        <div id="mobile-account-menu" className="absolute right-0 top-full z-30 mt-3 w-56 rounded-xl border border-gray-200 bg-white p-2 text-gray-900 shadow-xl sm:hidden">
+                            <p className="truncate border-b border-gray-100 px-3 py-2 text-sm font-semibold">{displayName}</p>
                             <button type="button" onClick={handleChangePassword} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-blue-50">Change Password</button>
                             <button type="button" onClick={handleSignOut} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-blue-50">Sign Out</button>
                         </div>
@@ -118,42 +119,17 @@ export function Layout() {
         </div>
         {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)} />}
         {showSignOutModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setShowSignOutModal(false)}>
-                <div
-                    className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl"
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <div className="flex items-start justify-between">
-                        <div>
-                            <h2 className="text-xl font-semibold text-gray-900">Sign out</h2>
-                            <p className="text-sm text-gray-500 mt-1">You will need to enter your email and password again to sign back in.</p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setShowSignOutModal(false)}
-                            className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-                        >
-                            ×
-                        </button>
-                    </div>
-                    <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
-                        <button
-                            type="button"
-                            onClick={() => setShowSignOutModal(false)}
-                            className="rounded-full border border-gray-300 px-5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="button"
-                            onClick={confirmSignOut}
-                            className="rounded-full bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-amber-400"
-                        >
-                            Sign Out
-                        </button>
-                    </div>
-                </div>
-            </div>
+            <Modal
+                title="Sign out"
+                description="You will need to enter your email and password again to sign back in."
+                onClose={() => setShowSignOutModal(false)}
+                size="sm"
+            >
+                <ModalActions>
+                    <Button variant="secondary" onClick={() => setShowSignOutModal(false)}>Cancel</Button>
+                    <Button onClick={confirmSignOut}>Sign out</Button>
+                </ModalActions>
+            </Modal>
         )}
         </>
     );

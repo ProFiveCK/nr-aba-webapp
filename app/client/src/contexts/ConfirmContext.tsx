@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import { Button, Modal, ModalActions } from '../components/Ui';
 import {
     ConfirmContext,
     type ConfirmOptions,
@@ -53,62 +54,39 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         <ConfirmContext.Provider value={value}>
             {children}
             {pending && (
-                <div
-                    className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/60 px-4 py-6"
-                    onClick={() => close(pending.kind === 'confirm' ? false : null)}
+                <Modal
+                    title={pending.options.title || (isPrompt ? 'Enter a value' : 'Please confirm')}
+                    description={pending.options.message}
+                    onClose={() => close(pending.kind === 'confirm' ? false : null)}
                 >
-                    <div
-                        className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl"
-                        onClick={(e) => e.stopPropagation()}
-                        role="dialog"
-                        aria-modal="true"
-                    >
-                        {pending.options.title && (
-                            <h2 className="text-lg font-semibold text-[#002B7F]">{pending.options.title}</h2>
-                        )}
-                        {pending.options.message && (
-                            <p className={`text-sm text-gray-600 ${pending.options.title ? 'mt-1.5' : ''}`}>
-                                {pending.options.message}
-                            </p>
-                        )}
+                    {isPrompt && (
+                        <input
+                            autoFocus
+                            type="text"
+                            aria-label={pending.options.title || pending.options.message || 'Value'}
+                            value={inputValue}
+                            onChange={(e) => setInputValue(e.target.value)}
+                            placeholder={pending.options.placeholder}
+                            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !confirmDisabled) close(inputValue.trim());
+                            }}
+                        />
+                    )}
 
-                        {isPrompt && (
-                            <input
-                                autoFocus
-                                type="text"
-                                value={inputValue}
-                                onChange={(e) => setInputValue(e.target.value)}
-                                placeholder={pending.options.placeholder}
-                                className="mt-4 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-[#002B7F]/20"
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && !confirmDisabled) close(inputValue.trim());
-                                }}
-                            />
-                        )}
-
-                        <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
-                            <button
-                                type="button"
-                                onClick={() => close(pending.kind === 'confirm' ? false : null)}
-                                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                            >
-                                {pending.options.cancelLabel || 'Cancel'}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => close(pending.kind === 'confirm' ? true : inputValue.trim())}
-                                disabled={confirmDisabled}
-                                className={`rounded-md px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                                    pending.kind === 'confirm' && pending.options.tone === 'danger'
-                                        ? 'bg-rose-600 hover:bg-rose-500'
-                                        : 'bg-[#E8842C] hover:bg-[#d4761f]'
-                                }`}
-                            >
-                                {pending.options.confirmLabel || (pending.kind === 'confirm' ? 'Confirm' : 'OK')}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                    <ModalActions>
+                        <Button variant="secondary" onClick={() => close(pending.kind === 'confirm' ? false : null)}>
+                            {pending.options.cancelLabel || 'Cancel'}
+                        </Button>
+                        <Button
+                            variant={pending.kind === 'confirm' && pending.options.tone === 'danger' ? 'danger' : 'primary'}
+                            onClick={() => close(pending.kind === 'confirm' ? true : inputValue.trim())}
+                            disabled={confirmDisabled}
+                        >
+                            {pending.options.confirmLabel || (pending.kind === 'confirm' ? 'Confirm' : 'OK')}
+                        </Button>
+                    </ModalActions>
+                </Modal>
             )}
         </ConfirmContext.Provider>
     );

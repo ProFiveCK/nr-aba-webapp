@@ -3,6 +3,7 @@ import { apiClient } from '../lib/api';
 import { useToast } from '../contexts/useToast';
 import { useAuth } from '../contexts/useAuth';
 import type { User } from '../contexts/auth-types';
+import { Button, Modal, ModalActions } from './Ui';
 
 interface ChangePasswordModalProps {
     onClose: () => void;
@@ -58,27 +59,13 @@ export function ChangePasswordModal({ onClose, onChanged }: ChangePasswordModalP
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={onClose}>
-            <div
-                className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
-                onClick={(event) => event.stopPropagation()}
-            >
-                <div className="flex items-start justify-between">
-                    <div>
-                        <h2 className="text-xl font-semibold text-gray-900">Change Password</h2>
-                        <p className="text-sm text-gray-500 mt-1">Enter your current password and a new password (minimum 12 characters).</p>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-                        aria-label="Close change password modal"
-                    >
-                        ×
-                    </button>
-                </div>
-
-                <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        <Modal
+            title="Change password"
+            description="Enter your current password and a new password (minimum 12 characters)."
+            onClose={onClose}
+            closeDisabled={loading}
+        >
+                <form onSubmit={handleSubmit} className="space-y-4">
                     <label className="text-sm font-medium text-gray-700">
                         Current password
                         <input
@@ -117,27 +104,13 @@ export function ChangePasswordModal({ onClose, onChanged }: ChangePasswordModalP
                         />
                     </label>
 
-                    {error && <p className="text-sm text-rose-600">{error}</p>}
+                    {error && <p role="alert" className="text-sm text-rose-600">{error}</p>}
 
-                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end pt-2">
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="rounded-full border border-gray-300 px-5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                            disabled={loading}
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="submit"
-                            disabled={loading}
-                            className="rounded-full bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-amber-400 disabled:opacity-60"
-                        >
-                            {loading ? 'Updating…' : 'Update Password'}
-                        </button>
-                    </div>
+                    <ModalActions>
+                        <Button variant="secondary" onClick={onClose} disabled={loading}>Cancel</Button>
+                        <Button type="submit" loading={loading}>{loading ? 'Updating…' : 'Update password'}</Button>
+                    </ModalActions>
                 </form>
-            </div>
-        </div>
+        </Modal>
     );
 }

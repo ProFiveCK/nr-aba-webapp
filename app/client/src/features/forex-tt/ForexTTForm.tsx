@@ -24,12 +24,12 @@ const ATTACHMENT_CATEGORIES: { value: string; label: string }[] = [
 const SENDER_NAME = 'The Republic of Nauru';
 
 const fieldClass =
-  'w-full h-9 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:bg-zinc-50 disabled:text-zinc-500';
+  'w-full h-9 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:bg-gray-50 disabled:text-gray-500';
 
 const selectClass =
-  'w-full h-9 appearance-none rounded-md border border-zinc-300 bg-white px-3 pr-8 text-sm text-zinc-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:bg-zinc-50 disabled:text-zinc-500 bg-[url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20fill%3D%22none%22%20viewBox%3D%220%200%2024%2024%22%20stroke%3D%22%2371717a%22%20stroke-width%3D%222%22%3E%3Cpath%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20d%3D%22M19%209l-7%207-7-7%22%2F%3E%3C%2Fsvg%3E")] bg-[length:16px] bg-[right_8px_center] bg-no-repeat';
+  'w-full h-9 appearance-none rounded-md border border-gray-300 bg-white px-3 pr-8 text-sm text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:bg-gray-50 disabled:text-gray-500 bg-[url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20fill%3D%22none%22%20viewBox%3D%220%200%2024%2024%22%20stroke%3D%22%2371717a%22%20stroke-width%3D%222%22%3E%3Cpath%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20d%3D%22M19%209l-7%207-7-7%22%2F%3E%3C%2Fsvg%3E")] bg-[length:16px] bg-[right_8px_center] bg-no-repeat';
 
-const labelClass = 'block text-xs font-medium text-zinc-600 mb-1';
+const labelClass = 'block text-xs font-medium text-gray-600 mb-1';
 
 interface ForexTTFormProps {
   request?: ForexTTRequest;
@@ -134,8 +134,8 @@ export function ForexTTForm({ request, onSaved }: ForexTTFormProps) {
       )}
 
       {/* Transfer Details */}
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-3 border-b border-zinc-100 pb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+      <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-3 border-b border-gray-100 pb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
           Transfer Details
         </h3>
         <div className="grid gap-3 sm:grid-cols-3">
@@ -211,8 +211,8 @@ export function ForexTTForm({ request, onSaved }: ForexTTFormProps) {
       </section>
 
       {/* Beneficiary */}
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-3 border-b border-zinc-100 pb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+      <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-3 border-b border-gray-100 pb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
           Beneficiary Details
         </h3>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -229,7 +229,7 @@ export function ForexTTForm({ request, onSaved }: ForexTTFormProps) {
           <div className="sm:col-span-2">
             <label className={labelClass}>Beneficiary Address</label>
             <textarea
-              className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
               rows={2}
               value={form.beneficiary_address || ''}
               onChange={(e) => update('beneficiary_address', e.target.value)}
@@ -283,26 +283,26 @@ export function ForexTTForm({ request, onSaved }: ForexTTFormProps) {
       </section>
 
       {/* Sender Account — fixed, Treasury completes BSB/Account */}
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-3 border-b border-zinc-100 pb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+      <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-3 border-b border-gray-100 pb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
           Sender Account
         </h3>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <label className={labelClass}>Account Name</label>
-            <div className="flex h-9 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm font-medium text-zinc-700">
+            <div className="flex h-9 items-center rounded-md border border-gray-200 bg-gray-50 px-3 text-sm font-medium text-gray-700">
               {SENDER_NAME}
             </div>
           </div>
           <div>
             <label className={labelClass}>BSB</label>
-            <div className="flex h-9 items-center rounded-md border border-dashed border-zinc-300 bg-zinc-50 px-3 text-xs text-zinc-400">
+            <div className="flex h-9 items-center rounded-md border border-dashed border-gray-300 bg-gray-50 px-3 text-xs text-gray-400">
               Treasury use only
             </div>
           </div>
           <div>
             <label className={labelClass}>Account Number</label>
-            <div className="flex h-9 items-center rounded-md border border-dashed border-zinc-300 bg-zinc-50 px-3 text-xs text-zinc-400">
+            <div className="flex h-9 items-center rounded-md border border-dashed border-gray-300 bg-gray-50 px-3 text-xs text-gray-400">
               Treasury use only
             </div>
           </div>
@@ -310,12 +310,12 @@ export function ForexTTForm({ request, onSaved }: ForexTTFormProps) {
       </section>
 
       {/* Notes */}
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-3 border-b border-zinc-100 pb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+      <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-3 border-b border-gray-100 pb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
           Notes / Additional Instructions
         </h3>
         <textarea
-          className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+          className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
           rows={2}
           value={form.notes || ''}
           onChange={(e) => update('notes', e.target.value)}
@@ -324,8 +324,8 @@ export function ForexTTForm({ request, onSaved }: ForexTTFormProps) {
       </section>
 
       {/* Attachments */}
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-3 border-b border-zinc-100 pb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+      <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-3 border-b border-gray-100 pb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
           Supporting Documents (PDF, PNG, JPG)
         </h3>
         <div className="space-y-3">
@@ -333,10 +333,10 @@ export function ForexTTForm({ request, onSaved }: ForexTTFormProps) {
             const selected = filesByCategory[cat.value];
             const existing = groupedAttachments[cat.value] || [];
             return (
-              <div key={cat.value} className="rounded-md border border-zinc-200 p-3">
-                <label className="mb-2 block text-sm font-medium text-zinc-700">{cat.label}</label>
+              <div key={cat.value} className="rounded-md border border-gray-200 p-3">
+                <label className="mb-2 block text-sm font-medium text-gray-700">{cat.label}</label>
                 {existing.length > 0 && (
-                  <ul className="mb-2 divide-y divide-zinc-100 rounded-md border border-zinc-100">
+                  <ul className="mb-2 divide-y divide-gray-100 rounded-md border border-gray-100">
                     {existing.map((a) => (
                       <li key={a.id} className="flex items-center justify-between px-3 py-2">
                         <a
@@ -370,11 +370,11 @@ export function ForexTTForm({ request, onSaved }: ForexTTFormProps) {
                 />
                 <label
                   htmlFor={`forex-tt-form-${cat.value}`}
-                  className="inline-flex h-9 cursor-pointer items-center rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+                  className="inline-flex h-9 cursor-pointer items-center rounded-md border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
                 >
                   Select files
                 </label>
-                <p className="mt-2 text-xs text-zinc-500">
+                <p className="mt-2 text-xs text-gray-500">
                   {selected && selected.length > 0
                     ? `${selected.length} file${selected.length === 1 ? '' : 's'} selected`
                     : 'No files selected'}

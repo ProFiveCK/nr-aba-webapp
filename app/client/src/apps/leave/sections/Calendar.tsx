@@ -80,15 +80,15 @@ export function Calendar() {
     return (
         <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2 app-panel px-4 py-3">
-                <h2 className="text-sm font-semibold text-zinc-900">Who is away — {monthLabel}</h2>
+                <h2 className="text-sm font-semibold text-gray-900">Who is away — {monthLabel}</h2>
                 <div className="flex gap-2">
-                    <button type="button" onClick={() => setOffset(offset - 1)} className="rounded-md border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-50">
+                    <button type="button" onClick={() => setOffset(offset - 1)} className="rounded-md border border-gray-300 px-3 py-1 text-sm hover:bg-gray-50">
                         ← Previous
                     </button>
-                    <button type="button" onClick={() => setOffset(0)} className="rounded-md border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-50">
+                    <button type="button" onClick={() => setOffset(0)} className="rounded-md border border-gray-300 px-3 py-1 text-sm hover:bg-gray-50">
                         This month
                     </button>
-                    <button type="button" onClick={() => setOffset(offset + 1)} className="rounded-md border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-50">
+                    <button type="button" onClick={() => setOffset(offset + 1)} className="rounded-md border border-gray-300 px-3 py-1 text-sm hover:bg-gray-50">
                         Next →
                     </button>
                 </div>
@@ -103,26 +103,26 @@ export function Calendar() {
             ) : (
                 <div className="overflow-x-auto app-panel">
                     <table className="min-w-full text-sm">
-                        <thead className="bg-zinc-50 text-xs text-zinc-500">
+                        <thead className="bg-gray-50 text-xs text-gray-500">
                             <tr>
-                                <th className="sticky left-0 bg-zinc-50 px-3 py-2 text-left font-medium">Person</th>
+                                <th className="sticky left-0 bg-gray-50 px-3 py-2 text-left font-medium">Person</th>
                                 {Array.from({ length: daysInMonth }, (_, i) => {
                                     const date = new Date(bounds.start.getFullYear(), bounds.start.getMonth(), i + 1);
                                     const weekend = date.getDay() === 0 || date.getDay() === 6;
                                     return (
-                                        <th key={i} className={`w-7 py-2 text-center font-normal ${weekend ? 'text-zinc-300' : ''}`}>
+                                        <th key={i} className={`w-7 py-2 text-center font-normal ${weekend ? 'text-gray-300' : ''}`}>
                                             {i + 1}
                                         </th>
                                     );
                                 })}
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-zinc-100">
+                        <tbody className="divide-y divide-gray-100">
                             {byPerson.map((person) => (
                                 <tr key={person.name}>
-                                    <td className="sticky left-0 whitespace-nowrap bg-white px-3 py-2 font-medium text-zinc-900">
+                                    <td className="sticky left-0 whitespace-nowrap bg-white px-3 py-2 font-medium text-gray-900">
                                         {person.name}
-                                        <span className="ml-2 text-xs font-normal text-zinc-400">
+                                        <span className="ml-2 text-xs font-normal text-gray-400">
                                             {[...person.types].join(', ')}
                                         </span>
                                     </td>
@@ -136,7 +136,7 @@ export function Calendar() {
                                             <td key={i} className="p-0.5">
                                                 <div
                                                     className={`h-5 rounded-sm ${
-                                                        away ? 'bg-[#002B7F]' : studying ? 'bg-amber-500' : weekend ? 'bg-zinc-100' : 'bg-zinc-50'
+                                                        away ? 'bg-brand' : studying ? 'bg-amber-500' : weekend ? 'bg-gray-100' : 'bg-gray-50'
                                                     }`}
                                                     title={away || studying ? `${person.name} ${studying && !away ? 'on study leave' : 'away'} on ${day} ${monthLabel}` : undefined}
                                                 />
@@ -151,19 +151,19 @@ export function Calendar() {
             )}
 
             {!loading && byPerson.length > 0 && (
-                <p className="flex flex-wrap items-center gap-4 px-1 text-xs text-zinc-600">
-                    <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-[#002B7F]" aria-hidden="true" />Approved leave</span>
+                <p className="flex flex-wrap items-center gap-4 px-1 text-xs text-gray-600">
+                    <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-brand" aria-hidden="true" />Approved leave</span>
                     <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-amber-500" aria-hidden="true" />Study leave</span>
                 </p>
             )}
 
             {!loading && entries.length > 0 && (
                 <div className="app-panel p-4 text-sm">
-                    <h3 className="mb-2 text-sm font-semibold text-zinc-900">Detail</h3>
-                    <ul className="space-y-1 text-zinc-600">
+                    <h3 className="mb-2 text-sm font-semibold text-gray-900">Detail</h3>
+                    <ul className="space-y-1 text-gray-600">
                         {entries.map((entry) => (
                             <li key={entry.id}>
-                                <span className="font-medium text-zinc-900">{entry.employee_name}</span> —{' '}
+                                <span className="font-medium text-gray-900">{entry.employee_name}</span> —{' '}
                                 {entry.kind === 'study_leave'
                                     ? `Study leave from ${formatDate(entry.start_date)}${entry.end_date ? ` to ${formatDate(entry.end_date)}` : ', return date not set'}`
                                     : `${entry.leave_type_name}, ${formatDate(entry.start_date)} to ${formatDate(entry.end_date as string)} (${entry.days} days)`}

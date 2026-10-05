@@ -24,10 +24,10 @@ export function LeaveApp() {
     if (!fallback) {
         return (
             <div className="space-y-5">
-                <h2 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">Leave</h2>
-                <div className="rounded-xl border border-zinc-200 bg-white p-6 text-center shadow-sm">
-                    <p className="text-sm font-medium text-zinc-900">No leave functions are enabled for your account</p>
-                    <p className="mt-1 text-sm text-zinc-500">Ask an administrator to grant you leave access.</p>
+                <h2 className="text-2xl font-bold tracking-tight text-gray-950 sm:text-3xl">Leave</h2>
+                <div className="rounded-xl border border-gray-200 bg-white p-6 text-center shadow-sm">
+                    <p className="text-sm font-medium text-gray-900">No leave functions are enabled for your account</p>
+                    <p className="mt-1 text-sm text-gray-500">Ask an administrator to grant you leave access.</p>
                 </div>
             </div>
         );

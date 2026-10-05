@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 import {
   FINANCIAL_YEAR_START_MONTH,
+  accrualCreditFor,
   isResetDue,
   openingBalanceFor,
   resetBoundaryFor,
@@ -11,6 +12,27 @@ import {
 
 const ANNUAL = { is_accruable: true, default_days: '20.00', reset_period: 'none' };
 const SICK = { is_accruable: false, default_days: '10.00', reset_period: 'financial_year' };
+
+describe('accrualCreditFor', () => {
+  const CAPPED = { accrual_days_per_fortnight: '3.00', max_balance: '60.00' };
+
+  test('credits the full amount when there is room', () => {
+    assert.equal(accrualCreditFor(CAPPED, 40), 3);
+  });
+
+  test('credits only what fits under the maximum', () => {
+    assert.equal(accrualCreditFor(CAPPED, 58.5), 1.5);
+  });
+
+  test('credits nothing at the maximum, or above it', () => {
+    assert.equal(accrualCreditFor(CAPPED, 60), 0);
+    assert.equal(accrualCreditFor(CAPPED, 64), 0);
+  });
+
+  test('has no limit when no maximum is set', () => {
+    assert.equal(accrualCreditFor({ accrual_days_per_fortnight: '3.00', max_balance: null }, 500), 3);
+  });
+});
 
 describe('seedBalanceFor', () => {
   test('an accruable type starts empty and earns its days', () => {

@@ -17,6 +17,7 @@ interface EditDraft {
     name: string;
     default_days: string;
     accrual_days_per_fortnight: string;
+    max_balance: string;
     reset_period: ResetPeriod;
     is_accruable: boolean;
     is_active: boolean;
@@ -39,6 +40,7 @@ export function Policies() {
     const [name, setName] = useState('');
     const [defaultDays, setDefaultDays] = useState('');
     const [accrualPerFortnight, setAccrualPerFortnight] = useState('');
+    const [maxBalance, setMaxBalance] = useState('');
     const [resetPeriod, setResetPeriod] = useState<ResetPeriod>('none');
     const [isAccruable, setIsAccruable] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -85,6 +87,7 @@ export function Policies() {
                 name: name.trim(),
                 default_days: Number(defaultDays) || 0,
                 accrual_days_per_fortnight: Number(accrualPerFortnight) || 0,
+                max_balance: maxBalance.trim() === '' ? null : Number(maxBalance),
                 reset_period: resetPeriod,
                 is_accruable: isAccruable,
             });
@@ -92,6 +95,7 @@ export function Policies() {
             setName('');
             setDefaultDays('');
             setAccrualPerFortnight('');
+            setMaxBalance('');
             setResetPeriod('none');
             setIsAccruable(false);
             await load();
@@ -164,6 +168,7 @@ export function Policies() {
             name: type.name,
             default_days: type.default_days,
             accrual_days_per_fortnight: type.accrual_days_per_fortnight,
+            max_balance: type.max_balance ?? '',
             reset_period: type.reset_period,
             is_accruable: type.is_accruable,
             is_active: type.is_active,
@@ -182,6 +187,7 @@ export function Policies() {
                 name: draft.name.trim(),
                 default_days: Number(draft.default_days) || 0,
                 accrual_days_per_fortnight: Number(draft.accrual_days_per_fortnight) || 0,
+                max_balance: String(draft.max_balance).trim() === '' ? null : Number(draft.max_balance),
                 reset_period: draft.reset_period,
                 is_accruable: draft.is_accruable,
                 is_active: draft.is_active,
@@ -285,6 +291,7 @@ export function Policies() {
                                 <th className="px-4 py-2">Name</th>
                                 <th className="px-4 py-2">Days / year</th>
                                 <th className="px-4 py-2">Accrual / fortnight</th>
+                                <th className="px-4 py-2">Max balance</th>
                                 <th className="px-4 py-2">Reset</th>
                                 <th className="px-4 py-2">Accruable</th>
                                 <th className="px-4 py-2">Active</th>
@@ -297,6 +304,7 @@ export function Policies() {
                                     <td className="px-4 py-2 font-medium text-zinc-900">{type.name}</td>
                                     <td className="px-4 py-2 text-zinc-600">{type.default_days}</td>
                                     <td className="px-4 py-2 text-zinc-600">{type.accrual_days_per_fortnight}</td>
+                                    <td className="px-4 py-2 text-zinc-600">{type.max_balance ?? 'No limit'}</td>
                                     <td className="px-4 py-2 text-zinc-600">{resetLabel(type.reset_period)}</td>
                                     <td className="px-4 py-2"><YesNo value={type.is_accruable} /></td>
                                     <td className="px-4 py-2"><YesNo value={type.is_active} /></td>
@@ -348,6 +356,16 @@ export function Policies() {
                         value={accrualPerFortnight}
                         onChange={(e) => setAccrualPerFortnight(e.target.value)}
                         placeholder="Accrual days per fortnight (accruable types only)"
+                        disabled={!isAccruable}
+                        className="rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
+                    />
+                    <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        value={maxBalance}
+                        onChange={(e) => setMaxBalance(e.target.value)}
+                        placeholder="Maximum balance in days (blank = no limit)"
                         disabled={!isAccruable}
                         className="rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
                     />
@@ -423,6 +441,20 @@ export function Policies() {
                                     onChange={(e) => setDraft({ ...draft, accrual_days_per_fortnight: e.target.value })}
                                     className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
                                 />
+                            </label>
+                            <label className="block text-sm">
+                                <span className="mb-1 block font-medium text-zinc-700">Maximum balance (days)</span>
+                                <input
+                                    type="number"
+                                    step="0.5"
+                                    min="0"
+                                    value={draft.max_balance}
+                                    disabled={!draft.is_accruable}
+                                    placeholder="No limit"
+                                    onChange={(e) => setDraft({ ...draft, max_balance: e.target.value })}
+                                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
+                                />
+                                <span className="mt-1 block text-xs text-zinc-500">Accrual stops once a balance reaches this. Leave blank for no limit.</span>
                             </label>
                             <label className="block text-sm">
                                 <span className="mb-1 block font-medium text-zinc-700">Reset</span>

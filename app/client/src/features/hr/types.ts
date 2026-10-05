@@ -12,6 +12,7 @@ export interface LeaveType {
     is_active: boolean;
     accrual_days_per_fortnight: string;
     reset_period: ResetPeriod;
+    max_balance: string | null;
     usage_count?: number;
 }
 
@@ -36,6 +37,14 @@ export interface LeaveBalance {
     requires_note?: boolean;
 }
 
+export type IneligibleReason = 'temporary' | 'intern' | 'study_leave';
+
+export const INELIGIBLE_REASON_LABELS: Record<IneligibleReason, string> = {
+    temporary: 'Temporary',
+    intern: 'Intern',
+    study_leave: 'Study leave',
+};
+
 export interface Employee {
     id: string;
     reviewer_id: string | null;
@@ -49,6 +58,10 @@ export interface Employee {
     join_date: string | null;
     status: 'active' | 'inactive';
     leave_entitled: boolean;
+    ineligible_reason?: IneligibleReason | null;
+    study_leave_start?: string | null;
+    study_leave_end?: string | null;
+    eligibility_note?: string | null;
     /** Withheld by the API unless the caller is an HR administrator. */
     daily_rate?: number | string | null;
 }

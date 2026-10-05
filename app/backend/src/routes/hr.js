@@ -17,6 +17,7 @@ import { ServiceError } from '../lib/serviceError.js';
 import { PERMISSIONS } from '../config.js';
 import { buildUpdateAssignments, changedFields, collectUpdates } from '../lib/sqlUpdate.js';
 import { normalizeNameKey } from '../lib/names.js';
+import { INELIGIBLE_REASONS, resolveEligibility } from '../lib/eligibility.js';
 import { calculateWorkingDays, monthsBetween, parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js';
 
@@ -684,6 +685,10 @@ router.post(
     body('manager_id').optional({ nullable: true }).isUUID(),
     body('join_date').optional({ nullable: true }).isISO8601(),
     body('leave_entitled').optional().isBoolean(),
+    body('ineligible_reason').optional({ nullable: true }).isIn(INELIGIBLE_REASONS),
+    body('study_leave_start').optional({ nullable: true }).isISO8601(),
+    body('study_leave_end').optional({ nullable: true }).isISO8601(),
+    body('eligibility_note').optional({ nullable: true }).isString().isLength({ max: 300 }),
     body('confirm').optional().isBoolean(),
   ],
   async (req, res) => {
@@ -692,6 +697,11 @@ router.post(
     const orgUnit = await resolveOrgUnit(req.body.department_code, req.body.division_code);
     if (orgUnit.error) {
       res.status(400).json({ message: orgUnit.error });
+      return;
+    }
+    const eligibility = resolveEligibility({ ...req.body, leave_entitled: req.body.leave_entitled ?? true });
+    if (eligibility.error) {
+      res.status(400).json({ message: eligibility.error });
       return;
     }
 
@@ -735,10 +745,13 @@ router.post(
     }
 
     const { rows } = await pool.query(
-      `INSERT INTO hr_employees (display_name, position_title, department_code, division_code, manager_id, join_date, leave_entitled)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      `INSERT INTO hr_employees (display_name, position_title, department_code, division_code, manager_id, join_date, leave_entitled,
+                                 ineligible_reason, study_leave_start, study_leave_end, eligibility_note)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
       [req.body.display_name, req.body.position_title || null, orgUnit.department,
-       orgUnit.division, req.body.manager_id || null, req.body.join_date || null, req.body.leave_entitled ?? true]
+       orgUnit.division, req.body.manager_id || null, req.body.join_date || null, req.body.leave_entitled ?? true,
+       eligibility.values.ineligible_reason, eligibility.values.study_leave_start,
+       eligibility.values.study_leave_end, eligibility.values.eligibility_note]
     );
     await recordAudit({
       actor: { id: req.user.id, email: req.user.email, ip: req.ip },
@@ -772,6 +785,10 @@ const EMPLOYEE_UPDATABLE = {
   daily_rate: { nullable: true },
   status: { nullable: false },
   leave_entitled: { nullable: false },
+  ineligible_reason: { nullable: true },
+  study_leave_start: { nullable: true },
+  study_leave_end: { nullable: true },
+  eligibility_note: { nullable: true },
 };
 
 /**
@@ -803,6 +820,10 @@ router.put(
     // Both columns are NOT NULL, so null is rejected rather than treated as a clear.
     body('status').optional().isIn(['active', 'inactive']),
     body('leave_entitled').optional().isBoolean(),
+    body('ineligible_reason').optional({ nullable: true }).isIn(INELIGIBLE_REASONS),
+    body('study_leave_start').optional({ nullable: true }).isISO8601(),
+    body('study_leave_end').optional({ nullable: true }).isISO8601(),
+    body('eligibility_note').optional({ nullable: true }).isString().isLength({ max: 300 }),
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -844,6 +865,18 @@ router.put(
       }
       updates.department_code = orgUnit.department;
       updates.division_code = orgUnit.division;
+    }
+
+    // The reason and study-leave dates only mean something together with the
+    // toggle, so they are settled as a whole whenever any of them changes.
+    const eligibilityFields = ['leave_entitled', 'ineligible_reason', 'study_leave_start', 'study_leave_end', 'eligibility_note'];
+    if (eligibilityFields.some((field) => Object.hasOwn(updates, field))) {
+      const eligibility = resolveEligibility({ ...existing[0], ...updates });
+      if (eligibility.error) {
+        res.status(400).json({ message: eligibility.error });
+        return;
+      }
+      Object.assign(updates, eligibility.values);
     }
 
     // The contact address follows the linked login: linking adopts the
@@ -1143,16 +1176,17 @@ router.post(
     body('requires_note').optional().isBoolean(),
     body('accrual_days_per_fortnight').optional().isFloat({ min: 0, max: 365 }),
     body('reset_period').optional().isIn(['none', 'financial_year', 'anniversary']),
+    body('max_balance').optional({ nullable: true }).isFloat({ min: 0, max: 1000 }),
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     try {
       const { rows } = await pool.query(
-        `INSERT INTO hr_leave_types (name, description, default_days, is_accruable, requires_note, accrual_days_per_fortnight, reset_period)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        `INSERT INTO hr_leave_types (name, description, default_days, is_accruable, requires_note, accrual_days_per_fortnight, reset_period, max_balance)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
         [req.body.name.trim(), req.body.description || null, req.body.default_days,
          req.body.is_accruable === true, req.body.requires_note === true,
-         req.body.accrual_days_per_fortnight ?? 0, req.body.reset_period || 'none']
+         req.body.accrual_days_per_fortnight ?? 0, req.body.reset_period || 'none', req.body.max_balance ?? null]
       );
       await recordAudit({
         actor: { id: req.user.id, email: req.user.email, ip: req.ip },
@@ -1185,6 +1219,7 @@ router.put(
     body('is_active').optional().isBoolean(),
     body('accrual_days_per_fortnight').optional().isFloat({ min: 0, max: 365 }),
     body('reset_period').optional().isIn(['none', 'financial_year', 'anniversary']),
+    body('max_balance').optional({ nullable: true }).isFloat({ min: 0, max: 1000 }),
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -1202,19 +1237,21 @@ router.put(
               requires_note = COALESCE($6, requires_note),
               is_active = COALESCE($7, is_active),
               accrual_days_per_fortnight = COALESCE($8, accrual_days_per_fortnight),
-              reset_period = COALESCE($9, reset_period)
+              reset_period = COALESCE($9, reset_period),
+              max_balance = CASE WHEN $10::boolean THEN $11::numeric ELSE max_balance END
         WHERE id = $1 RETURNING *`,
       [req.params.id, req.body.name ?? null, req.body.description ?? null, req.body.default_days ?? null,
        req.body.is_accruable ?? null, req.body.requires_note ?? null, req.body.is_active ?? null,
-       req.body.accrual_days_per_fortnight ?? null, req.body.reset_period ?? null]
+       req.body.accrual_days_per_fortnight ?? null, req.body.reset_period ?? null,
+       Object.hasOwn(req.body, 'max_balance'), req.body.max_balance ?? null]
     );
     await recordAudit({
       actor: { id: req.user.id, email: req.user.email, ip: req.ip },
       action: 'hr.leave_type.updated',
       entityType: 'hr_leave_type',
       entityId: req.params.id,
-      before: { name: before.rows[0].name, default_days: before.rows[0].default_days },
-      after: { name: rows[0].name, default_days: rows[0].default_days },
+      before: { name: before.rows[0].name, default_days: before.rows[0].default_days, max_balance: before.rows[0].max_balance },
+      after: { name: rows[0].name, default_days: rows[0].default_days, max_balance: rows[0].max_balance },
     });
     res.json(rows[0]);
   }
@@ -1508,9 +1545,19 @@ router.get(
       pool.query(
         `SELECT
            (SELECT COUNT(*) FROM hr_employees WHERE status = 'active') AS active_employees,
-           (SELECT COUNT(DISTINCT a.employee_id) FROM hr_leave_applications a
-             WHERE a.status = 'approved' AND a.start_date <= CURRENT_DATE AND a.end_date >= CURRENT_DATE
-           ) AS on_leave_today`
+           (SELECT COUNT(*) FROM (
+              SELECT a.employee_id FROM hr_leave_applications a
+               WHERE a.status = 'approved' AND a.start_date <= CURRENT_DATE AND a.end_date >= CURRENT_DATE
+              UNION
+              SELECT e.id FROM hr_employees e
+               WHERE e.status = 'active' AND e.leave_entitled = FALSE AND e.ineligible_reason = 'study_leave'
+                 AND e.study_leave_start <= CURRENT_DATE
+                 AND (e.study_leave_end IS NULL OR e.study_leave_end >= CURRENT_DATE)
+            ) away_today) AS on_leave_today,
+           (SELECT COUNT(*) FROM hr_employees e
+             WHERE e.status = 'active' AND e.leave_entitled = FALSE AND e.ineligible_reason = 'study_leave'
+               AND e.study_leave_start <= CURRENT_DATE
+               AND (e.study_leave_end IS NULL OR e.study_leave_end >= CURRENT_DATE)) AS on_study_leave`
       ),
       pool.query(
         `SELECT status, COUNT(*) AS count
@@ -1621,20 +1668,34 @@ router.get(
             GROUP BY 1
          ),
          away AS (
-           SELECT COALESCE(e.department_code, 'Unassigned') AS department_code,
-                  day::date AS day,
-                  COUNT(DISTINCT a.employee_id) AS people_out
-             FROM hr_leave_applications a
-             JOIN hr_employees e ON e.id = a.employee_id
-             CROSS JOIN LATERAL generate_series(
-               GREATEST(a.start_date, CURRENT_DATE),
-               LEAST(a.end_date, CURRENT_DATE + INTERVAL '30 days'),
-               INTERVAL '1 day'
-             ) AS day
-            WHERE a.status = 'approved'
-              AND a.start_date <= CURRENT_DATE + INTERVAL '30 days' AND a.end_date >= CURRENT_DATE
-              AND EXTRACT(ISODOW FROM day) < 6
-              AND NOT EXISTS (SELECT 1 FROM hr_public_holidays h WHERE h.holiday_date = day::date)
+           SELECT department_code, day, COUNT(DISTINCT employee_id) AS people_out
+             FROM (
+               SELECT a.employee_id, COALESCE(e.department_code, 'Unassigned') AS department_code, day::date AS day
+                 FROM hr_leave_applications a
+                 JOIN hr_employees e ON e.id = a.employee_id
+                 CROSS JOIN LATERAL generate_series(
+                   GREATEST(a.start_date, CURRENT_DATE),
+                   LEAST(a.end_date, CURRENT_DATE + INTERVAL '30 days'),
+                   INTERVAL '1 day'
+                 ) AS day
+                WHERE a.status = 'approved'
+                  AND a.start_date <= CURRENT_DATE + INTERVAL '30 days' AND a.end_date >= CURRENT_DATE
+                  AND EXTRACT(ISODOW FROM day) < 6
+                  AND NOT EXISTS (SELECT 1 FROM hr_public_holidays h WHERE h.holiday_date = day::date)
+               UNION ALL
+               SELECT e.id, COALESCE(e.department_code, 'Unassigned'), day::date
+                 FROM hr_employees e
+                 CROSS JOIN LATERAL generate_series(
+                   GREATEST(e.study_leave_start, CURRENT_DATE),
+                   LEAST(COALESCE(e.study_leave_end, CURRENT_DATE + 30), CURRENT_DATE + 30),
+                   INTERVAL '1 day'
+                 ) AS day
+                WHERE e.status = 'active' AND e.leave_entitled = FALSE AND e.ineligible_reason = 'study_leave'
+                  AND e.study_leave_start <= CURRENT_DATE + 30
+                  AND (e.study_leave_end IS NULL OR e.study_leave_end >= CURRENT_DATE)
+                  AND EXTRACT(ISODOW FROM day) < 6
+                  AND NOT EXISTS (SELECT 1 FROM hr_public_holidays h WHERE h.holiday_date = day::date)
+             ) absences
             GROUP BY 1, 2
          )
          SELECT away.department_code, to_char(away.day, 'YYYY-MM-DD') AS day,
@@ -1714,6 +1775,7 @@ router.get(
       headcount: {
         active_employees: Number(headcount.rows[0].active_employees),
         on_leave_today: Number(headcount.rows[0].on_leave_today),
+        on_study_leave: Number(headcount.rows[0].on_study_leave),
       },
       applications: {
         ...statusCounts,
@@ -1812,9 +1874,10 @@ router.get(
     const seesEveryone = Boolean(
       req.user.permissions?.[PERMISSIONS.HR_ADMIN] || req.user.permissions?.[PERMISSIONS.HR_STAFF_MANAGE]
     );
-    const { rows } = await pool.query(
+    const { rows: applications } = await pool.query(
       `SELECT a.id, a.start_date, a.end_date, a.days, a.status,
-              t.name AS leave_type_name, e.display_name AS employee_name, e.department_code
+              t.name AS leave_type_name, e.display_name AS employee_name, e.department_code,
+              'leave' AS kind
          FROM hr_leave_applications a
          JOIN hr_leave_types t ON t.id = a.leave_type_id
          JOIN hr_employees e ON e.id = a.employee_id
@@ -1824,7 +1887,19 @@ router.get(
         ORDER BY a.start_date, e.display_name`,
       seesEveryone ? [req.query.from, req.query.to] : [req.query.from, req.query.to, me.id]
     );
-    res.json(rows);
+    // Study leave is a period away recorded on the staff record, not an application.
+    const { rows: studyLeave } = await pool.query(
+      `SELECT 'study-' || e.id AS id, e.study_leave_start AS start_date, e.study_leave_end AS end_date,
+              NULL::numeric AS days, 'approved' AS status, 'Study leave' AS leave_type_name,
+              e.display_name AS employee_name, e.department_code, 'study_leave' AS kind
+         FROM hr_employees e
+        WHERE e.status = 'active' AND e.leave_entitled = FALSE AND e.ineligible_reason = 'study_leave'
+          AND e.study_leave_start <= $2 AND (e.study_leave_end IS NULL OR e.study_leave_end >= $1)
+          ${seesEveryone ? '' : 'AND (e.manager_id = $3 OR e.id = $3)'}
+        ORDER BY e.display_name`,
+      seesEveryone ? [req.query.from, req.query.to] : [req.query.from, req.query.to, me.id]
+    );
+    res.json([...applications, ...studyLeave]);
   }
 );
 

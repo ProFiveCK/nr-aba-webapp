@@ -473,6 +473,42 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       }
     });
 
+    test('study leave counts as away today, and stops once the return date has passed', async () => {
+      await pool.query(
+        `UPDATE hr_employees SET leave_entitled = FALSE, ineligible_reason = 'study_leave',
+                study_leave_start = CURRENT_DATE - 30, study_leave_end = CURRENT_DATE + 30
+          WHERE id = $1`, [ana.id]);
+
+      let data = await overview();
+      assert.equal(data.headcount.on_leave_today, 1);
+      assert.equal(data.headcount.on_study_leave, 1);
+
+      await pool.query('UPDATE hr_employees SET study_leave_end = CURRENT_DATE - 1 WHERE id = $1', [ana.id]);
+      data = await overview();
+      assert.equal(data.headcount.on_leave_today, 0, 'their return date has passed');
+      assert.equal(data.headcount.on_study_leave, 0);
+    });
+
+    test('study leave with no return date yet is still away', async () => {
+      await pool.query(
+        `UPDATE hr_employees SET leave_entitled = FALSE, ineligible_reason = 'study_leave',
+                study_leave_start = CURRENT_DATE - 1, study_leave_end = NULL
+          WHERE id = $1`, [ana.id]);
+
+      assert.equal((await overview()).headcount.on_study_leave, 1);
+    });
+
+    test('someone on study leave who also has approved leave is counted once', async () => {
+      await pool.query(
+        `UPDATE hr_employees SET leave_entitled = FALSE, ineligible_reason = 'study_leave',
+                study_leave_start = CURRENT_DATE - 1 WHERE id = $1`, [ana.id]);
+      await pool.query(
+        `INSERT INTO hr_leave_applications (employee_id, leave_type_id, start_date, end_date, days, status)
+         VALUES ($1, $2, CURRENT_DATE - 1, CURRENT_DATE + 1, 1, 'approved')`, [ana.id, annual.id]);
+
+      assert.equal((await overview()).headcount.on_leave_today, 1);
+    });
+
     test('reports liability coverage rather than a confident wrong number', async () => {
       const data = await overview();
       assert.equal(data.liability.staff_total, 2);
@@ -622,6 +658,52 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       assert.equal((await callAs(admin, `/departments/${finance.id}`, { method: 'DELETE' })).status, 409, 'staff are in it');
       await pool.query('UPDATE hr_employees SET department_code = NULL WHERE id = $1', [ana.id]);
       assert.equal((await callAs(admin, `/departments/${finance.id}`, { method: 'DELETE' })).status, 200);
+    });
+
+    test('not being eligible for annual leave needs a reason, and study leave needs dates', async () => {
+      const staff = { hr_staff_manage: true, hr_access: true };
+      const edit = (fields) => callAs(staff, `/employees/${ana.id}`, { method: 'PUT', body: fields });
+
+      assert.equal((await edit({ leave_entitled: false })).status, 400, 'a reason is required');
+      assert.equal((await edit({ leave_entitled: false, ineligible_reason: 'study_leave' })).status, 400, 'study leave needs a start date');
+      assert.equal((await edit({
+        leave_entitled: false, ineligible_reason: 'study_leave', study_leave_start: '2026-10-01', study_leave_end: '2026-09-01',
+      })).status, 400, 'the return date cannot precede the start');
+
+      const intern = await edit({ leave_entitled: false, ineligible_reason: 'intern', study_leave_start: '2026-10-01' });
+      assert.equal(intern.status, 200);
+      assert.equal(intern.body.ineligible_reason, 'intern');
+      assert.equal(intern.body.study_leave_start, null, 'dates only belong to study leave');
+
+      const study = await edit({
+        leave_entitled: false, ineligible_reason: 'study_leave', study_leave_start: '2026-10-01',
+        study_leave_end: '2027-04-01', eligibility_note: 'Unpaid, studying overseas',
+      });
+      assert.equal(study.status, 200);
+      assert.equal(study.body.study_leave_start, '2026-10-01');
+      assert.equal(study.body.eligibility_note, 'Unpaid, studying overseas');
+
+      const back = await edit({ leave_entitled: true });
+      assert.equal(back.status, 200);
+      assert.equal(back.body.ineligible_reason, null, 'eligible again clears the reason');
+      assert.equal(back.body.study_leave_end, null);
+      assert.equal(back.body.eligibility_note, null);
+    });
+
+    test('the calendar shows study leave, and a manager sees only their team', async () => {
+      await pool.query(
+        `UPDATE hr_employees SET leave_entitled = FALSE, ineligible_reason = 'study_leave',
+                study_leave_start = '2026-10-01', study_leave_end = NULL WHERE id = $1`, [ana.id]);
+      const window = '/calendar?from=2026-10-01&to=2026-10-31';
+
+      const admin = await callAs({ hr_admin: true }, window);
+      const entry = admin.body.find((row) => row.employee_name === 'Ana');
+      assert.equal(entry.kind, 'study_leave');
+      assert.equal(entry.leave_type_name, 'Study leave');
+      assert.equal(entry.end_date, null, 'no return date yet');
+
+      const outsider = await callAs({ hr_leave_approve: true, hr_access: true }, window);
+      assert.equal(outsider.body.some((row) => row.employee_name === 'Ana'), false);
     });
 
     test('the team list does not leak the rate to a manager', async () => {

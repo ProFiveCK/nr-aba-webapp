@@ -125,6 +125,27 @@ describe('leave accrual', { skip: skipWithoutDatabase }, () => {
 
       assert.equal((await accrue(`${YEAR}-02-13`)).credited, 0);
     });
+
+    test('stops at the maximum balance, topping up to it and never reducing', async () => {
+      const type = await upsertLeaveType(pool, { name: 'T:Annual', accruable: true, perFortnight: 3, maxBalance: 60 });
+      const near = await createEmployee(pool, { name: 'Near' });
+      const full = await createEmployee(pool, { name: 'Full' });
+      const over = await createEmployee(pool, { name: 'Over' });
+      for (const [employee, balance] of [[near, 58.5], [full, 60], [over, 64]]) {
+        const row = await ensureBalance(pool, employee.id, type.id, YEAR);
+        await pool.query('UPDATE hr_leave_balances SET balance = $1 WHERE id = $2', [balance, row.id]);
+      }
+
+      const result = await accrue(`${YEAR}-02-13`);
+
+      assert.equal(result.credited, 1, 'only the person with room is credited');
+      assert.equal((await readBalance(pool, near.id, type.id, YEAR)).balance, 60);
+      assert.equal((await readBalance(pool, full.id, type.id, YEAR)).balance, 60);
+      assert.equal((await readBalance(pool, over.id, type.id, YEAR)).balance, 64, 'a balance over the maximum is left alone');
+      const { rows } = await pool.query('SELECT amount, reason FROM hr_leave_adjustments WHERE employee_id = $1', [near.id]);
+      assert.equal(Number(rows[0].amount), 1.5);
+      assert.match(rows[0].reason, /capped at 60 days/);
+    });
   });
 
   describe('resets', () => {

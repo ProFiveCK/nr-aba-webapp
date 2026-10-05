@@ -11,8 +11,9 @@ interface CalendarEntry {
     department_code: string | null;
     leave_type_name: string;
     start_date: string;
-    end_date: string;
-    days: string;
+    end_date: string | null;
+    days: string | null;
+    kind?: 'leave' | 'study_leave';
 }
 
 function monthBounds(offset: number) {
@@ -53,25 +54,28 @@ export function Calendar() {
 
     // One row per person, with the days they are away shaded.
     const byPerson = useMemo(() => {
-        const map = new Map<string, { name: string; days: Set<number>; types: Set<string> }>();
+        const map = new Map<string, { name: string; days: Set<number>; studyDays: Set<number>; types: Set<string> }>();
         for (const entry of entries) {
             const record = map.get(entry.employee_name) ?? {
                 name: entry.employee_name,
                 days: new Set<number>(),
+                studyDays: new Set<number>(),
                 types: new Set<string>(),
             };
             record.types.add(entry.leave_type_name);
+            const studying = entry.kind === 'study_leave';
+            const target = studying ? record.studyDays : record.days;
             const from = new Date(entry.start_date);
-            const to = new Date(entry.end_date);
+            const to = entry.end_date ? new Date(entry.end_date) : new Date(bounds.end);
             for (const cursor = new Date(from); cursor <= to; cursor.setDate(cursor.getDate() + 1)) {
                 if (cursor.getMonth() === bounds.start.getMonth() && cursor.getFullYear() === bounds.start.getFullYear()) {
-                    record.days.add(cursor.getDate());
+                    target.add(cursor.getDate());
                 }
             }
             map.set(entry.employee_name, record);
         }
         return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-    }, [entries, bounds.start]);
+    }, [entries, bounds.start, bounds.end]);
 
     return (
         <div className="space-y-4">
@@ -94,7 +98,7 @@ export function Calendar() {
                 <LoadingState label="Loading calendar…" />
             ) : !byPerson.length ? (
                 <div className="app-panel p-4">
-                    <EmptyState title="Nobody is on approved leave this month" />
+                    <EmptyState title="Nobody is away this month" />
                 </div>
             ) : (
                 <div className="overflow-x-auto app-panel">
@@ -127,13 +131,14 @@ export function Calendar() {
                                         const date = new Date(bounds.start.getFullYear(), bounds.start.getMonth(), day);
                                         const weekend = date.getDay() === 0 || date.getDay() === 6;
                                         const away = person.days.has(day);
+                                        const studying = person.studyDays.has(day);
                                         return (
                                             <td key={i} className="p-0.5">
                                                 <div
                                                     className={`h-5 rounded-sm ${
-                                                        away ? 'bg-[#002B7F]' : weekend ? 'bg-zinc-100' : 'bg-zinc-50'
+                                                        away ? 'bg-[#002B7F]' : studying ? 'bg-amber-500' : weekend ? 'bg-zinc-100' : 'bg-zinc-50'
                                                     }`}
-                                                    title={away ? `${person.name} away on ${day} ${monthLabel}` : undefined}
+                                                    title={away || studying ? `${person.name} ${studying && !away ? 'on study leave' : 'away'} on ${day} ${monthLabel}` : undefined}
                                                 />
                                             </td>
                                         );
@@ -145,6 +150,13 @@ export function Calendar() {
                 </div>
             )}
 
+            {!loading && byPerson.length > 0 && (
+                <p className="flex flex-wrap items-center gap-4 px-1 text-xs text-zinc-600">
+                    <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-[#002B7F]" aria-hidden="true" />Approved leave</span>
+                    <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-amber-500" aria-hidden="true" />Study leave</span>
+                </p>
+            )}
+
             {!loading && entries.length > 0 && (
                 <div className="app-panel p-4 text-sm">
                     <h3 className="mb-2 text-sm font-semibold text-zinc-900">Detail</h3>
@@ -152,7 +164,9 @@ export function Calendar() {
                         {entries.map((entry) => (
                             <li key={entry.id}>
                                 <span className="font-medium text-zinc-900">{entry.employee_name}</span> —{' '}
-                                {entry.leave_type_name}, {formatDate(entry.start_date)} to {formatDate(entry.end_date)} ({entry.days} days)
+                                {entry.kind === 'study_leave'
+                                    ? `Study leave from ${formatDate(entry.start_date)}${entry.end_date ? ` to ${formatDate(entry.end_date)}` : ', return date not set'}`
+                                    : `${entry.leave_type_name}, ${formatDate(entry.start_date)} to ${formatDate(entry.end_date as string)} (${entry.days} days)`}
                             </li>
                         ))}
                     </ul>

@@ -798,6 +798,15 @@ export async function initSchema() {
     // separate field for it that department_code alone can't fill.
     await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS division_code TEXT');
 
+    // Why someone is not eligible for annual leave. Study leave is a period away
+    // overseas (the person keeps their position), so it carries its own dates.
+    await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS ineligible_reason TEXT');
+    await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS study_leave_start DATE');
+    await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS study_leave_end DATE');
+    await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS eligibility_note TEXT');
+    await client.query('ALTER TABLE hr_employees DROP CONSTRAINT IF EXISTS hr_employees_ineligible_reason_check');
+    await client.query("ALTER TABLE hr_employees ADD CONSTRAINT hr_employees_ineligible_reason_check CHECK (ineligible_reason IN ('temporary','intern','study_leave'))");
+
     // Departments and divisions a leave administrator manages; staff records
     // store the chosen names as text. Seeded once from what staff already use.
     await client.query(`
@@ -854,6 +863,15 @@ export async function initSchema() {
     // employee's service anniversary, or never.
     await client.query('ALTER TABLE hr_leave_types ADD COLUMN IF NOT EXISTS accrual_days_per_fortnight NUMERIC(6,2) NOT NULL DEFAULT 0');
     await client.query("ALTER TABLE hr_leave_types ADD COLUMN IF NOT EXISTS reset_period TEXT NOT NULL DEFAULT 'none'");
+    // Accrual stops once a balance reaches max_balance (blank = no limit). Annual
+    // starts at 60, set once when the column is first created.
+    const { rows: hadMaxBalance } = await client.query(
+      "SELECT 1 FROM information_schema.columns WHERE table_name = 'hr_leave_types' AND column_name = 'max_balance'"
+    );
+    await client.query('ALTER TABLE hr_leave_types ADD COLUMN IF NOT EXISTS max_balance NUMERIC(6,2)');
+    if (!hadMaxBalance.length) {
+      await client.query("UPDATE hr_leave_types SET max_balance = 60 WHERE name = 'Annual'");
+    }
     await client.query('ALTER TABLE hr_leave_types DROP CONSTRAINT IF EXISTS hr_leave_types_reset_period_check');
     await client.query("ALTER TABLE hr_leave_types ADD CONSTRAINT hr_leave_types_reset_period_check CHECK (reset_period IN ('none','financial_year','anniversary'))");
 

@@ -7,7 +7,7 @@ import { useAuth } from '../../contexts/useAuth';
 import { useConfirm } from '../../contexts/useConfirm';
 import { EmptyState, LoadingState, StatTile } from '../../components/Ui';
 import { formatDate } from '../../features/hr/types';
-import { toDateInputValue } from '../../lib/date';
+import { toDateInputValue, todayIsoDate } from '../../lib/date';
 import { csvCell, parseCsv } from '../../features/hr/csv';
 import { BalancesReport } from '../../features/hr/BalancesReport';
 import type {
@@ -15,7 +15,8 @@ import type {
     ImportRow,
     StaffBalancesResponse,
 } from '../../features/hr/staffTypes';
-import type { Employee, LeaveBalance, LeaveType, OrgDepartment } from '../../features/hr/types';
+import { INELIGIBLE_REASON_LABELS } from '../../features/hr/types';
+import type { Employee, IneligibleReason, LeaveBalance, LeaveType, OrgDepartment } from '../../features/hr/types';
 
 const FIXED_COLUMNS = ['display_name', 'department_code', 'division_code', 'join_date'];
 
@@ -40,6 +41,10 @@ type EmployeeDraft = {
     managerId: string;
     joinDate: string;
     leaveEntitled: boolean;
+    ineligibleReason: IneligibleReason | '';
+    studyLeaveStart: string;
+    studyLeaveEnd: string;
+    eligibilityNote: string;
     dailyRate: string;
 };
 
@@ -53,6 +58,10 @@ function draftFor(employee: Employee): EmployeeDraft {
         managerId: employee.manager_id || '',
         joinDate: toDateInputValue(employee.join_date),
         leaveEntitled: employee.leave_entitled !== false,
+        ineligibleReason: employee.ineligible_reason || '',
+        studyLeaveStart: toDateInputValue(employee.study_leave_start),
+        studyLeaveEnd: toDateInputValue(employee.study_leave_end),
+        eligibilityNote: employee.eligibility_note || '',
         dailyRate: String(employee.daily_rate ?? ''),
     };
 }
@@ -301,7 +310,27 @@ export function Staff() {
         if (divisionCode !== (selected.division_code || '')) updates.division_code = divisionCode || null;
         if (draft.managerId !== (selected.manager_id || '')) updates.manager_id = draft.managerId || null;
         if (draft.joinDate !== toDateInputValue(selected.join_date)) updates.join_date = draft.joinDate || null;
-        if (draft.leaveEntitled !== (selected.leave_entitled !== false)) updates.leave_entitled = draft.leaveEntitled;
+        const eligibilityChanged = draft.leaveEntitled !== (selected.leave_entitled !== false)
+            || draft.ineligibleReason !== (selected.ineligible_reason || '')
+            || draft.studyLeaveStart !== toDateInputValue(selected.study_leave_start)
+            || draft.studyLeaveEnd !== toDateInputValue(selected.study_leave_end)
+            || draft.eligibilityNote.trim() !== (selected.eligibility_note || '');
+        if (eligibilityChanged) {
+            if (!draft.leaveEntitled && !draft.ineligibleReason) {
+                addToast('Choose why this person is not eligible for annual leave.', 'error');
+                return;
+            }
+            if (!draft.leaveEntitled && draft.ineligibleReason === 'study_leave' && !draft.studyLeaveStart) {
+                addToast('Enter the date study leave starts.', 'error');
+                return;
+            }
+            const studying = !draft.leaveEntitled && draft.ineligibleReason === 'study_leave';
+            updates.leave_entitled = draft.leaveEntitled;
+            updates.ineligible_reason = draft.leaveEntitled ? null : draft.ineligibleReason || null;
+            updates.study_leave_start = studying ? draft.studyLeaveStart : null;
+            updates.study_leave_end = studying ? draft.studyLeaveEnd || null : null;
+            updates.eligibility_note = draft.leaveEntitled ? null : draft.eligibilityNote.trim() || null;
+        }
         if (canSeePay && draft.dailyRate !== String(selected.daily_rate ?? '')) {
             const rate = draft.dailyRate.trim() === '' ? null : Number(draft.dailyRate);
             if (rate !== null && (!Number.isFinite(rate) || rate < 0 || rate > 100000)) {
@@ -875,7 +904,13 @@ export function Staff() {
                                                         {(employee.leave_entitled === false || employee.status === 'inactive') && (
                                                             <span className="mt-0.5 flex gap-1">
                                                                 {employee.leave_entitled === false && (
-                                                                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">no leave</span>
+                                                                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
+                                                                        {employee.ineligible_reason ? INELIGIBLE_REASON_LABELS[employee.ineligible_reason] : 'no leave'}
+                                                                    </span>
+                                                                )}
+                                                                {employee.leave_entitled === false && employee.ineligible_reason === 'study_leave'
+                                                                    && employee.study_leave_end && toDateInputValue(employee.study_leave_end) < todayIsoDate() && (
+                                                                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">return date passed</span>
                                                                 )}
                                                                 {employee.status === 'inactive' && (
                                                                     <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">inactive</span>
@@ -1027,13 +1062,70 @@ export function Staff() {
                                         ))}
                                     </select>
                                 </label>
-                                <label className="flex items-center justify-between gap-4 rounded-xl border border-blue-100 bg-[#f5f8ff] p-4">
-                                    <span>
-                                        <span className="block text-sm font-semibold text-[#002B7F]">Entitled to leave</span>
-                                        <span className="mt-1 block text-xs leading-5 text-slate-600">If turned off, this person cannot accrue or apply for leave.</span>
-                                    </span>
-                                    <input type="checkbox" checked={draft.leaveEntitled} onChange={(event) => setDraft({ ...draft, leaveEntitled: event.target.checked })} className="h-5 w-5 shrink-0 accent-[#002B7F]" />
-                                </label>
+                                <div className="space-y-3 rounded-xl border border-blue-100 bg-[#f5f8ff] p-4">
+                                    <label className="flex items-center justify-between gap-4">
+                                        <span>
+                                            <span className="block text-sm font-semibold text-[#002B7F]">Eligible for annual leave</span>
+                                            <span className="mt-1 block text-xs leading-5 text-slate-600">If turned off, this person does not accrue or apply for leave.</span>
+                                        </span>
+                                        <input type="checkbox" checked={draft.leaveEntitled} onChange={(event) => setDraft({ ...draft, leaveEntitled: event.target.checked })} className="h-5 w-5 shrink-0 accent-[#002B7F]" />
+                                    </label>
+                                    {!draft.leaveEntitled && (
+                                        <>
+                                            <label className="block text-sm font-medium text-slate-700">
+                                                Reason
+                                                <select
+                                                    value={draft.ineligibleReason}
+                                                    onChange={(event) => setDraft({ ...draft, ineligibleReason: event.target.value as IneligibleReason | '' })}
+                                                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                >
+                                                    <option value="">Choose a reason</option>
+                                                    {(Object.keys(INELIGIBLE_REASON_LABELS) as IneligibleReason[]).map((reason) => (
+                                                        <option key={reason} value={reason}>{INELIGIBLE_REASON_LABELS[reason]}</option>
+                                                    ))}
+                                                </select>
+                                            </label>
+                                            {draft.ineligibleReason === 'study_leave' && (
+                                                <div className="grid gap-3 sm:grid-cols-2">
+                                                    <label className="text-sm font-medium text-slate-700">
+                                                        Study leave starts
+                                                        <input
+                                                            type="date"
+                                                            value={draft.studyLeaveStart}
+                                                            onChange={(event) => setDraft({ ...draft, studyLeaveStart: event.target.value })}
+                                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                        />
+                                                    </label>
+                                                    <label className="text-sm font-medium text-slate-700">
+                                                        Expected return
+                                                        <input
+                                                            type="date"
+                                                            value={draft.studyLeaveEnd}
+                                                            min={draft.studyLeaveStart || undefined}
+                                                            onChange={(event) => setDraft({ ...draft, studyLeaveEnd: event.target.value })}
+                                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                        />
+                                                    </label>
+                                                    <p className="text-xs leading-5 text-slate-600 sm:col-span-2">
+                                                        While on study leave this person counts as away and appears on the calendar. They keep their position;
+                                                        turn eligibility back on when they return.
+                                                    </p>
+                                                </div>
+                                            )}
+                                            <label className="block text-sm font-medium text-slate-700">
+                                                Note (optional)
+                                                <input
+                                                    type="text"
+                                                    maxLength={300}
+                                                    value={draft.eligibilityNote}
+                                                    onChange={(event) => setDraft({ ...draft, eligibilityNote: event.target.value })}
+                                                    placeholder="e.g. Unpaid, studying overseas"
+                                                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                />
+                                            </label>
+                                        </>
+                                    )}
+                                </div>
                                 {canSeePay && (
                                     <label className="block text-sm font-medium text-slate-700">
                                         Daily rate

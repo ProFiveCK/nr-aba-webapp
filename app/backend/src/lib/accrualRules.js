@@ -20,6 +20,18 @@ export function seedBalanceFor(type) {
   return type.is_accruable ? 0 : Number(type.default_days);
 }
 
+/**
+ * The days one fortnight actually credits: the full accrual, less whatever
+ * would carry the balance past the type's maximum. A balance already at or over
+ * the maximum earns nothing, and is never reduced.
+ */
+export function accrualCreditFor(type, currentBalance) {
+  const amount = Number(type.accrual_days_per_fortnight);
+  if (type.max_balance === null || type.max_balance === undefined) return amount;
+  const headroom = Math.max(0, Number(type.max_balance) - Number(currentBalance));
+  return Math.round(Math.min(amount, headroom) * 100) / 100;
+}
+
 /** Unused days on a balance: what is on the books less what is already held. */
 function unusedDays(balance) {
   if (!balance) return 0;

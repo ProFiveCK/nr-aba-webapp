@@ -18,7 +18,7 @@ const SERIES_COLOR = '#2a78d6';
 interface OverviewResponse {
     from: string;
     to: string;
-    headcount: { active_employees: number; on_leave_today: number };
+    headcount: { active_employees: number; on_leave_today: number; on_study_leave?: number };
     applications: {
         total: number;
         pending: number;
@@ -515,7 +515,11 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                         : `${exceptions.pending_over_five_days} waiting over 5 days`}
                                 attention={Boolean(exceptions.pending_approvals)}
                             />
-                            <StatCell label="On leave today" value={String(data.headcount.on_leave_today)} detail="Approved absences" />
+                            <StatCell
+                                label="On leave today"
+                                value={String(data.headcount.on_leave_today)}
+                                detail={data.headcount.on_study_leave ? `Includes ${data.headcount.on_study_leave} on study leave` : 'Approved absences'}
+                            />
                             <StatCell label="Active staff" value={String(data.headcount.active_employees)} detail="Current workforce" />
                         </div>
                         {!checksAvailable ? (

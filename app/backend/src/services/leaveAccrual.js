@@ -10,6 +10,7 @@
  */
 
 import {
+  accrualCreditFor,
   isResetDue,
   openingBalanceFor,
   resetBoundaryFor,
@@ -69,7 +70,7 @@ export async function runLeaveAccrual(client, { periodEnd, actorId }) {
 
   const [{ rows: accruable }, { rows: resetTypes }, { rows: employees }] = await Promise.all([
     client.query(
-      'SELECT id, name, accrual_days_per_fortnight FROM hr_leave_types WHERE is_active = TRUE AND is_accruable = TRUE AND accrual_days_per_fortnight > 0'
+      'SELECT id, name, accrual_days_per_fortnight, max_balance FROM hr_leave_types WHERE is_active = TRUE AND is_accruable = TRUE AND accrual_days_per_fortnight > 0'
     ),
     client.query(
       "SELECT id, name, reset_period, default_days, is_accruable FROM hr_leave_types WHERE is_active = TRUE AND reset_period <> 'none'"
@@ -79,14 +80,16 @@ export async function runLeaveAccrual(client, { periodEnd, actorId }) {
 
   let credited = 0;
   for (const type of accruable) {
-    const amount = Number(type.accrual_days_per_fortnight);
     for (const employee of employees) {
       const balance = await ensureBalance(client, employee.id, type.id, year);
+      const amount = accrualCreditFor(type, balance.balance);
+      if (amount <= 0) continue;
       await client.query('UPDATE hr_leave_balances SET balance = balance + $1 WHERE id = $2', [amount, balance.id]);
+      const capped = amount < Number(type.accrual_days_per_fortnight) ? ` (capped at ${Number(type.max_balance)} days)` : '';
       await client.query(
         `INSERT INTO hr_leave_adjustments (employee_id, leave_type_id, amount, reason, adjusted_by)
          VALUES ($1, $2, $3, $4, $5)`,
-        [employee.id, type.id, amount, `Fortnightly accrual — period ending ${periodEnd}`, actorId]
+        [employee.id, type.id, amount, `Fortnightly accrual — period ending ${periodEnd}${capped}`, actorId]
       );
       credited += 1;
     }

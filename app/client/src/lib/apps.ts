@@ -27,6 +27,13 @@ export type UserRole = 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll' | '
 
 export interface AppDef {
   id: AppId;
+  /**
+   * The app's URL segment. Kept separate from `id` because the id is also the
+   * permission prefix and is baked into stored capabilities, while the path is
+   * what people see and bookmark — "Leave" lives at /leave but is `hr`
+   * everywhere underneath.
+   */
+  path: string;
   label: string;
   shortLabel: string;
   icon: LucideIcon;
@@ -40,6 +47,7 @@ export interface AppDef {
 export const APPS: AppDef[] = [
   {
     id: 'aba',
+    path: 'aba',
     label: 'ABA Payments',
     shortLabel: 'ABA',
     icon: CreditCard,
@@ -49,6 +57,7 @@ export const APPS: AppDef[] = [
   },
   {
     id: 'banking',
+    path: 'banking',
     label: 'Banking',
     shortLabel: 'Banking',
     icon: Landmark,
@@ -58,6 +67,7 @@ export const APPS: AppDef[] = [
   },
   {
     id: 'payroll',
+    path: 'payroll',
     label: 'Payroll',
     shortLabel: 'Payroll',
     icon: Wallet,
@@ -67,6 +77,7 @@ export const APPS: AppDef[] = [
   },
   {
     id: 'tools',
+    path: 'tools',
     label: 'Tools',
     shortLabel: 'Tools',
     icon: Wrench,
@@ -76,6 +87,7 @@ export const APPS: AppDef[] = [
   },
   {
     id: 'forex-tt',
+    path: 'forex-tt',
     label: 'FOREX TT',
     shortLabel: 'FOREX TT',
     icon: Globe,
@@ -85,6 +97,7 @@ export const APPS: AppDef[] = [
   },
   {
     id: 'public-health',
+    path: 'wellness',
     label: 'Wellness Program',
     shortLabel: 'Wellness Program',
     icon: Activity,
@@ -94,6 +107,7 @@ export const APPS: AppDef[] = [
   },
   {
     id: 'hr',
+    path: 'leave',
     label: 'Leave',
     shortLabel: 'Leave',
     icon: CalendarDays,
@@ -106,6 +120,7 @@ export const APPS: AppDef[] = [
 export const SYSTEM_PAGES: AppDef[] = [
   {
     id: 'dashboard',
+    path: '',
     label: 'Dashboard',
     shortLabel: 'Dashboard',
     icon: LayoutDashboard,
@@ -115,6 +130,7 @@ export const SYSTEM_PAGES: AppDef[] = [
   },
   {
     id: 'admin',
+    path: 'admin',
     label: 'Administration',
     shortLabel: 'Admin',
     icon: Settings,
@@ -134,6 +150,19 @@ export function getAllowedApps(user: User | null): AppDef[] {
   return APPS.filter((app) => canAccessApp(user, app));
 }
 
+const ALL_APPS = [...APPS, ...SYSTEM_PAGES];
+
 export function findApp(id: AppId): AppDef | undefined {
-  return [...APPS, ...SYSTEM_PAGES].find((app) => app.id === id);
+  return ALL_APPS.find((app) => app.id === id);
+}
+
+/** The app owning a URL segment, for turning a location back into an app. */
+export function findAppByPath(path: string): AppDef | undefined {
+  if (!path) return ALL_APPS.find((app) => app.id === 'dashboard');
+  return ALL_APPS.find((app) => app.path === path);
+}
+
+/** Where an app lives. The dashboard is the root, not /dashboard. */
+export function pathForApp(app: AppDef): string {
+  return app.path ? `/${app.path}` : '/';
 }

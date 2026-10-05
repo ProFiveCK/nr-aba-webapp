@@ -1,16 +1,17 @@
 import { useState } from 'react';
+import { NavLink, Outlet } from 'react-router-dom';
 import { UserRound } from 'lucide-react';
 import { useAuth } from '../contexts/useAuth';
 import { ChangePasswordModal } from './ChangePasswordModal';
-import { getAllowedApps, SYSTEM_PAGES, type AppId, findApp } from '../lib/apps';
+import { getAllowedApps, SYSTEM_PAGES, pathForApp, type AppDef } from '../lib/apps';
 
-interface LayoutProps {
-    children: React.ReactNode;
-    activeApp: AppId;
-    onAppChange: (appId: AppId) => void;
-}
-
-export function Layout({ children, activeApp, onAppChange }: LayoutProps) {
+/**
+ * The portal chrome every app sits inside: the Naoero header, the app nav and
+ * the page container. It renders whichever app the route selected through
+ * `<Outlet />`, and no longer knows anything about the apps themselves — the
+ * page heading moved to `AppPageHeader`, which each app opts into.
+ */
+export function Layout() {
     const { user, logout } = useAuth();
     const [showPasswordModal, setShowPasswordModal] = useState(false);
     const [showSignOutModal, setShowSignOutModal] = useState(false);
@@ -31,18 +32,14 @@ export function Layout({ children, activeApp, onAppChange }: LayoutProps) {
         setShowPasswordModal(true);
     };
 
-    const app = findApp(activeApp);
     const displayName = user?.display_name || user?.email || 'User';
 
     const allowedApps = getAllowedApps(user);
     const systemPages = SYSTEM_PAGES.filter(
         (p) => p.id !== 'dashboard' && (p.id !== 'admin' || user?.role === 'admin')
     );
-    const navItems = [
-        { id: 'dashboard' as AppId, label: 'Dashboard' },
-        ...allowedApps.map((a) => ({ id: a.id, label: a.shortLabel })),
-        ...systemPages.map((p) => ({ id: p.id, label: p.shortLabel })),
-    ];
+    const dashboard = SYSTEM_PAGES.find((p) => p.id === 'dashboard') as AppDef;
+    const navItems = [dashboard, ...allowedApps, ...systemPages];
     const [navOpen, setNavOpen] = useState(false);
 
     return (
@@ -107,34 +104,29 @@ export function Layout({ children, activeApp, onAppChange }: LayoutProps) {
             <div className="border-b border-slate-200 bg-white px-4 shadow-sm sm:px-6 lg:px-8">
                 <nav id="primary-navigation" aria-label="Applications" className={`mx-auto max-h-[60dvh] max-w-7xl overflow-y-auto sm:max-h-none sm:overflow-visible ${navOpen ? 'block' : 'hidden sm:block'}`}>
                     <div className="flex flex-wrap gap-1 py-2">
+                        {/* Links, not buttons: ctrl-click and middle-click open
+                            an app in a new tab, which a button cannot do. */}
                         {navItems.map((item) => (
-                            <button
+                            <NavLink
                                 key={item.id}
-                                onClick={() => { onAppChange(item.id); setNavOpen(false); }}
-                                aria-current={activeApp === item.id ? 'page' : undefined}
-                                className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                                    activeApp === item.id
+                                to={pathForApp(item)}
+                                end={item.id === 'dashboard'}
+                                onClick={() => setNavOpen(false)}
+                                className={({ isActive }) => `rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                                    isActive
                                         ? 'bg-[#002B7F] text-white shadow-sm'
                                         : 'text-slate-600 hover:bg-blue-50 hover:text-[#002B7F]'
                                 }`}
                             >
-                                {item.label}
-                            </button>
+                                {item.shortLabel}
+                            </NavLink>
                         ))}
                     </div>
                 </nav>
             </div>
             </header>
             <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-                {/* Leave renders its own compact header with its section tabs. */}
-                {activeApp !== 'hr' && (
-                    <div className="mb-6">
-                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#2a5ba5]">Treasury applications</p>
-                        <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{activeApp === 'dashboard' ? 'Dashboard' : app?.label || 'App'}</h2>
-                        <p className="mt-1 text-sm text-slate-500">{activeApp === 'dashboard' ? 'Choose an app to get started' : app?.description || app?.label || 'App'}</p>
-                    </div>
-                )}
-                <main>{children}</main>
+                <main><Outlet /></main>
             </div>
         </div>
         {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)} />}

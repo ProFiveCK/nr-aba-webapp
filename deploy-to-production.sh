@@ -39,7 +39,7 @@ fi
 
 # Check if dist exists
 if [ ! -d "$LOCAL_PATH/app/client/dist" ]; then
-    echo -e "${RED}ERROR: Frontend not built! Run: cd app/client && npm run build${NC}"
+    echo -e "${RED}ERROR: Frontend not published! Run: cd app/client && npm run build && cd .. && ./scripts/publish-frontend.sh${NC}"
     exit 1
 fi
 

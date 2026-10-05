@@ -5,6 +5,12 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    // NOT `dist`: nginx bind-mounts app/client/dist, so building straight
+    // into it empties the live site for the length of the build. Builds land
+    // here, and scripts/publish-frontend.sh moves them across safely.
+    outDir: 'build',
+  },
   server: {
     proxy: {
       '/api': {

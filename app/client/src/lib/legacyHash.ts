@@ -7,10 +7,9 @@ import { findApp, type AppId } from './apps';
  * those links bookmarked and pasted into emails, so they have to keep
  * arriving somewhere sensible — `#hr/staff` becomes `/leave/staff`.
  *
- * Run once, before React mounts, and only from the site root. Apps that have
- * not been converted to routes yet still drive their own tabs through the
- * hash; firing on every hash change, or when already inside an app, would
- * fight them for the URL.
+ * Run once, before React mounts, and only from the site root — a bookmark
+ * from before routing lands there, with everything after the `#`. Anywhere
+ * else the URL is already a route and there is nothing to translate.
  *
  * `#reset-password=<token>` is left alone — it is a password-reset link from
  * an email, not navigation, and App still reads it from the hash.

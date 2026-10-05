@@ -330,6 +330,11 @@ export async function initSchema() {
       ALTER TABLE reviewer_settings
         ADD COLUMN IF NOT EXISTS accrual_anchor_date DATE
     `);
+    // Unused. The leave planning table once listed only staff above a
+    // furlough threshold kept here; it now ranks everyone by the leave they
+    // hold and has no threshold, so nothing reads this. Kept rather than
+    // dropped because removing a column is irreversible and this one costs
+    // nothing — delete it if thresholds are definitively not coming back.
     await client.query(`
       ALTER TABLE reviewer_settings
         ADD COLUMN IF NOT EXISTS furlough_review_days NUMERIC(6,2) NOT NULL DEFAULT 0

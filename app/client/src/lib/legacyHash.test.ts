@@ -37,8 +37,8 @@ describe('migrateLegacyHash', () => {
         expect(replaced).toEqual([]);
     });
 
-    // Apps not yet converted still drive their own tabs through the hash.
-    // Rewriting from inside one would fight them for the URL.
+    // Anywhere but the root, the URL is already a route; a stray hash there
+    // is a fragment, not navigation to translate.
     it('does nothing once the user is already inside an app', () => {
         const replaced = rewritesTo('/aba', '#aba/generator');
         expect(replaced).toEqual([]);

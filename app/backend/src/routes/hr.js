@@ -1571,42 +1571,6 @@ router.put(
   }
 );
 
-// Furlough has no policy allocation, so the overview flags balances above this.
-router.get('/planning/settings', requirePermission(PERMISSIONS.HR_ADMIN), async (_req, res) => {
-  const { rows } = await pool.query(
-    'SELECT furlough_review_days FROM reviewer_settings WHERE id = TRUE'
-  );
-  res.json({ furlough_review_days: Number(rows[0]?.furlough_review_days ?? 0) });
-});
-
-router.put(
-  '/planning/settings',
-  requirePermission(PERMISSIONS.HR_ADMIN),
-  [body('furlough_review_days').isFloat({ min: 0, max: 9999 })],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const value = Number(req.body.furlough_review_days);
-    const { rows: before } = await pool.query(
-      'SELECT furlough_review_days FROM reviewer_settings WHERE id = TRUE'
-    );
-    await pool.query(
-      `INSERT INTO reviewer_settings (id, furlough_review_days)
-       VALUES (TRUE, $1)
-       ON CONFLICT (id) DO UPDATE SET furlough_review_days = EXCLUDED.furlough_review_days`,
-      [value]
-    );
-    await recordAudit({
-      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-      action: 'hr.planning.settings.updated',
-      entityType: 'reviewer_settings',
-      entityId: 'hr_furlough_review_days',
-      before: { furlough_review_days: Number(before[0]?.furlough_review_days ?? 0) },
-      after: { furlough_review_days: value },
-    });
-    res.json({ furlough_review_days: value });
-  }
-);
-
 // ===== Senior management overview =====
 
 /**

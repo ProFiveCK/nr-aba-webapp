@@ -158,6 +158,8 @@ export function Generator() {
         return [];
     });
     const [searchTerm, setSearchTerm] = React.useState('');
+    // The rows a CSV import skipped, kept next to the table until dismissed or the next import.
+    const [importErrors, setImportErrors] = React.useState<string[]>([]);
     const [sortState, setSortState] = React.useState<SortState>({ key: null, direction: 'asc' });
     const [pendingBatch, setPendingBatch] = React.useState<PendingBatch | null>(null);
     const [commitForm, setCommitForm] = React.useState<CommitFormState>({ ...INITIAL_COMMIT_FORM });
@@ -255,6 +257,7 @@ export function Generator() {
 
     const confirmClearAll = () => {
         setTransactions([]);
+        setImportErrors([]);
         setShowClearConfirm(false);
     };
 
@@ -292,6 +295,7 @@ export function Generator() {
 
             const text = await file.text();
             const { transactions: imported, errors } = parseTransactionsFromCSV(text);
+            setImportErrors(errors);
 
             if (errors.length > 0) {
                 addToast(
@@ -561,6 +565,23 @@ export function Generator() {
                     onSearchChange={setSearchTerm}
                     searchTerm={searchTerm}
                 />
+                {importErrors.length > 0 && (
+                    <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3">
+                        <div className="flex items-start justify-between gap-4">
+                            <h3 className="text-sm font-semibold text-red-800">
+                                CSV import skipped {importErrors.length} row{importErrors.length === 1 ? '' : 's'}
+                            </h3>
+                            <button type="button" onClick={() => setImportErrors([])} className="text-xs font-semibold text-red-700 hover:underline">
+                                Dismiss
+                            </button>
+                        </div>
+                        <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-red-700">
+                            {importErrors.slice(0, 10).map((error, i) => <li key={i}>{error}</li>)}
+                        </ul>
+                        {importErrors.length > 10 && <p className="mt-1 text-xs font-medium text-red-700">…and {importErrors.length - 10} more</p>}
+                        <p className="mt-2 text-xs text-red-600">Fix these rows in the CSV and import it again, or add them by hand.</p>
+                    </div>
+                )}
                 <TransactionTable
                     transactions={transactions}
                     searchTerm={searchTerm}

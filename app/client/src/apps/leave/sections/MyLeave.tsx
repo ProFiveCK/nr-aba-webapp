@@ -39,6 +39,8 @@ export function MyLeave() {
     const [documents, setDocuments] = useState<File[]>([]);
     // Bumped to rebuild the file input, which cannot be cleared by state alone.
     const [documentsKey, setDocumentsKey] = useState(0);
+    // Shown next to the form as well as in a toast, so the reason stays in view.
+    const [formError, setFormError] = useState('');
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -102,18 +104,24 @@ export function MyLeave() {
         : applications.filter((application) => application.status === statusFilter);
     const pendingCount = applications.filter((application) => application.status === 'pending').length;
 
+    const showFormError = (message: string) => {
+        setFormError(message);
+        addToast(message, 'error');
+    };
+
     const submit = async (event: FormEvent) => {
         event.preventDefault();
+        setFormError('');
         if (!reason.trim()) {
-            addToast('Explain the reason for your leave.', 'error');
+            showFormError('Explain the reason for your leave.');
             return;
         }
         if (previewDays <= 0) {
-            addToast('The selected dates contain no working days.', 'error');
+            showFormError('The selected dates contain no working days.');
             return;
         }
         if (documentMissing) {
-            addToast(`Attach ${documentLabel} before submitting.`, 'error');
+            showFormError(`Attach ${documentLabel} before submitting.`);
             return;
         }
         setSubmitting(true);
@@ -142,7 +150,7 @@ export function MyLeave() {
             setDocumentsKey((key) => key + 1);
             await load();
         } catch (err) {
-            addToast((err as Error)?.message || 'Unable to submit your application.', 'error');
+            showFormError((err as Error)?.message || 'Unable to submit your application.');
         } finally {
             setSubmitting(false);
         }
@@ -319,13 +327,14 @@ export function MyLeave() {
                             const chosen = Array.from(e.target.files ?? []);
                             const tooBig = chosen.find((file) => file.size > LEAVE_ATTACHMENT_MAX_BYTES);
                             if (tooBig) {
-                                addToast(`"${tooBig.name}" is larger than ${formatFileSize(LEAVE_ATTACHMENT_MAX_BYTES)}.`, 'error');
+                                showFormError(`"${tooBig.name}" is larger than ${formatFileSize(LEAVE_ATTACHMENT_MAX_BYTES)}.`);
                                 return;
                             }
                             if (chosen.length > LEAVE_ATTACHMENT_MAX_FILES) {
-                                addToast(`Attach at most ${LEAVE_ATTACHMENT_MAX_FILES} documents.`, 'error');
+                                showFormError(`Attach at most ${LEAVE_ATTACHMENT_MAX_FILES} documents.`);
                                 return;
                             }
+                            setFormError('');
                             setDocuments(chosen);
                         }}
                         className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-gray-700"
@@ -335,6 +344,12 @@ export function MyLeave() {
                         {documents.length > 0 && ` Attached: ${documents.map((file) => file.name).join(', ')}.`}
                     </span>
                 </label>
+
+                {formError && (
+                    <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                        {formError}
+                    </p>
+                )}
 
                 <div className="flex flex-wrap items-center gap-3 border-t border-gray-100 pt-5">
                     <button

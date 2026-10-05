@@ -466,6 +466,10 @@ router.patch(
       res.status(403).json({ message: 'Only FOREX TT reviewers can perform this action.' });
       return;
     }
+    if (['claimed', 'processing', 'approved'].includes(targetStatus) && isOwner) {
+      res.status(403).json({ message: 'You cannot review your own request. Another FOREX TT reviewer must take it.' });
+      return;
+    }
     if (!canTransition(request.status, targetStatus, req.user)) {
       res.status(400).json({ message: `Cannot move request from ${request.status} to ${targetStatus}.` });
       return;

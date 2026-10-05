@@ -18,6 +18,8 @@ import { fileURLToPath } from 'url';
 import { setTestingMode } from './services/notificationService.js';
 import { runDueLeaveAccruals } from './services/leaveAccrual.js';
 import { LOCK_KEYS, withAdvisoryLock } from './lib/advisoryLock.js';
+import { amendValueDate, parseAbaFile } from './lib/abaFile.js';
+import { ServiceError } from './lib/serviceError.js';
 import {
   buildCookieParser,
   buildTokenPayload,
@@ -1570,6 +1572,31 @@ const buildBlacklistKey = (bsb, account) => {
   return `${normalizedBsb}|${normalizedAccount}`;
 };
 
+// True when the payload transactions (what reviewers are shown) and the ABA
+// file's credit lines (what the bank pays) are the same payments, in any order.
+function sameCredits(payloadTransactions, fileCredits) {
+  const key = (bsb, account, cents) => `${buildBlacklistKey(bsb, account)}|${cents}`;
+  const fromPayload = payloadTransactions
+    .map((tx) => key(tx?.bsb, tx?.account, Math.round(Number.parseFloat(String(tx?.amount)) * 100)))
+    .sort();
+  const fromFile = fileCredits.map((c) => key(c.bsb, c.account, c.cents)).sort();
+  return fromPayload.length === fromFile.length && fromPayload.every((k, i) => k === fromFile[i]);
+}
+
+// The first credit line paying a blacklisted account or BSB, with its entry.
+async function findBlacklistedCredit(fileCredits) {
+  const { rows } = await pool.query(
+    'SELECT bsb, account, all_accounts, label FROM blacklist_entries WHERE active = TRUE'
+  );
+  for (const credit of fileCredits) {
+    const entry = rows.find((row) => (row.all_accounts
+      ? normalizeBsb(row.bsb) === normalizeBsb(credit.bsb)
+      : buildBlacklistKey(row.bsb, row.account) === buildBlacklistKey(credit.bsb, credit.account)));
+    if (entry) return { credit, entry };
+  }
+  return null;
+}
+
 async function refreshTestingModeSetting() {
   try {
     const { rows } = await pool.query(
@@ -2631,29 +2658,8 @@ app.patch(
 );
 
 // ===== Reviews =====
-app.post(
-  '/api/reviews',
-  requireAuth(REVIEW_ACCESS_ROLES),
-  [
-    body('batch_id').isUUID(),
-    body('reviewer').isString().trim().notEmpty(),
-    body('status').isIn(['submitted', 'pending', 'approved', 'rejected']),
-    body('comments').optional({ nullable: true }).isString(),
-    body('metadata').optional({ nullable: true })
-  ],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const { batch_id, reviewer, status, comments, metadata } = req.body;
-    const { rows } = await pool.query(
-      `INSERT INTO batch_reviews (batch_id, reviewer, status, comments, metadata)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [batch_id, reviewer, status, comments ?? null, metadata ?? {}]
-    );
-    res.status(201).json(rows[0]);
-  }
-);
-
+// Review entries are written only by the routes that act on a batch, with the
+// signed-in user as the reviewer; there is deliberately no endpoint to post one.
 app.get('/api/reviews', requireAuth(['admin']), async (_req, res) => {
   const { rows } = await pool.query('SELECT * FROM batch_reviews ORDER BY created_at DESC LIMIT 100');
   res.json(rows);
@@ -2723,7 +2729,6 @@ app.post(
     body('aba_content').isString(),
     body('pd_number').isString().trim().isLength({ min: 1, max: 50 }),
     body('metadata').optional({ nullable: true }),
-    body('checksum').optional({ nullable: true }).isString(),
     body('suggested_file_name').optional({ nullable: true }).isString(),
     body('dept_code').optional({ nullable: true }).matches(/^\d{2}$/),
     body('workflow_type').optional({ nullable: true }).isIn(BATCH_WORKFLOW_TYPES)
@@ -2737,13 +2742,11 @@ app.post(
       res.status(400).json({ message: 'PD number is required.' });
       return;
     }
-    let fileData;
-    try {
-      fileData = Buffer.from(req.body.aba_content, 'base64');
-    } catch (err) {
-      res.status(400).json({ message: 'Invalid ABA content.' });
-      return;
-    }
+    // The stored bytes are what the bank pays, so they are checked here, not
+    // only in the browser: the file must add up, its payees must not be
+    // blacklisted, and it must match the transactions reviewers are shown.
+    const fileData = Buffer.from(req.body.aba_content, 'base64');
+    const abaFile = parseAbaFile(fileData);
     const accountDept = account.department_code ? String(account.department_code).trim() : '';
     const fallbackDept = req.body.dept_code ? String(req.body.dept_code).trim() : '';
     const deptCode = accountDept || fallbackDept;
@@ -2822,52 +2825,22 @@ app.post(
 
     const payloadTransactions = Array.isArray(metadata?.payload?.transactions)
       ? metadata.payload.transactions
-      : [];
-    if (payloadTransactions.length) {
-      const normalizedTransactions = payloadTransactions
-        .map((tx) => {
-          const txBsb = normalizeBsb(tx?.bsb);
-          const txAccount = normalizeAccountNumber(tx?.account);
-          if (!txBsb || !txAccount) return null;
-          return {
-            bsb: txBsb,
-            account: txAccount,
-            original: tx
-          };
-        })
-        .filter(Boolean);
-      if (normalizedTransactions.length) {
-        const { rows: blacklistRows } = await pool.query(
-          `SELECT bsb, account, all_accounts, label FROM blacklist_entries WHERE active = TRUE`
-        );
-        if (blacklistRows.length) {
-          const blacklistSet = new Map(
-            blacklistRows.map((row) => {
-              const key = buildBlacklistKey(row.bsb, row.account);
-              return [key, row];
-            })
-          );
-          const blockedBsbs = new Map(
-            blacklistRows
-              .filter((row) => row.all_accounts)
-              .map((row) => [normalizeBsb(row.bsb), row])
-          );
-          const blocked = normalizedTransactions.find((tx) => {
-            const key = buildBlacklistKey(tx.bsb, tx.account);
-            return blockedBsbs.has(tx.bsb) || (key && blacklistSet.has(key));
-          });
-          if (blocked) {
-            const key = buildBlacklistKey(blocked.bsb, blocked.account);
-            const meta = blockedBsbs.get(blocked.bsb) || (key ? blacklistSet.get(key) : null);
-            const labelText = meta?.label ? ` (${meta.label})` : '';
-            res.status(400).json({
-              message: `Transactions to ${blocked.bsb}${meta?.all_accounts ? '' : ` / ${blocked.account}`}${labelText} are not permitted.`
-            });
-            return;
-          }
-        }
-      }
+      : null;
+    if (payloadTransactions && !sameCredits(payloadTransactions, abaFile.credits)) {
+      res.status(400).json({
+        message: 'The transactions in this submission do not match its ABA file. Generate the file again and resubmit.'
+      });
+      return;
     }
+    const blocked = await findBlacklistedCredit(abaFile.credits);
+    if (blocked) {
+      const labelText = blocked.entry.label ? ` (${blocked.entry.label})` : '';
+      res.status(400).json({
+        message: `Transactions to ${blocked.credit.bsb}${blocked.entry.all_accounts ? '' : ` / ${blocked.credit.account}`}${labelText} are not permitted.`
+      });
+      return;
+    }
+    const checksum = crypto.createHash('sha256').update(fileData).digest('hex');
 
     const batchId = crypto.randomUUID();
     if (!rootBatchId) rootBatchId = batchId;
@@ -2894,7 +2867,7 @@ app.post(
             deptCode,
             fileName,
             `db://${code}`,
-            req.body.checksum ?? null,
+            checksum,
             null,
             metadata,
             workflowType,
@@ -2993,6 +2966,13 @@ app.patch(
       res.status(400).json({ message: `Cannot move batch from ${currentStage} to ${targetStage}.` });
       return;
     }
+    const isSubmitter = batch.submitted_by
+      ? batch.submitted_by === actor.id
+      : Boolean(batch.submitted_email) && lowerEmail(batch.submitted_email) === lowerEmail(actor.email);
+    if (targetStage === 'approved' && isSubmitter) {
+      res.status(403).json({ message: 'You cannot approve a batch you submitted. Another reviewer must approve it.' });
+      return;
+    }
     const stageUpdatedIso = new Date().toISOString();
     const { rows: updatedRows } = await pool.query(
       `UPDATE batch_archives
@@ -3075,25 +3055,19 @@ app.patch(
   [
     param('code').isString().trim(),
     body('proc').matches(/^\d{6}$/),
-    body('aba_content').isString(),
     body('desc').optional({ nullable: true }).isString(),
     body('remitter').optional({ nullable: true }).isString()
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const formattedCode = formatBatchCode(req.params.code);
-    const { proc, desc, remitter, aba_content: abaContent } = req.body;
-    let fileData;
-    try {
-      fileData = Buffer.from(abaContent, 'base64');
-    } catch (err) {
-      res.status(400).json({ message: 'Invalid ABA content.' });
-      return;
-    }
+    // Any aba_content the client sends is ignored: the stored file is amended
+    // here, so a reviewer can change the date but never the payments.
+    const { proc, desc, remitter } = req.body;
     try {
       const { rows } = await pool.query(
         `SELECT batch_id, code, root_batch_id, department_code, file_name, checksum, created_at, transactions,
-                stage, stage_updated_at, pd_number, submitted_email, submitted_by, is_draft
+                stage, stage_updated_at, pd_number, submitted_email, submitted_by, is_draft, file_data
            FROM batch_archives
           WHERE deleted_at IS NULL
             AND code = $1
@@ -3117,7 +3091,8 @@ app.patch(
         res.status(400).json({ message: 'Original payload unavailable. Cannot rebuild ABA automatically.' });
         return;
       }
-      metadata.payload.header.proc = proc;
+      const fileData = amendValueDate(record.file_data, { proc, desc, remitter });
+      metadata.payload = { ...metadata.payload, header: { ...metadata.payload.header, proc } };
       if (typeof desc === 'string') metadata.payload.header.desc = desc;
       if (typeof remitter === 'string') metadata.payload.header.remitter = remitter;
       metadata.value_date_adjustment = {
@@ -3173,6 +3148,7 @@ app.patch(
       }
       res.json(response);
     } catch (err) {
+      if (err instanceof ServiceError) throw err;
       console.error('Failed to adjust value date', err);
       res.status(500).json({ message: 'Unable to adjust value date.' });
     }

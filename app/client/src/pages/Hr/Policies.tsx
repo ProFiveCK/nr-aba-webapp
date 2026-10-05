@@ -21,6 +21,8 @@ interface EditDraft {
     reset_period: ResetPeriod;
     is_accruable: boolean;
     is_active: boolean;
+    requires_attachment: boolean;
+    attachment_label: string;
 }
 
 function resetLabel(value: ResetPeriod): string {
@@ -43,6 +45,8 @@ export function Policies() {
     const [maxBalance, setMaxBalance] = useState('');
     const [resetPeriod, setResetPeriod] = useState<ResetPeriod>('none');
     const [isAccruable, setIsAccruable] = useState(false);
+    const [requiresAttachment, setRequiresAttachment] = useState(false);
+    const [attachmentLabel, setAttachmentLabel] = useState('');
     const [saving, setSaving] = useState(false);
     const [runningAccrual, setRunningAccrual] = useState(false);
     const [anchorDate, setAnchorDate] = useState('');
@@ -90,6 +94,8 @@ export function Policies() {
                 max_balance: maxBalance.trim() === '' ? null : Number(maxBalance),
                 reset_period: resetPeriod,
                 is_accruable: isAccruable,
+                requires_attachment: requiresAttachment,
+                attachment_label: requiresAttachment ? attachmentLabel.trim() || null : null,
             });
             addToast('Leave type created.', 'success');
             setName('');
@@ -98,6 +104,8 @@ export function Policies() {
             setMaxBalance('');
             setResetPeriod('none');
             setIsAccruable(false);
+            setRequiresAttachment(false);
+            setAttachmentLabel('');
             await load();
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to create the leave type.', 'error');
@@ -172,6 +180,8 @@ export function Policies() {
             reset_period: type.reset_period,
             is_accruable: type.is_accruable,
             is_active: type.is_active,
+            requires_attachment: type.requires_attachment === true,
+            attachment_label: type.attachment_label ?? '',
         });
     };
 
@@ -191,6 +201,8 @@ export function Policies() {
                 reset_period: draft.reset_period,
                 is_accruable: draft.is_accruable,
                 is_active: draft.is_active,
+                requires_attachment: draft.requires_attachment,
+                attachment_label: draft.requires_attachment ? draft.attachment_label.trim() || null : null,
             });
             addToast('Leave type saved.', 'success');
             setEditing(null);
@@ -269,6 +281,11 @@ export function Policies() {
                             onChange={(e) => setFurloughReviewDays(e.target.value)}
                             className="w-32 rounded-md border border-zinc-300 px-3 py-2 text-sm"
                         />
+                        <span className="mt-1 block text-xs text-zinc-500">
+                            {Number(furloughReviewDays) > 0
+                                ? `Staff with more than ${Number(furloughReviewDays)} furlough days available are listed on the Overview.`
+                                : 'Set to 0: furlough is not flagged on the Overview at all.'}
+                        </span>
                     </label>
                     <button
                         type="button"
@@ -283,7 +300,11 @@ export function Policies() {
 
             <div className="app-panel">
                 <h2 className="border-b border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-900">Leave types</h2>
-                <p className="px-4 pt-3 text-sm text-zinc-600">Every leave application requires an explanation.</p>
+                <p className="px-4 pt-3 text-sm text-zinc-600">
+                    Every leave application requires an explanation. A type with a document required will not accept
+                    an application until the named document is attached — the invitation for official leave, the
+                    certificate for sick leave with an M/C.
+                </p>
                 <div className="overflow-x-auto">
                     <table className="min-w-full text-sm">
                         <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
@@ -294,6 +315,7 @@ export function Policies() {
                                 <th className="px-4 py-2">Max balance</th>
                                 <th className="px-4 py-2">Reset</th>
                                 <th className="px-4 py-2">Accruable</th>
+                                <th className="px-4 py-2">Document required</th>
                                 <th className="px-4 py-2">Active</th>
                                 <th className="px-4 py-2" />
                             </tr>
@@ -307,6 +329,11 @@ export function Policies() {
                                     <td className="px-4 py-2 text-zinc-600">{type.max_balance ?? 'No limit'}</td>
                                     <td className="px-4 py-2 text-zinc-600">{resetLabel(type.reset_period)}</td>
                                     <td className="px-4 py-2"><YesNo value={type.is_accruable} /></td>
+                                    <td className="px-4 py-2 text-zinc-600">
+                                        {type.requires_attachment
+                                            ? (type.attachment_label?.trim() || 'Yes')
+                                            : <span className="text-zinc-400">No</span>}
+                                    </td>
                                     <td className="px-4 py-2"><YesNo value={type.is_active} /></td>
                                     <td className="px-4 py-2 text-right whitespace-nowrap">
                                         <button
@@ -384,7 +411,24 @@ export function Policies() {
                         <input type="checkbox" checked={isAccruable} onChange={(e) => setIsAccruable(e.target.checked)} />
                         Accruable
                     </label>
+                    <label className="flex items-center gap-2">
+                        <input
+                            type="checkbox"
+                            checked={requiresAttachment}
+                            onChange={(e) => setRequiresAttachment(e.target.checked)}
+                        />
+                        Requires a supporting document
+                    </label>
                 </div>
+                {requiresAttachment && (
+                    <input
+                        value={attachmentLabel}
+                        onChange={(e) => setAttachmentLabel(e.target.value)}
+                        maxLength={200}
+                        placeholder="Name the document, e.g. Invitation letter from the partner organisation"
+                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm sm:max-w-xl"
+                    />
+                )}
                 <button
                     type="button"
                     onClick={create}
@@ -485,7 +529,31 @@ export function Policies() {
                                     />
                                     Active
                                 </label>
+                                <label className="flex items-center gap-2">
+                                    <input
+                                        type="checkbox"
+                                        checked={draft.requires_attachment}
+                                        onChange={(e) => setDraft({ ...draft, requires_attachment: e.target.checked })}
+                                    />
+                                    Requires a supporting document
+                                </label>
                             </div>
+                            {draft.requires_attachment && (
+                                <label className="block text-sm">
+                                    <span className="mb-1 block font-medium text-zinc-700">Document to attach</span>
+                                    <input
+                                        value={draft.attachment_label}
+                                        onChange={(e) => setDraft({ ...draft, attachment_label: e.target.value })}
+                                        maxLength={200}
+                                        placeholder="e.g. Medical certificate"
+                                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                                    />
+                                    <span className="mt-1 block text-xs text-zinc-500">
+                                        Named on the application form so the applicant knows what to attach. Changing
+                                        this does not affect applications already submitted.
+                                    </span>
+                                </label>
+                            )}
                         </div>
                         <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4">
                             <button

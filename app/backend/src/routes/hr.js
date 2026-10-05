@@ -20,6 +20,7 @@ import { normalizeNameKey } from '../lib/names.js';
 import { INELIGIBLE_REASONS, resolveEligibility } from '../lib/eligibility.js';
 import { calculateWorkingDays, monthsBetween, parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js';
+import { leaveAttachmentUpload, sha256 } from '../middleware/upload.js';
 
 const router = express.Router();
 
@@ -166,10 +167,25 @@ router.get('/me', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res) => 
   res.json({ employee: visibleEmployee(req, employee), year, balances, manager: manager[0] || null });
 });
 
+// The documents attached to an application, without their bytes. Written as a
+// subquery rather than a join so an application with two attachments is still
+// one row.
+const ATTACHMENT_SUMMARY_SQL = `
+  COALESCE((
+    SELECT json_agg(json_build_object(
+             'id', att.id, 'file_name', att.file_name,
+             'content_type', att.content_type, 'byte_size', att.byte_size,
+             'created_at', att.created_at
+           ) ORDER BY att.created_at)
+      FROM hr_leave_attachments att
+     WHERE att.application_id = a.id
+  ), '[]'::json) AS attachments`;
+
 router.get('/leaves', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res) => {
   const employee = await currentEmployee(req);
   const { rows } = await pool.query(
-    `SELECT a.*, t.name AS leave_type_name, r.display_name AS reviewed_by_name
+    `SELECT a.*, t.name AS leave_type_name, r.display_name AS reviewed_by_name,
+            ${ATTACHMENT_SUMMARY_SQL}
        FROM hr_leave_applications a
        JOIN hr_leave_types t ON t.id = a.leave_type_id
        LEFT JOIN reviewers r ON r.id = a.reviewed_by
@@ -274,9 +290,68 @@ router.get(
   }
 );
 
+/**
+ * Downloads a document attached to a leave application.
+ *
+ * A medical certificate is health information, so this is deliberately
+ * narrower than the rest of the leave endpoints: the applicant, the manager
+ * the application is routed to, the approver who decided it, and HR. A
+ * capability to approve leave in general is not enough — the same separation
+ * of capability from reporting line that `canActOnEmployee` makes everywhere
+ * else.
+ *
+ * An attachment the caller may not see is reported as missing rather than
+ * forbidden, so this cannot be used to confirm that someone has filed a
+ * certificate.
+ */
+router.get(
+  '/leaves/:id/attachments/:attachmentId',
+  leaveFormAccess,
+  [param('id').isUUID(), param('attachmentId').isUUID()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const { rows } = await pool.query(
+      `SELECT att.file_name, att.content_type, att.file_data,
+              a.employee_id, a.reviewed_by, e.reviewer_id, e.manager_id
+         FROM hr_leave_attachments att
+         JOIN hr_leave_applications a ON a.id = att.application_id
+         JOIN hr_employees e ON e.id = a.employee_id
+        WHERE att.id = $1 AND att.application_id = $2`,
+      [req.params.attachmentId, req.params.id]
+    );
+    const missing = () => res.status(404).json({ message: 'Attachment not found.' });
+    if (!rows.length) return missing();
+    const attachment = rows[0];
+
+    const isOwner = attachment.reviewer_id === req.user.id;
+    const isHr = Boolean(req.user.permissions?.[PERMISSIONS.HR_ADMIN]
+      || req.user.permissions?.[PERMISSIONS.HR_STAFF_MANAGE]);
+    let allowed = isOwner || isHr
+      || (req.user.permissions?.[PERMISSIONS.HR_LEAVE_APPROVE] && attachment.reviewed_by === req.user.id);
+    if (!allowed && req.user.permissions?.[PERMISSIONS.HR_LEAVE_APPROVE]) {
+      const { rows: manager } = await pool.query(
+        'SELECT id FROM hr_employees WHERE reviewer_id = $1', [req.user.id]
+      );
+      allowed = Boolean(manager[0]) && manager[0].id === attachment.manager_id;
+    }
+    if (!allowed) return missing();
+
+    res.set('Cache-Control', 'no-store');
+    res.set('Content-Type', attachment.content_type || 'application/octet-stream');
+    // Always an attachment, never inline: nothing uploaded by a user should be
+    // rendered by the browser on the portal's own origin.
+    res.set('Content-Disposition', `attachment; filename="${encodeURIComponent(attachment.file_name)}"`);
+    return res.send(attachment.file_data);
+  }
+);
+
+// Accepts JSON, or multipart when the leave type needs a supporting document
+// (an invitation letter, a medical certificate). `leaveAttachmentUpload` leaves
+// a JSON request untouched, so both shapes reach the same validation below.
 router.post(
   '/leaves',
   requirePermission(PERMISSIONS.HR_LEAVE_APPLY),
+  leaveAttachmentUpload,
   [
     body('leave_type_id').isUUID(),
     body('start_date').isISO8601(),
@@ -292,6 +367,13 @@ router.post(
       startDate: req.body.start_date,
       endDate: req.body.end_date,
       reason: req.body.reason,
+      attachments: (req.files || []).map((file) => ({
+        fileName: file.originalname,
+        contentType: file.mimetype,
+        buffer: file.buffer,
+        checksum: sha256(file.buffer),
+      })),
+      actorId: req.user.id,
     });
     res.status(201).json(application);
 
@@ -373,7 +455,8 @@ router.get('/approvals', requirePermission(PERMISSIONS.HR_LEAVE_APPROVE, PERMISS
   const { rows } = await pool.query(
     `SELECT a.id, a.employee_id, a.leave_type_id, a.start_date, a.end_date,
             a.days, a.reason, a.status, a.applied_at, a.reviewed_at, a.reviewer_note,
-            t.name AS leave_type_name, e.display_name AS employee_name, e.department_code
+            t.name AS leave_type_name, e.display_name AS employee_name, e.department_code,
+            ${ATTACHMENT_SUMMARY_SQL}
        FROM hr_leave_applications a
        JOIN hr_leave_types t ON t.id = a.leave_type_id
        JOIN hr_employees e ON e.id = a.employee_id
@@ -928,7 +1011,26 @@ router.put(
       });
     }
 
-    res.json(visibleEmployee(req, updated));
+    // Recording that someone is away does not touch the requests already in
+    // their approver's queue, and those requests can no longer be approved.
+    // Saying so here is the only moment the administrator is in a position to
+    // deal with them.
+    let pendingWarning = null;
+    if (existing[0].leave_entitled !== false && updated.leave_entitled === false) {
+      const { rows: pending } = await pool.query(
+        `SELECT COUNT(*)::int AS count FROM hr_leave_applications
+          WHERE employee_id = $1 AND status = 'pending'`,
+        [updated.id]
+      );
+      if (pending[0].count > 0) {
+        pendingWarning = `${updated.display_name} has ${pending[0].count} leave `
+          + `application${pending[0].count === 1 ? '' : 's'} still awaiting approval. `
+          + 'They can no longer be approved while this person is not entitled to leave — '
+          + 'ask the approver to reject them, or have the applicant cancel them.';
+      }
+    }
+
+    res.json({ ...visibleEmployee(req, updated), pending_leave_warning: pendingWarning });
   }
 );
 
@@ -1177,16 +1279,19 @@ router.post(
     body('accrual_days_per_fortnight').optional().isFloat({ min: 0, max: 365 }),
     body('reset_period').optional().isIn(['none', 'financial_year', 'anniversary']),
     body('max_balance').optional({ nullable: true }).isFloat({ min: 0, max: 1000 }),
+    body('requires_attachment').optional().isBoolean(),
+    body('attachment_label').optional({ nullable: true }).isString().isLength({ max: 200 }),
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     try {
       const { rows } = await pool.query(
-        `INSERT INTO hr_leave_types (name, description, default_days, is_accruable, requires_note, accrual_days_per_fortnight, reset_period, max_balance)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        `INSERT INTO hr_leave_types (name, description, default_days, is_accruable, requires_note, accrual_days_per_fortnight, reset_period, max_balance, requires_attachment, attachment_label)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
         [req.body.name.trim(), req.body.description || null, req.body.default_days,
          req.body.is_accruable === true, req.body.requires_note === true,
-         req.body.accrual_days_per_fortnight ?? 0, req.body.reset_period || 'none', req.body.max_balance ?? null]
+         req.body.accrual_days_per_fortnight ?? 0, req.body.reset_period || 'none', req.body.max_balance ?? null,
+         req.body.requires_attachment === true, String(req.body.attachment_label || '').trim() || null]
       );
       await recordAudit({
         actor: { id: req.user.id, email: req.user.email, ip: req.ip },
@@ -1220,6 +1325,8 @@ router.put(
     body('accrual_days_per_fortnight').optional().isFloat({ min: 0, max: 365 }),
     body('reset_period').optional().isIn(['none', 'financial_year', 'anniversary']),
     body('max_balance').optional({ nullable: true }).isFloat({ min: 0, max: 1000 }),
+    body('requires_attachment').optional().isBoolean(),
+    body('attachment_label').optional({ nullable: true }).isString().isLength({ max: 200 }),
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -1238,12 +1345,16 @@ router.put(
               is_active = COALESCE($7, is_active),
               accrual_days_per_fortnight = COALESCE($8, accrual_days_per_fortnight),
               reset_period = COALESCE($9, reset_period),
-              max_balance = CASE WHEN $10::boolean THEN $11::numeric ELSE max_balance END
+              max_balance = CASE WHEN $10::boolean THEN $11::numeric ELSE max_balance END,
+              requires_attachment = COALESCE($12, requires_attachment),
+              attachment_label = CASE WHEN $13::boolean THEN $14::text ELSE attachment_label END
         WHERE id = $1 RETURNING *`,
       [req.params.id, req.body.name ?? null, req.body.description ?? null, req.body.default_days ?? null,
        req.body.is_accruable ?? null, req.body.requires_note ?? null, req.body.is_active ?? null,
        req.body.accrual_days_per_fortnight ?? null, req.body.reset_period ?? null,
-       Object.hasOwn(req.body, 'max_balance'), req.body.max_balance ?? null]
+       Object.hasOwn(req.body, 'max_balance'), req.body.max_balance ?? null,
+       req.body.requires_attachment ?? null,
+       Object.hasOwn(req.body, 'attachment_label'), String(req.body.attachment_label || '').trim() || null]
     );
     await recordAudit({
       actor: { id: req.user.id, email: req.user.email, ip: req.ip },
@@ -1540,7 +1651,7 @@ router.get(
 
     const [
       headcount, applications, turnaround, byType, byDepartment, monthly, upcoming,
-      pendingAge, negative, excess, coverage, liability, balanceByType,
+      pendingAge, negative, excess, studyReturnDue, coverage, liability, balanceByType,
     ] = await Promise.all([
       pool.query(
         `SELECT
@@ -1657,6 +1768,28 @@ router.get(
                 ), '[]'::json) AS employee_names
            FROM excess_people`,
         [today.getFullYear()]
+      ),
+      // Study leave whose return date has been and gone. Nothing restores
+      // eligibility automatically — deliberately, because somebody has to
+      // confirm the person actually came back — so until an administrator
+      // does, they cannot apply for leave and accrue nothing. That is a
+      // silence worth breaking.
+      pool.query(
+        `SELECT COUNT(*) AS count,
+                COALESCE((
+                  SELECT json_agg(display_name ORDER BY display_name)
+                    FROM (
+                      SELECT display_name FROM hr_employees
+                       WHERE status = 'active' AND leave_entitled = FALSE
+                         AND ineligible_reason = 'study_leave'
+                         AND study_leave_end IS NOT NULL AND study_leave_end < CURRENT_DATE
+                       ORDER BY display_name LIMIT 3
+                    ) preview
+                ), '[]'::json) AS employee_names
+           FROM hr_employees
+          WHERE status = 'active' AND leave_entitled = FALSE
+            AND ineligible_reason = 'study_leave'
+            AND study_leave_end IS NOT NULL AND study_leave_end < CURRENT_DATE`
       ),
       // Coverage risk: a department with more than a third of its people away
       // on the same working day in the next month. This is the question a
@@ -1792,6 +1925,8 @@ router.get(
         negative_balances: Number(negative.rows[0].count),
         excess_balances: Number(excess.rows[0].count),
         excess_employee_names: excess.rows[0].employee_names,
+        study_leave_return_due: Number(studyReturnDue.rows[0].count),
+        study_leave_return_names: studyReturnDue.rows[0].employee_names,
         coverage_risks: coverage.rows.map((r) => ({
           department_code: r.department_code,
           day: r.day,

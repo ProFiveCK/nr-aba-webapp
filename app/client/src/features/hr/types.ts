@@ -13,7 +13,20 @@ export interface LeaveType {
     accrual_days_per_fortnight: string;
     reset_period: ResetPeriod;
     max_balance: string | null;
+    /** The type is only granted on the strength of a document, e.g. a medical certificate. */
+    requires_attachment?: boolean;
+    /** Names the document to attach, so the form can ask for it by name. */
+    attachment_label?: string | null;
     usage_count?: number;
+}
+
+/** A supporting document on a leave application, without its bytes. */
+export interface LeaveAttachment {
+    id: string;
+    file_name: string;
+    content_type: string | null;
+    byte_size: number;
+    created_at: string;
 }
 
 export interface OrgDivision {
@@ -82,6 +95,7 @@ export interface LeaveApplication {
     reviewed_by_name?: string | null;
     reviewer_note: string | null;
     department_code?: string | null;
+    attachments?: LeaveAttachment[];
 }
 
 export interface MyLeaveResponse {

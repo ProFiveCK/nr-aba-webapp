@@ -57,9 +57,19 @@ async function releasePending(client, application) {
 /**
  * Submits an application and holds the days against the employee's balance.
  *
+ * `attachments` are the supporting documents sent with the application, as
+ * `{ fileName, contentType, buffer, checksum }`. A leave type marked
+ * `requires_attachment` will not accept an application without at least one —
+ * official leave is granted on the strength of the partner's invitation and
+ * certified sick leave on the strength of the certificate, so an application
+ * with neither is not a complete application.
+ *
  * Returns `{ application, leaveType }`. The caller notifies the manager.
  */
-export async function applyForLeave(pool, { employee, leaveTypeId, startDate, endDate, reason }) {
+export async function applyForLeave(
+  pool,
+  { employee, leaveTypeId, startDate, endDate, reason, attachments = [], actorId = null }
+) {
   if (employee.leave_entitled === false) {
     throw forbidden('You are not entitled to leave.');
   }
@@ -83,6 +93,13 @@ export async function applyForLeave(pool, { employee, leaveTypeId, startDate, en
       throw badRequest('An explanation or reason is required for every leave application.');
     }
 
+    // Checked before the balance is touched, so a rejected application leaves
+    // no hold behind.
+    if (leaveType.requires_attachment && !attachments.length) {
+      const what = String(leaveType.attachment_label || '').trim() || 'a supporting document';
+      throw badRequest(`${leaveType.name} leave requires ${what}. Attach it and submit again.`);
+    }
+
     const balance = await ensureBalance(client, employee.id, leaveTypeId, balanceYearFor(startDate));
     const available = Number(balance.balance) - Number(balance.pending);
     if (days > available) {
@@ -100,7 +117,22 @@ export async function applyForLeave(pool, { employee, leaveTypeId, startDate, en
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
       [employee.id, leaveTypeId, startDate, endDate, days, note || null]
     );
-    return { application: created[0], leaveType };
+    // Inside the same transaction as the application: an application that was
+    // only accepted because a document came with it must never exist without
+    // that document.
+    const stored = [];
+    for (const file of attachments) {
+      const { rows } = await client.query(
+        `INSERT INTO hr_leave_attachments
+           (application_id, file_name, content_type, byte_size, file_data, checksum, uploaded_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, file_name, content_type, byte_size, created_at`,
+        [created[0].id, file.fileName, file.contentType || null, file.buffer.length,
+         file.buffer, file.checksum, actorId]
+      );
+      stored.push(rows[0]);
+    }
+    return { application: { ...created[0], attachments: stored }, leaveType };
   });
 }
 
@@ -165,6 +197,28 @@ export async function decideLeave(pool, { applicationId, decision, note, actorId
     }
     if (decision === 'approved' && !String(application.reason || '').trim()) {
       throw badRequest('This application has no explanation. Ask the applicant to cancel and resubmit it with a reason.');
+    }
+
+    // Entitlement is checked again here, not only when the leave was applied
+    // for. An application sits in the queue, and in between an administrator
+    // may have recorded that this person is away on study leave or is no
+    // longer entitled — approving it then would charge days against someone
+    // the organisation has already accounted for as absent. Rejection stays
+    // open, because that is how the stale request is cleared.
+    if (decision === 'approved') {
+      const { rows: entitlement } = await client.query(
+        'SELECT leave_entitled, ineligible_reason FROM hr_employees WHERE id = $1',
+        [application.employee_id]
+      );
+      if (entitlement[0]?.leave_entitled === false) {
+        const away = entitlement[0].ineligible_reason === 'study_leave'
+          ? 'is recorded as away on study leave'
+          : 'is not currently entitled to leave';
+        throw badRequest(
+          `This person ${away}, so their leave cannot be approved. Reject this request, `
+          + 'or restore their eligibility on their staff record first.'
+        );
+      }
     }
 
     await releasePending(client, application);

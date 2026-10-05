@@ -875,6 +875,18 @@ export async function initSchema() {
     await client.query('ALTER TABLE hr_leave_types DROP CONSTRAINT IF EXISTS hr_leave_types_reset_period_check');
     await client.query("ALTER TABLE hr_leave_types ADD CONSTRAINT hr_leave_types_reset_period_check CHECK (reset_period IN ('none','financial_year','anniversary'))");
 
+    // Supporting documents. Some leave is only granted on the strength of a
+    // paper the applicant holds — a partner organisation's invitation for
+    // official travel, a doctor's certificate for certified sick leave — and
+    // the paper leave form already says to attach it. `attachment_label` names
+    // what to attach, so the form can ask for the right document by name
+    // rather than "a file".
+    const { rows: hadRequiresAttachment } = await client.query(
+      "SELECT 1 FROM information_schema.columns WHERE table_name = 'hr_leave_types' AND column_name = 'requires_attachment'"
+    );
+    await client.query('ALTER TABLE hr_leave_types ADD COLUMN IF NOT EXISTS requires_attachment BOOLEAN NOT NULL DEFAULT FALSE');
+    await client.query('ALTER TABLE hr_leave_types ADD COLUMN IF NOT EXISTS attachment_label TEXT');
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS hr_leave_balances (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -912,6 +924,30 @@ export async function initSchema() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_apps_employee_applied ON hr_leave_applications(employee_id, applied_at DESC)');
     // Preserve the figures and staff details at approval for payroll reprints.
     await client.query('ALTER TABLE hr_leave_applications ADD COLUMN IF NOT EXISTS payroll_form_snapshot JSONB');
+
+    // The documents an application was granted on the strength of: the
+    // invitation that justified official travel, the certificate that made
+    // sick leave certified sick leave.
+    //
+    // Stored as bytes in the database rather than on disk, like the FOREX
+    // attachments, so a backup of the database is a complete record and a
+    // restored deployment is not left with rows pointing at files that are no
+    // longer there. ON DELETE CASCADE because a document has no meaning once
+    // the application it supports is gone.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_leave_attachments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        application_id UUID NOT NULL REFERENCES hr_leave_applications(id) ON DELETE CASCADE,
+        file_name TEXT NOT NULL,
+        content_type TEXT,
+        byte_size INT NOT NULL,
+        file_data BYTEA NOT NULL,
+        checksum TEXT NOT NULL,
+        uploaded_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_leave_attachments_application ON hr_leave_attachments(application_id)');
 
     // Manual balance corrections. reason is required: every adjustment must say why.
     await client.query(`
@@ -988,6 +1024,22 @@ export async function initSchema() {
       ON CONFLICT (name) DO NOTHING
     `);
     await client.query(`UPDATE hr_leave_types SET is_active = FALSE WHERE name = 'Sick'`);
+
+    // Which types need a supporting document, seeded once when the columns are
+    // first created — and here rather than beside the ALTER TABLE, because the
+    // types these name are only inserted just above. After the first run the
+    // setting belongs to the Leave Admin: switching it off in Policies has to
+    // survive a restart, which it would not if this ran on every boot.
+    if (!hadRequiresAttachment.length) {
+      await client.query(
+        `UPDATE hr_leave_types SET requires_attachment = TRUE, attachment_label = v.label
+           FROM (VALUES
+             ('Official',       'Invitation letter from the partner organisation'),
+             ('Sick (with MC)', 'Medical certificate')
+           ) AS v(name, label)
+          WHERE hr_leave_types.name = v.name`
+      );
+    }
 
     await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_email_attempted ON login_attempts(email, attempted_at)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_attempted_at ON login_attempts(attempted_at)');

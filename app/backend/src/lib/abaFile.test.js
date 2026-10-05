@@ -1,16 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseAbaFile, amendValueDate } from './abaFile.js';
-
-// Built the way app/client/src/lib/generator-utils.ts buildAbaFile does.
-const R = (s) => s.padEnd(120, ' ').slice(0, 120);
-const detail = (bsb, acct, code, cents, title, lodg, remitter = 'RON TREASURY') =>
-  R('1' + bsb + acct.padStart(9, ' ') + ' ' + code + String(cents).padStart(10, '0') +
-    title.padEnd(32) + lodg.padEnd(18) + '012-345' + '123456789' + remitter.padEnd(16) + '00000000');
-const header = (desc, proc) =>
-  R('0' + ' '.repeat(17) + '01' + 'CBA' + ' '.repeat(7) + 'REPUBLIC OF NAURU'.padEnd(26) + '123456' + desc.padEnd(12) + proc);
-const trailer = (net, credits, debits, count) =>
-  R('7999-999' + ' '.repeat(12) + [net, credits, debits].map((n) => String(n).padStart(10, '0')).join('') + ' '.repeat(24) + String(count).padStart(6, '0'));
+import { detail, file, header, trailer } from '../test-support/aba.js';
 
 const goodLines = [
   header('SALARIES', '061026'),
@@ -19,7 +10,6 @@ const goodLines = [
   detail('012-345', '11112222', '13', 5150000, 'TREASURY OPERATING', 'SALARIES-061026'),
   trailer(0, 5150000, 5150000, 3),
 ];
-const file = (lines, eol = '\r\n') => Buffer.from(lines.join(eol) + eol, 'utf8');
 
 test('parses a balanced file and lists the credit lines', () => {
   const parsed = parseAbaFile(file(goodLines));

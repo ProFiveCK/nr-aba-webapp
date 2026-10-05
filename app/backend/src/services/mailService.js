@@ -138,17 +138,6 @@ async function sendMail(options = {}) {
   }
 }
 
-function buildBatchReviewLink(code) {
-  const formatted = formatBatchCode(code);
-  try {
-    const url = new URL(FRONTEND_BASE_URL);
-    url.searchParams.set('batch', formatted);
-    return url.toString();
-  } catch (_) {
-    return `${FRONTEND_BASE_URL}?batch=${encodeURIComponent(formatted)}`;
-  }
-}
-
 async function sendReviewerWelcomeEmail({ email, display_name, role }, tempPassword) {
   const name = display_name || email;
   const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : 'Account';
@@ -215,61 +204,6 @@ async function notifyAdminsOfSignupRequest({ email, name, departmentCode, reques
   const subject = `Signup request submitted by ${signupName}`;
   const [primaryRecipient, ...bccRecipients] = recipients;
   const mailOptions = { to: primaryRecipient, subject, text };
-  if (bccRecipients.length) mailOptions.bcc = bccRecipients;
-  await sendMail(mailOptions);
-}
-
-async function notifyReviewersOfNewBatch(batch, metadata) {
-  if (!mailTransport || testingModeEnabled) return;
-  // Notify reviewers/admins who have notify_on_submission = true
-  const { rows } = await pool.query(
-    `SELECT email, display_name FROM reviewers
-      WHERE status = 'active'
-        AND role IN ('reviewer', 'admin')
-        AND notify_on_submission = TRUE`
-  );
-  if (!rows.length) return;
-  const recipients = Array.from(new Set(rows.map((row) => lowerEmail(row.email)).filter(Boolean)));
-  if (!recipients.length) return;
-  const formattedCode = formatBatchCode(batch.code);
-  const reviewLink = buildBatchReviewLink(batch.code);
-  const currencyFormatter = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' });
-  const creditsValue = (metadata?.metrics?.creditsCents !== undefined)
-    ? currencyFormatter.format((metadata.metrics.creditsCents || 0) / 100)
-    : 'N/A';
-  const duplicates = metadata?.duplicates ?? {};
-  const duplicateSets = duplicates.sets ?? 0;
-  const duplicateRows = duplicates.rows ?? 0;
-  const transactionCount = metadata?.metrics?.transactionCount
-    ?? metadata?.payload?.transactions?.length
-    ?? 'N/A';
-  const notesLine = metadata?.notes ? metadata.notes : 'None';
-  const departmentCode = metadata?.department_code || batch.department_code || 'Unknown';
-  const pdNumber = metadata?.pd_number || batch.pd_number || 'N/A';
-  const submitter = metadata?.prepared_by || metadata?.prepared_by_name || batch.submitted_email || 'Unknown';
-  const subject = `PD ${pdNumber} - Dept ${departmentCode} - ${formattedCode}`;
-  const text = `A new ABA batch has been submitted for review.
-
-Reference code: ${formattedCode}
-Department: ${departmentCode}
-PD number: ${pdNumber}
-Prepared by: ${submitter}
-Transactions: ${transactionCount}
-Total credits: ${creditsValue}
-Duplicate sets: ${duplicateSets}
-Duplicate rows: ${duplicateRows}
-Notes: ${notesLine}
-Stage: submitted
-
-Review it here: ${reviewLink}
-`;
-  const [primaryRecipient, ...bccRecipients] = recipients;
-  const mailOptions = {
-    to: primaryRecipient,
-    subject,
-    text,
-    replyTo: batch.submitted_email || metadata?.submitted_by_email
-  };
   if (bccRecipients.length) mailOptions.bcc = bccRecipients;
   await sendMail(mailOptions);
 }
@@ -455,4 +389,5 @@ export {
   sendMail,
   sendReviewerPasswordResetEmail,
   sendReviewerWelcomeEmail,
+  testingModeEnabled,
 };

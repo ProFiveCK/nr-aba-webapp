@@ -1,23 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import { Search, X } from 'lucide-react';
-import { apiClient } from '../../lib/api';
-import { useToast } from '../../contexts/useToast';
-import { useAuth } from '../../contexts/useAuth';
-import { useConfirm } from '../../contexts/useConfirm';
-import { EmptyState, LoadingState, StatTile } from '../../components/Ui';
-import { formatDate } from '../../features/hr/types';
-import { toDateInputValue, todayIsoDate } from '../../lib/date';
-import { csvCell, parseCsv } from '../../features/hr/csv';
-import { BalancesReport } from '../../features/hr/BalancesReport';
+import { apiClient } from '../../../lib/api';
+import { useToast } from '../../../contexts/useToast';
+import { useAuth } from '../../../contexts/useAuth';
+import { useConfirm } from '../../../contexts/useConfirm';
+import { EmptyState, LoadingState, StatTile } from '../../../components/Ui';
+import { formatDate } from '../types';
+import { toDateInputValue, todayIsoDate } from '../../../lib/date';
+import { csvCell, parseCsv } from '../../../lib/csv';
+import { BalancesReport } from '../BalancesReport';
 import type {
     ImportResult,
     ImportRow,
     StaffBalanceRow,
     StaffBalancesResponse,
-} from '../../features/hr/staffTypes';
-import { INELIGIBLE_REASON_LABELS } from '../../features/hr/types';
-import type { Employee, IneligibleReason, LeaveBalance, LeaveType, OrgDepartment } from '../../features/hr/types';
+} from '../staffTypes';
+import { INELIGIBLE_REASON_LABELS } from '../types';
+import type { Employee, IneligibleReason, LeaveBalance, LeaveType, OrgDepartment } from '../types';
 
 const FIXED_COLUMNS = ['display_name', 'department_code', 'division_code', 'join_date'];
 

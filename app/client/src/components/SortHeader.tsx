@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react';
-import type { SortDirection, SortState } from './tableSort';
+import type { SortDirection, SortState } from '../lib/tableSort';
 
 /**
  * A sortable column heading.

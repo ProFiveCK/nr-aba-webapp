@@ -1,23 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { apiClient } from '../../lib/api';
-import { useToast } from '../../contexts/useToast';
-import { useConfirm } from '../../contexts/useConfirm';
-import { EmptyState, LoadingState } from '../../components/Ui';
-import { printApprovedLeaveForm } from '../../features/hr/payrollForm';
+import { apiClient } from '../../../lib/api';
+import { useToast } from '../../../contexts/useToast';
+import { useConfirm } from '../../../contexts/useConfirm';
+import { EmptyState, LoadingState } from '../../../components/Ui';
+import { printApprovedLeaveForm } from '../payrollForm';
 import {
     calculateWorkingDays,
     formatDate,
     STATUS_STYLES,
-} from '../../features/hr/types';
+} from '../types';
 import {
     LEAVE_ATTACHMENT_ACCEPT,
     LEAVE_ATTACHMENT_MAX_BYTES,
     LEAVE_ATTACHMENT_MAX_FILES,
     formatFileSize,
-} from '../../features/hr/leaveAttachments';
-import { LeaveAttachmentLinks } from '../../features/hr/LeaveAttachmentLinks';
-import type { LeaveApplication, LeaveType, MyLeaveResponse, PublicHoliday } from '../../features/hr/types';
+} from '../leaveAttachments';
+import { LeaveAttachmentLinks } from '../LeaveAttachmentLinks';
+import type { LeaveApplication, LeaveType, MyLeaveResponse, PublicHoliday } from '../types';
 
 export function MyLeave() {
     const { addToast } = useToast();

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { apiClient } from '../../lib/api';
-import { useToast } from '../../contexts/useToast';
-import { useConfirm } from '../../contexts/useConfirm';
-import { EmptyState, LoadingState } from '../../components/Ui';
-import { formatDate } from '../../features/hr/types';
-import { printApprovedLeaveForm } from '../../features/hr/payrollForm';
-import { LeaveAttachmentLinks } from '../../features/hr/LeaveAttachmentLinks';
-import type { LeaveApplication } from '../../features/hr/types';
+import { apiClient } from '../../../lib/api';
+import { useToast } from '../../../contexts/useToast';
+import { useConfirm } from '../../../contexts/useConfirm';
+import { EmptyState, LoadingState } from '../../../components/Ui';
+import { formatDate } from '../types';
+import { printApprovedLeaveForm } from '../payrollForm';
+import { LeaveAttachmentLinks } from '../LeaveAttachmentLinks';
+import type { LeaveApplication } from '../types';
 
 export function Approvals() {
     const { addToast } = useToast();

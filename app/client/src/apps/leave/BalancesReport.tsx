@@ -1,7 +1,7 @@
 import { RefreshCw } from 'lucide-react';
 import { EmptyState, LoadingState } from '../../components/Ui';
-import { compareCells, useTableSort } from './tableSort';
-import { SortHeader } from './SortHeader';
+import { compareCells, useTableSort } from '../../lib/tableSort';
+import { SortHeader } from '../../components/SortHeader';
 import type { StaffBalanceRow, StaffBalancesResponse } from './staffTypes';
 
 // Fixed columns are keyed by name; a leave type column is keyed by the type's

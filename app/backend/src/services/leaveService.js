@@ -193,6 +193,15 @@ export async function decideLeave(pool, { applicationId, decision, note, actorId
     if (application.status !== 'pending') {
       throw badRequest('This application is no longer pending.');
     }
+    // Nobody decides their own leave, HR administrators included; to withdraw
+    // it, the applicant cancels it.
+    const { rows: applicant } = await client.query(
+      'SELECT reviewer_id FROM hr_employees WHERE id = $1',
+      [application.employee_id]
+    );
+    if (actorId && applicant[0]?.reviewer_id === actorId) {
+      throw forbidden('You cannot approve or reject your own leave. Another approver must decide it.');
+    }
     if (!(await canAct(application.employee_id))) {
       throw forbidden('This person does not report to you.');
     }

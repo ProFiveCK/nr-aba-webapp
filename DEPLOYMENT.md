@@ -28,7 +28,7 @@ Complete guide for deploying the ABA Stack in development or production environm
 ### Network Requirements
 
 - **Development:** Port `WEB_PORT` available (default is `8080` on macOS when using `./setup-dev.sh`)
-- **Production:** Port `WEB_PORT` available (default `80`). Optional: Port `9001` if you enable the Portainer agent service.
+- **Production:** Port `WEB_PORT` available (default `80`). Optional: the Portainer agent runs from its own file, `docker-compose.portainer.yml`, and needs `PORTAINER_AGENT_SECRET` (plus `PORTAINER_AGENT_BIND` set to the LAN address, if the Portainer server is on another machine).
 - Outbound SMTP access (port 587) for email notifications
 
 ---

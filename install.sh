@@ -410,8 +410,9 @@ configure_env() {
     ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
     read -rp "  Admin name   [System Admin]: " ADMIN_NAME
     ADMIN_NAME="${ADMIN_NAME:-System Admin}"
-    ADMIN_PASS="Admin123!"
-    warn "Default admin password: Admin123!  ← change after first login"
+    # Random, never a shared default: the API refuses to create an admin with
+    # a known or short password. Shown once at the end; change it at first login.
+    ADMIN_PASS="$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-20)"
 
     # ── Web port ────────────────────────────────────────────────────────
     echo ""
@@ -713,11 +714,12 @@ start_services() {
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 print_summary() {
-  local port admin_email
+  local port admin_email admin_pass
   port="$(grep "^WEB_PORT=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' ')"
   port="${port:-80}"
   admin_email="$(grep "^DEFAULT_ADMIN_EMAIL=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' ')"
   admin_email="${admin_email:-admin@example.com}"
+  admin_pass="$(grep "^DEFAULT_ADMIN_PASSWORD=" "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d ' ')"
 
   echo ""
   echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════════════════════╗"
@@ -729,7 +731,8 @@ print_summary() {
   echo -e "  Health    →  ${CYAN}http://localhost:${port}/health${NC}"
   echo ""
   echo -e "  Login email :  ${admin_email}"
-  echo -e "  Password    :  ${YELLOW}Admin123!${NC}  ← change this now"
+  echo -e "  Password    :  ${YELLOW}${admin_pass:-(see DEFAULT_ADMIN_PASSWORD in $ENV_FILE)}${NC}  ← you must change it at first login"
+  echo    "  Then remove DEFAULT_ADMIN_PASSWORD from $ENV_FILE."
   echo ""
   echo "  Useful commands:"
   echo "    $COMPOSE_CMD --env-file $ENV_FILE logs -f         # tail all logs"

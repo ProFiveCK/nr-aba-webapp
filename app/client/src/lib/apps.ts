@@ -83,7 +83,7 @@ export const APPS: AppDef[] = [
     icon: Wrench,
     capability: 'tools_access',
     description: 'SaaS subscriptions and utility tools.',
-    color: 'bg-slate-600',
+    color: 'bg-gray-600',
   },
   {
     id: 'forex-tt',
@@ -113,7 +113,7 @@ export const APPS: AppDef[] = [
     icon: CalendarDays,
     capability: 'hr_access',
     description: 'Request leave, review approvals, and manage team availability.',
-    color: 'bg-[#002B7F]',
+    color: 'bg-brand',
   },
 ];
 
@@ -126,7 +126,7 @@ export const SYSTEM_PAGES: AppDef[] = [
     icon: LayoutDashboard,
     capability: 'dashboard',
     description: 'App launcher and overview.',
-    color: 'bg-zinc-700',
+    color: 'bg-gray-700',
   },
   {
     id: 'admin',

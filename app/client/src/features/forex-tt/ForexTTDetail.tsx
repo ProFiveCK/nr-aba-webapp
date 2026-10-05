@@ -151,14 +151,14 @@ export function ForexTTDetail({ request, reviewMode, onBack, onSaved, onSubmitte
           <a
             href={`${import.meta.env.VITE_API_BASE_URL || '/api'}/forex-tt/${detail.request_id}/pdf`}
             download
-            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
           >
             Download PDF
           </a>
         </div>
       </div>
 
-      <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3 shadow-sm">
+      <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">{detail.request_id}</h2>
@@ -185,16 +185,16 @@ export function ForexTTDetail({ request, reviewMode, onBack, onSaved, onSubmitte
         />
       )}
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">Attached Files</h3>
+      <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Attached Files</h3>
         {Object.keys(groupedAttachments).length > 0 ? (
           <div className="space-y-4">
             {Object.entries(groupedAttachments).map(([category, items]) => (
               <div key={category}>
-                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
                   {CATEGORY_LABELS[category] || category}
                 </h4>
-                <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-100">
+                <ul className="divide-y divide-gray-100 rounded-md border border-gray-100">
                   {items.map((a: ForexTTAttachment) => (
                     <li key={a.id} className="flex items-center justify-between px-3 py-2">
                       <span className="text-sm">{a.file_name}</span>
@@ -212,15 +212,15 @@ export function ForexTTDetail({ request, reviewMode, onBack, onSaved, onSubmitte
             ))}
           </div>
         ) : (
-          <p className="text-sm text-zinc-500">No attachments.</p>
+          <p className="text-sm text-gray-500">No attachments.</p>
         )}
       </section>
 
       {canReview && (
-        <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">Reviewer Actions</h3>
+        <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Reviewer Actions</h3>
           <textarea
-            className="mb-3 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+            className="mb-3 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
             rows={3}
             value={comments}
             onChange={(e) => setComments(e.target.value)}
@@ -228,9 +228,9 @@ export function ForexTTDetail({ request, reviewMode, onBack, onSaved, onSubmitte
           />
           {(detail.status === 'claimed' || detail.status === 'processing') && detail.claimed_by === user?.id && (
             <div className="mb-3">
-              <label className="mb-1 block text-sm font-medium text-zinc-700">Bank Confirmation</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Bank Confirmation</label>
               <textarea
-                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                 rows={2}
                 value={detail.bank_confirmation || ''}
                 onChange={(e) => setDetail((prev) => (prev ? { ...prev, bank_confirmation: e.target.value } : prev))}
@@ -242,7 +242,7 @@ export function ForexTTDetail({ request, reviewMode, onBack, onSaved, onSubmitte
             {detail.status === 'submitted' && (
               <button
                 onClick={() => transition('claimed')}
-                className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 Claim
               </button>
@@ -250,7 +250,7 @@ export function ForexTTDetail({ request, reviewMode, onBack, onSaved, onSubmitte
             {detail.status === 'claimed' && detail.claimed_by === user?.id && (
               <button
                 onClick={() => transition('processing')}
-                className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 Mark Processing
               </button>
@@ -283,8 +283,8 @@ export function ForexTTDetail({ request, reviewMode, onBack, onSaved, onSubmitte
         </section>
       )}
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">History</h3>
+      <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">History</h3>
         {detail.bank_confirmation && (
           <div className="mb-3 rounded-md border border-green-100 bg-green-50 p-3">
             <h4 className="text-xs font-semibold uppercase tracking-wide text-green-700">Bank Confirmation</h4>
@@ -297,13 +297,13 @@ export function ForexTTDetail({ request, reviewMode, onBack, onSaved, onSubmitte
               <li key={h.id} className="text-sm">
                 <span className="font-medium">{h.reviewer}</span>
                 {' '}moved to <span className="capitalize">{h.status.replace(/_/g, ' ')}</span>
-                {' '}<span className="text-zinc-500">· {new Date(h.created_at).toLocaleString()}</span>
-                {h.comments && <p className="mt-1 text-zinc-600">“{h.comments}”</p>}
+                {' '}<span className="text-gray-500">· {new Date(h.created_at).toLocaleString()}</span>
+                {h.comments && <p className="mt-1 text-gray-600">“{h.comments}”</p>}
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-zinc-500">No activity yet.</p>
+          <p className="text-sm text-gray-500">No activity yet.</p>
         )}
       </section>
     </div>

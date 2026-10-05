@@ -1,0 +1,22 @@
+# Portainer agent, kept out of the app stack on purpose.
+#
+# The agent holds the Docker socket, so whoever can talk to it is root on this
+# host. It refuses to start without a shared secret (set the same value on the
+# Portainer server), and listens on loopback unless PORTAINER_AGENT_BIND names
+# the LAN address your Portainer server connects to.
+#
+#   docker compose -f docker-compose.portainer.yml --env-file .env.prod up -d
+name: ron-stack-portainer
+
+services:
+  portainer-agent:
+    image: portainer/agent:latest
+    container_name: portainer-agent-ronstack
+    restart: unless-stopped
+    environment:
+      AGENT_SECRET: ${PORTAINER_AGENT_SECRET:?set PORTAINER_AGENT_SECRET (same value as on the Portainer server)}
+    ports:
+      - "${PORTAINER_AGENT_BIND:-127.0.0.1}:9001:9001"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes

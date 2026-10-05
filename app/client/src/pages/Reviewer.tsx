@@ -1,10 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { apiClient } from '../lib/api';
-import { EmptyState, Icon, LoadingState } from '../components/Ui';
+import { Button, EmptyState, Icon, LoadingState, Modal, ModalActions } from '../components/Ui';
 import { useAuth } from '../contexts/useAuth';
 import { useToast } from '../contexts/useToast';
 import type { BatchDetail, BatchStage } from './MyBatches/types';
-import type { HeaderData, Transaction as GeneratorTransaction } from './Generator/types';
 import {
     downloadBase64File,
     formatIsoDateTime,
@@ -12,10 +11,8 @@ import {
     formatPdNumber,
     formatBatchCode,
     getBatchStageBadgeClasses,
-    toBase64,
 } from '../lib/utils';
-import { CREDIT_CODE_SET, CREDIT_TXN_CODES, HEADER_PRESETS, STAGE_META } from '../lib/constants';
-import { buildAbaFile } from '../lib/generator-utils';
+import { HEADER_PRESETS, STAGE_META } from '../lib/constants';
 
 interface ReviewerProps {
     onSwitchToReader?: () => void;
@@ -55,16 +52,6 @@ interface ArchivePage {
 }
 
 const ARCHIVE_LIMIT = 40;
-
-type PayloadTransaction = {
-    bsb?: string;
-    account?: string;
-    amount?: number | string;
-    cents?: number;
-    accountTitle?: string;
-    lodgementRef?: string;
-    txnCode?: string;
-};
 
 export function Reviewer({ onSwitchToReader }: ReviewerProps) {
     const { user } = useAuth();
@@ -189,7 +176,6 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
     const metrics = selectedBatch?.transactions?.metrics;
     const duplicates = selectedBatch?.transactions?.duplicates as { sets?: number; rows?: number } | undefined;
     const payloadHeader = selectedBatch?.transactions?.payload?.header as Record<string, unknown> | undefined;
-    const payloadTransactions = selectedBatch?.transactions?.payload?.transactions as PayloadTransaction[] | undefined;
     const traceBsb = (payloadHeader?.trace_bsb as string | undefined) || '';
     const traceAcct = (payloadHeader?.trace_acct as string | undefined) || '';
     const balanceBsb = (payloadHeader?.balance_bsb as string | undefined) || '';
@@ -262,26 +248,15 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
             setValueDateError('Processing date must be DDMMYY (6 digits).');
             return;
         }
-        const normalizedTransactions = normalizePayloadTransactions(payloadTransactions);
-        if (!normalizedTransactions.length) {
-            setValueDateError('Original transaction payload not available.');
-            return;
-        }
-        const headerData = buildHeaderDataFromPayload(payloadHeader);
-        headerData.proc = trimmedProc;
         const sanitizedDesc = valueDateDesc.trim().slice(0, 12);
         const sanitizedRemitter = valueDateRemitter.trim().slice(0, 16);
-        if (sanitizedDesc) headerData.desc = sanitizedDesc;
-        if (sanitizedRemitter) headerData.remitter = sanitizedRemitter;
         try {
             setValueDateLoading(true);
-            const abaText = buildAbaFile(headerData, normalizedTransactions);
-            const abaBase64 = toBase64(abaText);
+            // The server amends the stored file itself; only the new values are sent.
             await apiClient.patch(`/batches/${encodeURIComponent(selectedBatch.code)}/value-date`, {
                 proc: trimmedProc,
                 desc: sanitizedDesc || undefined,
                 remitter: sanitizedRemitter || undefined,
-                aba_content: abaBase64,
             });
             addToast('Processing date updated successfully.', 'success');
             setValueDateModalOpen(false);
@@ -446,7 +421,7 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
                                             onChange={(e) => setRejectComment(e.target.value)}
                                             rows={3}
                                             placeholder="Explain why this batch is rejected; this is emailed to the submitter."
-                                            className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
+                                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
                                         />
                                     </label>
                                     {rejectError && <p className="text-xs text-rose-600">{rejectError}</p>}
@@ -475,7 +450,7 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
                     </div>
                     <div className="flex flex-wrap gap-2">
                         <label className="relative">
-                            <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                            <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                             <input
                                 type="search"
                                 value={searchTerm}
@@ -598,69 +573,26 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
         </div>
 
         {readerNoticeOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setReaderNoticeOpen(false)}>
-                <div
-                    className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
-                    onClick={(e) => e.stopPropagation()}
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby="reader-notice-title"
-                >
-                    <div className="flex items-start gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
-                            <Icon name="alert" />
-                        </div>
-                        <div className="min-w-0">
-                            <h3 id="reader-notice-title" className="text-lg font-semibold text-gray-900">ABA file not available</h3>
-                            <p className="mt-1 text-sm text-gray-600">
-                                The ABA file is not available for this batch.
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setReaderNoticeOpen(false)}
-                            className="icon-button -mr-2 -mt-2 shrink-0"
-                            aria-label="Close"
-                        >
-                            <Icon name="x" />
-                        </button>
-                    </div>
-                    <div className="mt-6 flex justify-end">
-                        <button
-                            type="button"
-                            onClick={() => setReaderNoticeOpen(false)}
-                            className="toolbar-button toolbar-button-primary"
-                        >
-                            OK
-                        </button>
-                    </div>
-                </div>
-            </div>
+            <Modal
+                title="ABA file not available"
+                description="The ABA file is not available for this batch."
+                onClose={() => setReaderNoticeOpen(false)}
+            >
+                <ModalActions>
+                    <Button onClick={() => setReaderNoticeOpen(false)}>OK</Button>
+                </ModalActions>
+            </Modal>
         )}
 
         {valueDateModalOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setValueDateModalOpen(false)}>
-                <div
-                    className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <div className="flex items-start justify-between">
-                        <div>
-                            <h3 className="text-xl font-semibold text-gray-900">Adjust processing date</h3>
-                            <p className="text-sm text-gray-500 mt-1">
-                                Update the value date the bank will use. Enter DDMMYY (six digits) and optionally adjust the description or remitter.
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setValueDateModalOpen(false)}
-                            className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-                        >
-                            ×
-                        </button>
-                    </div>
-
-                    <div className="mt-4 space-y-3">
+            <Modal
+                title="Adjust processing date"
+                description="Update the value date the bank will use. Enter DDMMYY (six digits) and optionally adjust the description or remitter."
+                onClose={() => setValueDateModalOpen(false)}
+                closeDisabled={valueDateLoading}
+                size="lg"
+            >
+                    <div className="space-y-3">
                         <label className="text-sm font-medium text-gray-700">
                             Processing date (DDMMYY)
                             <input
@@ -693,28 +625,13 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
                                 className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                             />
                         </label>
-                        {valueDateError && <p className="text-sm text-rose-600">{valueDateError}</p>}
-                        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end pt-2">
-                            <button
-                                type="button"
-                                onClick={() => setValueDateModalOpen(false)}
-                                className="rounded-full border border-gray-300 px-5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                                disabled={valueDateLoading}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleValueDateSubmit}
-                                disabled={valueDateLoading}
-                                className="rounded-full bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-amber-400 disabled:opacity-60"
-                            >
-                                {valueDateLoading ? 'Saving…' : 'Update date'}
-                            </button>
-                        </div>
+                        {valueDateError && <p role="alert" className="text-sm text-rose-600">{valueDateError}</p>}
+                        <ModalActions>
+                            <Button variant="secondary" onClick={() => setValueDateModalOpen(false)} disabled={valueDateLoading}>Cancel</Button>
+                            <Button onClick={handleValueDateSubmit} loading={valueDateLoading}>{valueDateLoading ? 'Saving…' : 'Update date'}</Button>
+                        </ModalActions>
                     </div>
-                </div>
-            </div>
+            </Modal>
         )}
         </>
     );
@@ -730,68 +647,3 @@ function normalizeAccount(value?: string) {
     return value.replace(/[^0-9]/g, '').slice(0, 16);
 }
 
-function normalizePayloadTransactions(items?: PayloadTransaction[]): GeneratorTransaction[] {
-    if (!Array.isArray(items)) return [];
-    return items
-        .map((tx) => {
-            const rawCode = (tx.txnCode || '53').toString();
-            const creditCode = CREDIT_CODE_SET.has(rawCode as typeof CREDIT_TXN_CODES[number])
-                ? (rawCode as typeof CREDIT_TXN_CODES[number])
-                : '53';
-            const numericAmount =
-                typeof tx.amount === 'number'
-                    ? tx.amount
-                    : typeof tx.amount === 'string'
-                    ? Number(tx.amount)
-                    : undefined;
-            const centsAmount = typeof tx.cents === 'number' ? tx.cents / 100 : undefined;
-            const amount = centsAmount ?? numericAmount ?? 0;
-            return {
-                bsb: tx.bsb || '',
-                account: tx.account || '',
-                amount,
-                accountTitle: tx.accountTitle || '',
-                lodgementRef: tx.lodgementRef || '',
-                txnCode: creditCode,
-            };
-        })
-        .filter((tx) => tx.bsb && tx.account && tx.amount > 0);
-}
-
-function buildHeaderDataFromPayload(payloadHeader?: Record<string, unknown>): HeaderData {
-    const preset = HEADER_PRESETS['CBA-RON'];
-    const fallbackProc = typeof preset.proc === 'string' ? preset.proc : '';
-    const getString = (key: string, fallback: string) => {
-        if (!payloadHeader) return fallback;
-        const value = payloadHeader[key];
-        if (typeof value === 'string' || typeof value === 'number') return String(value);
-        return fallback;
-    };
-    const getBoolean = (key: string, fallback: boolean) => {
-        if (!payloadHeader) return fallback;
-        const value = payloadHeader[key];
-        if (typeof value === 'boolean') return value;
-        if (typeof value === 'string') {
-            const normalized = value.trim().toLowerCase();
-            if (['true', 't', '1', 'yes', 'y'].includes(normalized)) return true;
-            if (['false', 'f', '0', 'no', 'n'].includes(normalized)) return false;
-        }
-        return fallback;
-    };
-    return {
-        fi: getString('fi', preset.fi),
-        reel: getString('reel', preset.reel),
-        user: getString('user', preset.user),
-        apca: getString('apca', preset.apca),
-        desc: getString('desc', preset.desc),
-        proc: getString('proc', fallbackProc),
-        trace_bsb: getString('trace_bsb', preset.trace_bsb),
-        trace_acct: getString('trace_acct', preset.trace_acct),
-        remitter: getString('remitter', preset.remitter),
-        balance_required: getBoolean('balance_required', Boolean(preset.balance_required)),
-        balance_txn_code: getString('balance_txn_code', preset.balance_txn_code || '13'),
-        balance_bsb: getString('balance_bsb', preset.balance_bsb),
-        balance_acct: getString('balance_acct', preset.balance_acct),
-        balance_title: getString('balance_title', preset.balance_title),
-    };
-}

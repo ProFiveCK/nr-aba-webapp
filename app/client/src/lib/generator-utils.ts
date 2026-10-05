@@ -161,7 +161,11 @@ export function buildAbaFile(headerData: HeaderData, transactions: Transaction[]
     const U = {
         digitsOnly: (s: string) => String(s || '').replace(/[^0-9]/g, ''),
         padL: (s: string, w: number, ch = '0') => String(s || '').padStart(w, ch).slice(-w),
-        padR: (s: string, w: number, ch = ' ') => String(s || '').padEnd(w, ch).slice(0, w),
+        // Banks read ABA as fixed-width ASCII: "José" becomes "Jose", so a
+        // name never pushes its record past 120 bytes.
+        padR: (s: string, w: number, ch = ' ') => String(s || '')
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, '?')
+            .padEnd(w, ch).slice(0, w),
     };
 
     // Type 0 (Header record)
@@ -198,8 +202,10 @@ export function buildAbaFile(headerData: HeaderData, transactions: Transaction[]
             throw new Error(`Row ${n}: BSB must be 6 digits, format NNN-NNN.`);
         }
 
+        // Spaces and hyphens are formatting; any other character (a letter O
+        // typed for a zero) would otherwise vanish and pay a different account.
         const acctDigits = U.digitsOnly(r.account || '');
-        if (acctDigits.length < 5 || acctDigits.length > 9) {
+        if (/[^\d\s-]/.test(r.account || '') || acctDigits.length < 5 || acctDigits.length > 9) {
             throw new Error(`Row ${n}: Account must be 5–9 digits.`);
         }
 
@@ -229,6 +235,10 @@ export function buildAbaFile(headerData: HeaderData, transactions: Transaction[]
         count++;
         credits += cents;
     });
+
+    if (credits > 9999999999) {
+        throw new Error('The batch total exceeds the maximum an ABA file can carry ($99,999,999.99). Split it into smaller batches.');
+    }
 
     // Balancing debit (code 13), equals total credits
     const balAcctDigits = U.digitsOnly(headerData.balance_acct || '');

@@ -6,7 +6,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY app/backend/package.json app/backend/package-lock.json* ./
-RUN npm install --production
+RUN npm ci --omit=dev
 
 RUN python3 -m pip install --break-system-packages --no-cache-dir pandas openpyxl
 

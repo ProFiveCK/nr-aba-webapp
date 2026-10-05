@@ -20,7 +20,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         (message: string, type: ToastType = 'info') => {
             const id = ++idRef.current;
             setToasts((prev) => [...prev, { id, message, type }]);
-            window.setTimeout(() => removeToast(id), 5000);
+            // Errors stay until dismissed: they often say what to fix, and 5s is too short to read and act on.
+            if (type !== 'error') window.setTimeout(() => removeToast(id), 5000);
         },
         [removeToast]
     );
@@ -41,8 +42,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                     <div
                         key={toast.id}
                         className={`pointer-events-auto rounded-xl border px-4 py-3 shadow-lg ${typeStyles[toast.type]}`}
-                        role="status"
-                        aria-live="polite"
+                        role={toast.type === 'error' ? 'alert' : 'status'}
                     >
                         <div className="flex items-start gap-3">
                             <p className="text-sm font-medium leading-snug">{toast.message}</p>

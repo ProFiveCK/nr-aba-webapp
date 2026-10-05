@@ -1,8 +1,9 @@
 import express from 'express';
 import cors from 'cors';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import helmet from 'helmet';
-import { body, param, query, validationResult } from 'express-validator';
+import { body, param, query } from 'express-validator';
+import { handleValidation } from './middleware/validation.js';
 import { pool, initSchema } from './db.js';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
@@ -18,6 +19,9 @@ import { fileURLToPath } from 'url';
 import { setTestingMode } from './services/notificationService.js';
 import { runDueLeaveAccruals } from './services/leaveAccrual.js';
 import { LOCK_KEYS, withAdvisoryLock } from './lib/advisoryLock.js';
+import { amendValueDate, parseAbaFile } from './lib/abaFile.js';
+import { ServiceError } from './lib/serviceError.js';
+import { findPdConflict } from './lib/pdNumber.js';
 import {
   buildCookieParser,
   buildTokenPayload,
@@ -40,6 +44,7 @@ import {
   setCapabilities,
 } from './services/authService.js';
 import { recordAudit } from './services/auditService.js';
+import { buildBlacklistKey, normalizeAccountNumber, normalizeBsb } from './utils/helpers.js';
 import {
   enableAsyncErrors,
   errorHandler,
@@ -57,6 +62,7 @@ import {
   ADMIN_ARCHIVE_LIMIT_DEFAULT,
   AUTH_LOCKOUT_WINDOW_MS,
   AUTH_MAX_FAILED_ATTEMPTS,
+  PASSWORD_MIN_LENGTH,
   ALL_CAPABILITIES,
   BANK_PRESET_KEYS,
   BATCH_WORKFLOW_TYPES,
@@ -277,10 +283,11 @@ const generalLimiter = rateLimit({
 });
 app.use('/api', generalLimiter);
 
-// Rate limiting: authentication endpoints
-// Key by account email rather than IP so a single mis-typed password or
-// brute-force attempt against one account does not block all staff who
-// share a corporate gateway / reverse proxy / NAT IP.
+// Rate limiting: authentication endpoints, twice over.
+// Per account: a brute-force attempt on one account cannot lock out everyone
+// behind the same office gateway. Per address: one address cannot spray a
+// common password across many accounts, which the per-account limit never
+// sees. The address limit is generous because staff share a NAT.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10,
@@ -290,14 +297,20 @@ const authLimiter = rateLimit({
   skipSuccessfulRequests: true, // successful logins reset the in-memory attempt budget
   keyGenerator: (req) => {
     const email = String(req.body?.email || '').toLowerCase().trim();
-    return email || 'unknown';
+    return email ? `email:${email}` : `ip:${ipKeyGenerator(req.ip)}`;
   },
 });
-app.use('/api/auth/login', authLimiter);
-app.use('/api/auth/google', authLimiter);
-app.use('/api/auth/signup', authLimiter);
-app.use('/api/auth/forgot-password', authLimiter);
-app.use('/api/auth/reset-password', authLimiter);
+const authIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many sign-in attempts from your network. Please try again later.' },
+  skipSuccessfulRequests: true,
+});
+for (const route of ['login', 'google', 'signup', 'forgot-password', 'reset-password']) {
+  app.use(`/api/auth/${route}`, authIpLimiter, authLimiter);
+}
 
 app.get('/health', async (_req, res) => {
   try {
@@ -449,7 +462,8 @@ app.post(
   [
     body('email').isEmail(),
     body('name').isString().isLength({ min: 1, max: 100 }),
-    body('password').isString().isLength({ min: 6, max: 128 }),
+    body('password').isString().isLength({ min: PASSWORD_MIN_LENGTH, max: 128 })
+      .withMessage(`Passwords must be at least ${PASSWORD_MIN_LENGTH} characters.`),
     body('department_code').optional({ nullable: true }).matches(/^\d{2}$/),
     body('requested_role').optional({ nullable: true }).isIn(SIGNUP_ROLES),
     body('requested_apps').optional().isArray(),
@@ -535,11 +549,14 @@ app.get('/api/auth/config', (_req, res) => {
   });
 });
 
+// Compared against when the account does not exist, to take the same time.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), PASS_HASH_ROUNDS);
+
 app.post(
   '/api/auth/login',
   [
     body('email').isEmail(),
-    body('password').isString().isLength({ min: 6, max: 128 })
+    body('password').isString().isLength({ min: 1, max: 128 })
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -564,23 +581,19 @@ app.post(
          FROM reviewers WHERE email = $1`,
       [email]
     );
-    if (!rows.length) {
+    // Unknown, inactive and wrong-password all cost one bcrypt comparison and
+    // get the same answer, so a caller cannot tell which accounts exist.
+    const reviewer = rows[0];
+    const valid = await bcrypt.compare(password, reviewer?.password_hash || DUMMY_PASSWORD_HASH);
+    if (!reviewer || !valid) {
       await recordLoginAttempt(email, clientIp, false);
-      console.warn(`[login] unknown email: ${email} from ${clientIp}`);
+      console.warn(`[login] ${reviewer ? 'wrong password' : 'unknown email'}: ${email} from ${clientIp}`);
       res.status(401).json({ message: 'Invalid credentials.' });
       return;
     }
-    const reviewer = rows[0];
     if (reviewer.status !== 'active') {
       console.warn(`[login] inactive account: ${email} from ${clientIp}`);
       res.status(403).json({ message: 'Account inactive.' });
-      return;
-    }
-    const valid = await bcrypt.compare(password, reviewer.password_hash);
-    if (!valid) {
-      await recordLoginAttempt(email, clientIp, false);
-      console.warn(`[login] wrong password: ${email} from ${clientIp}`);
-      res.status(401).json({ message: 'Invalid credentials.' });
       return;
     }
 
@@ -713,7 +726,8 @@ app.post(
   requireAuth(),
   [
     body('current_password').isString().isLength({ min: 1 }),
-    body('new_password').isString().isLength({ min: 6, max: 128 })
+    body('new_password').isString().isLength({ min: PASSWORD_MIN_LENGTH, max: 128 })
+      .withMessage(`Passwords must be at least ${PASSWORD_MIN_LENGTH} characters.`)
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -760,6 +774,8 @@ app.post(
 );
 
 // ===== Password Reset (Self-Service) =====
+const sha256Hex = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
+
 app.post(
   '/api/auth/forgot-password',
   [body('email').isEmail()],
@@ -788,7 +804,8 @@ app.post(
          token = EXCLUDED.token, 
          expires_at = EXCLUDED.expires_at, 
          created_at = NOW()`,
-      [user.id, resetToken, expiresAt]
+      // Stored hashed: a copy of the table cannot be used to reset anyone.
+      [user.id, sha256Hex(resetToken), expiresAt]
     );
     
     // Send reset email
@@ -824,7 +841,8 @@ app.post(
   '/api/auth/reset-password',
   [
     body('token').isString().isLength({ min: 1 }),
-    body('new_password').isString().isLength({ min: 6, max: 128 })
+    body('new_password').isString().isLength({ min: PASSWORD_MIN_LENGTH, max: 128 })
+      .withMessage(`Passwords must be at least ${PASSWORD_MIN_LENGTH} characters.`)
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -835,7 +853,7 @@ app.post(
        FROM password_reset_tokens prt
        JOIN reviewers r ON r.id = prt.reviewer_id
        WHERE prt.token = $1 AND prt.expires_at > NOW()`,
-      [token]
+      [sha256Hex(token)]
     );
     
     if (!rows.length) {
@@ -1032,7 +1050,8 @@ app.post(
     body('display_name').optional({ nullable: true }).isString().isLength({ min: 0, max: 200 }),
     body('role').optional().isIn(ACCOUNT_ROLES),
     body('status').optional().isIn(ACCOUNT_STATUSES),
-    body('password').optional().isString().isLength({ min: 6, max: 128 }),
+    body('password').optional().isString().isLength({ min: PASSWORD_MIN_LENGTH, max: 128 })
+      .withMessage(`Passwords must be at least ${PASSWORD_MIN_LENGTH} characters.`),
     body('department_code').optional({ nullable: true }).matches(/^\d{2}$/),
     body('division_code').optional({ nullable: true }).matches(/^\d{2}$/),
     body('notify_on_submission').optional().isBoolean(),
@@ -1252,7 +1271,8 @@ app.post(
   requireAuth(['admin']),
   [
     param('id').isUUID(),
-    body('new_password').optional({ nullable: true }).isString().isLength({ min: 6, max: 128 }),
+    body('new_password').optional({ nullable: true }).isString().isLength({ min: PASSWORD_MIN_LENGTH, max: 128 })
+      .withMessage(`Passwords must be at least ${PASSWORD_MIN_LENGTH} characters.`),
     body('send_email').optional().isBoolean()
   ],
   async (req, res) => {
@@ -1497,14 +1517,6 @@ async function runPayrollScript(inputPath, outputPath) {
   });
 }
 
-function handleValidation(req, res) {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    res.status(422).json({ errors: errors.array() });
-    return false;
-  }
-  return true;
-}
 
 function formatBatchCode(code) {
   if (!code) return '';
@@ -1553,22 +1565,30 @@ async function clearLoginAttempts(email) {
   await pool.query('DELETE FROM login_attempts WHERE email = $1', [normalizedEmail]);
 }
 
-function normalizeBsb(value) {
-  const digits = String(value || '').replace(/\D/g, '').slice(0, 6);
-  if (digits.length !== 6) return null;
-  return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+// True when the payload transactions (what reviewers are shown) and the ABA
+// file's credit lines (what the bank pays) are the same payments, in any order.
+function sameCredits(payloadTransactions, fileCredits) {
+  const key = (bsb, account, cents) => `${buildBlacklistKey(bsb, account)}|${cents}`;
+  const fromPayload = payloadTransactions
+    .map((tx) => key(tx?.bsb, tx?.account, Math.round(Number.parseFloat(String(tx?.amount)) * 100)))
+    .sort();
+  const fromFile = fileCredits.map((c) => key(c.bsb, c.account, c.cents)).sort();
+  return fromPayload.length === fromFile.length && fromPayload.every((k, i) => k === fromFile[i]);
 }
 
-function normalizeAccountNumber(value) {
-  return String(value || '').replace(/[^0-9]/g, '').trim();
+// The first credit line paying a blacklisted account or BSB, with its entry.
+async function findBlacklistedCredit(fileCredits) {
+  const { rows } = await pool.query(
+    'SELECT bsb, account, all_accounts, label FROM blacklist_entries WHERE active = TRUE'
+  );
+  for (const credit of fileCredits) {
+    const entry = rows.find((row) => (row.all_accounts
+      ? normalizeBsb(row.bsb) === normalizeBsb(credit.bsb)
+      : buildBlacklistKey(row.bsb, row.account) === buildBlacklistKey(credit.bsb, credit.account)));
+    if (entry) return { credit, entry };
+  }
+  return null;
 }
-
-const buildBlacklistKey = (bsb, account) => {
-  const normalizedBsb = normalizeBsb(bsb);
-  const normalizedAccount = normalizeAccountNumber(account);
-  if (!normalizedBsb || !normalizedAccount) return null;
-  return `${normalizedBsb}|${normalizedAccount}`;
-};
 
 async function refreshTestingModeSetting() {
   try {
@@ -1999,33 +2019,36 @@ async function fetchBatchHistory(rootBatchId) {
   });
 }
 
+// Creates the first administrator on a fresh install, from DEFAULT_ADMIN_*.
+// Only while there is no active administrator at all, so deleting or renaming
+// the account later never brings it back, and never with a guessable password.
 async function bootstrapDefaultAdmin() {
   const email = lowerEmail(process.env.DEFAULT_ADMIN_EMAIL);
   const password = process.env.DEFAULT_ADMIN_PASSWORD;
   if (!email || !password) return;
 
-  const isWeakDefaultPassword =
-    password === 'change_me_on_first_login' ||
-    password === 'Admin123!' ||
-    password.length < 12;
+  const { rows: admins } = await pool.query(
+    "SELECT 1 FROM reviewers WHERE role = 'admin' AND status = 'active' LIMIT 1"
+  );
+  if (admins.length) return;
 
-  if (isWeakDefaultPassword) {
-    console.warn('SECURITY WARNING: DEFAULT_ADMIN_PASSWORD appears weak or unchanged. The default admin account will be created with must_change_password=true, but you should set a strong password and remove DEFAULT_ADMIN_PASSWORD from .env.prod after first provisioning.');
+  const weak = ['change_me_on_first_login', 'Admin123!'].includes(password) || password.length < PASSWORD_MIN_LENGTH;
+  if (weak) {
+    console.error(`No administrator exists, and DEFAULT_ADMIN_PASSWORD is a known default or shorter than ${PASSWORD_MIN_LENGTH} characters, so none was created. Set a strong one in .env.prod and restart.`);
+    return;
   }
 
   const displayName = process.env.DEFAULT_ADMIN_NAME || 'Admin';
-  const { rows } = await pool.query('SELECT id FROM reviewers WHERE email = $1', [email]);
-  if (rows.length) return;
   const hash = await bcrypt.hash(password, PASS_HASH_ROUNDS);
   await pool.query(
     `INSERT INTO reviewers (email, display_name, role, status, password_hash, must_change_password, department_code, notify_on_submission)
-     VALUES ($1, $2, 'admin', 'active', $3, TRUE, NULL, FALSE)`,
+     VALUES ($1, $2, 'admin', 'active', $3, TRUE, NULL, FALSE)
+     ON CONFLICT (email) DO UPDATE
+       SET role = 'admin', status = 'active', password_hash = EXCLUDED.password_hash,
+           must_change_password = TRUE, updated_at = NOW()`,
     [email, displayName, hash]
   );
-  console.log(`Created default admin account for ${email}`);
-  if (isWeakDefaultPassword) {
-    console.warn('ACTION REQUIRED: Change the default admin password immediately and remove/comment out DEFAULT_ADMIN_PASSWORD in your environment file.');
-  }
+  console.log(`No active administrator existed; set up ${email} as administrator. Sign in and change the password, then remove DEFAULT_ADMIN_PASSWORD from .env.prod.`);
 }
 
 // ===== Sanity thresholds =====
@@ -2631,29 +2654,8 @@ app.patch(
 );
 
 // ===== Reviews =====
-app.post(
-  '/api/reviews',
-  requireAuth(REVIEW_ACCESS_ROLES),
-  [
-    body('batch_id').isUUID(),
-    body('reviewer').isString().trim().notEmpty(),
-    body('status').isIn(['submitted', 'pending', 'approved', 'rejected']),
-    body('comments').optional({ nullable: true }).isString(),
-    body('metadata').optional({ nullable: true })
-  ],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const { batch_id, reviewer, status, comments, metadata } = req.body;
-    const { rows } = await pool.query(
-      `INSERT INTO batch_reviews (batch_id, reviewer, status, comments, metadata)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [batch_id, reviewer, status, comments ?? null, metadata ?? {}]
-    );
-    res.status(201).json(rows[0]);
-  }
-);
-
+// Review entries are written only by the routes that act on a batch, with the
+// signed-in user as the reviewer; there is deliberately no endpoint to post one.
 app.get('/api/reviews', requireAuth(['admin']), async (_req, res) => {
   const { rows } = await pool.query('SELECT * FROM batch_reviews ORDER BY created_at DESC LIMIT 100');
   res.json(rows);
@@ -2684,23 +2686,8 @@ app.get(
     }
 
     const rootBatchIdRaw = typeof req.query.root_batch_id === 'string' ? req.query.root_batch_id : null;
-    const duplicateParams = [digitsOnly];
-    let duplicateQuery = `
-      SELECT code, stage, department_code, root_batch_id, is_draft
-        FROM combined_batch_archives
-       WHERE REGEXP_REPLACE(COALESCE(pd_number, ''), '\\D', '', 'g') = $1
-         AND COALESCE(is_draft, FALSE) = FALSE
-         AND stage <> 'rejected'
-    `;
-    if (rootBatchIdRaw && UUID_REGEX.test(rootBatchIdRaw)) {
-      duplicateQuery += ' AND root_batch_id <> $2';
-      duplicateParams.push(rootBatchIdRaw);
-    }
-    duplicateQuery += ' ORDER BY created_at DESC LIMIT 1';
-
-    const { rows } = await pool.query(duplicateQuery, duplicateParams);
-    if (rows.length) {
-      const conflict = rows[0];
+    const conflict = await findPdConflict(pool, digitsOnly, UUID_REGEX.test(rootBatchIdRaw || '') ? rootBatchIdRaw : null);
+    if (conflict) {
       const conflictLabel = conflict.code ? formatBatchCode(conflict.code) : 'an existing batch';
       const deptLabel = conflict.department_code ? ` for department ${conflict.department_code}` : '';
       const stageLabel = conflict.stage ? ` (currently ${conflict.stage})` : '';
@@ -2723,7 +2710,6 @@ app.post(
     body('aba_content').isString(),
     body('pd_number').isString().trim().isLength({ min: 1, max: 50 }),
     body('metadata').optional({ nullable: true }),
-    body('checksum').optional({ nullable: true }).isString(),
     body('suggested_file_name').optional({ nullable: true }).isString(),
     body('dept_code').optional({ nullable: true }).matches(/^\d{2}$/),
     body('workflow_type').optional({ nullable: true }).isIn(BATCH_WORKFLOW_TYPES)
@@ -2737,13 +2723,11 @@ app.post(
       res.status(400).json({ message: 'PD number is required.' });
       return;
     }
-    let fileData;
-    try {
-      fileData = Buffer.from(req.body.aba_content, 'base64');
-    } catch (err) {
-      res.status(400).json({ message: 'Invalid ABA content.' });
-      return;
-    }
+    // The stored bytes are what the bank pays, so they are checked here, not
+    // only in the browser: the file must add up, its payees must not be
+    // blacklisted, and it must match the transactions reviewers are shown.
+    const fileData = Buffer.from(req.body.aba_content, 'base64');
+    const abaFile = parseAbaFile(fileData);
     const accountDept = account.department_code ? String(account.department_code).trim() : '';
     const fallbackDept = req.body.dept_code ? String(req.body.dept_code).trim() : '';
     const deptCode = accountDept || fallbackDept;
@@ -2762,23 +2746,8 @@ app.post(
       rootBatchId = rootBatchIdRaw;
     }
 
-    const duplicateParams = [pdNumber];
-    let duplicateQuery = `
-      SELECT code, stage, department_code, root_batch_id, is_draft
-        FROM combined_batch_archives
-       WHERE REGEXP_REPLACE(COALESCE(pd_number, ''), '\\D', '', 'g') = $1
-         AND COALESCE(is_draft, FALSE) = FALSE
-         AND stage <> 'rejected'
-    `;
-    if (rootBatchId) {
-      duplicateQuery += ' AND root_batch_id <> $2';
-      duplicateParams.push(rootBatchId);
-    }
-    duplicateQuery += ' ORDER BY created_at DESC LIMIT 1';
-
-    const { rows: duplicateRows } = await pool.query(duplicateQuery, duplicateParams);
-    if (duplicateRows.length) {
-      const conflict = duplicateRows[0];
+    const conflict = await findPdConflict(pool, pdNumber, rootBatchId);
+    if (conflict) {
       const conflictLabel = conflict.code ? formatBatchCode(conflict.code) : 'an existing batch';
       const deptLabel = conflict.department_code ? ` for department ${conflict.department_code}` : '';
       const stageLabel = conflict.stage ? ` (currently ${conflict.stage})` : '';
@@ -2822,52 +2791,22 @@ app.post(
 
     const payloadTransactions = Array.isArray(metadata?.payload?.transactions)
       ? metadata.payload.transactions
-      : [];
-    if (payloadTransactions.length) {
-      const normalizedTransactions = payloadTransactions
-        .map((tx) => {
-          const txBsb = normalizeBsb(tx?.bsb);
-          const txAccount = normalizeAccountNumber(tx?.account);
-          if (!txBsb || !txAccount) return null;
-          return {
-            bsb: txBsb,
-            account: txAccount,
-            original: tx
-          };
-        })
-        .filter(Boolean);
-      if (normalizedTransactions.length) {
-        const { rows: blacklistRows } = await pool.query(
-          `SELECT bsb, account, all_accounts, label FROM blacklist_entries WHERE active = TRUE`
-        );
-        if (blacklistRows.length) {
-          const blacklistSet = new Map(
-            blacklistRows.map((row) => {
-              const key = buildBlacklistKey(row.bsb, row.account);
-              return [key, row];
-            })
-          );
-          const blockedBsbs = new Map(
-            blacklistRows
-              .filter((row) => row.all_accounts)
-              .map((row) => [normalizeBsb(row.bsb), row])
-          );
-          const blocked = normalizedTransactions.find((tx) => {
-            const key = buildBlacklistKey(tx.bsb, tx.account);
-            return blockedBsbs.has(tx.bsb) || (key && blacklistSet.has(key));
-          });
-          if (blocked) {
-            const key = buildBlacklistKey(blocked.bsb, blocked.account);
-            const meta = blockedBsbs.get(blocked.bsb) || (key ? blacklistSet.get(key) : null);
-            const labelText = meta?.label ? ` (${meta.label})` : '';
-            res.status(400).json({
-              message: `Transactions to ${blocked.bsb}${meta?.all_accounts ? '' : ` / ${blocked.account}`}${labelText} are not permitted.`
-            });
-            return;
-          }
-        }
-      }
+      : null;
+    if (payloadTransactions && !sameCredits(payloadTransactions, abaFile.credits)) {
+      res.status(400).json({
+        message: 'The transactions in this submission do not match its ABA file. Generate the file again and resubmit.'
+      });
+      return;
     }
+    const blocked = await findBlacklistedCredit(abaFile.credits);
+    if (blocked) {
+      const labelText = blocked.entry.label ? ` (${blocked.entry.label})` : '';
+      res.status(400).json({
+        message: `Transactions to ${blocked.credit.bsb}${blocked.entry.all_accounts ? '' : ` / ${blocked.credit.account}`}${labelText} are not permitted.`
+      });
+      return;
+    }
+    const checksum = crypto.createHash('sha256').update(fileData).digest('hex');
 
     const batchId = crypto.randomUUID();
     if (!rootBatchId) rootBatchId = batchId;
@@ -2894,7 +2833,7 @@ app.post(
             deptCode,
             fileName,
             `db://${code}`,
-            req.body.checksum ?? null,
+            checksum,
             null,
             metadata,
             workflowType,
@@ -2993,6 +2932,13 @@ app.patch(
       res.status(400).json({ message: `Cannot move batch from ${currentStage} to ${targetStage}.` });
       return;
     }
+    const isSubmitter = batch.submitted_by
+      ? batch.submitted_by === actor.id
+      : Boolean(batch.submitted_email) && lowerEmail(batch.submitted_email) === lowerEmail(actor.email);
+    if (targetStage === 'approved' && isSubmitter) {
+      res.status(403).json({ message: 'You cannot approve a batch you submitted. Another reviewer must approve it.' });
+      return;
+    }
     const stageUpdatedIso = new Date().toISOString();
     const { rows: updatedRows } = await pool.query(
       `UPDATE batch_archives
@@ -3075,25 +3021,19 @@ app.patch(
   [
     param('code').isString().trim(),
     body('proc').matches(/^\d{6}$/),
-    body('aba_content').isString(),
     body('desc').optional({ nullable: true }).isString(),
     body('remitter').optional({ nullable: true }).isString()
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const formattedCode = formatBatchCode(req.params.code);
-    const { proc, desc, remitter, aba_content: abaContent } = req.body;
-    let fileData;
-    try {
-      fileData = Buffer.from(abaContent, 'base64');
-    } catch (err) {
-      res.status(400).json({ message: 'Invalid ABA content.' });
-      return;
-    }
+    // Any aba_content the client sends is ignored: the stored file is amended
+    // here, so a reviewer can change the date but never the payments.
+    const { proc, desc, remitter } = req.body;
     try {
       const { rows } = await pool.query(
         `SELECT batch_id, code, root_batch_id, department_code, file_name, checksum, created_at, transactions,
-                stage, stage_updated_at, pd_number, submitted_email, submitted_by, is_draft
+                stage, stage_updated_at, pd_number, submitted_email, submitted_by, is_draft, file_data
            FROM batch_archives
           WHERE deleted_at IS NULL
             AND code = $1
@@ -3117,7 +3057,8 @@ app.patch(
         res.status(400).json({ message: 'Original payload unavailable. Cannot rebuild ABA automatically.' });
         return;
       }
-      metadata.payload.header.proc = proc;
+      const fileData = amendValueDate(record.file_data, { proc, desc, remitter });
+      metadata.payload = { ...metadata.payload, header: { ...metadata.payload.header, proc } };
       if (typeof desc === 'string') metadata.payload.header.desc = desc;
       if (typeof remitter === 'string') metadata.payload.header.remitter = remitter;
       metadata.value_date_adjustment = {
@@ -3173,6 +3114,7 @@ app.patch(
       }
       res.json(response);
     } catch (err) {
+      if (err instanceof ServiceError) throw err;
       console.error('Failed to adjust value date', err);
       res.status(500).json({ message: 'Unable to adjust value date.' });
     }

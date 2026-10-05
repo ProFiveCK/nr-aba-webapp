@@ -249,6 +249,11 @@ export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS, 
   };
 }
 
+// All a session that still has to change its password may reach.
+const PASSWORD_CHANGE_PATHS = new Set([
+  '/api/auth/me', '/api/auth/change-password', '/api/auth/logout', '/api/auth/refresh',
+]);
+
 export function requireAuth(roles = []) {
   const allowedRoles = Array.isArray(roles) && roles.length ? roles : null;
   return async (req, res, next) => {
@@ -286,6 +291,12 @@ export function requireAuth(roles = []) {
       if (expiry <= now) {
         await invalidateSession(payload.tokenId);
         res.status(401).json({ message: 'Session expired.' });
+        return;
+      }
+      // A temporary or bootstrap password is known to someone else, so until
+      // it is replaced the session can do nothing but replace it.
+      if (session.must_change_password && !PASSWORD_CHANGE_PATHS.has(req.originalUrl.split('?')[0])) {
+        res.status(403).json({ message: 'Change your password to continue.', code: 'PASSWORD_CHANGE_REQUIRED' });
         return;
       }
       if (allowedRoles && !allowedRoles.includes(session.role)) {

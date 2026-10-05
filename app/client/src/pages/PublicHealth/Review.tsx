@@ -99,7 +99,7 @@ export function Review() {
         {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
         {!loading && !error && (
           <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <div className="wellness-stat"><div className="wellness-stat-label">Total batches</div><div className="wellness-stat-value text-[#002b7f]">{items.length}</div></div>
+            <div className="wellness-stat"><div className="wellness-stat-label">Total batches</div><div className="wellness-stat-value text-brand">{items.length}</div></div>
             <div className="wellness-stat"><div className="wellness-stat-label">Awaiting decision</div><div className="wellness-stat-value text-amber-700">{items.filter((item) => item.stage === 'submitted').length}</div></div>
             <div className="wellness-stat"><div className="wellness-stat-label">Approved</div><div className="wellness-stat-value text-emerald-700">{items.filter((item) => item.stage === 'approved').length}</div></div>
           </div>
@@ -144,13 +144,13 @@ export function Review() {
           {loading ? <LoadingState label="Loading review queue…" /> : items.length === 0 ? (
             <EmptyState title="No public health batches awaiting review." />
           ) : items.map((b) => (
-            <article key={b.code} className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+            <article key={b.code} className="rounded-xl border border-gray-200 bg-white p-3.5 shadow-sm">
               <div className="flex items-start justify-between gap-3">
-                <div><p className="font-mono text-sm font-semibold text-[#002b7f]">{formatBatchCode(b.code)}</p><p className="mt-1 text-xs text-slate-500">{formatIsoDateTime(b.created_at)}</p></div>
+                <div><p className="font-mono text-sm font-semibold text-brand">{formatBatchCode(b.code)}</p><p className="mt-1 text-xs text-gray-500">{formatIsoDateTime(b.created_at)}</p></div>
                 <span className={`rounded-full px-2 py-1 text-xs font-semibold ${getBatchStageBadgeClasses(b.stage)}`}>{STAGE_META[b.stage]?.label || b.stage}</span>
               </div>
-              <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
-                <span className="text-sm text-slate-600">Ref {b.pd_number ? formatPdNumber(b.pd_number) : '—'}</span>
+              <div className="mt-3 flex items-center justify-between border-t border-gray-100 pt-3">
+                <span className="text-sm text-gray-600">Ref {b.pd_number ? formatPdNumber(b.pd_number) : '—'}</span>
                 <button onClick={() => openBatch(b.code)} className="wellness-row-action">View batch</button>
               </div>
             </article>
@@ -177,7 +177,7 @@ export function Review() {
           </div>
           <div className="mt-4">
             <label className="block text-sm font-medium text-gray-700">Comments
-              <textarea rows={3} value={comments} onChange={(e) => setComments(e.target.value)} className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="Required when rejecting" />
+              <textarea rows={3} value={comments} onChange={(e) => setComments(e.target.value)} className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="Required when rejecting" />
             </label>
           </div>
         </section>

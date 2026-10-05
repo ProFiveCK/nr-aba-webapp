@@ -39,6 +39,8 @@ export function MyLeave() {
     const [documents, setDocuments] = useState<File[]>([]);
     // Bumped to rebuild the file input, which cannot be cleared by state alone.
     const [documentsKey, setDocumentsKey] = useState(0);
+    // Shown next to the form as well as in a toast, so the reason stays in view.
+    const [formError, setFormError] = useState('');
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -102,18 +104,24 @@ export function MyLeave() {
         : applications.filter((application) => application.status === statusFilter);
     const pendingCount = applications.filter((application) => application.status === 'pending').length;
 
+    const showFormError = (message: string) => {
+        setFormError(message);
+        addToast(message, 'error');
+    };
+
     const submit = async (event: FormEvent) => {
         event.preventDefault();
+        setFormError('');
         if (!reason.trim()) {
-            addToast('Explain the reason for your leave.', 'error');
+            showFormError('Explain the reason for your leave.');
             return;
         }
         if (previewDays <= 0) {
-            addToast('The selected dates contain no working days.', 'error');
+            showFormError('The selected dates contain no working days.');
             return;
         }
         if (documentMissing) {
-            addToast(`Attach ${documentLabel} before submitting.`, 'error');
+            showFormError(`Attach ${documentLabel} before submitting.`);
             return;
         }
         setSubmitting(true);
@@ -142,7 +150,7 @@ export function MyLeave() {
             setDocumentsKey((key) => key + 1);
             await load();
         } catch (err) {
-            addToast((err as Error)?.message || 'Unable to submit your application.', 'error');
+            showFormError((err as Error)?.message || 'Unable to submit your application.');
         } finally {
             setSubmitting(false);
         }
@@ -181,7 +189,7 @@ export function MyLeave() {
     if (loadError) return (
         <div className="app-panel p-6">
             <EmptyState title="Your leave could not be loaded" detail="Please try again to see your current balances and applications." />
-            <button type="button" onClick={() => load()} className="mt-4 rounded-lg bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white">Try again</button>
+            <button type="button" onClick={() => load()} className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white">Try again</button>
         </div>
     );
 
@@ -190,8 +198,8 @@ export function MyLeave() {
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#2a5ba5]">Employee self service</p>
-                    <h2 className="mt-1 text-xl font-bold text-slate-950">My leave</h2>
-                    <p className="mt-1 text-sm text-slate-500">Check your balance, plan time away and track decisions.</p>
+                    <h2 className="mt-1 text-xl font-bold text-gray-950">My leave</h2>
+                    <p className="mt-1 text-sm text-gray-500">Check your balance, plan time away and track decisions.</p>
                 </div>
                 {pendingCount > 0 && <span className="rounded-full bg-amber-100 px-3 py-1.5 text-sm font-semibold text-amber-900">{pendingCount} awaiting approval</span>}
             </div>
@@ -205,11 +213,11 @@ export function MyLeave() {
             {/* Balances */}
             <div className="app-panel p-5 sm:p-6">
                 <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
-                    <h3 className="text-lg font-semibold text-slate-950">
+                    <h3 className="text-lg font-semibold text-gray-950">
                         Leave balances {summary ? `— ${summary.year}` : ''}
                     </h3>
                     {summary?.manager && (
-                        <p className="text-xs text-zinc-500">Approver: {summary.manager.display_name}</p>
+                        <p className="text-xs text-gray-500">Approver: {summary.manager.display_name}</p>
                     )}
                 </div>
                 {summary?.balances.length ? (
@@ -218,11 +226,11 @@ export function MyLeave() {
                             const available = Number(balance.balance) - Number(balance.pending);
                             return (
                                 <div key={balance.leave_type_id} className="rounded-xl border border-blue-100 bg-[#f5f8ff] p-4">
-                                    <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
                                         {balance.leave_type_name}
                                     </p>
-                                    <p className="mt-2 text-3xl font-bold tabular-nums text-[#002B7F]">{available}</p>
-                                    <p className="text-xs text-zinc-500">
+                                    <p className="mt-2 text-3xl font-bold tabular-nums text-brand">{available}</p>
+                                    <p className="text-xs text-gray-500">
                                         days available
                                         {Number(balance.pending) > 0 && ` · ${balance.pending} pending`}
                                     </p>
@@ -231,7 +239,7 @@ export function MyLeave() {
                         })}
                     </div>
                 ) : (
-                    <p className="text-sm text-zinc-500">
+                    <p className="text-sm text-gray-500">
                         No balances yet — they are created the first time you apply for each leave type.
                     </p>
                 )}
@@ -241,16 +249,16 @@ export function MyLeave() {
             {!notEntitled && (
             <form onSubmit={submit} className="app-panel space-y-5 p-5 sm:p-6">
                 <div>
-                    <h3 className="text-lg font-semibold text-slate-950">Apply for leave</h3>
-                    <p className="mt-1 text-sm text-slate-500">Choose your leave type and dates. Working days are calculated before you submit.</p>
+                    <h3 className="text-lg font-semibold text-gray-950">Apply for leave</h3>
+                    <p className="mt-1 text-sm text-gray-500">Choose your leave type and dates. Working days are calculated before you submit.</p>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     <label className="text-sm">
-                        <span className="mb-1 block font-medium text-zinc-700">Leave type</span>
+                        <span className="mb-1 block font-medium text-gray-700">Leave type</span>
                         <select
                             value={leaveTypeId}
                             onChange={(e) => setLeaveTypeId(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                             required
                         >
                             {types.map((type) => (
@@ -259,50 +267,50 @@ export function MyLeave() {
                         </select>
                     </label>
                     <label className="text-sm">
-                        <span className="mb-1 block font-medium text-zinc-700">From</span>
+                        <span className="mb-1 block font-medium text-gray-700">From</span>
                         <input
                             type="date"
                             value={startDate}
                             onChange={(e) => setStartDate(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                             required
                         />
                     </label>
                     <label className="text-sm">
-                        <span className="mb-1 block font-medium text-zinc-700">To</span>
+                        <span className="mb-1 block font-medium text-gray-700">To</span>
                         <input
                             type="date"
                             value={endDate}
                             min={startDate || undefined}
                             onChange={(e) => setEndDate(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                             required
                         />
                     </label>
                 </div>
 
                 <label className="block text-sm">
-                    <span className="mb-1 block font-medium text-zinc-700">
+                    <span className="mb-1 block font-medium text-gray-700">
                         Explanation / reason <span className="text-red-600">(required)</span>
                     </span>
                     <textarea
                         value={reason}
                         onChange={(e) => setReason(e.target.value)}
                         rows={2}
-                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                         placeholder="Explain why you are applying for leave"
                         maxLength={2000}
                         required
                     />
-                    <span className="mt-1 block text-xs text-slate-500">This explanation appears on the approved form for the personnel file.</span>
+                    <span className="mt-1 block text-xs text-gray-500">This explanation appears on the approved form for the personnel file.</span>
                 </label>
 
                 <label className="block text-sm">
-                    <span className="mb-1 block font-medium text-zinc-700">
+                    <span className="mb-1 block font-medium text-gray-700">
                         Supporting documents{' '}
                         {documentRequired
                             ? <span className="text-red-600">(required)</span>
-                            : <span className="font-normal text-slate-500">(optional)</span>}
+                            : <span className="font-normal text-gray-500">(optional)</span>}
                     </span>
                     {documentRequired && (
                         <span className="mb-2 block rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-sm text-amber-900">
@@ -319,33 +327,40 @@ export function MyLeave() {
                             const chosen = Array.from(e.target.files ?? []);
                             const tooBig = chosen.find((file) => file.size > LEAVE_ATTACHMENT_MAX_BYTES);
                             if (tooBig) {
-                                addToast(`"${tooBig.name}" is larger than ${formatFileSize(LEAVE_ATTACHMENT_MAX_BYTES)}.`, 'error');
+                                showFormError(`"${tooBig.name}" is larger than ${formatFileSize(LEAVE_ATTACHMENT_MAX_BYTES)}.`);
                                 return;
                             }
                             if (chosen.length > LEAVE_ATTACHMENT_MAX_FILES) {
-                                addToast(`Attach at most ${LEAVE_ATTACHMENT_MAX_FILES} documents.`, 'error');
+                                showFormError(`Attach at most ${LEAVE_ATTACHMENT_MAX_FILES} documents.`);
                                 return;
                             }
+                            setFormError('');
                             setDocuments(chosen);
                         }}
-                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-gray-700"
                     />
-                    <span className="mt-1 block text-xs text-slate-500">
+                    <span className="mt-1 block text-xs text-gray-500">
                         PDF, JPG, PNG or Word, up to {formatFileSize(LEAVE_ATTACHMENT_MAX_BYTES)} each.
                         {documents.length > 0 && ` Attached: ${documents.map((file) => file.name).join(', ')}.`}
                     </span>
                 </label>
 
-                <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-5">
+                {formError && (
+                    <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                        {formError}
+                    </p>
+                )}
+
+                <div className="flex flex-wrap items-center gap-3 border-t border-gray-100 pt-5">
                     <button
                         type="submit"
                         disabled={submitting || previewDays <= 0 || insufficient || documentMissing}
-                        className="rounded-lg bg-[#002B7F] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#174495] disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         {submitting ? 'Submitting…' : 'Submit application'}
                     </button>
                     {startDate && endDate && calendarAvailable && (
-                        <p className={`text-sm ${insufficient ? 'font-medium text-red-600' : 'text-zinc-600'}`}>
+                        <p className={`text-sm ${insufficient ? 'font-medium text-red-600' : 'text-gray-600'}`}>
                             {insufficient
                                 ? `Insufficient balance: ${previewDays} working day${previewDays === 1 ? '' : 's'} requested, ${availableDays} available.`
                                 : previewDays > 0
@@ -363,7 +378,7 @@ export function MyLeave() {
                     </p>
                 )}
                 {holidaysInRange.length > 0 && (
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-gray-500">
                         Not charged as leave: {holidaysInRange.map((h) => `${formatDate(h.holiday_date)} (${h.name})`).join(', ')}
                     </p>
                 )}
@@ -372,13 +387,13 @@ export function MyLeave() {
 
             {/* History */}
             <div className="app-panel overflow-hidden">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4 sm:px-6">
                     <div>
-                        <h3 className="text-lg font-semibold text-slate-950">My applications</h3>
-                        <p className="text-sm text-slate-500">Follow each request from submission to decision.</p>
+                        <h3 className="text-lg font-semibold text-gray-950">My applications</h3>
+                        <p className="text-sm text-gray-500">Follow each request from submission to decision.</p>
                     </div>
-                    <label className="text-sm text-slate-600">Status{' '}
-                        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                    <label className="text-sm text-gray-600">Status{' '}
+                        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="ml-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
                             <option value="all">All</option>
                             <option value="pending">Pending</option>
                             <option value="approved">Approved</option>
@@ -389,28 +404,28 @@ export function MyLeave() {
                 </div>
                 {applications.length ? (
                     visibleApplications.length ? <>
-                    <div className="divide-y divide-slate-100 md:hidden">
+                    <div className="divide-y divide-gray-100 md:hidden">
                         {visibleApplications.map((application) => (
                             <article key={application.id} className="space-y-3 p-5">
                                 <div className="flex items-start justify-between gap-3">
                                     <div>
-                                        <h4 className="font-semibold text-slate-950">{application.leave_type_name}</h4>
-                                        <p className="mt-1 text-sm text-slate-600">{formatDate(application.start_date)} – {formatDate(application.end_date)}</p>
+                                        <h4 className="font-semibold text-gray-950">{application.leave_type_name}</h4>
+                                        <p className="mt-1 text-sm text-gray-600">{formatDate(application.start_date)} – {formatDate(application.end_date)}</p>
                                     </div>
                                     <span className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${STATUS_STYLES[application.status]}`}>{application.status}</span>
                                 </div>
-                                <p className="text-sm text-slate-600">{application.days} working days</p>
+                                <p className="text-sm text-gray-600">{application.days} working days</p>
                                 <LeaveAttachmentLinks application={application} onError={(message) => addToast(message, 'error')} />
-                                {application.reviewer_note && <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{application.reviewer_note}</p>}
-                                {application.status === 'approved' && <button type="button" onClick={() => void printForm(application)} className="text-sm font-semibold text-[#002B7F]">Open approved leave PDF</button>}
+                                {application.reviewer_note && <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-700">{application.reviewer_note}</p>}
+                                {application.status === 'approved' && <button type="button" onClick={() => void printForm(application)} className="text-sm font-semibold text-brand">Open approved leave PDF</button>}
                                 {application.status === 'pending' && <button type="button" onClick={() => cancel(application)} className="text-sm font-semibold text-red-700">Cancel request</button>}
-                                {(application.status === 'cancelled' || application.status === 'rejected') && <button type="button" onClick={() => archive(application)} className="text-sm font-semibold text-slate-600">Archive</button>}
+                                {(application.status === 'cancelled' || application.status === 'rejected') && <button type="button" onClick={() => archive(application)} className="text-sm font-semibold text-gray-600">Archive</button>}
                             </article>
                         ))}
                     </div>
                     <div className="hidden overflow-x-auto md:block">
                         <table className="min-w-full text-sm">
-                            <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
+                            <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
                                 <tr>
                                     <th className="px-4 py-2">Type</th>
                                     <th className="px-4 py-2">Dates</th>
@@ -420,28 +435,28 @@ export function MyLeave() {
                                     <th className="px-4 py-2" />
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-zinc-100">
+                            <tbody className="divide-y divide-gray-100">
                                 {visibleApplications.map((application) => (
                                     <tr key={application.id}>
-                                        <td className="px-4 py-2 font-medium text-zinc-900">
+                                        <td className="px-4 py-2 font-medium text-gray-900">
                                             {application.leave_type_name}
                                             <LeaveAttachmentLinks application={application} onError={(message) => addToast(message, 'error')} />
                                         </td>
-                                        <td className="px-4 py-2 text-zinc-600">
+                                        <td className="px-4 py-2 text-gray-600">
                                             {formatDate(application.start_date)} – {formatDate(application.end_date)}
                                         </td>
-                                        <td className="px-4 py-2 text-zinc-600">{application.days}</td>
+                                        <td className="px-4 py-2 text-gray-600">{application.days}</td>
                                         <td className="px-4 py-2">
                                             <span className={`rounded px-2 py-0.5 text-xs font-medium capitalize ${STATUS_STYLES[application.status]}`}>
                                                 {application.status}
                                             </span>
                                         </td>
-                                        <td className="px-4 py-2 text-zinc-600">
+                                        <td className="px-4 py-2 text-gray-600">
                                             {application.reviewer_note || (application.reviewed_at ? '—' : '')}
                                         </td>
                                         <td className="px-4 py-2 text-right">
                                             {application.status === 'approved' && (
-                                                <button type="button" onClick={() => void printForm(application)} className="text-sm font-medium text-[#002B7F] hover:underline">
+                                                <button type="button" onClick={() => void printForm(application)} className="text-sm font-medium text-brand hover:underline">
                                                     Open approved leave PDF
                                                 </button>
                                             )}
@@ -458,7 +473,7 @@ export function MyLeave() {
                                                 <button
                                                     type="button"
                                                     onClick={() => archive(application)}
-                                                    className="text-sm font-medium text-zinc-500 hover:underline"
+                                                    className="text-sm font-medium text-gray-500 hover:underline"
                                                     title="Hide this from your list. Balances are unaffected."
                                                 >
                                                     Archive

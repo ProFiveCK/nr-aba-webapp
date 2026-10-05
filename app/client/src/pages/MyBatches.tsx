@@ -3,6 +3,8 @@ import { apiClient } from '../lib/api';
 import { formatIsoDateTime, formatPdNumber, getBatchStageBadgeClasses, getBatchStageMetadata } from '../lib/utils';
 import { BatchDetailModal } from './MyBatches/BatchDetailModal';
 import type { Batch, BatchDetail } from './MyBatches/types';
+import { usePagination } from '../lib/usePagination';
+import { Pager } from '../components/Ui';
 
 export function MyBatches() {
     const [batches, setBatches] = useState<Batch[]>([]);
@@ -11,6 +13,7 @@ export function MyBatches() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [selectedBatch, setSelectedBatch] = useState<BatchDetail | null>(null);
+    const pagination = usePagination(filteredBatches, searchTerm);
 
     // Load batches from API
     const loadBatches = useCallback(async () => {
@@ -118,7 +121,7 @@ export function MyBatches() {
                                     </td>
                                 </tr>
                             ) : (
-                                filteredBatches.map((batch) => {
+                                pagination.pageRows.map((batch) => {
                                     const stageMetadata = getBatchStageMetadata(batch.stage);
                                     const badgeClasses = getBatchStageBadgeClasses(batch.stage);
 
@@ -158,11 +161,11 @@ export function MyBatches() {
                         </tbody>
                     </table>
                 </div>
-                {!loading && filteredBatches.length > 0 && (
+                {!loading && filteredBatches.length > 0 && (pagination.pageCount > 1 ? <Pager {...pagination} /> : (
                     <div className="text-sm text-gray-600">
                         Showing {filteredBatches.length} of {batches.length} batch{batches.length === 1 ? '' : 'es'}
                     </div>
-                )}
+                ))}
             </section>
 
             {selectedBatch && (

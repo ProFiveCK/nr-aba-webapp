@@ -66,7 +66,7 @@ export function SettingsPanel() {
             const tier = tiers.find((t) => t.code === code);
             const locked = code === 'LV0';
             return (
-              <div key={code} className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-4">
+              <div key={code} className="rounded-xl border border-gray-200 bg-gray-50/50 p-4">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-semibold text-gray-900">{code}</span>
                   {tier?.label && <span className="text-xs text-gray-500">{tier.label}</span>}
@@ -80,7 +80,7 @@ export function SettingsPanel() {
                     disabled={locked}
                     value={locked ? 0 : tier?.monthly_amount ?? 0}
                     onChange={(e) => setTier(code, e.target.value)}
-                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:bg-zinc-100 disabled:text-zinc-400"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:bg-gray-100 disabled:text-gray-400"
                   />
                 </div>
               </div>
@@ -96,15 +96,15 @@ export function SettingsPanel() {
         <h2 className="text-lg font-semibold text-gray-900">Payment Details</h2>
         <p className="text-sm text-gray-500">Payments are drawn from the CBA-RON treasury account.</p>
         <dl className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-3">
+          <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3">
             <dt className="text-xs uppercase tracking-wide text-gray-500">Source BSB</dt>
             <dd className="mt-1 font-mono text-sm font-medium text-gray-900">{SOURCE.trace_bsb}</dd>
           </div>
-          <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-3">
+          <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3">
             <dt className="text-xs uppercase tracking-wide text-gray-500">Source Account</dt>
             <dd className="mt-1 font-mono text-sm font-medium text-gray-900">{SOURCE.trace_acct}</dd>
           </div>
-          <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-3">
+          <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3">
             <dt className="text-xs uppercase tracking-wide text-gray-500">Description</dt>
             <dd className="mt-1 text-sm font-medium text-gray-900">ALLOWANCE-Health</dd>
           </div>

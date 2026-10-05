@@ -5,7 +5,8 @@ import { apiClient } from '../../../lib/api';
 import { useToast } from '../../../contexts/useToast';
 import { useAuth } from '../../../contexts/useAuth';
 import { useConfirm } from '../../../contexts/useConfirm';
-import { EmptyState, LoadingState, StatTile } from '../../../components/Ui';
+import { EmptyState, LoadingState, Pager, StatTile } from '../../../components/Ui';
+import { usePagination } from '../../../lib/usePagination';
 import { formatDate } from '../types';
 import { toDateInputValue, todayIsoDate } from '../../../lib/date';
 import { csvCell, parseCsv } from '../../../lib/csv';
@@ -221,6 +222,7 @@ export function Staff() {
             return true;
         });
     }, [employees, search, loginFilter, deptFilter]);
+    const employeePages = usePagination(filteredEmployees, `${search}|${loginFilter}|${deptFilter}`);
 
     const openEmployee = async (employee: Employee) => {
         setSelected(employee);
@@ -633,12 +635,12 @@ export function Staff() {
             )}
 
             <div className="flex flex-wrap items-center justify-between gap-3 app-panel p-3">
-                <div className="flex items-center gap-1 rounded-full bg-zinc-100 p-1">
+                <div className="flex items-center gap-1 rounded-full bg-gray-100 p-1">
                     <button
                         type="button"
                         onClick={() => setViewMode('directory')}
                         className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-                            viewMode === 'directory' ? 'bg-[#002B7F] text-white' : 'text-zinc-600 hover:bg-white'
+                            viewMode === 'directory' ? 'bg-brand text-white' : 'text-gray-600 hover:bg-white'
                         }`}
                     >
                         Directory
@@ -647,7 +649,7 @@ export function Staff() {
                         type="button"
                         onClick={() => setViewMode('report')}
                         className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-                            viewMode === 'report' ? 'bg-[#002B7F] text-white' : 'text-zinc-600 hover:bg-white'
+                            viewMode === 'report' ? 'bg-brand text-white' : 'text-gray-600 hover:bg-white'
                         }`}
                     >
                         Balances report
@@ -657,14 +659,14 @@ export function Staff() {
                     <button
                         type="button"
                         onClick={() => { setShowImport((s) => !s); setShowAddForm(false); }}
-                        className="whitespace-nowrap rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
+                        className="whitespace-nowrap rounded-full border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
                     >
                         {showImport ? 'Cancel' : 'Import from spreadsheet'}
                     </button>
                     <button
                         type="button"
                         onClick={() => { setShowAddForm((s) => !s); setShowImport(false); }}
-                        className="whitespace-nowrap rounded-full bg-[#002B7F] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#001f5c]"
+                        className="whitespace-nowrap rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark"
                     >
                         {showAddForm ? 'Cancel' : '+ Add staff'}
                     </button>
@@ -673,7 +675,7 @@ export function Staff() {
 
             {showImport && (
                 <div className="space-y-3 app-panel p-4">
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-gray-500">
                         Bulk-create staff records (each starts with no login — link one in User Management, or it
                         links itself the first time that person opens Leave). Download the template, fill it in,
                         and upload it back here. Department and division must match the lists in Policies;
@@ -683,7 +685,7 @@ export function Staff() {
                         <button
                             type="button"
                             onClick={downloadTemplate}
-                            className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100"
+                            className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
                         >
                             Download CSV template
                         </button>
@@ -702,12 +704,12 @@ export function Staff() {
 
                     {importRows.length > 0 && (
                         <div className="space-y-2">
-                            <p className="text-sm font-medium text-zinc-800">
+                            <p className="text-sm font-medium text-gray-800">
                                 {importFileName}: {importRows.length} row{importRows.length === 1 ? '' : 's'} ready to import
                             </p>
-                            <div className="max-h-56 overflow-auto rounded-md border border-zinc-200 bg-white">
+                            <div className="max-h-56 overflow-auto rounded-md border border-gray-200 bg-white">
                                 <table className="min-w-full text-sm">
-                                    <thead className="sticky top-0 bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
+                                    <thead className="sticky top-0 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
                                         <tr>
                                             <th className="px-3 py-1.5">Name</th>
                                             <th className="px-3 py-1.5">Dept</th>
@@ -716,14 +718,14 @@ export function Staff() {
                                             <th className="px-3 py-1.5">Balances set</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-zinc-100">
+                                    <tbody className="divide-y divide-gray-100">
                                         {importRows.map((r, i) => (
                                             <tr key={i}>
-                                                <td className="px-3 py-1.5 text-zinc-900">{r.display_name}</td>
-                                                <td className="px-3 py-1.5 text-zinc-600">{r.department_code || '—'}</td>
-                                                <td className="px-3 py-1.5 text-zinc-600">{r.division_code || '—'}</td>
-                                                <td className="px-3 py-1.5 text-zinc-600">{r.join_date || '—'}</td>
-                                                <td className="px-3 py-1.5 text-zinc-600">
+                                                <td className="px-3 py-1.5 text-gray-900">{r.display_name}</td>
+                                                <td className="px-3 py-1.5 text-gray-600">{r.department_code || '—'}</td>
+                                                <td className="px-3 py-1.5 text-gray-600">{r.division_code || '—'}</td>
+                                                <td className="px-3 py-1.5 text-gray-600">{r.join_date || '—'}</td>
+                                                <td className="px-3 py-1.5 text-gray-600">
                                                     {Object.keys(r.balances).length
                                                         ? Object.entries(r.balances).map(([k, v]) => `${k}: ${v}`).join(', ')
                                                         : '—'}
@@ -737,7 +739,7 @@ export function Staff() {
                                 type="button"
                                 onClick={confirmImport}
                                 disabled={importing}
-                                className="rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50"
+                                className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
                             >
                                 {importing ? 'Importing…' : `Confirm import (${importRows.length})`}
                             </button>
@@ -745,12 +747,12 @@ export function Staff() {
                     )}
 
                     {importResult && (
-                        <div className="rounded-md border border-zinc-200 bg-white p-3 text-sm">
+                        <div className="rounded-md border border-gray-200 bg-white p-3 text-sm">
                             <p className="font-medium text-emerald-700">{importResult.created.length} staff record(s) created.</p>
                             {importResult.skipped.length > 0 && (
                                 <div className="mt-2">
                                     <p className="font-medium text-amber-700">{importResult.skipped.length} skipped:</p>
-                                    <ul className="mt-1 list-inside list-disc text-zinc-600">
+                                    <ul className="mt-1 list-inside list-disc text-gray-600">
                                         {importResult.skipped.map((s, i) => (
                                             <li key={i}>{s.display_name} — {s.reason}</li>
                                         ))}
@@ -764,7 +766,7 @@ export function Staff() {
 
             {showAddForm && (
                 <div className="space-y-2 app-panel p-4">
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-gray-500">
                         Creates a leave record ahead of their login existing. Link it to an account in
                         User Management once it's set up, or it links itself the first time they open Leave.
                     </p>
@@ -774,13 +776,13 @@ export function Staff() {
                             value={newName}
                             onChange={(e) => setNewName(e.target.value)}
                             placeholder="Full name"
-                            className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
                         />
                         <select
                             value={newDept}
                             onChange={(e) => { setNewDept(e.target.value); setNewDivision(''); }}
                             aria-label="Department"
-                            className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
                         >
                             <option value="">Department (optional)</option>
                             <OrgOptions names={departmentNames} current="" />
@@ -790,7 +792,7 @@ export function Staff() {
                             onChange={(e) => setNewDivision(e.target.value)}
                             disabled={!newDept}
                             aria-label="Division"
-                            className="rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
+                            className="rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
                         >
                             <option value="">{newDept ? 'Division (optional)' : 'Choose a department first'}</option>
                             <OrgOptions names={divisionNamesFor(newDept)} current="" />
@@ -801,12 +803,12 @@ export function Staff() {
                             onChange={(e) => setNewPosition(e.target.value)}
                             placeholder="Position / job title"
                             maxLength={120}
-                            className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
                         />
                         <select
                             value={newManagerId}
                             onChange={(e) => setNewManagerId(e.target.value)}
-                            className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
                         >
                             <option value="">Reports to — none —</option>
                             {employees.map((candidate) => (
@@ -817,14 +819,14 @@ export function Staff() {
                             type="date"
                             value={newJoinDate}
                             onChange={(e) => setNewJoinDate(e.target.value)}
-                            className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
                         />
                     </div>
                     <button
                         type="button"
                         onClick={createEmployee}
                         disabled={creating}
-                        className="rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50"
+                        className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
                     >
                         {creating ? 'Creating…' : 'Create staff record'}
                     </button>
@@ -841,24 +843,24 @@ export function Staff() {
                 />
             ) : (
                 <div className="app-panel">
-                    <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-4 py-3">
-                        <h2 className="mr-auto text-sm font-semibold text-zinc-900">
+                    <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 px-4 py-3">
+                        <h2 className="mr-auto text-sm font-semibold text-gray-900">
                             Staff ({filteredEmployees.length}{filteredEmployees.length !== employees.length ? ` of ${employees.length}` : ''})
                         </h2>
                         <div className="relative">
-                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
                             <input
                                 type="text"
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 placeholder="Search name or email"
-                                className="rounded-md border border-zinc-300 py-1.5 pl-8 pr-3 text-sm"
+                                className="rounded-md border border-gray-300 py-1.5 pl-8 pr-3 text-sm"
                             />
                         </div>
                         <select
                             value={loginFilter}
                             onChange={(e) => setLoginFilter(e.target.value as LoginFilter)}
-                            className="rounded-md border border-zinc-300 px-2 py-1.5 text-sm"
+                            className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
                         >
                             <option value="all">All logins</option>
                             <option value="linked">Linked</option>
@@ -867,7 +869,7 @@ export function Staff() {
                         <select
                             value={deptFilter}
                             onChange={(e) => setDeptFilter(e.target.value)}
-                            className="rounded-md border border-zinc-300 px-2 py-1.5 text-sm"
+                            className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
                         >
                             <option value="all">All departments</option>
                             {departmentOptions.map((d) => (
@@ -875,10 +877,10 @@ export function Staff() {
                             ))}
                         </select>
                     </div>
-                    {filteredEmployees.length ? (
+                    {filteredEmployees.length ? (<>
                         <div className="overflow-x-auto">
                             <table className="min-w-full text-sm">
-                                <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
+                                <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
                                     <tr>
                                         <th className="w-12 px-4 py-2.5 text-right">#</th>
                                         <th className="px-3 py-2.5">Name</th>
@@ -887,8 +889,8 @@ export function Staff() {
                                         <th className="px-4 py-2.5">Joined</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-zinc-100">
-                                    {filteredEmployees.map((employee, index) => {
+                                <tbody className="divide-y divide-gray-100">
+                                    {employeePages.pageRows.map((employee, index) => {
                                         const initials = employee.display_name
                                             .trim()
                                             .split(/\s+/)
@@ -899,21 +901,21 @@ export function Staff() {
                                         return (
                                         <tr
                                             key={employee.id}
-                                            className={`cursor-pointer hover:bg-zinc-50 ${selected?.id === employee.id ? 'bg-zinc-50' : ''}`}
+                                            className={`cursor-pointer hover:bg-gray-50 ${selected?.id === employee.id ? 'bg-gray-50' : ''}`}
                                             onClick={() => openEmployee(employee)}
                                         >
-                                            <td className="px-4 py-2 text-right tabular-nums text-xs text-zinc-400">{index + 1}</td>
+                                            <td className="px-4 py-2 text-right tabular-nums text-xs text-gray-400">{employeePages.page * employeePages.pageSize + index + 1}</td>
                                             <td className="py-2 pl-3 pr-4">
                                                 <div className="flex items-center gap-2.5">
-                                                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-[#002B7F]" aria-hidden="true">
+                                                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-brand" aria-hidden="true">
                                                         {initials}
                                                     </span>
                                                     <span className="min-w-0">
-                                                        <span className="block truncate font-medium text-zinc-900">{employee.display_name}</span>
+                                                        <span className="block truncate font-medium text-gray-900">{employee.display_name}</span>
                                                         {(employee.leave_entitled === false || employee.status === 'inactive') && (
                                                             <span className="mt-0.5 flex gap-1">
                                                                 {employee.leave_entitled === false && (
-                                                                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
+                                                                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
                                                                         {employee.ineligible_reason ? INELIGIBLE_REASON_LABELS[employee.ineligible_reason] : 'no leave'}
                                                                     </span>
                                                                 )}
@@ -922,7 +924,7 @@ export function Staff() {
                                                                     <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">return date passed</span>
                                                                 )}
                                                                 {employee.status === 'inactive' && (
-                                                                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">inactive</span>
+                                                                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">inactive</span>
                                                                 )}
                                                             </span>
                                                         )}
@@ -931,22 +933,23 @@ export function Staff() {
                                             </td>
                                             <td className="px-4 py-2">
                                                 {employee.reviewer_id ? (
-                                                    <span className="text-zinc-600">{employee.email || 'Linked'}</span>
+                                                    <span className="text-gray-600">{employee.email || 'Linked'}</span>
                                                 ) : (
                                                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
                                                         No login
                                                     </span>
                                                 )}
                                             </td>
-                                            <td className="px-4 py-2 text-zinc-600">{employee.department_code || '—'}</td>
-                                            <td className="px-4 py-2 text-zinc-600">{formatDate(employee.join_date)}</td>
+                                            <td className="px-4 py-2 text-gray-600">{employee.department_code || '—'}</td>
+                                            <td className="px-4 py-2 text-gray-600">{formatDate(employee.join_date)}</td>
                                         </tr>
                                         );
                                     })}
                                 </tbody>
                             </table>
                         </div>
-                    ) : (
+                        <div className="px-4"><Pager {...employeePages} /></div>
+                    </>) : (
                         <div className="p-4">
                             <EmptyState
                                 title={employees.length ? 'No staff match these filters' : 'No staff records yet'}
@@ -959,9 +962,9 @@ export function Staff() {
 
             {selected && draft && (
                 <div className="fixed inset-0 z-50 flex justify-end" onKeyDown={handleEditorKeyDown}>
-                    <button type="button" className="absolute inset-0 bg-slate-950/55" onClick={() => void closeEditor()} aria-label="Close employee editor" />
+                    <button type="button" className="absolute inset-0 bg-gray-950/55" onClick={() => void closeEditor()} aria-label="Close employee editor" />
                     <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="employee-editor-title" className="relative flex h-dvh w-full max-w-2xl flex-col bg-[#f4f6fa] shadow-2xl sm:my-4 sm:h-[calc(100dvh-2rem)] sm:rounded-2xl">
-                        <header className="flex shrink-0 items-start justify-between gap-4 bg-[#002B7F] px-5 py-5 text-white sm:rounded-t-2xl sm:px-7">
+                        <header className="flex shrink-0 items-start justify-between gap-4 bg-brand px-5 py-5 text-white sm:rounded-t-2xl sm:px-7">
                             <div className="flex min-w-0 items-center gap-4">
                                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/15 text-lg font-bold" aria-hidden="true">
                                     {selected.display_name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}
@@ -980,40 +983,40 @@ export function Staff() {
                         <div className="flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-7">
                             <form id="employee-details-form" onSubmit={saveDetails} className="app-panel space-y-5 p-5 sm:p-6">
                                 <div>
-                                    <h3 className="text-lg font-semibold text-slate-950">Employment details</h3>
-                                    <p className="mt-1 text-sm text-slate-500">Update the reporting line and leave settings, then save them together.</p>
+                                    <h3 className="text-lg font-semibold text-gray-950">Employment details</h3>
+                                    <p className="mt-1 text-sm text-gray-500">Update the reporting line and leave settings, then save them together.</p>
                                 </div>
-                                <label className="block text-sm font-medium text-slate-700">
+                                <label className="block text-sm font-medium text-gray-700">
                                     Full name
                                     <input
                                         type="text"
                                         maxLength={200}
                                         value={draft.displayName}
                                         onChange={(event) => setDraft({ ...draft, displayName: event.target.value })}
-                                        className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                        className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                                         required
                                     />
-                                    <span className="mt-1 block text-xs text-slate-500">
+                                    <span className="mt-1 block text-xs text-gray-500">
                                         Fixes a typo or a duplicate spelling — e.g. two records for the same person created with slightly different names.
                                     </span>
                                 </label>
                                 <label className="flex items-center justify-between gap-4 rounded-xl border border-blue-100 bg-[#f5f8ff] p-4">
                                     <span>
-                                        <span className="block text-sm font-semibold text-[#002B7F]">Status</span>
-                                        <span className="mt-1 block text-xs leading-5 text-slate-600">
+                                        <span className="block text-sm font-semibold text-brand">Status</span>
+                                        <span className="mt-1 block text-xs leading-5 text-gray-600">
                                             Set a duplicate or departed staff record to inactive. It keeps its leave history but drops off active lists.
                                         </span>
                                     </span>
                                     <select
                                         value={draft.status}
                                         onChange={(event) => setDraft({ ...draft, status: event.target.value as 'active' | 'inactive' })}
-                                        className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                        className="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                                     >
                                         <option value="active">Active</option>
                                         <option value="inactive">Inactive</option>
                                     </select>
                                 </label>
-                                <label className="block text-sm font-medium text-slate-700">
+                                <label className="block text-sm font-medium text-gray-700">
                                     Position / job title
                                     <input
                                         type="text"
@@ -1021,49 +1024,49 @@ export function Staff() {
                                         value={draft.positionTitle}
                                         onChange={(event) => setDraft({ ...draft, positionTitle: event.target.value })}
                                         placeholder="Not recorded"
-                                        className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                        className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                                     />
                                 </label>
                                 <div className="grid gap-4 sm:grid-cols-3">
-                                    <label className="text-sm font-medium text-slate-700">
+                                    <label className="text-sm font-medium text-gray-700">
                                         Department
                                         <select
                                             value={draft.departmentCode}
                                             onChange={(event) => setDraft({ ...draft, departmentCode: event.target.value, divisionCode: '' })}
-                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                            className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                                         >
                                             <option value="">Not set</option>
                                             <OrgOptions names={departmentNames} current={draft.departmentCode} />
                                         </select>
                                     </label>
-                                    <label className="text-sm font-medium text-slate-700">
+                                    <label className="text-sm font-medium text-gray-700">
                                         Division
                                         <select
                                             value={draft.divisionCode}
                                             onChange={(event) => setDraft({ ...draft, divisionCode: event.target.value })}
                                             disabled={!draft.departmentCode}
-                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+                                            className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100"
                                         >
                                             <option value="">{draft.departmentCode ? 'Not set' : 'Choose a department first'}</option>
                                             <OrgOptions names={divisionNamesFor(draft.departmentCode)} current={draft.divisionCode} />
                                         </select>
                                     </label>
-                                    <label className="text-sm font-medium text-slate-700">
+                                    <label className="text-sm font-medium text-gray-700">
                                         Joining date
                                         <input
                                             type="date"
                                             value={draft.joinDate}
                                             onChange={(event) => setDraft({ ...draft, joinDate: event.target.value })}
-                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                            className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                                         />
                                     </label>
                                 </div>
-                                <label className="block text-sm font-medium text-slate-700">
+                                <label className="block text-sm font-medium text-gray-700">
                                     Reports to
                                     <select
                                         value={draft.managerId}
                                         onChange={(event) => setDraft({ ...draft, managerId: event.target.value })}
-                                        className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                        className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                                     >
                                         <option value="">No manager assigned</option>
                                         {employees.filter((candidate) => candidate.id !== selected.id).map((candidate) => (
@@ -1074,19 +1077,19 @@ export function Staff() {
                                 <div className="space-y-3 rounded-xl border border-blue-100 bg-[#f5f8ff] p-4">
                                     <label className="flex items-center justify-between gap-4">
                                         <span>
-                                            <span className="block text-sm font-semibold text-[#002B7F]">Eligible for annual leave</span>
-                                            <span className="mt-1 block text-xs leading-5 text-slate-600">If turned off, this person does not accrue or apply for leave.</span>
+                                            <span className="block text-sm font-semibold text-brand">Eligible for annual leave</span>
+                                            <span className="mt-1 block text-xs leading-5 text-gray-600">If turned off, this person does not accrue or apply for leave.</span>
                                         </span>
-                                        <input type="checkbox" checked={draft.leaveEntitled} onChange={(event) => setDraft({ ...draft, leaveEntitled: event.target.checked })} className="h-5 w-5 shrink-0 accent-[#002B7F]" />
+                                        <input type="checkbox" checked={draft.leaveEntitled} onChange={(event) => setDraft({ ...draft, leaveEntitled: event.target.checked })} className="h-5 w-5 shrink-0 accent-brand" />
                                     </label>
                                     {!draft.leaveEntitled && (
                                         <>
-                                            <label className="block text-sm font-medium text-slate-700">
+                                            <label className="block text-sm font-medium text-gray-700">
                                                 Reason
                                                 <select
                                                     value={draft.ineligibleReason}
                                                     onChange={(event) => setDraft({ ...draft, ineligibleReason: event.target.value as IneligibleReason | '' })}
-                                                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                    className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                                                 >
                                                     <option value="">Choose a reason</option>
                                                     {(Object.keys(INELIGIBLE_REASON_LABELS) as IneligibleReason[]).map((reason) => (
@@ -1096,32 +1099,32 @@ export function Staff() {
                                             </label>
                                             {draft.ineligibleReason === 'study_leave' && (
                                                 <div className="grid gap-3 sm:grid-cols-2">
-                                                    <label className="text-sm font-medium text-slate-700">
+                                                    <label className="text-sm font-medium text-gray-700">
                                                         Study leave starts
                                                         <input
                                                             type="date"
                                                             value={draft.studyLeaveStart}
                                                             onChange={(event) => setDraft({ ...draft, studyLeaveStart: event.target.value })}
-                                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                            className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                                                         />
                                                     </label>
-                                                    <label className="text-sm font-medium text-slate-700">
+                                                    <label className="text-sm font-medium text-gray-700">
                                                         Expected return
                                                         <input
                                                             type="date"
                                                             value={draft.studyLeaveEnd}
                                                             min={draft.studyLeaveStart || undefined}
                                                             onChange={(event) => setDraft({ ...draft, studyLeaveEnd: event.target.value })}
-                                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                            className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                                                         />
                                                     </label>
-                                                    <p className="text-xs leading-5 text-slate-600 sm:col-span-2">
+                                                    <p className="text-xs leading-5 text-gray-600 sm:col-span-2">
                                                         While on study leave this person counts as away and appears on the calendar. They keep their position;
                                                         turn eligibility back on when they return.
                                                     </p>
                                                 </div>
                                             )}
-                                            <label className="block text-sm font-medium text-slate-700">
+                                            <label className="block text-sm font-medium text-gray-700">
                                                 Note (optional)
                                                 <input
                                                     type="text"
@@ -1129,14 +1132,14 @@ export function Staff() {
                                                     value={draft.eligibilityNote}
                                                     onChange={(event) => setDraft({ ...draft, eligibilityNote: event.target.value })}
                                                     placeholder="e.g. Unpaid, studying overseas"
-                                                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                    className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                                                 />
                                             </label>
                                         </>
                                     )}
                                 </div>
                                 {canSeePay && (
-                                    <label className="block text-sm font-medium text-slate-700">
+                                    <label className="block text-sm font-medium text-gray-700">
                                         Daily rate
                                         <input
                                             type="number"
@@ -1146,26 +1149,26 @@ export function Staff() {
                                             value={draft.dailyRate}
                                             onChange={(event) => setDraft({ ...draft, dailyRate: event.target.value })}
                                             placeholder="Not recorded"
-                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                            className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
                                         />
-                                        <span className="mt-1.5 block text-xs font-normal leading-5 text-slate-500">Used for leave liability. Leave blank if the rate is unknown.</span>
+                                        <span className="mt-1.5 block text-xs font-normal leading-5 text-gray-500">Used for leave liability. Leave blank if the rate is unknown.</span>
                                     </label>
                                 )}
                             </form>
 
                             <section className="app-panel p-5 sm:p-6">
-                                <h3 className="text-lg font-semibold text-slate-950">Leave balances</h3>
-                                <p className="mt-1 text-sm text-slate-500">Available days after pending requests.</p>
+                                <h3 className="text-lg font-semibold text-gray-950">Leave balances</h3>
+                                <p className="mt-1 text-sm text-gray-500">Available days after pending requests.</p>
                                 {balancesLoading ? (
-                                    <p className="mt-4 text-sm text-slate-500" role="status">Loading balances…</p>
+                                    <p className="mt-4 text-sm text-gray-500" role="status">Loading balances…</p>
                                 ) : balances.length ? (
-                                    <ul className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-200">
+                                    <ul className="mt-4 divide-y divide-gray-100 rounded-xl border border-gray-200">
                                         {balances.map((balance) => {
                                             const available = Number(balance.balance) - Number(balance.pending);
                                             return (
                                                 <li key={balance.id} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-                                                    <span className="text-slate-600">{balance.leave_type_name}</span>
-                                                    <span className={`font-medium ${available < 0 ? 'text-red-600' : 'text-zinc-900'}`}>
+                                                    <span className="text-gray-600">{balance.leave_type_name}</span>
+                                                    <span className={`font-medium ${available < 0 ? 'text-red-600' : 'text-gray-900'}`}>
                                                         {available} days
                                                         {Number(balance.pending) > 0 && (
                                                             <span className="ml-1 text-xs font-normal text-amber-600">
@@ -1178,59 +1181,59 @@ export function Staff() {
                                         })}
                                     </ul>
                                 ) : (
-                                    <p className="mt-4 text-sm text-slate-500">No balances for this year yet.</p>
+                                    <p className="mt-4 text-sm text-gray-500">No balances for this year yet.</p>
                                 )}
                             </section>
 
                             <section className="app-panel space-y-3 p-5 sm:p-6">
-                                <h3 className="text-lg font-semibold text-slate-950">Adjust a balance</h3>
-                                <p className="text-sm text-slate-500">
+                                <h3 className="text-lg font-semibold text-gray-950">Adjust a balance</h3>
+                                <p className="text-sm text-gray-500">
                                     Use a negative amount to deduct. Every adjustment is kept with its reason.
                                 </p>
                                 {detailsDirty && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Save employee details before adjusting a balance.</p>}
-                                <label className="block text-sm font-medium text-slate-700">Leave type
+                                <label className="block text-sm font-medium text-gray-700">Leave type
                                 <select
                                     value={adjustType}
                                     onChange={(e) => setAdjustType(e.target.value)}
-                                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                                    className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm"
                                 >
                                     {types.map((type) => (
                                         <option key={type.id} value={type.id}>{type.name}</option>
                                     ))}
                                 </select>
                                 </label>
-                                <label className="block text-sm font-medium text-slate-700">Days to add or deduct
+                                <label className="block text-sm font-medium text-gray-700">Days to add or deduct
                                 <input
                                     type="number"
                                     step="0.5"
                                     value={adjustAmount}
                                     onChange={(e) => setAdjustAmount(e.target.value)}
                                     placeholder="e.g. 2 or -1.5"
-                                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                                    className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm"
                                 />
                                 </label>
-                                <label className="block text-sm font-medium text-slate-700">Reason
+                                <label className="block text-sm font-medium text-gray-700">Reason
                                 <textarea
                                     value={adjustReason}
                                     onChange={(e) => setAdjustReason(e.target.value)}
                                     rows={2}
                                     placeholder="Why is this adjustment needed?"
-                                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                                    className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm"
                                 />
                                 </label>
                                 <button
                                     type="button"
                                     onClick={adjust}
                                     disabled={saving || detailsDirty}
-                                    className="w-full rounded-lg border border-[#002B7F] bg-white px-4 py-2.5 text-sm font-semibold text-[#002B7F] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="w-full rounded-lg border border-brand bg-white px-4 py-2.5 text-sm font-semibold text-brand hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                     {saving ? 'Saving…' : 'Apply adjustment'}
                                 </button>
                             </section>
                         </div>
-                        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 py-4 sm:rounded-b-2xl sm:px-7">
+                        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-gray-200 bg-white px-5 py-4 sm:rounded-b-2xl sm:px-7">
                             <div className="flex flex-col gap-1">
-                                <p className="text-xs text-slate-500">{detailsDirty ? 'You have unsaved changes' : 'All employee details saved'}</p>
+                                <p className="text-xs text-gray-500">{detailsDirty ? 'You have unsaved changes' : 'All employee details saved'}</p>
                                 <button
                                     type="button"
                                     onClick={() => void deleteEmployee()}
@@ -1242,8 +1245,8 @@ export function Staff() {
                                 </button>
                             </div>
                             <div className="flex w-full gap-2 sm:w-auto">
-                                <button type="button" onClick={() => void closeEditor()} disabled={savingDetails || saving} className="flex-1 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:flex-none">Close</button>
-                                <button type="submit" form="employee-details-form" disabled={!detailsDirty || savingDetails} className="flex-1 rounded-lg bg-[#002B7F] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#174495] disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none">{savingDetails ? 'Saving…' : 'Save changes'}</button>
+                                <button type="button" onClick={() => void closeEditor()} disabled={savingDetails || saving} className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50 sm:flex-none">Close</button>
+                                <button type="submit" form="employee-details-form" disabled={!detailsDirty || savingDetails} className="flex-1 rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none">{savingDetails ? 'Saving…' : 'Save changes'}</button>
                             </div>
                         </footer>
                     </section>

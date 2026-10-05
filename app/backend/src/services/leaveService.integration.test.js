@@ -309,6 +309,23 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
   });
 
   describe('deciding', () => {
+    // canAct says yes (an HR administrator), but the applicant is the approver.
+    test('nobody approves their own leave, administrators included', async () => {
+      const { rows: [self] } = await pool.query(
+        `INSERT INTO reviewers (email, display_name, role, password_hash, permissions, status)
+         VALUES ('self-approver@test', 'Ana', 'admin', 'x', '{"hr_admin": true}', 'active') RETURNING id`
+      );
+      await pool.query('UPDATE hr_employees SET reviewer_id = $1 WHERE id = $2', [self.id, ana.id]);
+      const { application } = await apply();
+
+      await assert.rejects(() => service.decideLeave(pool, {
+        applicationId: application.id, decision: 'approved', note: '', actorId: self.id, canAct: allowAll,
+      }), /your own leave/);
+      const balance = await readBalance(pool, ana.id, annual.id, YEAR);
+      assert.equal(balance.pending, 5);
+      assert.equal(balance.balance, 20);
+    });
+
     test('an older request without an explanation cannot be approved', async () => {
       const { application } = await apply();
       await pool.query('UPDATE hr_leave_applications SET reason = NULL WHERE id = $1', [application.id]);

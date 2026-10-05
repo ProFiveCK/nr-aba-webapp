@@ -8,7 +8,7 @@ For full details, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 - [ ] Docker + Docker Compose v2 installed
 - [ ] Port available for the web service (`WEB_PORT`, default `80`)
-- [ ] Optional: Port `9001` available if you enable the Portainer agent
+- [ ] Optional: Portainer agent: set `PORTAINER_AGENT_SECRET` (and `PORTAINER_AGENT_BIND`) in `.env.prod`, then `docker compose -f docker-compose.portainer.yml --env-file .env.prod up -d`
 - [ ] External Docker network exists: `docker network create ron-net` (one-time)
 - [ ] External Postgres volume exists: `docker volume create ron-stack_pgdata` (one-time)
 - [ ] `.env.prod` present and reviewed (strong passwords, correct `FRONTEND_BASE_URL`)

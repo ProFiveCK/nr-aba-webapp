@@ -40,6 +40,7 @@ import {
   setCapabilities,
 } from './services/authService.js';
 import { recordAudit } from './services/auditService.js';
+import { buildBlacklistKey, normalizeAccountNumber, normalizeBsb } from './utils/helpers.js';
 import {
   enableAsyncErrors,
   errorHandler,
@@ -1552,23 +1553,6 @@ async function clearLoginAttempts(email) {
   if (!normalizedEmail) return;
   await pool.query('DELETE FROM login_attempts WHERE email = $1', [normalizedEmail]);
 }
-
-function normalizeBsb(value) {
-  const digits = String(value || '').replace(/\D/g, '').slice(0, 6);
-  if (digits.length !== 6) return null;
-  return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-}
-
-function normalizeAccountNumber(value) {
-  return String(value || '').replace(/[^0-9]/g, '').trim();
-}
-
-const buildBlacklistKey = (bsb, account) => {
-  const normalizedBsb = normalizeBsb(bsb);
-  const normalizedAccount = normalizeAccountNumber(account);
-  if (!normalizedBsb || !normalizedAccount) return null;
-  return `${normalizedBsb}|${normalizedAccount}`;
-};
 
 async function refreshTestingModeSetting() {
   try {

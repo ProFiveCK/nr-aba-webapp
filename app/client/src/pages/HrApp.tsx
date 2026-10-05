@@ -1,6 +1,4 @@
 import { useEffect, useState } from 'react';
-import { CalendarDays, ChartNoAxesCombined, ClipboardCheck, FileChartColumn, FileText, Palmtree, UsersRound } from 'lucide-react';
-import { AppSectionNav } from '../components/AppSectionNav';
 import { useAuth } from '../contexts/useAuth';
 import { readHash, setHash } from '../lib/hash';
 import { Overview } from './Hr/Overview';
@@ -17,14 +15,14 @@ export function HrApp() {
   const { user } = useAuth();
   const can = (capability: string) => user?.permissions?.[capability] === true;
 
-  const tabs: { id: Tab; label: string; detail: string; icon: typeof CalendarDays; show: boolean }[] = [
-    { id: 'overview', label: 'Overview', detail: 'Leave at a glance', icon: ChartNoAxesCombined, show: can('hr_admin') },
-    { id: 'my-leave', label: 'My Leave', detail: 'Balances and requests', icon: Palmtree, show: can('hr_leave_apply') },
-    { id: 'approvals', label: 'Approvals', detail: 'Review requests', icon: ClipboardCheck, show: can('hr_leave_approve') || can('hr_admin') },
-    { id: 'calendar', label: 'Calendar', detail: 'Who is away', icon: CalendarDays, show: can('hr_access') },
-    { id: 'staff', label: 'Staff', detail: 'People and balances', icon: UsersRound, show: can('hr_staff_manage') || can('hr_admin') },
-    { id: 'report', label: 'Report', detail: 'Leave reporting', icon: FileChartColumn, show: can('hr_staff_manage') || can('hr_admin') },
-    { id: 'policies', label: 'Leave Policies', detail: 'Rules and entitlements', icon: FileText, show: can('hr_admin') },
+  const tabs: { id: Tab; label: string; show: boolean }[] = [
+    { id: 'overview', label: 'Overview', show: can('hr_admin') },
+    { id: 'my-leave', label: 'My Leave', show: can('hr_leave_apply') },
+    { id: 'approvals', label: 'Approvals', show: can('hr_leave_approve') || can('hr_admin') },
+    { id: 'calendar', label: 'Calendar', show: can('hr_access') },
+    { id: 'staff', label: 'Staff', show: can('hr_staff_manage') || can('hr_admin') },
+    { id: 'report', label: 'Report', show: can('hr_staff_manage') || can('hr_admin') },
+    { id: 'policies', label: 'Policies', show: can('hr_admin') },
   ];
   const visible = tabs.filter((t) => t.show);
   const validIds = visible.map((t) => t.id);
@@ -55,16 +53,40 @@ export function HrApp() {
   // hr_access can be granted without any of the action capabilities.
   if (!visible.length) {
     return (
-      <div className="rounded-xl border border-zinc-200 bg-white p-6 text-center shadow-sm">
-        <p className="text-sm font-medium text-zinc-900">No leave functions are enabled for your account</p>
-        <p className="mt-1 text-sm text-zinc-500">Ask an administrator to grant you leave access.</p>
+      <div className="space-y-5">
+        <h2 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">Leave</h2>
+        <div className="rounded-xl border border-zinc-200 bg-white p-6 text-center shadow-sm">
+          <p className="text-sm font-medium text-zinc-900">No leave functions are enabled for your account</p>
+          <p className="mt-1 text-sm text-zinc-500">Ask an administrator to grant you leave access.</p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-5">
-      <AppSectionNav label="Leave sections" sections={visible} activeId={activeTab} onChange={changeTab} />
+      {/* Leave owns its page header (Layout skips it) so the title and the
+          section tabs read as one block instead of two stacked panels. */}
+      <div className="border-b border-slate-200">
+        <h2 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">Leave</h2>
+        <nav aria-label="Leave sections" className="-mb-px mt-3 flex gap-6 overflow-x-auto [scrollbar-width:none]">
+          {visible.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => changeTab(t.id)}
+              aria-current={activeTab === t.id ? 'page' : undefined}
+              className={`shrink-0 whitespace-nowrap border-b-2 pb-2.5 pt-1 text-sm font-medium transition-colors ${
+                activeTab === t.id
+                  ? 'border-[#E8842C] text-[#002B7F]'
+                  : 'border-transparent text-slate-600 hover:text-[#002B7F]'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      </div>
 
       {activeTab === 'overview' && <Overview onNavigate={changeTab} />}
       {activeTab === 'my-leave' && <MyLeave />}

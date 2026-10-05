@@ -37,7 +37,7 @@ export function SortHeader<K extends string>({
                 <Arrow
                     size={13}
                     aria-hidden="true"
-                    className={active ? 'shrink-0 text-[#002B7F]' : 'shrink-0 text-zinc-300 group-hover:text-zinc-500'}
+                    className={active ? 'shrink-0 text-brand' : 'shrink-0 text-gray-300 group-hover:text-gray-500'}
                 />
             </button>
         </th>

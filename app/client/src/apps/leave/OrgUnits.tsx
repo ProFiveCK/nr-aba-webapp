@@ -85,21 +85,21 @@ export function OrgUnits() {
 
             <div className="mt-4 flex flex-wrap items-end gap-3">
                 <label className="flex-1 text-sm">
-                    <span className="mb-1 block font-medium text-zinc-700">New department</span>
+                    <span className="mb-1 block font-medium text-gray-700">New department</span>
                     <input
                         type="text"
                         value={newDepartment}
                         maxLength={60}
                         placeholder="Finance"
                         onChange={(e) => setNewDepartment(e.target.value)}
-                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                     />
                 </label>
                 <button
                     type="button"
                     onClick={addDepartment}
                     disabled={saving}
-                    className="rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50"
+                    className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
                 >
                     Add department
                 </button>
@@ -108,13 +108,13 @@ export function OrgUnits() {
             {loading ? (
                 <LoadingState label="Loading departments…" />
             ) : departments.length === 0 ? (
-                <p className="mt-4 text-sm text-zinc-500">No departments yet. Add one so it can be chosen on staff records.</p>
+                <p className="mt-4 text-sm text-gray-500">No departments yet. Add one so it can be chosen on staff records.</p>
             ) : (
-                <ul className="mt-4 divide-y divide-zinc-100">
+                <ul className="mt-4 divide-y divide-gray-100">
                     {departments.map((department) => (
                         <li key={department.id} className="py-3">
                             <div className="flex items-center justify-between gap-3">
-                                <span className="text-sm font-semibold text-zinc-900">{department.name}</span>
+                                <span className="text-sm font-semibold text-gray-900">{department.name}</span>
                                 <button
                                     type="button"
                                     onClick={() => removeDepartment(department)}
@@ -126,12 +126,12 @@ export function OrgUnits() {
                             </div>
                             <div className="mt-2 flex flex-wrap items-center gap-2">
                                 {department.divisions.length === 0 && (
-                                    <span className="text-xs text-zinc-500">No divisions</span>
+                                    <span className="text-xs text-gray-500">No divisions</span>
                                 )}
                                 {department.divisions.map((division) => (
                                     <span
                                         key={division.id}
-                                        className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 py-1 pl-3 pr-1.5 text-xs text-zinc-800"
+                                        className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 py-1 pl-3 pr-1.5 text-xs text-gray-800"
                                     >
                                         {division.name}
                                         <button
@@ -139,7 +139,7 @@ export function OrgUnits() {
                                             onClick={() => removeDivision(department.name, division)}
                                             disabled={saving}
                                             aria-label={`Remove ${division.name}`}
-                                            className="rounded-full px-1.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 disabled:opacity-50"
+                                            className="rounded-full px-1.5 text-gray-500 hover:bg-gray-200 hover:text-gray-800 disabled:opacity-50"
                                         >
                                             ×
                                         </button>
@@ -154,13 +154,13 @@ export function OrgUnits() {
                                     placeholder="New division"
                                     aria-label={`New division in ${department.name}`}
                                     onChange={(e) => setNewDivisions((current) => ({ ...current, [department.id]: e.target.value }))}
-                                    className="w-56 rounded-md border border-zinc-300 px-3 py-1.5 text-sm"
+                                    className="w-56 rounded-md border border-gray-300 px-3 py-1.5 text-sm"
                                 />
                                 <button
                                     type="button"
                                     onClick={() => addDivision(department)}
                                     disabled={saving}
-                                    className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+                                    className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                                 >
                                     Add division
                                 </button>

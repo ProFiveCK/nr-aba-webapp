@@ -446,7 +446,7 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
                                             onChange={(e) => setRejectComment(e.target.value)}
                                             rows={3}
                                             placeholder="Explain why this batch is rejected; this is emailed to the submitter."
-                                            className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
+                                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
                                         />
                                     </label>
                                     {rejectError && <p className="text-xs text-rose-600">{rejectError}</p>}
@@ -475,7 +475,7 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
                     </div>
                     <div className="flex flex-wrap gap-2">
                         <label className="relative">
-                            <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                            <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                             <input
                                 type="search"
                                 value={searchTerm}

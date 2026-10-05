@@ -42,12 +42,12 @@ export function LeaveAttachmentLinks({
                         type="button"
                         onClick={() => void open(attachment.id)}
                         disabled={busyId === attachment.id}
-                        className="inline-flex items-center gap-1 text-sm font-medium text-[#002B7F] hover:underline disabled:opacity-50"
+                        className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline disabled:opacity-50"
                     >
                         <Paperclip size={13} aria-hidden="true" />
                         {attachment.file_name}
                         {attachment.byte_size > 0 && (
-                            <span className="font-normal text-slate-500">({formatFileSize(attachment.byte_size)})</span>
+                            <span className="font-normal text-gray-500">({formatFileSize(attachment.byte_size)})</span>
                         )}
                     </button>
                 </li>

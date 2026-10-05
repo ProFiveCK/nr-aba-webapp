@@ -61,7 +61,7 @@ export function Layout() {
         <>
         <div className="min-h-screen bg-[#f4f6fa]">
             <header className="sticky top-0 z-40 shadow-sm">
-            <div className="border-b border-white/10 bg-[#002B7F] px-4 py-4 text-white sm:px-6 lg:px-8">
+            <div className="border-b border-white/10 bg-brand px-4 py-4 text-white sm:px-6 lg:px-8">
                 <div className="relative mx-auto flex max-w-7xl items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                         <img src="/logo.png" alt="Republic of Naoero coat of arms" className="h-12 w-12 rounded-lg bg-white p-1 object-contain" />
@@ -80,7 +80,7 @@ export function Layout() {
                         </button>
                         <button
                             onClick={handleSignOut}
-                            className="rounded-lg bg-white px-3 py-2 text-sm font-semibold text-[#002B7F] transition-colors hover:bg-blue-50"
+                            className="rounded-lg bg-white px-3 py-2 text-sm font-semibold text-brand transition-colors hover:bg-blue-50"
                         >
                             Sign Out
                         </button>
@@ -100,8 +100,8 @@ export function Layout() {
                         </button>
                     </div>
                     {showAccountMenu && (
-                        <div id="mobile-account-menu" className="absolute right-0 top-full z-30 mt-3 w-56 rounded-xl border border-slate-200 bg-white p-2 text-slate-900 shadow-xl sm:hidden">
-                            <p className="truncate border-b border-slate-100 px-3 py-2 text-sm font-semibold">{displayName}</p>
+                        <div id="mobile-account-menu" className="absolute right-0 top-full z-30 mt-3 w-56 rounded-xl border border-gray-200 bg-white p-2 text-gray-900 shadow-xl sm:hidden">
+                            <p className="truncate border-b border-gray-100 px-3 py-2 text-sm font-semibold">{displayName}</p>
                             <button type="button" onClick={handleChangePassword} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-blue-50">Change Password</button>
                             <button type="button" onClick={handleSignOut} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-blue-50">Sign Out</button>
                         </div>

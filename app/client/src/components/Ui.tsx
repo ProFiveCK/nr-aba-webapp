@@ -104,7 +104,7 @@ export function Icon({ name, className = 'h-4 w-4', ...props }: IconProps) {
 export function LoadingState({ label = 'Loading…' }: { label?: string }) {
     return (
         <div className="state-surface">
-            <span className="h-7 w-7 animate-spin rounded-full border-2 border-zinc-200 border-t-amber-500" />
+            <span className="h-7 w-7 animate-spin rounded-full border-2 border-gray-200 border-t-amber-500" />
             <span>{label}</span>
         </div>
     );
@@ -113,12 +113,12 @@ export function LoadingState({ label = 'Loading…' }: { label?: string }) {
 export function EmptyState({ title, detail }: { title: string; detail?: string }) {
     return (
         <div className="state-surface">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-100 text-zinc-500">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-100 text-gray-500">
                 <Icon name="search" />
             </div>
             <div>
-                <p className="font-medium text-zinc-700">{title}</p>
-                {detail && <p className="mt-1 text-xs text-zinc-500">{detail}</p>}
+                <p className="font-medium text-gray-700">{title}</p>
+                {detail && <p className="mt-1 text-xs text-gray-500">{detail}</p>}
             </div>
         </div>
     );
@@ -149,8 +149,8 @@ export function CardHeading({
     return (
         <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-                <h2 className="text-sm font-semibold text-zinc-900">{title}</h2>
-                {subtitle && <p className="mt-0.5 text-xs text-zinc-500">{subtitle}</p>}
+                <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
+                {subtitle && <p className="mt-0.5 text-xs text-gray-500">{subtitle}</p>}
             </div>
             {children}
         </div>
@@ -167,12 +167,12 @@ export function StatTile({
     label, value, hint, emphasis = false,
 }: { label: string; value: string; hint?: string; emphasis?: boolean }) {
     return (
-        <div className={`app-panel p-4 ${emphasis ? 'border-[#002B7F]/25 bg-[#002B7F]/[0.03]' : ''}`.trim()}>
-            <p className="text-xs font-medium text-zinc-500">{label}</p>
-            <p className={`mt-1 font-semibold tabular-nums ${emphasis ? 'text-4xl text-[#002B7F]' : 'text-2xl text-zinc-900'}`}>
+        <div className={`app-panel p-4 ${emphasis ? 'border-brand/25 bg-brand/[0.03]' : ''}`.trim()}>
+            <p className="text-xs font-medium text-gray-500">{label}</p>
+            <p className={`mt-1 font-semibold tabular-nums ${emphasis ? 'text-4xl text-brand' : 'text-2xl text-gray-900'}`}>
                 {value}
             </p>
-            {hint && <p className="mt-1 text-xs text-zinc-500">{hint}</p>}
+            {hint && <p className="mt-1 text-xs text-gray-500">{hint}</p>}
         </div>
     );
 }

@@ -345,7 +345,7 @@ function SignupRequestsPanel() {
                                             {req.requested_apps?.length ? (
                                                 <span className="mt-1 flex flex-wrap gap-1">
                                                     {req.requested_apps.map((app) => (
-                                                        <span key={app} className="rounded bg-[#002B7F]/10 px-1.5 py-0.5 text-xs font-medium text-[#002B7F]">
+                                                        <span key={app} className="rounded bg-brand/10 px-1.5 py-0.5 text-xs font-medium text-brand">
                                                             {app}
                                                         </span>
                                                     ))}
@@ -1664,7 +1664,7 @@ function AdminArchivesPanel() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                     <label className="relative">
-                        <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                        <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                         <input
                             type="search"
                             value={searchTerm}

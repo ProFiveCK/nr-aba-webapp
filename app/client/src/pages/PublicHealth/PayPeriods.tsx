@@ -220,14 +220,14 @@ export function PayPeriods() {
           <div className="mt-4 grid gap-6 lg:grid-cols-2">
             <div>
               <h3 className="text-sm font-semibold text-gray-700">By Level</h3>
-              <div className="mt-2 overflow-hidden rounded-lg border border-zinc-200">
+              <div className="mt-2 overflow-hidden rounded-lg border border-gray-200">
                 <table className="min-w-full text-sm">
-                  <thead className="bg-zinc-50 text-xs uppercase text-zinc-500">
+                  <thead className="bg-gray-50 text-xs uppercase text-gray-500">
                     <tr><th className="px-3 py-2 text-left">Level</th><th className="px-3 py-2 text-right">Count</th><th className="px-3 py-2 text-right">Amount</th></tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-100">
+                  <tbody className="divide-y divide-gray-100">
                     {LEVELS.map((lvl) => (
-                      <tr key={lvl} className={byLevel[lvl].count === 0 ? 'text-zinc-400' : ''}>
+                      <tr key={lvl} className={byLevel[lvl].count === 0 ? 'text-gray-400' : ''}>
                         <td className="px-3 py-2 font-medium">{lvl}</td>
                         <td className="px-3 py-2 text-right">{byLevel[lvl].count}</td>
                         <td className="px-3 py-2 text-right">${byLevel[lvl].amount.toFixed(2)}</td>
@@ -239,14 +239,14 @@ export function PayPeriods() {
             </div>
             <div>
               <h3 className="text-sm font-semibold text-gray-700">By Village</h3>
-              <div className="mt-2 max-h-64 overflow-auto rounded-lg border border-zinc-200">
+              <div className="mt-2 max-h-64 overflow-auto rounded-lg border border-gray-200">
                 <table className="min-w-full text-sm">
-                  <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 sticky top-0">
+                  <thead className="bg-gray-50 text-xs uppercase text-gray-500 sticky top-0">
                     <tr><th className="px-3 py-2 text-left">Village</th><th className="px-3 py-2 text-right">Count</th><th className="px-3 py-2 text-right">Amount</th></tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-100">
+                  <tbody className="divide-y divide-gray-100">
                     {villageRows.length === 0 ? (
-                      <tr><td colSpan={3} className="px-3 py-2 text-center text-zinc-400">No active participants</td></tr>
+                      <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400">No active participants</td></tr>
                     ) : villageRows.map(([v, d]) => (
                       <tr key={v}>
                         <td className="px-3 py-2">{v}</td>
@@ -292,7 +292,7 @@ export function PayPeriods() {
                               onChange={() => toggleActive(e.id)}
                               disabled={isLv0}
                               title={isLv0 ? 'LV0 participants cannot be paid' : undefined}
-                              className="h-4 w-4 rounded border-zinc-300 text-teal-600 focus:ring-teal-500 disabled:cursor-not-allowed disabled:opacity-40"
+                              className="h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500 disabled:cursor-not-allowed disabled:opacity-40"
                             />
                           </td>
                           <td className="px-3 py-2 font-medium text-gray-900">{e.full_name}</td>
@@ -300,7 +300,7 @@ export function PayPeriods() {
                           <td className="px-3 py-2 font-mono">{e.bank_bsb} {e.bank_account}</td>
                           <td className="px-3 py-2">
                             <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${levelClass(e.level)}`}>{e.level}</span>
-                            {isLv0 && <span className="ml-1 text-xs text-zinc-400">No payment</span>}
+                            {isLv0 && <span className="ml-1 text-xs text-gray-400">No payment</span>}
                           </td>
                           <td className="px-3 py-2 text-right font-medium">{isLv0 ? '—' : `$${Number(e.amount).toFixed(2)}`}</td>
                         </tr>
@@ -329,8 +329,8 @@ export function PayPeriods() {
         {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
         {!loading && !error && (
           <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <div className="wellness-stat"><div className="wellness-stat-label">Total runs</div><div className="wellness-stat-value text-[#002b7f]">{periods.length}</div></div>
-            <div className="wellness-stat"><div className="wellness-stat-label">Draft</div><div className="wellness-stat-value text-slate-700">{periods.filter((p) => p.status === 'draft').length}</div></div>
+            <div className="wellness-stat"><div className="wellness-stat-label">Total runs</div><div className="wellness-stat-value text-brand">{periods.length}</div></div>
+            <div className="wellness-stat"><div className="wellness-stat-label">Draft</div><div className="wellness-stat-value text-gray-700">{periods.filter((p) => p.status === 'draft').length}</div></div>
             <div className="wellness-stat"><div className="wellness-stat-label">Awaiting review</div><div className="wellness-stat-value text-amber-700">{periods.filter((p) => p.status === 'submitted').length}</div></div>
           </div>
         )}
@@ -372,13 +372,13 @@ export function PayPeriods() {
           {loading ? <LoadingState label="Loading pay runs…" /> : periods.length === 0 ? (
             <EmptyState title="No pay runs yet." detail="Create your first pay run to begin." />
           ) : periods.map((p) => (
-            <article key={p.id} className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+            <article key={p.id} className="rounded-xl border border-gray-200 bg-white p-3.5 shadow-sm">
               <div className="flex items-start justify-between gap-3">
-                <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Paid date</p><h3 className="mt-1 font-semibold text-slate-900">{p.paid_date}</h3></div>
+                <div><p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Paid date</p><h3 className="mt-1 font-semibold text-gray-900">{p.paid_date}</h3></div>
                 <span className={`rounded-full px-2 py-1 text-xs font-semibold ${statusClass(p.status)}`}>{p.status}</span>
               </div>
-              <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
-                <span className="text-sm text-slate-600">{p.active_count ?? 0} of {p.entry_count ?? 0} included</span>
+              <div className="mt-3 flex items-center justify-between border-t border-gray-100 pt-3">
+                <span className="text-sm text-gray-600">{p.active_count ?? 0} of {p.entry_count ?? 0} included</span>
                 <button onClick={() => openPeriod(p)} className="wellness-row-action">Open run</button>
               </div>
             </article>
@@ -395,7 +395,7 @@ export function PayPeriods() {
             </div>
             <div className="mt-4 space-y-3">
               <label className="block text-sm font-medium text-gray-700">Paid date (value date)
-                <input type="date" value={paidDate} onChange={(e) => setPaidDate(e.target.value)} className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" />
+                <input type="date" value={paidDate} onChange={(e) => setPaidDate(e.target.value)} className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" />
               </label>
               <p className="text-xs text-gray-500">Paid from CBA-RON ({HEADER_PRESETS['CBA-RON'].trace_bsb} {HEADER_PRESETS['CBA-RON'].trace_acct}). Description: ALLOWANCE-Health.</p>
             </div>
@@ -414,13 +414,13 @@ function statusClass(status: string) {
   switch (status) {
     case 'approved': return 'bg-emerald-50 text-emerald-700';
     case 'submitted': return 'bg-amber-50 text-amber-700';
-    default: return 'bg-zinc-100 text-zinc-600';
+    default: return 'bg-gray-100 text-gray-600';
   }
 }
 
 function levelClass(level?: string) {
   switch (level) {
-    case 'LV0': return 'bg-zinc-100 text-zinc-600';
+    case 'LV0': return 'bg-gray-100 text-gray-600';
     case 'LV1': return 'bg-teal-50 text-teal-700';
     case 'LV2': return 'bg-blue-50 text-blue-700';
     case 'LV3': return 'bg-purple-50 text-purple-700';

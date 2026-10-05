@@ -20,8 +20,8 @@ const SERIES_COLOR = '#2a78d6';
 
 type PlanningSortKey = 'name' | 'department' | 'annual' | 'furlough' | 'total';
 
-const PLANNING_TH = 'sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-4 py-2 text-left text-xs font-semibold uppercase text-slate-500';
-const PLANNING_TH_RIGHT = 'sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-3 py-2 text-right text-xs font-semibold uppercase text-slate-500';
+const PLANNING_TH = 'sticky top-0 z-10 border-b border-gray-200 bg-gray-50 px-4 py-2 text-left text-xs font-semibold uppercase text-gray-500';
+const PLANNING_TH_RIGHT = 'sticky top-0 z-10 border-b border-gray-200 bg-gray-50 px-3 py-2 text-right text-xs font-semibold uppercase text-gray-500';
 
 interface OverviewResponse {
     from: string;
@@ -99,11 +99,11 @@ function StatCell({ label, value, detail, attention = false }: {
 }) {
     return (
         <div className="min-w-0 p-3.5 sm:p-4">
-            <p className="text-xs font-medium text-slate-600 sm:text-sm">{label}</p>
+            <p className="text-xs font-medium text-gray-600 sm:text-sm">{label}</p>
             <p className={`mt-2 text-2xl font-semibold leading-none tabular-nums tracking-tight ${
-                attention ? 'text-amber-800' : 'text-[#002B7F]'
+                attention ? 'text-amber-800' : 'text-brand'
             }`}>{value}</p>
-            <p className="mt-2 text-xs leading-4 text-slate-500">{detail}</p>
+            <p className="mt-2 text-xs leading-4 text-gray-500">{detail}</p>
         </div>
     );
 }
@@ -111,9 +111,9 @@ function StatCell({ label, value, detail, attention = false }: {
 function PlanningMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
     return (
         <div className="min-w-0 p-3.5 sm:p-4">
-            <dt className="text-xs font-medium text-slate-600">{label}</dt>
-            <dd className="mt-2 text-xl font-semibold leading-none tabular-nums text-[#002B7F]">{value}</dd>
-            <p className="mt-2 text-xs leading-4 text-slate-500">{detail}</p>
+            <dt className="text-xs font-medium text-gray-600">{label}</dt>
+            <dd className="mt-2 text-xl font-semibold leading-none tabular-nums text-brand">{value}</dd>
+            <p className="mt-2 text-xs leading-4 text-gray-500">{detail}</p>
         </div>
     );
 }
@@ -133,7 +133,7 @@ function IssueRow({
     return (
         <Tag
             {...(onClick ? { type: 'button' as const, onClick } : {})}
-            className={`flex w-full items-center justify-between gap-3 border-t border-slate-200 px-4 py-2.5 text-left text-sm transition-colors ${palette} ${onClick ? 'hover:brightness-95' : ''}`}
+            className={`flex w-full items-center justify-between gap-3 border-t border-gray-200 px-4 py-2.5 text-left text-sm transition-colors ${palette} ${onClick ? 'hover:brightness-95' : ''}`}
         >
             <span className="flex min-w-0 items-center gap-2">
                 <TriangleAlert size={16} className="shrink-0" aria-hidden="true" />
@@ -187,18 +187,18 @@ function monthLabel(month: string): string {
 function DataTable({ headers, rows }: { headers: string[]; rows: (string | number)[][] }) {
     return (
         <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-zinc-200 text-sm">
-                <thead className="text-left text-xs font-semibold uppercase text-zinc-500">
+            <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="text-left text-xs font-semibold uppercase text-gray-500">
                     <tr>
                         {headers.map((h) => (
                             <th key={h} className="px-2 py-1.5">{h}</th>
                         ))}
                     </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-100">
+                <tbody className="divide-y divide-gray-100">
                     {rows.length === 0 ? (
                         <tr>
-                            <td colSpan={headers.length} className="px-2 py-4 text-center text-zinc-400">
+                            <td colSpan={headers.length} className="px-2 py-4 text-center text-gray-400">
                                 No data for this period.
                             </td>
                         </tr>
@@ -206,7 +206,7 @@ function DataTable({ headers, rows }: { headers: string[]; rows: (string | numbe
                         rows.map((row, i) => (
                             <tr key={i}>
                                 {row.map((cell, j) => (
-                                    <td key={j} className="px-2 py-1.5 text-zinc-700">{cell}</td>
+                                    <td key={j} className="px-2 py-1.5 text-gray-700">{cell}</td>
                                 ))}
                             </tr>
                         ))
@@ -222,7 +222,7 @@ function TableToggle({ showTable, onToggle }: { showTable: boolean; onToggle: ()
         <button
             type="button"
             onClick={onToggle}
-            className="shrink-0 rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
+            className="shrink-0 rounded-full border border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
         >
             {showTable ? 'View charts' : 'View as table'}
         </button>
@@ -242,8 +242,8 @@ function ChartSection({
 }) {
     return (
         <div className="min-w-0">
-            <h4 className="text-sm font-semibold text-zinc-900">{title}</h4>
-            {subtitle && <p className="mt-0.5 text-xs text-zinc-500">{subtitle}</p>}
+            <h4 className="text-sm font-semibold text-gray-900">{title}</h4>
+            {subtitle && <p className="mt-0.5 text-xs text-gray-500">{subtitle}</p>}
             <div className="mt-3">
                 {showTable ? <DataTable headers={tableHeaders} rows={tableRows} /> : children}
             </div>
@@ -271,11 +271,11 @@ function HorizontalBars({
                     tabIndex={onSelect ? 0 : undefined}
                     onClick={onSelect ? () => onSelect(d.label) : undefined}
                     onKeyDown={onSelect ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(d.label); } } : undefined}
-                    className={`flex items-center gap-3 rounded ${onSelect ? 'cursor-pointer px-1 py-0.5 hover:bg-zinc-50' : ''} ${
-                        selected === d.label ? 'bg-zinc-100' : ''
+                    className={`flex items-center gap-3 rounded ${onSelect ? 'cursor-pointer px-1 py-0.5 hover:bg-gray-50' : ''} ${
+                        selected === d.label ? 'bg-gray-100' : ''
                     }`}
                 >
-                    <div className="w-32 shrink-0 truncate text-xs text-zinc-600" title={d.label}>
+                    <div className="w-32 shrink-0 truncate text-xs text-gray-600" title={d.label}>
                         {d.label}
                     </div>
                     <div className="h-3 flex-1 min-w-0">
@@ -284,7 +284,7 @@ function HorizontalBars({
                             style={{ width: `${Math.max((d.value / max) * 100, 2)}%`, backgroundColor: SERIES_COLOR }}
                         />
                     </div>
-                    <div className="w-16 shrink-0 text-right text-xs font-medium text-zinc-700">
+                    <div className="w-16 shrink-0 text-right text-xs font-medium text-gray-700">
                         {d.value.toFixed(1)}d
                     </div>
                 </div>
@@ -524,7 +524,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
             ) : (
                 <>
                     <section aria-label="Right now" className="app-panel overflow-hidden">
-                        <div className="grid grid-cols-3 divide-x divide-slate-200">
+                        <div className="grid grid-cols-3 divide-x divide-gray-200">
                             <StatCell
                                 label="Pending approvals"
                                 value={exceptions.pending_approvals === undefined ? '—' : String(exceptions.pending_approvals)}
@@ -543,7 +543,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                             <StatCell label="Active staff" value={String(data.headcount.active_employees)} detail="Current workforce" />
                         </div>
                         {!checksAvailable ? (
-                            <p className="border-t border-slate-200 px-4 py-2.5 text-sm text-slate-600">Leave checks unavailable</p>
+                            <p className="border-t border-gray-200 px-4 py-2.5 text-sm text-gray-600">Leave checks unavailable</p>
                         ) : (
                             issues.filter((issue) => issue.count > 0).map((issue) => (
                                 <IssueRow
@@ -562,8 +562,8 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                         <section className="app-panel p-5 lg:col-span-2">
                             <div className="flex flex-wrap items-start justify-between gap-3">
                                 <div>
-                                    <h3 className="text-base font-semibold text-slate-950">Leave activity</h3>
-                                    <p className="mt-0.5 text-xs text-slate-500">{formatDate(data.from)} – {formatDate(data.to)}</p>
+                                    <h3 className="text-base font-semibold text-gray-950">Leave activity</h3>
+                                    <p className="mt-0.5 text-xs text-gray-500">{formatDate(data.from)} – {formatDate(data.to)}</p>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <TableToggle showTable={showTable} onToggle={() => setShowTable((v) => !v)} />
@@ -571,7 +571,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                         value={preset}
                                         onChange={(event) => setPreset(event.target.value as Preset)}
                                         aria-label="Period"
-                                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900"
+                                        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900"
                                     >
                                         {PRESETS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
                                         <option value="custom">Custom</option>
@@ -580,29 +580,29 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                             </div>
                             {preset === 'custom' && (
                                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                                    <label className="text-xs font-medium text-slate-600">From
+                                    <label className="text-xs font-medium text-gray-600">From
                                         <input type="date" value={customFrom} max={customTo} onChange={(e) => setCustomFrom(e.target.value)}
-                                            className="mt-1 block w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-sm" />
+                                            className="mt-1 block w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
                                     </label>
-                                    <label className="text-xs font-medium text-slate-600">To
+                                    <label className="text-xs font-medium text-gray-600">To
                                         <input type="date" value={customTo} min={customFrom} onChange={(e) => setCustomTo(e.target.value)}
-                                            className="mt-1 block w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-sm" />
+                                            className="mt-1 block w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
                                     </label>
                                 </div>
                             )}
 
-                            <dl className="mt-4 grid grid-cols-3 gap-3 border-y border-slate-100 py-3">
+                            <dl className="mt-4 grid grid-cols-3 gap-3 border-y border-gray-100 py-3">
                                 <div>
-                                    <dt className="text-xs text-slate-500">Approved days</dt>
-                                    <dd className="mt-1 text-lg font-semibold tabular-nums text-[#002B7F]">{data.days_taken.toFixed(1)}</dd>
+                                    <dt className="text-xs text-gray-500">Approved days</dt>
+                                    <dd className="mt-1 text-lg font-semibold tabular-nums text-brand">{data.days_taken.toFixed(1)}</dd>
                                 </div>
                                 <div>
-                                    <dt className="text-xs text-slate-500">Applications</dt>
-                                    <dd className="mt-1 text-lg font-semibold tabular-nums text-[#002B7F]">{data.applications.total}</dd>
+                                    <dt className="text-xs text-gray-500">Applications</dt>
+                                    <dd className="mt-1 text-lg font-semibold tabular-nums text-brand">{data.applications.total}</dd>
                                 </div>
                                 <div>
-                                    <dt className="text-xs text-slate-500">Avg. approval time</dt>
-                                    <dd className={`mt-1 tabular-nums ${turnaround ? 'text-lg font-semibold text-[#002B7F]' : 'pt-1 text-sm text-slate-500'}`}>
+                                    <dt className="text-xs text-gray-500">Avg. approval time</dt>
+                                    <dd className={`mt-1 tabular-nums ${turnaround ? 'text-lg font-semibold text-brand' : 'pt-1 text-sm text-gray-500'}`}>
                                         {turnaround ?? 'No decisions yet'}
                                     </dd>
                                 </div>
@@ -648,20 +648,20 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                             </div>
 
                             {(drilling || drill) && (
-                                <div className="mt-6 border-t border-slate-100 pt-4">
+                                <div className="mt-6 border-t border-gray-100 pt-4">
                                     <div className="flex flex-wrap items-start justify-between gap-3">
                                         <div>
-                                            <h4 className="text-sm font-semibold text-zinc-900">
+                                            <h4 className="text-sm font-semibold text-gray-900">
                                                 {drill ? `Who is behind “${drill.value}”` : 'Loading…'}
                                             </h4>
-                                            <p className="mt-0.5 text-xs text-zinc-500">
+                                            <p className="mt-0.5 text-xs text-gray-500">
                                                 Same measure as the chart, so these rows add up to the bar.
                                             </p>
                                         </div>
                                         <button
                                             type="button"
                                             onClick={() => setDrill(null)}
-                                            className="shrink-0 rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
+                                            className="shrink-0 rounded-full border border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
                                         >
                                             Close
                                         </button>
@@ -672,8 +672,8 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                         <EmptyState title="Nothing in this period" />
                                     ) : (
                                         <div className="mt-3 overflow-x-auto">
-                                            <table className="min-w-full divide-y divide-zinc-200 text-sm">
-                                                <thead className="text-left text-xs font-semibold uppercase text-zinc-500">
+                                            <table className="min-w-full divide-y divide-gray-200 text-sm">
+                                                <thead className="text-left text-xs font-semibold uppercase text-gray-500">
                                                     <tr>
                                                         <th className="px-2 py-1.5">Staff member</th>
                                                         <th className="px-2 py-1.5">
@@ -683,15 +683,15 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                                         <th className="px-2 py-1.5 text-right">Applications</th>
                                                     </tr>
                                                 </thead>
-                                                <tbody className="divide-y divide-zinc-100">
+                                                <tbody className="divide-y divide-gray-100">
                                                     {drill.rows.map((row, i) => (
                                                         <tr key={`${row.employee_name}-${row.leave_type_name}-${i}`}>
-                                                            <td className="px-2 py-1.5 font-medium text-zinc-900">{row.employee_name}</td>
-                                                            <td className="px-2 py-1.5 text-zinc-600">
+                                                            <td className="px-2 py-1.5 font-medium text-gray-900">{row.employee_name}</td>
+                                                            <td className="px-2 py-1.5 text-gray-600">
                                                                 {drill.dimension === 'department' ? row.leave_type_name : row.department_code}
                                                             </td>
-                                                            <td className="px-2 py-1.5 text-right tabular-nums text-zinc-700">{row.days.toFixed(1)}</td>
-                                                            <td className="px-2 py-1.5 text-right tabular-nums text-zinc-700">{row.applications}</td>
+                                                            <td className="px-2 py-1.5 text-right tabular-nums text-gray-700">{row.days.toFixed(1)}</td>
+                                                            <td className="px-2 py-1.5 text-right tabular-nums text-gray-700">{row.applications}</td>
                                                         </tr>
                                                     ))}
                                                 </tbody>
@@ -701,14 +701,14 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                 </div>
                             )}
 
-                            <p className="mt-5 text-xs leading-5 text-zinc-500">
+                            <p className="mt-5 text-xs leading-5 text-gray-500">
                                 Days are working days within the selected dates. Applications are counted by application date.
                             </p>
                         </section>
 
                         <div className="space-y-4">
                             <section className="app-panel p-5">
-                                <h3 className="text-base font-semibold text-slate-950">Next 30 days</h3>
+                                <h3 className="text-base font-semibold text-gray-950">Next 30 days</h3>
                                 {exceptions.coverage_risks.length > 0 && (
                                     <div className="mt-3 space-y-1.5">
                                         <p className="text-xs font-medium text-amber-800">Coverage risk: over a third of a department away</p>
@@ -721,16 +721,16 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                     </div>
                                 )}
                                 {data.upcoming.length === 0 ? (
-                                    <p className="mt-3 text-sm text-zinc-500">Nobody has approved leave starting in the next 30 days.</p>
+                                    <p className="mt-3 text-sm text-gray-500">Nobody has approved leave starting in the next 30 days.</p>
                                 ) : (
-                                    <div className="mt-3 divide-y divide-zinc-100">
+                                    <div className="mt-3 divide-y divide-gray-100">
                                         {data.upcoming.map((u, i) => (
                                             <div key={i} className="py-2 text-sm">
                                                 <div className="flex justify-between gap-3">
-                                                    <span className="font-medium text-zinc-900">{u.employee_name}</span>
-                                                    <span className="shrink-0 tabular-nums text-zinc-600">{u.days.toFixed(1)}d</span>
+                                                    <span className="font-medium text-gray-900">{u.employee_name}</span>
+                                                    <span className="shrink-0 tabular-nums text-gray-600">{u.days.toFixed(1)}d</span>
                                                 </div>
-                                                <p className="text-xs text-zinc-500">
+                                                <p className="text-xs text-gray-500">
                                                     {u.leave_type_name} · {formatDate(u.start_date)} – {formatDate(u.end_date)}
                                                 </p>
                                             </div>
@@ -742,8 +742,8 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                             <section className="app-panel p-5">
                                 <div className="flex items-start justify-between gap-3">
                                     <div>
-                                        <h3 className="text-base font-semibold text-slate-950">Unused balance</h3>
-                                        <p className="mt-0.5 text-xs text-zinc-500">Available days across active staff, {new Date().getFullYear()}</p>
+                                        <h3 className="text-base font-semibold text-gray-950">Unused balance</h3>
+                                        <p className="mt-0.5 text-xs text-gray-500">Available days across active staff, {new Date().getFullYear()}</p>
                                     </div>
                                     <TableToggle showTable={showBalanceTable} onToggle={() => setShowBalanceTable((v) => !v)} />
                                 </div>
@@ -762,27 +762,27 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                     </div>
 
                     <section aria-labelledby="leave-planning-title" className="app-panel overflow-hidden">
-                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-4 py-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-200 px-4 py-4">
                             <div>
-                                <h3 id="leave-planning-title" className="text-base font-semibold text-slate-950">Leave planning</h3>
-                                <p className="mt-1 text-sm text-slate-600">Every staff member ranked by the leave they are holding</p>
+                                <h3 id="leave-planning-title" className="text-base font-semibold text-gray-950">Leave planning</h3>
+                                <p className="mt-1 text-sm text-gray-600">Every staff member ranked by the leave they are holding</p>
                             </div>
                             <button type="button" onClick={exportPlanningRows} disabled={!planningRows.length}
-                                className="inline-flex min-h-9 items-center justify-center gap-2 rounded border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
+                                className="inline-flex min-h-9 items-center justify-center gap-2 rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">
                                 <Download size={15} aria-hidden="true" /> Export list
                             </button>
                         </div>
 
-                        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-                            <p className="max-w-4xl text-sm leading-5 text-slate-700">
+                        <div className="border-b border-gray-200 bg-gray-50 px-4 py-3">
+                            <p className="max-w-4xl text-sm leading-5 text-gray-700">
                                 Available days = balance minus pending leave. Everyone is listed, most leave first, so
                                 management can read down from the top and decide who to plan time off with. Sort by any
                                 column heading.
                             </p>
                             <div className="mt-3 sm:max-w-xs">
-                                <label className="text-xs font-medium text-slate-600">Department
+                                <label className="text-xs font-medium text-gray-600">Department
                                     <select value={planningDepartment} onChange={(event) => setPlanningDepartment(event.target.value)}
-                                        className="mt-1 block w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900">
+                                        className="mt-1 block w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900">
                                         <option value="all">All departments</option>
                                         {departmentOptions.map((department) => <option key={department} value={department}>{department}</option>)}
                                     </select>
@@ -796,7 +796,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                             <p className="px-4 py-4 text-sm text-amber-900">Leave balances could not be loaded. Try refreshing.</p>
                         ) : (
                             <>
-                                <dl className="grid grid-cols-1 divide-y divide-slate-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                                <dl className="grid grid-cols-1 divide-y divide-gray-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
                                     <PlanningMetric
                                         label="Total leave held"
                                         value={`${planningSummary.totalAvailable.toFixed(1)}d`}
@@ -827,24 +827,24 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                                     className={PLANNING_TH_RIGHT} />
                                             </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-slate-100">
+                                        <tbody className="divide-y divide-gray-100">
                                             {planningRows.map((row) => (
-                                                <tr key={row.id} className="hover:bg-slate-50">
-                                                    <td className="px-4 py-2 font-medium text-slate-900">{row.display_name}</td>
-                                                    <td className="px-3 py-2 text-slate-600">{row.department_code || '—'} / {row.division_code || '—'}</td>
-                                                    <td className="px-3 py-2 text-right tabular-nums text-slate-800">
+                                                <tr key={row.id} className="hover:bg-gray-50">
+                                                    <td className="px-4 py-2 font-medium text-gray-900">{row.display_name}</td>
+                                                    <td className="px-3 py-2 text-gray-600">{row.department_code || '—'} / {row.division_code || '—'}</td>
+                                                    <td className="px-3 py-2 text-right tabular-nums text-gray-800">
                                                         {row.annual.available.toFixed(1)}d
-                                                        {row.annual.pending > 0 && <span className="block text-xs text-slate-500">{row.annual.pending}d pending</span>}
+                                                        {row.annual.pending > 0 && <span className="block text-xs text-gray-500">{row.annual.pending}d pending</span>}
                                                     </td>
-                                                    <td className="px-3 py-2 text-right tabular-nums text-slate-800">
+                                                    <td className="px-3 py-2 text-right tabular-nums text-gray-800">
                                                         {row.furlough.available.toFixed(1)}d
-                                                        {row.furlough.pending > 0 && <span className="block text-xs text-slate-500">{row.furlough.pending}d pending</span>}
+                                                        {row.furlough.pending > 0 && <span className="block text-xs text-gray-500">{row.furlough.pending}d pending</span>}
                                                     </td>
-                                                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-[#002B7F]">{row.total.toFixed(1)}d</td>
+                                                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-brand">{row.total.toFixed(1)}d</td>
                                                 </tr>
                                             ))}
                                             {planningRows.length === 0 && (
-                                                <tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-500">No staff in this department.</td></tr>
+                                                <tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-gray-500">No staff in this department.</td></tr>
                                             )}
                                         </tbody>
                                     </table>

@@ -64,7 +64,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                         aria-modal="true"
                     >
                         {pending.options.title && (
-                            <h2 className="text-lg font-semibold text-[#002B7F]">{pending.options.title}</h2>
+                            <h2 className="text-lg font-semibold text-brand">{pending.options.title}</h2>
                         )}
                         {pending.options.message && (
                             <p className={`text-sm text-gray-600 ${pending.options.title ? 'mt-1.5' : ''}`}>
@@ -79,7 +79,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                                 value={inputValue}
                                 onChange={(e) => setInputValue(e.target.value)}
                                 placeholder={pending.options.placeholder}
-                                className="mt-4 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-[#002B7F]/20"
+                                className="mt-4 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
                                 onKeyDown={(e) => {
                                     if (e.key === 'Enter' && !confirmDisabled) close(inputValue.trim());
                                 }}
@@ -101,7 +101,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                                 className={`rounded-md px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                                     pending.kind === 'confirm' && pending.options.tone === 'danger'
                                         ? 'bg-rose-600 hover:bg-rose-500'
-                                        : 'bg-[#E8842C] hover:bg-[#d4761f]'
+                                        : 'bg-accent hover:bg-accent-hover'
                                 }`}
                             >
                                 {pending.options.confirmLabel || (pending.kind === 'confirm' ? 'Confirm' : 'OK')}

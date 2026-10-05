@@ -276,7 +276,7 @@ export function Participants() {
           <Stat label="LV3" value={stats.LV3} tone="purple" />
         </div>
 
-        <div className="wellness-filterbar mt-4 border-t border-slate-200">
+        <div className="wellness-filterbar mt-4 border-t border-gray-200">
             <input
               type="search"
               aria-label="Search participants"
@@ -337,7 +337,7 @@ export function Participants() {
                       <td className="px-3 py-2 font-mono">{p.bank_bsb ? formatBSB(p.bank_bsb) : '—'}</td>
                       <td className="px-3 py-2 font-mono">{p.bank_account || '—'}</td>
                       <td className="px-3 py-2">
-                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${p.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-600'}`}>{p.status}</span>
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${p.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>{p.status}</span>
                       </td>
                       <td className="px-3 py-2 text-right whitespace-nowrap">
                         <button onClick={() => openLevel(p)} className="wellness-row-action">Change level</button>
@@ -355,16 +355,16 @@ export function Participants() {
           {loading ? <LoadingState label="Loading participants…" /> : filtered.length === 0 ? (
             <EmptyState title="No participants match your filters." detail="Adjust the filters or add a participant." />
           ) : filtered.map((p) => (
-            <article key={p.id} className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+            <article key={p.id} className="rounded-xl border border-gray-200 bg-white p-3.5 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h3 className="truncate font-semibold text-slate-900">{p.full_name}</h3>
-                  <p className="mt-0.5 text-xs text-slate-500">{p.village || 'Village not set'}</p>
+                  <h3 className="truncate font-semibold text-gray-900">{p.full_name}</h3>
+                  <p className="mt-0.5 text-xs text-gray-500">{p.village || 'Village not set'}</p>
                 </div>
-                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${p.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-600'}`}>{p.status}</span>
+                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${p.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>{p.status}</span>
               </div>
-              <div className="mt-3 flex items-center justify-between border-y border-slate-100 py-2.5 text-sm">
-                <span className="text-slate-500">Allowance level</span>
+              <div className="mt-3 flex items-center justify-between border-y border-gray-100 py-2.5 text-sm">
+                <span className="text-gray-500">Allowance level</span>
                 <button onClick={() => openLevel(p)} className={`rounded-full px-2.5 py-1 text-xs font-bold ${levelClass(p.current_level)}`}>{p.current_level || 'LV1'} ▾</button>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
@@ -385,24 +385,24 @@ export function Participants() {
             </div>
             <div className="mt-4 space-y-3">
               <Field label="Full name *">
-                <input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="e.g. Jane Doe" />
+                <input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="e.g. Jane Doe" />
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Village">
-                  <input value={form.village} onChange={(e) => setForm({ ...form, village: e.target.value })} className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="e.g. Aiwo" />
+                  <input value={form.village} onChange={(e) => setForm({ ...form, village: e.target.value })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="e.g. Aiwo" />
                 </Field>
                 <Field label="BSB">
-                  <input value={form.bank_bsb} onChange={(e) => setForm({ ...form, bank_bsb: formatBsbInput(e.target.value) })} className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="000-000" maxLength={7} />
+                  <input value={form.bank_bsb} onChange={(e) => setForm({ ...form, bank_bsb: formatBsbInput(e.target.value) })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="000-000" maxLength={7} />
                 </Field>
               </div>
               <Field label="Account number">
-                <input value={form.bank_account} onChange={(e) => setForm({ ...form, bank_account: e.target.value })} className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="12345678" />
+                <input value={form.bank_account} onChange={(e) => setForm({ ...form, bank_account: e.target.value })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="12345678" />
               </Field>
               <Field label="Account name">
-                <input value={form.bank_account_name} onChange={(e) => setForm({ ...form, bank_account_name: e.target.value })} className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="Account holder" />
+                <input value={form.bank_account_name} onChange={(e) => setForm({ ...form, bank_account_name: e.target.value })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="Account holder" />
               </Field>
               <Field label="External reference">
-                <input value={form.external_ref} onChange={(e) => setForm({ ...form, external_ref: e.target.value })} className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="Optional identifier" />
+                <input value={form.external_ref} onChange={(e) => setForm({ ...form, external_ref: e.target.value })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="Optional identifier" />
               </Field>
             </div>
             <div className="mt-6 flex justify-end gap-2">
@@ -423,12 +423,12 @@ export function Participants() {
             <p className="mt-1 text-sm text-gray-500">Current level: <span className="font-medium">{levelParticipant.current_level || 'LV1'}</span></p>
             <div className="mt-4 space-y-3">
               <Field label="New level">
-                <select value={levelForm.level} onChange={(e) => setLevelForm({ ...levelForm, level: e.target.value as PublicHealthTierCode })} className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500">
+                <select value={levelForm.level} onChange={(e) => setLevelForm({ ...levelForm, level: e.target.value as PublicHealthTierCode })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500">
                   {LEVELS.map((l) => <option key={l} value={l}>{l}{l === 'LV0' ? ' (no payment)' : ''}</option>)}
                 </select>
               </Field>
               <Field label="Reason for change *">
-                <textarea rows={3} value={levelForm.reason} onChange={(e) => setLevelForm({ ...levelForm, reason: e.target.value })} className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="e.g. Met milestone 2" />
+                <textarea rows={3} value={levelForm.reason} onChange={(e) => setLevelForm({ ...levelForm, reason: e.target.value })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="e.g. Met milestone 2" />
               </Field>
             </div>
             <div className="mt-6 flex justify-end gap-2">
@@ -445,7 +445,7 @@ export function Participants() {
 function Stat({ label, value, tone }: { label: string; value: number; tone?: string }) {
   const tones: Record<string, string> = {
     emerald: 'text-emerald-700',
-    zinc: 'text-zinc-700',
+    zinc: 'text-gray-700',
     teal: 'text-teal-700',
     blue: 'text-blue-700',
     purple: 'text-purple-700',
@@ -463,7 +463,7 @@ function SortTh({ label, active, dir, onClick }: { label: string; active: boolea
     <th className="px-3 py-2">
       <button onClick={onClick} className="inline-flex items-center gap-1 font-semibold uppercase tracking-wide hover:text-teal-700">
         {label}
-        <span className="text-xs text-zinc-400">{active ? (dir === 'asc' ? '▲' : '▼') : '↕'}</span>
+        <span className="text-xs text-gray-400">{active ? (dir === 'asc' ? '▲' : '▼') : '↕'}</span>
       </button>
     </th>
   );
@@ -471,7 +471,7 @@ function SortTh({ label, active, dir, onClick }: { label: string; active: boolea
 
 function levelClass(level?: string) {
   switch (level) {
-    case 'LV0': return 'bg-zinc-100 text-zinc-600';
+    case 'LV0': return 'bg-gray-100 text-gray-600';
     case 'LV1': return 'bg-teal-50 text-teal-700';
     case 'LV2': return 'bg-blue-50 text-blue-700';
     case 'LV3': return 'bg-purple-50 text-purple-700';

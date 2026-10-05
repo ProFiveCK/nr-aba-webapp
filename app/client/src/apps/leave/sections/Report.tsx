@@ -65,22 +65,22 @@ export function Report() {
         <div className="space-y-4">
             <div className="flex flex-wrap items-end gap-3 app-panel p-4">
                 <label className="text-sm">
-                    <span className="mb-1 block font-medium text-zinc-700">Period from</span>
+                    <span className="mb-1 block font-medium text-gray-700">Period from</span>
                     <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
-                        className="rounded-md border border-zinc-300 px-3 py-2 text-sm" />
+                        className="rounded-md border border-gray-300 px-3 py-2 text-sm" />
                 </label>
                 <label className="text-sm">
-                    <span className="mb-1 block font-medium text-zinc-700">to</span>
+                    <span className="mb-1 block font-medium text-gray-700">to</span>
                     <input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)}
-                        className="rounded-md border border-zinc-300 px-3 py-2 text-sm" />
+                        className="rounded-md border border-gray-300 px-3 py-2 text-sm" />
                 </label>
                 <button type="button" onClick={run} disabled={loading}
-                    className="rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50">
+                    className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50">
                     {loading ? 'Building…' : 'Run report'}
                 </button>
                 {rows !== null && rows.length > 0 && (
                     <button type="button" onClick={downloadCsv}
-                        className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50">
+                        className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
                         Download CSV
                     </button>
                 )}
@@ -97,7 +97,7 @@ export function Report() {
             ) : (
                 <div className="overflow-x-auto app-panel">
                     <table className="min-w-full text-sm">
-                        <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
+                        <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
                             <tr>
                                 <th className="px-4 py-2">Employee</th>
                                 <th className="px-4 py-2">Dept</th>
@@ -106,18 +106,18 @@ export function Report() {
                                 <th className="px-4 py-2 text-right">Applications</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-zinc-100">
+                        <tbody className="divide-y divide-gray-100">
                             {rows.map((row, index) => (
                                 <tr key={`${row.employee_name}-${row.leave_type_name}-${index}`}>
-                                    <td className="px-4 py-2 font-medium text-zinc-900">{row.employee_name}</td>
-                                    <td className="px-4 py-2 text-zinc-600">{row.department_code || '—'}</td>
-                                    <td className="px-4 py-2 text-zinc-600">{row.leave_type_name}</td>
-                                    <td className="px-4 py-2 text-right text-zinc-900">{row.total_days}</td>
-                                    <td className="px-4 py-2 text-right text-zinc-600">{row.applications}</td>
+                                    <td className="px-4 py-2 font-medium text-gray-900">{row.employee_name}</td>
+                                    <td className="px-4 py-2 text-gray-600">{row.department_code || '—'}</td>
+                                    <td className="px-4 py-2 text-gray-600">{row.leave_type_name}</td>
+                                    <td className="px-4 py-2 text-right text-gray-900">{row.total_days}</td>
+                                    <td className="px-4 py-2 text-right text-gray-600">{row.applications}</td>
                                 </tr>
                             ))}
                         </tbody>
-                        <tfoot className="bg-zinc-50 text-sm font-semibold text-zinc-900">
+                        <tfoot className="bg-gray-50 text-sm font-semibold text-gray-900">
                             <tr>
                                 <td className="px-4 py-2" colSpan={3}>Total</td>
                                 <td className="px-4 py-2 text-right">{totalDays}</td>

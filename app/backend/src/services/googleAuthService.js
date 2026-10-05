@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { pool } from '../db.js';
 import { GOOGLE_CLIENT_ID } from '../config.js';
@@ -130,4 +131,48 @@ export async function unlinkIdentity(reviewerId, provider) {
     [reviewerId, provider]
   );
   return rowCount > 0;
+}
+
+/**
+ * Retires a pending temporary password when its owner signs in with Google.
+ *
+ * `must_change_password` means an administrator set a password and told
+ * somebody what it was. Until it is replaced it is a live credential a second
+ * person knows, which is why such a session is otherwise allowed to do
+ * nothing but replace it. That left anyone who never used the temporary
+ * password stuck: signing in with Google worked, and then every request was
+ * refused until they produced a password they had never been given.
+ *
+ * Signing in with Google proves who they are without it, so the flag is
+ * cleared. Clearing it alone would leave the shared password working, so the
+ * hash is replaced with a value no input can match — bcrypt compares against
+ * it and simply returns false. The account becomes Google-only.
+ *
+ * Only a *pending temporary* password is retired. Somebody who chose their
+ * own password keeps it, because while Google is not yet the only way in, a
+ * problem with the Google configuration must not be able to lock out
+ * everyone who has ever used it. When Google does become the only route,
+ * widen this to every sign-in.
+ *
+ * Returns true when a password was retired, so the caller can correct the
+ * session payload it is about to send.
+ */
+export async function retireTemporaryPassword(reviewer, { ip } = {}) {
+  if (!reviewer?.must_change_password) return false;
+
+  await pool.query(
+    `UPDATE reviewers
+        SET password_hash = $1, must_change_password = FALSE, updated_at = NOW()
+      WHERE id = $2`,
+    [`google-only:${randomBytes(32).toString('hex')}`, reviewer.id]
+  );
+  await recordAudit({
+    actor: { id: reviewer.id, email: reviewer.email, ip },
+    action: 'auth.google.password_retired',
+    entityType: 'reviewer',
+    entityId: reviewer.id,
+    after: { must_change_password: false, password: 'retired — account signs in with Google' },
+  });
+  console.info(`[google-auth] retired the temporary password for ${reviewer.email}`);
+  return true;
 }

@@ -17,6 +17,7 @@ import {
 import {
   GoogleSignInResult,
   googleSignInEnabled,
+  retireTemporaryPassword,
   resolveGoogleIdentity,
 } from '../services/googleAuthService.js';
 import { clearLoginAttempts, isAccountLocked, recordLoginAttempt } from '../services/loginAttempts.js';
@@ -215,6 +216,13 @@ router.post(
     }
 
     await clearLoginAttempts(reviewer.email);
+    // Proving who you are through Google settles a pending temporary
+    // password: the flag it set is cleared and the password itself retired,
+    // so the account is Google-only from here. Done before the session is
+    // built, because the session carries the flag.
+    if (await retireTemporaryPassword(reviewer, { ip: clientIp })) {
+      reviewer.must_change_password = false;
+    }
     const { tokenId, expiresAt } = await createSession(reviewer.id);
     await pool.query('UPDATE reviewers SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [reviewer.id]);
     const token = buildTokenPayload(reviewer, tokenId, expiresAt);

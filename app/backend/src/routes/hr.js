@@ -68,11 +68,11 @@ async function currentEmployee(req) {
   }
 
   const { rows: created } = await pool.query(
-    `INSERT INTO hr_employees (reviewer_id, display_name, email, department_code)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO hr_employees (reviewer_id, display_name, email, department_code, division_code)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (reviewer_id) DO UPDATE SET updated_at = NOW()
      RETURNING *`,
-    [req.user.id, name, req.user.email, req.user.department_code]
+    [req.user.id, name, req.user.email, req.user.department_code, req.user.division_code]
   );
   return created[0];
 }
@@ -456,8 +456,14 @@ router.get(
     const year = Number(req.query.year) || new Date().getFullYear();
     const [{ rows: employees }, { rows: types }, { rows: balances }] = await Promise.all([
       pool.query(
-        `SELECT id, display_name, department_code, status, reviewer_id, email, join_date
-           FROM hr_employees WHERE status = 'active' AND leave_entitled = TRUE ORDER BY display_name`
+        `SELECT e.id, e.display_name,
+          COALESCE(e.department_code, r.department_code) AS department_code,
+          COALESCE(e.division_code, r.division_code) AS division_code,
+          e.status, e.reviewer_id, e.email, e.join_date
+           FROM hr_employees e
+           LEFT JOIN reviewers r ON r.id = e.reviewer_id
+          WHERE e.status = 'active' AND e.leave_entitled = TRUE
+          ORDER BY e.display_name`
       ),
       pool.query('SELECT id, name, default_days, is_accruable FROM hr_leave_types WHERE is_active = TRUE ORDER BY name'),
       pool.query('SELECT employee_id, leave_type_id, balance, pending FROM hr_leave_balances WHERE year = $1', [year]),
@@ -474,7 +480,16 @@ router.get(
       }
       return { ...e, balances: byType };
     });
-    res.json({ year, leave_types: types.map((t) => t.name), employees: result });
+    res.json({
+      year,
+      leave_types: types.map((t) => t.name),
+      leave_type_rules: types.map((t) => ({
+        name: t.name,
+        default_days: Number(t.default_days),
+        is_accruable: t.is_accruable,
+      })),
+      employees: result,
+    });
   }
 );
 

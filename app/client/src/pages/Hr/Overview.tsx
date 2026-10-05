@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ArrowUpRight, TriangleAlert } from 'lucide-react';
+import { ArrowUpRight, Download, TriangleAlert } from 'lucide-react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
 import { EmptyState, LoadingState } from '../../components/Ui';
 import { formatDate } from '../../features/hr/types';
+import { csvCell } from '../../features/hr/csv';
+import { summarizeLeavePlanning } from '../../features/hr/leavePlanning';
+import type { StaffBalancesResponse } from '../../features/hr/staffTypes';
 import { toIsoDate } from '../../lib/date';
 
 // A single, muted-blue hue throughout: every chart here compares one measure
@@ -89,6 +92,16 @@ function StatCell({ label, value, detail, attention = false }: {
             <p className={`mt-2 text-2xl font-semibold leading-none tabular-nums tracking-tight ${
                 attention ? 'text-amber-800' : 'text-[#002B7F]'
             }`}>{value}</p>
+            <p className="mt-2 text-xs leading-4 text-slate-500">{detail}</p>
+        </div>
+    );
+}
+
+function PlanningMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
+    return (
+        <div className="min-w-0 p-3.5 sm:p-4">
+            <dt className="text-xs font-medium text-slate-600">{label}</dt>
+            <dd className="mt-2 text-xl font-semibold leading-none tabular-nums text-[#002B7F]">{value}</dd>
             <p className="mt-2 text-xs leading-4 text-slate-500">{detail}</p>
         </div>
     );
@@ -339,6 +352,11 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
     const [customTo, setCustomTo] = useState(() => rangeForPreset('12m').to);
     const [data, setData] = useState<OverviewResponse | null>(null);
     const [loading, setLoading] = useState(true);
+    const [balanceReport, setBalanceReport] = useState<StaffBalancesResponse | null>(null);
+    const [balanceReportLoading, setBalanceReportLoading] = useState(true);
+    const [furloughLineOverride, setFurloughLineOverride] = useState<number | null>(null);
+    const [planningType, setPlanningType] = useState<'any' | 'Annual' | 'Furlough'>('any');
+    const [planningDepartment, setPlanningDepartment] = useState('all');
     const [drill, setDrill] = useState<{ dimension: Dimension; value: string; rows: BreakdownRow[] } | null>(null);
     const [drilling, setDrilling] = useState(false);
     const [showTable, setShowTable] = useState(false);
@@ -360,6 +378,32 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeRange.from, activeRange.to]);
+
+    useEffect(() => {
+        let cancelled = false;
+        apiClient.get<StaffBalancesResponse>('/hr/employees/balances')
+            .then(async (result) => {
+                let rules = result.leave_type_rules;
+                if (!rules?.length) {
+                    const leaveTypes = await apiClient.get<Array<{
+                        name: string;
+                        default_days: number | string;
+                        is_accruable: boolean;
+                    }>>('/hr/leave-types');
+                    rules = leaveTypes.map((type) => ({
+                        name: type.name,
+                        default_days: Number(type.default_days),
+                        is_accruable: type.is_accruable,
+                    }));
+                }
+                if (!cancelled) setBalanceReport({ ...result, leave_type_rules: rules });
+            })
+            .catch((err) => {
+                if (!cancelled) addToast((err as Error)?.message || 'Unable to load leave balance planning.', 'error');
+            })
+            .finally(() => { if (!cancelled) setBalanceReportLoading(false); });
+        return () => { cancelled = true; };
+    }, [addToast]);
 
     // Who is behind a bar. Uses the same windowed measure as the chart, so the
     // rows add up to the bar that was clicked.
@@ -388,6 +432,50 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
     const excessDetail = excessNames.length
         ? `${excessNames.join(', ')}${exceptions.excess_balances > excessNames.length ? ` +${exceptions.excess_balances - excessNames.length} more` : ''}`
         : 'Holding over twice their entitlement';
+    const annualRule = balanceReport?.leave_type_rules?.find((rule) => rule.name.toLowerCase() === 'annual');
+    const annualAllocation = annualRule && Number.isFinite(Number(annualRule.default_days))
+        ? Number(annualRule.default_days)
+        : null;
+    const furloughReviewLine = furloughLineOverride ?? 0;
+    const planningSummary = balanceReport && annualAllocation !== null
+        ? summarizeLeavePlanning(balanceReport.employees, annualAllocation, furloughReviewLine)
+        : null;
+    const departmentOptions = balanceReport
+        ? Array.from(new Set(balanceReport.employees.map((employee) => employee.department_code || 'Unassigned'))).sort()
+        : [];
+    const planningRows = planningSummary?.rows.filter((row) => {
+        const department = row.department_code || 'Unassigned';
+        if (planningDepartment !== 'all' && department !== planningDepartment) return false;
+        if (planningType === 'Annual') return row.annual.aboveLine > 0;
+        if (planningType === 'Furlough') return row.furlough.aboveLine > 0;
+        return true;
+    }) ?? [];
+    const exportPlanningRows = () => {
+        const header = [
+            'Name', 'Department', 'Division',
+            'Annual available days', 'Annual pending days', 'Annual days above allocation',
+            'Furlough available days', 'Furlough pending days', 'Furlough days above threshold',
+        ];
+        const rows = planningRows.map((row) => [
+            row.display_name,
+            row.department_code || '',
+            row.division_code || '',
+            row.annual.available,
+            row.annual.pending,
+            row.annual.aboveLine,
+            row.furlough.available,
+            row.furlough.pending,
+            row.furlough.aboveLine,
+        ]);
+        const csv = [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
+        const blob = new Blob([String.fromCharCode(0xfeff) + csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `leave-planning-${balanceReport?.year ?? new Date().getFullYear()}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+    };
     const turnaround = data?.applications.avg_turnaround_hours === null || data?.applications.avg_turnaround_hours === undefined
         ? null
         : data.applications.avg_turnaround_hours < 24
@@ -645,6 +733,101 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                             </section>
                         </div>
                     </div>
+
+                    <section aria-labelledby="leave-planning-title" className="app-panel overflow-hidden">
+                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-4 py-4">
+                            <div>
+                                <h3 id="leave-planning-title" className="text-base font-semibold text-slate-950">Leave planning</h3>
+                                <p className="mt-1 text-sm text-slate-600">Staff with Annual or Furlough days to plan</p>
+                            </div>
+                            <button type="button" onClick={exportPlanningRows} disabled={!planningRows.length}
+                                className="inline-flex min-h-9 items-center justify-center gap-2 rounded border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
+                                <Download size={15} aria-hidden="true" /> Export list
+                            </button>
+                        </div>
+
+                        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            <p className="max-w-4xl text-sm leading-5 text-slate-700">
+                                Available days = balance minus pending leave. Annual is compared with its allocation from HR Policies → Leave types. Furlough is shown when it is above the threshold below; 0 includes every positive balance.
+                            </p>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(12rem,1fr)_minmax(12rem,1fr)_auto] lg:items-end">
+                                <label className="text-xs font-medium text-slate-600">Furlough: flag balances above
+                                    <span className="mt-1 flex items-center gap-2">
+                                        <input type="number" min="0" step="0.5" value={furloughReviewLine}
+                                            onChange={(event) => setFurloughLineOverride(Math.max(0, Number(event.target.value) || 0))}
+                                            className="w-28 rounded border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900" />
+                                        <span>days</span>
+                                    </span>
+                                </label>
+                                <label className="text-xs font-medium text-slate-600">Show
+                                    <select value={planningType} onChange={(event) => setPlanningType(event.target.value as typeof planningType)}
+                                        className="mt-1 block w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900">
+                                        <option value="any">Both leave types</option>
+                                        <option value="Annual">Annual only</option>
+                                        <option value="Furlough">Furlough only</option>
+                                    </select>
+                                </label>
+                                <label className="text-xs font-medium text-slate-600">Department
+                                    <select value={planningDepartment} onChange={(event) => setPlanningDepartment(event.target.value)}
+                                        className="mt-1 block w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900">
+                                        <option value="all">All departments</option>
+                                        {departmentOptions.map((department) => <option key={department} value={department}>{department}</option>)}
+                                    </select>
+                                </label>
+                            </div>
+                            {annualAllocation !== null && (
+                                <p className="mt-3 text-xs text-slate-600">
+                                    Current comparison: Annual above {annualAllocation} days · Furlough above {furloughReviewLine} days
+                                </p>
+                            )}
+                        </div>
+
+                        {balanceReportLoading ? (
+                            <div className="p-4"><LoadingState label="Loading leave balances…" /></div>
+                        ) : !balanceReport || annualAllocation === null || !planningSummary ? (
+                            <p className="px-4 py-4 text-sm text-amber-900">Annual allocation could not be loaded. Check the Annual leave type in HR Policies → Leave types, then refresh.</p>
+                        ) : (
+                            <>
+                                <dl className="grid grid-cols-1 divide-y divide-slate-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                                    <PlanningMetric label="People to plan with" value={String(planningSummary.staffToReview)} detail="Above at least one comparison amount" />
+                                    <PlanningMetric label="Annual days above allocation" value={`${planningSummary.annualDaysAbove.toFixed(1)}d`} detail={`${planningSummary.annualStaffAbove} people · ${planningSummary.annualAvailable.toFixed(1)}d available in total`} />
+                                    <PlanningMetric label="Furlough days above threshold" value={`${planningSummary.furloughDaysAbove.toFixed(1)}d`} detail={`${planningSummary.furloughStaffAbove} people · ${planningSummary.furloughAvailable.toFixed(1)}d available in total`} />
+                                </dl>
+
+                                <div className="max-h-[28rem] overflow-auto">
+                                    <table className="min-w-full border-separate border-spacing-0 text-sm">
+                                        <thead>
+                                            <tr>
+                                                <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-4 py-2 text-left text-xs font-semibold uppercase text-slate-500">Staff member</th>
+                                                <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs font-semibold uppercase text-slate-500">Department / division</th>
+                                                <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-3 py-2 text-right text-xs font-semibold uppercase text-slate-500">Annual above allocation</th>
+                                                <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-3 py-2 text-right text-xs font-semibold uppercase text-slate-500">Furlough above threshold</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {planningRows.map((row) => (
+                                                <tr key={row.id} className="hover:bg-slate-50">
+                                                    <td className="px-4 py-2 font-medium text-slate-900">{row.display_name}</td>
+                                                    <td className="px-3 py-2 text-slate-600">{row.department_code || '—'} / {row.division_code || '—'}</td>
+                                                    <td className="px-3 py-2 text-right tabular-nums">
+                                                        <span className="font-semibold text-amber-800">{row.annual.aboveLine.toFixed(1)}d above</span>
+                                                        <span className="block text-xs text-slate-500">{row.annual.available.toFixed(1)}d available{row.annual.pending > 0 ? ` · ${row.annual.pending}d pending` : ''}</span>
+                                                    </td>
+                                                    <td className="px-3 py-2 text-right tabular-nums">
+                                                        <span className="font-semibold text-amber-800">{row.furlough.aboveLine.toFixed(1)}d above</span>
+                                                        <span className="block text-xs text-slate-500">{row.furlough.available.toFixed(1)}d available{row.furlough.pending > 0 ? ` · ${row.furlough.pending}d pending` : ''}</span>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {planningRows.length === 0 && (
+                                                <tr><td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-500">No staff exceed the selected amounts.</td></tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </>
+                        )}
+                    </section>
                 </>
             )}
         </div>

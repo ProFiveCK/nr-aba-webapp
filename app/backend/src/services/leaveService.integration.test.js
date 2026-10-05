@@ -263,6 +263,10 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       const supervisor = await createLogin('leave-supervisor@test', manager.id, { hr_leave_approve: true });
       const outsider = await createEmployee(pool, { name: 'Outsider' });
       const other = await createLogin('leave-outsider@test', outsider.id);
+      const reportAdminEmployee = await createEmployee(pool, { name: 'Report Admin' });
+      const reportAdmin = await createLogin('leave-report-admin@test', reportAdminEmployee.id, { hr_admin: true });
+      await pool.query("UPDATE hr_employees SET department_code = 'FIN' WHERE id = $1", [ana.id]);
+      await pool.query("UPDATE reviewers SET division_code = '01' WHERE id = $1", [owner.id]);
       const { application } = await apply();
       await service.decideLeave(pool, {
         applicationId: application.id, decision: 'approved', note: '', actorId: supervisor.id, canAct: allowAll,
@@ -274,6 +278,14 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       const server = await new Promise((resolve) => { const value = app.listen(0, '127.0.0.1', () => resolve(value)); });
       try {
         const { port } = server.address();
+        const balanceResponse = await fetch(`http://127.0.0.1:${port}/api/hr/employees/balances`, {
+          headers: { Authorization: `Bearer ${reportAdmin.token}` },
+        });
+        assert.equal(balanceResponse.status, 200);
+        const balanceData = await balanceResponse.json();
+        assert.equal(balanceData.employees.find((employee) => employee.id === ana.id).division_code, '01');
+        assert.ok(balanceData.leave_type_rules.some((rule) => rule.name === 'T:Annual' && rule.default_days === 20));
+
         const getForm = (id, token) => fetch(`http://127.0.0.1:${port}/api/hr/leaves/${id}/payroll-form`, {
           headers: { Authorization: `Bearer ${token}` },
         });

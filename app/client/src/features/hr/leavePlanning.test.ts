@@ -22,48 +22,64 @@ const employees: StaffBalanceRow[] = [
 ];
 
 describe('summarizeLeavePlanning', () => {
-    it('subtracts pending leave and reports staff and days above each review line', () => {
-        const summary = summarizeLeavePlanning(employees, 40, 6);
+    it('reports available days per type, net of pending leave', () => {
+        const summary = summarizeLeavePlanning(employees);
 
         expect(summary.annualAvailable).toBe(83);
-        expect(summary.annualStaffAbove).toBe(1);
-        expect(summary.annualDaysAbove).toBe(5);
         expect(summary.furloughAvailable).toBe(10);
-        expect(summary.furloughStaffAbove).toBe(1);
-        expect(summary.furloughDaysAbove).toBe(4);
-        expect(summary.furloughFlagged).toBe(true);
-        expect(summary.staffToReview).toBe(1);
+        expect(summary.totalAvailable).toBe(93);
         expect(summary.rows[0]).toMatchObject({
             display_name: 'Ana',
-            annual: { available: 45, pending: 5, aboveLine: 5 },
-            furlough: { available: 10, pending: 4, aboveLine: 4 },
+            annual: { available: 45, pending: 5 },
+            furlough: { available: 10, pending: 4 },
+            total: 55,
         });
     });
 
-    it('sorts the review list by total days above line', () => {
-        const summary = summarizeLeavePlanning(employees, 30, 6);
+    it('ranks everyone by total leave held, most first', () => {
+        const summary = summarizeLeavePlanning(employees);
 
         expect(summary.rows.map((row) => row.display_name)).toEqual(['Ana', 'Ben']);
+        expect(summary.highestTotal).toBe(55);
     });
 
-    // Clearing the threshold to 0 used to flag every positive furlough balance,
-    // so the setting could be saved but never switched off.
-    it('leaves furlough out entirely when no threshold is set', () => {
-        const summary = summarizeLeavePlanning(employees, 40, 0);
+    // No threshold: somebody holding nothing is still in the ranking, at the
+    // bottom. The list answers "who holds the most", which has an answer for
+    // everyone, rather than "who is past a line".
+    it('lists staff holding no leave rather than dropping them', () => {
+        const summary = summarizeLeavePlanning([
+            ...employees,
+            {
+                id: '3', display_name: 'Cara', department_code: 'FIN', division_code: '01',
+                reviewer_id: null, email: null,
+                balances: { Annual: { balance: 0, pending: 0 } },
+            },
+        ]);
 
-        expect(summary.furloughFlagged).toBe(false);
-        expect(summary.furloughStaffAbove).toBe(0);
-        expect(summary.furloughDaysAbove).toBe(0);
-        expect(summary.rows[0].furlough.aboveLine).toBe(0);
-        // Available days are still reported — the balances exist, they are
-        // simply not being compared with anything.
-        expect(summary.furloughAvailable).toBe(10);
+        expect(summary.staffCount).toBe(3);
+        expect(summary.rows.at(-1)).toMatchObject({ display_name: 'Cara', total: 0 });
     });
 
-    it('lists nobody when annual is within allocation and furlough is not flagged', () => {
-        const summary = summarizeLeavePlanning(employees, 100, 0);
+    // Leave already applied for is spoken for, and an overdrawn balance is not
+    // leave in hand — neither should inflate the ranking.
+    it('never counts an overdrawn balance as leave held', () => {
+        const summary = summarizeLeavePlanning([{
+            id: '4', display_name: 'Dan', department_code: null, division_code: null,
+            reviewer_id: null, email: null,
+            balances: { Annual: { balance: 2, pending: 9 } },
+        }]);
 
-        expect(summary.staffToReview).toBe(0);
-        expect(summary.rows).toEqual([]);
+        expect(summary.rows[0].annual.available).toBe(0);
+        expect(summary.totalAvailable).toBe(0);
+    });
+
+    it('breaks a tie on total by name, so the order is stable', () => {
+        const tied: StaffBalanceRow[] = ['Zoe', 'Abe'].map((name, index) => ({
+            id: String(index), display_name: name, department_code: null, division_code: null,
+            reviewer_id: null, email: null,
+            balances: { Annual: { balance: 7, pending: 0 } },
+        }));
+
+        expect(summarizeLeavePlanning(tied).rows.map((row) => row.display_name)).toEqual(['Abe', 'Zoe']);
     });
 });

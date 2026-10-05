@@ -7,6 +7,9 @@ import { EmptyState, LoadingState } from '../../components/Ui';
 import { formatDate } from '../../features/hr/types';
 import { csvCell } from '../../features/hr/csv';
 import { summarizeLeavePlanning } from '../../features/hr/leavePlanning';
+import type { LeavePlanningRow } from '../../features/hr/leavePlanning';
+import { compareCells, useTableSort } from '../../features/hr/tableSort';
+import { SortHeader } from '../../features/hr/SortHeader';
 import type { StaffBalancesResponse } from '../../features/hr/staffTypes';
 import { toIsoDate } from '../../lib/date';
 
@@ -14,6 +17,11 @@ import { toIsoDate } from '../../lib/date';
 // (days taken) by magnitude, not several series by identity, so a categorical
 // palette would be the wrong tool - see the dataviz skill's choosing-a-form.
 const SERIES_COLOR = '#2a78d6';
+
+type PlanningSortKey = 'name' | 'department' | 'annual' | 'furlough' | 'total';
+
+const PLANNING_TH = 'sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-4 py-2 text-left text-xs font-semibold uppercase text-slate-500';
+const PLANNING_TH_RIGHT = 'sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-3 py-2 text-right text-xs font-semibold uppercase text-slate-500';
 
 interface OverviewResponse {
     from: string;
@@ -357,8 +365,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
     const [loading, setLoading] = useState(true);
     const [balanceReport, setBalanceReport] = useState<StaffBalancesResponse | null>(null);
     const [balanceReportLoading, setBalanceReportLoading] = useState(true);
-    const [furloughReviewLine, setFurloughReviewLine] = useState(0);
-    const [planningType, setPlanningType] = useState<'any' | 'Annual' | 'Furlough'>('any');
+    const planningSort = useTableSort<PlanningSortKey>({ key: 'total', direction: 'desc' });
     const [planningDepartment, setPlanningDepartment] = useState('all');
     const [drill, setDrill] = useState<{ dimension: Dimension; value: string; rows: BreakdownRow[] } | null>(null);
     const [drilling, setDrilling] = useState(false);
@@ -386,7 +393,6 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
         let cancelled = false;
         apiClient.get<StaffBalancesResponse>('/hr/employees/balances')
             .then(async (result) => {
-                const settings = await apiClient.get<{ furlough_review_days: number }>('/hr/planning/settings');
                 let rules = result.leave_type_rules;
                 if (!rules?.length) {
                     const leaveTypes = await apiClient.get<Array<{
@@ -400,10 +406,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                         is_accruable: type.is_accruable,
                     }));
                 }
-                if (!cancelled) {
-                    setFurloughReviewLine(Number(settings?.furlough_review_days) || 0);
-                    setBalanceReport({ ...result, leave_type_rules: rules });
-                }
+                if (!cancelled) setBalanceReport({ ...result, leave_type_rules: rules });
             })
             .catch((err) => {
                 if (!cancelled) addToast((err as Error)?.message || 'Unable to load leave balance planning.', 'error');
@@ -446,42 +449,42 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
     const studyReturnDetail = studyReturnNames.length
         ? `${studyReturnNames.join(', ')}${studyReturnCount > studyReturnNames.length ? ` +${studyReturnCount - studyReturnNames.length} more` : ''} — restore their leave eligibility`
         : 'Still marked as away; restore their leave eligibility';
-    const annualRule = balanceReport?.leave_type_rules?.find((rule) => rule.name.toLowerCase() === 'annual');
-    const annualAllocation = annualRule && Number.isFinite(Number(annualRule.default_days))
-        ? Number(annualRule.default_days)
-        : null;
-    const planningSummary = balanceReport && annualAllocation !== null
-        ? summarizeLeavePlanning(balanceReport.employees, annualAllocation, furloughReviewLine)
-        : null;
-    // A threshold of 0 means furlough is not being flagged at all, so the
-    // column, the filter and the metric all have nothing to say.
-    const furloughFlagged = furloughReviewLine > 0;
+    const planningSummary = balanceReport ? summarizeLeavePlanning(balanceReport.employees) : null;
     const departmentOptions = balanceReport
         ? Array.from(new Set(balanceReport.employees.map((employee) => employee.department_code || 'Unassigned'))).sort()
         : [];
-    const planningRows = planningSummary?.rows.filter((row) => {
-        const department = row.department_code || 'Unassigned';
-        if (planningDepartment !== 'all' && department !== planningDepartment) return false;
-        if (planningType === 'Annual') return row.annual.aboveLine > 0;
-        if (planningType === 'Furlough' && furloughFlagged) return row.furlough.aboveLine > 0;
-        return true;
-    }) ?? [];
+    // summarizeLeavePlanning already ranks by total; re-sorted here only when
+    // a column heading asks for a different order.
+    const planningCell = (row: LeavePlanningRow, key: PlanningSortKey) => ({
+        name: row.display_name,
+        department: row.department_code,
+        annual: row.annual.available,
+        furlough: row.furlough.available,
+        total: row.total,
+    }[key]);
+    const planningRows = (planningSummary?.rows ?? [])
+        .filter((row) => planningDepartment === 'all'
+            || (row.department_code || 'Unassigned') === planningDepartment)
+        .slice()
+        .sort((a, b) => compareCells(planningCell(a, planningSort.sort.key), planningCell(b, planningSort.sort.key), planningSort.sort.direction)
+            || a.display_name.localeCompare(b.display_name));
     const exportPlanningRows = () => {
         const header = [
             'Name', 'Department', 'Division',
-            'Annual available days', 'Annual pending days', 'Annual days above allocation',
-            'Furlough available days', 'Furlough pending days', 'Furlough days above threshold',
+            'Annual available days', 'Annual pending days',
+            'Furlough available days', 'Furlough pending days',
+            'Total days held',
         ];
+        // Exported in the order on screen, so the file matches what was sorted.
         const rows = planningRows.map((row) => [
             row.display_name,
             row.department_code || '',
             row.division_code || '',
             row.annual.available,
             row.annual.pending,
-            row.annual.aboveLine,
             row.furlough.available,
             row.furlough.pending,
-            row.furlough.aboveLine,
+            row.total,
         ]);
         const csv = [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
         const blob = new Blob([String.fromCharCode(0xfeff) + csv], { type: 'text/csv;charset=utf-8;' });
@@ -762,7 +765,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-4 py-4">
                             <div>
                                 <h3 id="leave-planning-title" className="text-base font-semibold text-slate-950">Leave planning</h3>
-                                <p className="mt-1 text-sm text-slate-600">Staff with Annual or Furlough days to plan</p>
+                                <p className="mt-1 text-sm text-slate-600">Every staff member ranked by the leave they are holding</p>
                             </div>
                             <button type="button" onClick={exportPlanningRows} disabled={!planningRows.length}
                                 className="inline-flex min-h-9 items-center justify-center gap-2 rounded border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
@@ -772,24 +775,11 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
 
                         <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
                             <p className="max-w-4xl text-sm leading-5 text-slate-700">
-                                Available days = balance minus pending leave. Staff are listed when they hold more than the amounts below. A Leave Admin sets these in HR Policies.
+                                Available days = balance minus pending leave. Everyone is listed, most leave first, so
+                                management can read down from the top and decide who to plan time off with. Sort by any
+                                column heading.
                             </p>
-                            {annualAllocation !== null && (
-                                <p className="mt-2 text-sm font-medium text-slate-800">
-                                    Annual: above {annualAllocation} days (yearly allocation) · Furlough: {furloughFlagged
-                                        ? `above ${furloughReviewLine} days`
-                                        : 'not flagged (no threshold set)'}
-                                </p>
-                            )}
-                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                                <label className="text-xs font-medium text-slate-600">Show
-                                    <select value={planningType} onChange={(event) => setPlanningType(event.target.value as typeof planningType)}
-                                        className="mt-1 block w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900">
-                                        <option value="any">Both leave types</option>
-                                        <option value="Annual">Annual only</option>
-                                        {furloughFlagged && <option value="Furlough">Furlough only</option>}
-                                    </select>
-                                </label>
+                            <div className="mt-3 sm:max-w-xs">
                                 <label className="text-xs font-medium text-slate-600">Department
                                     <select value={planningDepartment} onChange={(event) => setPlanningDepartment(event.target.value)}
                                         className="mt-1 block w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900">
@@ -802,29 +792,39 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
 
                         {balanceReportLoading ? (
                             <div className="p-4"><LoadingState label="Loading leave balances…" /></div>
-                        ) : !balanceReport || annualAllocation === null || !planningSummary ? (
-                            <p className="px-4 py-4 text-sm text-amber-900">Annual allocation could not be loaded. Check the Annual leave type in HR Policies → Leave types, then refresh.</p>
+                        ) : !planningSummary ? (
+                            <p className="px-4 py-4 text-sm text-amber-900">Leave balances could not be loaded. Try refreshing.</p>
                         ) : (
                             <>
                                 <dl className="grid grid-cols-1 divide-y divide-slate-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-                                    <PlanningMetric label="People to plan with" value={String(planningSummary.staffToReview)} detail="Above at least one comparison amount" />
-                                    <PlanningMetric label="Annual days above allocation" value={`${planningSummary.annualDaysAbove.toFixed(1)}d`} detail={`${planningSummary.annualStaffAbove} people · ${planningSummary.annualAvailable.toFixed(1)}d available in total`} />
                                     <PlanningMetric
-                                        label="Furlough days above threshold"
-                                        value={furloughFlagged ? `${planningSummary.furloughDaysAbove.toFixed(1)}d` : 'Not flagged'}
-                                        detail={furloughFlagged
-                                            ? `${planningSummary.furloughStaffAbove} people · ${planningSummary.furloughAvailable.toFixed(1)}d available in total`
-                                            : `${planningSummary.furloughAvailable.toFixed(1)}d available in total · set a threshold in HR Policies to flag it`} />
+                                        label="Total leave held"
+                                        value={`${planningSummary.totalAvailable.toFixed(1)}d`}
+                                        detail={`Across ${planningSummary.staffCount} staff · most by one person is ${planningSummary.highestTotal.toFixed(1)}d`} />
+                                    <PlanningMetric
+                                        label="Annual days held"
+                                        value={`${planningSummary.annualAvailable.toFixed(1)}d`}
+                                        detail="Available after pending leave" />
+                                    <PlanningMetric
+                                        label="Furlough days held"
+                                        value={`${planningSummary.furloughAvailable.toFixed(1)}d`}
+                                        detail="Available after pending leave" />
                                 </dl>
 
                                 <div className="max-h-[28rem] overflow-auto">
                                     <table className="min-w-full border-separate border-spacing-0 text-sm">
                                         <thead>
                                             <tr>
-                                                <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-4 py-2 text-left text-xs font-semibold uppercase text-slate-500">Staff member</th>
-                                                <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs font-semibold uppercase text-slate-500">Department / division</th>
-                                                <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-3 py-2 text-right text-xs font-semibold uppercase text-slate-500">Annual above allocation</th>
-                                                <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-3 py-2 text-right text-xs font-semibold uppercase text-slate-500">Furlough above threshold</th>
+                                                <SortHeader label="Staff member" sortKey="name" sort={planningSort.sort} onSort={planningSort.toggle} defaultDirection="asc"
+                                                    className={PLANNING_TH} />
+                                                <SortHeader label="Department / division" sortKey="department" sort={planningSort.sort} onSort={planningSort.toggle} defaultDirection="asc"
+                                                    className={PLANNING_TH} />
+                                                <SortHeader label="Annual" sortKey="annual" sort={planningSort.sort} onSort={planningSort.toggle} align="right"
+                                                    className={PLANNING_TH_RIGHT} />
+                                                <SortHeader label="Furlough" sortKey="furlough" sort={planningSort.sort} onSort={planningSort.toggle} align="right"
+                                                    className={PLANNING_TH_RIGHT} />
+                                                <SortHeader label="Total held" sortKey="total" sort={planningSort.sort} onSort={planningSort.toggle} align="right"
+                                                    className={PLANNING_TH_RIGHT} />
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
@@ -832,20 +832,19 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                                 <tr key={row.id} className="hover:bg-slate-50">
                                                     <td className="px-4 py-2 font-medium text-slate-900">{row.display_name}</td>
                                                     <td className="px-3 py-2 text-slate-600">{row.department_code || '—'} / {row.division_code || '—'}</td>
-                                                    <td className="px-3 py-2 text-right tabular-nums">
-                                                        <span className="font-semibold text-amber-800">{row.annual.aboveLine.toFixed(1)}d above</span>
-                                                        <span className="block text-xs text-slate-500">{row.annual.available.toFixed(1)}d available{row.annual.pending > 0 ? ` · ${row.annual.pending}d pending` : ''}</span>
+                                                    <td className="px-3 py-2 text-right tabular-nums text-slate-800">
+                                                        {row.annual.available.toFixed(1)}d
+                                                        {row.annual.pending > 0 && <span className="block text-xs text-slate-500">{row.annual.pending}d pending</span>}
                                                     </td>
-                                                    <td className="px-3 py-2 text-right tabular-nums">
-                                                        {furloughFlagged
-                                                            ? <span className="font-semibold text-amber-800">{row.furlough.aboveLine.toFixed(1)}d above</span>
-                                                            : <span className="text-slate-400">Not flagged</span>}
-                                                        <span className="block text-xs text-slate-500">{row.furlough.available.toFixed(1)}d available{row.furlough.pending > 0 ? ` · ${row.furlough.pending}d pending` : ''}</span>
+                                                    <td className="px-3 py-2 text-right tabular-nums text-slate-800">
+                                                        {row.furlough.available.toFixed(1)}d
+                                                        {row.furlough.pending > 0 && <span className="block text-xs text-slate-500">{row.furlough.pending}d pending</span>}
                                                     </td>
+                                                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-[#002B7F]">{row.total.toFixed(1)}d</td>
                                                 </tr>
                                             ))}
                                             {planningRows.length === 0 && (
-                                                <tr><td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-500">No staff exceed the selected amounts.</td></tr>
+                                                <tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-500">No staff in this department.</td></tr>
                                             )}
                                         </tbody>
                                     </table>

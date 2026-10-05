@@ -18,6 +18,7 @@ import { ensureBalance } from './leaveAccrual.js';
 import { calculateWorkingDays, parseDateOnly } from '../lib/leaveDates.js';
 import { withTransaction } from '../lib/transaction.js';
 import { badRequest, forbidden, notFound } from '../lib/serviceError.js';
+import { PERMISSIONS } from '../config.js';
 
 /**
  * Balances are held per calendar year, keyed on the year the leave starts in.
@@ -346,4 +347,31 @@ export async function setOpeningBalance(client, { employeeId, leaveTypeId, targe
   if (delta === 0) return 0;
   await applyAdjustment(client, { employeeId, leaveTypeId, delta, reason, actorId, year });
   return delta;
+}
+
+/**
+ * Who should be told that this person has applied for leave.
+ *
+ * Their manager, when the staff record names one. When it does not — and ten
+ * of the active records currently do not — the request still lands in the
+ * administrators' queue, because HR_ADMIN sees everyone; it was only the
+ * email that went nowhere, so the application sat unannounced until somebody
+ * happened to look. The administrators are the de facto approver in that
+ * case, so they are who gets told.
+ */
+export async function leaveApprovers(pool, employee) {
+  if (employee.manager_id) {
+    const { rows } = await pool.query(
+      'SELECT display_name, email FROM hr_employees WHERE id = $1 AND email IS NOT NULL',
+      [employee.manager_id]
+    );
+    if (rows.length) return rows;
+  }
+  const { rows: admins } = await pool.query(
+    `SELECT display_name, email FROM reviewers
+      WHERE status = 'active' AND email IS NOT NULL
+        AND (permissions->>$1)::boolean IS TRUE`,
+    [PERMISSIONS.HR_ADMIN]
+  );
+  return admins;
 }

@@ -1,5 +1,6 @@
-import { Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom';
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/useAuth';
+import { useAppSections } from '../../components/appChrome';
 import { defaultLeaveSection, visibleLeaveSections, type LeaveSection } from './sections';
 import { Overview } from './sections/Overview';
 import { MyLeave } from './sections/MyLeave';
@@ -14,6 +15,9 @@ export function LeaveApp() {
     const navigate = useNavigate();
     const visible = visibleLeaveSections(user?.permissions);
     const fallback = defaultLeaveSection(user?.permissions);
+    // Drawn by the portal's sticky bar, so a long staff list does not scroll
+    // the section menu off the screen.
+    useAppSections(visible.map((section) => ({ to: `/leave/${section.id}`, label: section.label })));
 
     // hr_access can be granted on its own, without any of the action
     // capabilities that make a section worth opening.
@@ -34,27 +38,6 @@ export function LeaveApp() {
 
     return (
         <div className="space-y-5">
-            {/* Leave owns its header, so the title and its sections read as one
-                block. The portal chrome above is the only thing it shares. */}
-            <div className="border-b border-slate-200">
-                <h2 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">Leave</h2>
-                <nav aria-label="Leave sections" className="-mb-px mt-3 flex gap-6 overflow-x-auto [scrollbar-width:none]">
-                    {visible.map((section) => (
-                        <NavLink
-                            key={section.id}
-                            to={`/leave/${section.id}`}
-                            className={({ isActive }) => `shrink-0 whitespace-nowrap border-b-2 pb-2.5 pt-1 text-sm font-medium transition-colors ${
-                                isActive
-                                    ? 'border-[#E8842C] text-[#002B7F]'
-                                    : 'border-transparent text-slate-600 hover:text-[#002B7F]'
-                            }`}
-                        >
-                            {section.label}
-                        </NavLink>
-                    ))}
-                </nav>
-            </div>
-
             <Routes>
                 <Route index element={<Navigate to={fallback} replace />} />
                 {visible.some((s) => s.id === 'overview') && <Route path="overview" element={<Overview onNavigate={goToSection} />} />}

@@ -6,12 +6,9 @@ import { ToastProvider } from './contexts/ToastContext';
 import { ConfirmProvider } from './contexts/ConfirmContext';
 import { Login } from './pages/Login';
 import { Layout } from './components/Layout';
-import { AppPageHeader } from './components/AppPageHeader';
 import { ResetPasswordModal } from './components/ResetPasswordModal';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { Dashboard } from './pages/Dashboard';
-import type { AppId } from './lib/apps';
-
 // Every app is loaded on demand. Now that each one owns a route, somebody who
 // only ever opens Leave no longer downloads ABA, Banking and the rest to get
 // there — which they did when these were imported up front.
@@ -30,22 +27,6 @@ declare global {
   }
 }
 
-/**
- * An app that has not been converted to its own routed structure yet.
- *
- * These still keep their section state in the hash and rely on the portal to
- * print their title, which is what `AppPageHeader` does. Leave does neither —
- * it owns its page from the heading down — so it is routed without this.
- */
-function ClassicApp({ id, children }: { id: AppId; children: React.ReactNode }) {
-  return (
-    <>
-      <AppPageHeader appId={id} />
-      {children}
-    </>
-  );
-}
-
 const SPINNER = (
   <div className="flex h-full min-h-96 items-center justify-center">
     <div className="inline-block h-8 w-8 animate-spin rounded-full border-b-2 border-amber-500"></div>
@@ -56,19 +37,22 @@ function AuthedRoutes() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route index element={<><AppPageHeader appId="dashboard" /><Dashboard /></>} />
-        <Route path="aba/*" element={<ClassicApp id="aba"><AbaWorkflow /></ClassicApp>} />
-        <Route path="banking/*" element={<ClassicApp id="banking"><Banking /></ClassicApp>} />
-        <Route path="payroll/*" element={<ClassicApp id="payroll"><Payroll /></ClassicApp>} />
-        <Route path="tools/*" element={<ClassicApp id="tools"><Tools /></ClassicApp>} />
-        <Route path="forex-tt/*" element={<ClassicApp id="forex-tt"><ForexTTApp /></ClassicApp>} />
-        <Route path="wellness/*" element={<ClassicApp id="public-health"><PublicHealthApp /></ClassicApp>} />
-        <Route path="admin/*" element={<ClassicApp id="admin"><Admin /></ClassicApp>} />
-
-        {/* Converted: owns its own header and section routes. */}
+        {/* Every app owns its page from the top: the portal draws the header
+            bar and the app's section menu, and the app's own content starts
+            immediately below. No app prints a portal-supplied title. */}
+        <Route index element={<Dashboard />} />
+        <Route path="aba/*" element={<AbaWorkflow />} />
+        <Route path="banking/*" element={<Banking />} />
+        <Route path="payroll/*" element={<Payroll />} />
+        <Route path="tools/*" element={<Tools />} />
+        <Route path="forex-tt/*" element={<ForexTTApp />} />
+        <Route path="fit-for-duty/*" element={<PublicHealthApp />} />
         <Route path="leave/*" element={<LeaveApp />} />
-        {/* The internal id, for anyone who typed or saved the old name. */}
+        <Route path="admin/*" element={<Admin />} />
+
+        {/* Earlier names, kept so saved links and emails still land. */}
         <Route path="hr/*" element={<Navigate to="/leave" replace />} />
+        <Route path="wellness/*" element={<Navigate to="/fit-for-duty" replace />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

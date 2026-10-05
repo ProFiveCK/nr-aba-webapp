@@ -5,22 +5,20 @@ export interface LeavePlanningRow {
     display_name: string;
     department_code: string | null;
     division_code: string | null;
-    annual: { available: number; pending: number; aboveLine: number };
-    furlough: { available: number; pending: number; aboveLine: number };
-    totalAboveLine: number;
+    annual: { available: number; pending: number };
+    furlough: { available: number; pending: number };
+    /** Annual plus furlough available — what the ranking is on. */
+    total: number;
 }
 
 export interface LeavePlanningSummary {
     rows: LeavePlanningRow[];
     annualAvailable: number;
-    annualStaffAbove: number;
-    annualDaysAbove: number;
     furloughAvailable: number;
-    furloughStaffAbove: number;
-    furloughDaysAbove: number;
-    /** False when no furlough threshold is set, so furlough is not flagged at all. */
-    furloughFlagged: boolean;
-    staffToReview: number;
+    totalAvailable: number;
+    staffCount: number;
+    /** The largest total held by one person, for reading the top of the list against. */
+    highestTotal: number;
 }
 
 function balanceFor(employee: StaffBalanceRow, leaveType: string) {
@@ -30,52 +28,43 @@ function balanceFor(employee: StaffBalanceRow, leaveType: string) {
 }
 
 /**
- * A `furloughReviewLine` of zero means no threshold has been set, not a
- * threshold of nothing: furlough is then left out of the review entirely
- * rather than flagging every positive balance.
+ * Every member of staff ranked by the leave they are holding, most first.
  *
- * Annual is compared with its yearly allocation, which always exists. Furlough
- * has no allocation, so the only line it can be above is one a Leave Admin
- * names; until they do, "above" has nothing to mean. Treating zero as a real
- * line was how clearing the setting put every furlough holder on the list.
+ * There is deliberately no threshold here. "How much leave has built up, and
+ * who has the most of it" is a question with an answer for everyone, and the
+ * previous version could only answer it for people past a line — a line that
+ * for annual leave was quietly the yearly allocation, which is an entitlement
+ * and not a judgement about how much is too much. Management reads down from
+ * the top and decides where to stop.
+ *
+ * Available is balance minus pending and never negative: leave already
+ * applied for is spoken for, and an overdrawn balance is not leave in hand.
  */
-export function summarizeLeavePlanning(
-    employees: StaffBalanceRow[],
-    annualReviewLine: number,
-    furloughReviewLine: number
-): LeavePlanningSummary {
-    const furloughFlagged = Number(furloughReviewLine) > 0;
-    const allRows = employees.map((employee) => {
-        const annualBalance = balanceFor(employee, 'Annual');
-        const furloughBalance = balanceFor(employee, 'Furlough');
-        const annual = { ...annualBalance, aboveLine: Math.max(0, annualBalance.available - annualReviewLine) };
-        const furlough = {
-            ...furloughBalance,
-            aboveLine: furloughFlagged ? Math.max(0, furloughBalance.available - furloughReviewLine) : 0,
-        };
-        return {
-            id: employee.id,
-            display_name: employee.display_name,
-            department_code: employee.department_code,
-            division_code: employee.division_code,
-            annual,
-            furlough,
-            totalAboveLine: annual.aboveLine + furlough.aboveLine,
-        };
-    });
-    const rows = allRows
-        .filter((row) => row.totalAboveLine > 0)
-        .sort((a, b) => b.totalAboveLine - a.totalAboveLine || a.display_name.localeCompare(b.display_name));
+export function summarizeLeavePlanning(employees: StaffBalanceRow[]): LeavePlanningSummary {
+    const rows = employees
+        .map((employee) => {
+            const annual = balanceFor(employee, 'Annual');
+            const furlough = balanceFor(employee, 'Furlough');
+            return {
+                id: employee.id,
+                display_name: employee.display_name,
+                department_code: employee.department_code,
+                division_code: employee.division_code,
+                annual,
+                furlough,
+                total: annual.available + furlough.available,
+            };
+        })
+        .sort((a, b) => b.total - a.total || a.display_name.localeCompare(b.display_name));
 
+    const annualAvailable = rows.reduce((sum, row) => sum + row.annual.available, 0);
+    const furloughAvailable = rows.reduce((sum, row) => sum + row.furlough.available, 0);
     return {
         rows,
-        annualAvailable: allRows.reduce((total, row) => total + row.annual.available, 0),
-        annualStaffAbove: allRows.filter((row) => row.annual.aboveLine > 0).length,
-        annualDaysAbove: allRows.reduce((total, row) => total + row.annual.aboveLine, 0),
-        furloughAvailable: allRows.reduce((total, row) => total + row.furlough.available, 0),
-        furloughStaffAbove: allRows.filter((row) => row.furlough.aboveLine > 0).length,
-        furloughDaysAbove: allRows.reduce((total, row) => total + row.furlough.aboveLine, 0),
-        furloughFlagged,
-        staffToReview: rows.length,
+        annualAvailable,
+        furloughAvailable,
+        totalAvailable: annualAvailable + furloughAvailable,
+        staffCount: rows.length,
+        highestTotal: rows[0]?.total ?? 0,
     };
 }

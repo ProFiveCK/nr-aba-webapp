@@ -13,6 +13,7 @@ import { BalancesReport } from '../../features/hr/BalancesReport';
 import type {
     ImportResult,
     ImportRow,
+    StaffBalanceRow,
     StaffBalancesResponse,
 } from '../../features/hr/staffTypes';
 import { INELIGIBLE_REASON_LABELS } from '../../features/hr/types';
@@ -421,10 +422,12 @@ export function Staff() {
         URL.revokeObjectURL(url);
     };
 
-    const exportReport = () => {
+    // Takes the rows from the report table so the file comes out in whatever
+    // order the user sorted the columns into, rather than the API's.
+    const exportReport = (employees: StaffBalanceRow[]) => {
         if (!report) return;
         const header = ['Name', 'Department', 'Division', 'Login', ...report.leave_types];
-        const rows = report.employees.map((e) => [
+        const rows = employees.map((e) => [
             e.display_name,
             e.department_code || '',
             e.division_code || '',

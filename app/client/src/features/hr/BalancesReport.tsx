@@ -1,6 +1,24 @@
 import { RefreshCw } from 'lucide-react';
 import { EmptyState, LoadingState } from '../../components/Ui';
-import type { StaffBalancesResponse } from './staffTypes';
+import { compareCells, useTableSort } from './tableSort';
+import { SortHeader } from './SortHeader';
+import type { StaffBalanceRow, StaffBalancesResponse } from './staffTypes';
+
+// Fixed columns are keyed by name; a leave type column is keyed by the type's
+// own name, which cannot collide with these because a type called "name"
+// would still arrive as "Name" and the keys below are lower case.
+const NAME = 'name';
+const DEPT = 'dept';
+const DIVISION = 'division';
+
+const TH_FIXED = 'sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500';
+const TH_TYPE = 'sticky top-0 z-10 whitespace-nowrap border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-zinc-500';
+
+/** Days in hand for one leave type: what is on the books less what is held. */
+function availableFor(employee: StaffBalanceRow, leaveType: string): number {
+    const entry = employee.balances[leaveType];
+    return entry ? entry.balance - entry.pending : 0;
+}
 
 // Every staff member against every active leave type, visible without
 // clicking into each person individually. Sticky header and name column so
@@ -11,9 +29,14 @@ export function BalancesReport({
     report: StaffBalancesResponse | null;
     loading: boolean;
     onOpenEmployee: (id: string) => void;
-    onExport: () => void;
+    /** Receives the rows in the order shown, so the file matches the screen. */
+    onExport: (employees: StaffBalanceRow[]) => void;
     onRefresh: () => void;
 }) {
+    // Declared before the early returns below: a hook cannot be called
+    // conditionally, and both of those paths return without a table.
+    const { sort, toggle } = useTableSort<string>({ key: NAME, direction: 'asc' });
+
     if (loading && !report) return <LoadingState label="Loading balances…" />;
     if (!report || !report.employees.length) {
         return (
@@ -22,6 +45,17 @@ export function BalancesReport({
             </div>
         );
     }
+    const cellFor = (employee: StaffBalanceRow, key: string): string | number | null => {
+        if (key === NAME) return employee.display_name;
+        if (key === DEPT) return employee.department_code;
+        if (key === DIVISION) return employee.division_code;
+        return availableFor(employee, key);
+    };
+    const employees = report.employees.slice().sort((a, b) => (
+        compareCells(cellFor(a, sort.key), cellFor(b, sort.key), sort.direction)
+        || a.display_name.localeCompare(b.display_name)
+    ));
+
     return (
         <div className="app-panel">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
@@ -42,7 +76,7 @@ export function BalancesReport({
                     </button>
                     <button
                         type="button"
-                        onClick={onExport}
+                        onClick={() => onExport(employees)}
                         className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
                     >
                         Export CSV
@@ -53,27 +87,21 @@ export function BalancesReport({
                 <table className="min-w-full border-separate border-spacing-0 text-sm">
                     <thead>
                         <tr>
-                            <th className="sticky left-0 top-0 z-20 border-b border-r border-zinc-200 bg-zinc-50 px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                                Name
-                            </th>
-                            <th className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                                Dept
-                            </th>
-                            <th className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                                Division
-                            </th>
+                            <SortHeader
+                                label="Name" sortKey={NAME} sort={sort} onSort={toggle} defaultDirection="asc"
+                                className="sticky left-0 top-0 z-20 border-b border-r border-zinc-200 bg-zinc-50 px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500"
+                            />
+                            <SortHeader label="Dept" sortKey={DEPT} sort={sort} onSort={toggle} defaultDirection="asc" className={TH_FIXED} />
+                            <SortHeader label="Division" sortKey={DIVISION} sort={sort} onSort={toggle} defaultDirection="asc" className={TH_FIXED} />
                             {report.leave_types.map((t) => (
-                                <th
-                                    key={t}
-                                    className="sticky top-0 z-10 whitespace-nowrap border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-zinc-500"
-                                >
-                                    {t}
-                                </th>
+                                // Days descending on first click: the question
+                                // asked of a balance column is who has the most.
+                                <SortHeader key={t} label={t} sortKey={t} sort={sort} onSort={toggle} align="right" className={TH_TYPE} />
                             ))}
                         </tr>
                     </thead>
                     <tbody>
-                        {report.employees.map((e) => (
+                        {employees.map((e) => (
                             <tr key={e.id} className="cursor-pointer hover:bg-zinc-50" onClick={() => onOpenEmployee(e.id)}>
                                 <td className="sticky left-0 z-10 whitespace-nowrap border-b border-r border-zinc-100 bg-white px-4 py-2 font-medium text-zinc-900">
                                     {e.display_name}

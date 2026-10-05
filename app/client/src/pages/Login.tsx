@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Building2, ChevronDown, LayoutGrid, Loader2, LockKeyhole, Mail, User } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { Button, Modal, ModalActions } from '../components/Ui';
 import { useAuth } from '../contexts/useAuth';
 import { apiClient } from '../lib/api';
@@ -25,6 +26,9 @@ const linkClass =
 
 export function Login() {
     const { login, loginWithGoogle } = useAuth();
+    const [searchParams] = useSearchParams();
+    // Set by App when an API call finds the session gone.
+    const sessionExpired = searchParams.get('session') === 'expired';
     const googleButtonRef = useRef<HTMLDivElement | null>(null);
     const [googleEnabled, setGoogleEnabled] = useState(false);
     const [isLogin, setIsLogin] = useState(true);
@@ -249,8 +253,14 @@ export function Login() {
                         {isLogin ? 'Log on using your details' : 'Create an access request'}
                     </h2>
 
+                    {sessionExpired && isLogin && !error && (
+                        <div role="status" className="mb-5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
+                            Your session expired, please sign in again.
+                        </div>
+                    )}
+
                     {error && (
-                        <div className="mb-5 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600">
+                        <div role="alert" className="mb-5 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600">
                             {error}
                         </div>
                     )}

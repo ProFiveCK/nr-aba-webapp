@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useSearchParams } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { useAuth } from './contexts/useAuth';
 import { ToastProvider } from './contexts/ToastContext';
@@ -74,16 +74,35 @@ function AppContent() {
     return null;
   });
 
+  const [searchParams, setSearchParams] = useSearchParams();
+
   useEffect(() => {
     window.handleAuthExpired = () => {
+      // A wrong password also answers 401; only a signed-in session can expire.
+      if (!isAuthenticated) return;
       logout();
-      console.log('Session expired. Please log in again.');
+      // ?session=expired tells Login to say why the user is back there, and
+      // keeps the path so they return to the same page after signing in.
+      setSearchParams((params) => {
+        params.set('session', 'expired');
+        return params;
+      }, { replace: true });
     };
 
     return () => {
       delete window.handleAuthExpired;
     };
-  }, [logout]);
+  }, [isAuthenticated, logout, setSearchParams]);
+
+  // Drop the notice once they are back in, so a later sign-out does not repeat it.
+  useEffect(() => {
+    if (isAuthenticated && searchParams.has('session')) {
+      setSearchParams((params) => {
+        params.delete('session');
+        return params;
+      }, { replace: true });
+    }
+  }, [isAuthenticated, searchParams, setSearchParams]);
 
   const handleResetPasswordClose = () => setResetToken(null);
 

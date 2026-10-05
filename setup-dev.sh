@@ -510,7 +510,10 @@ fi
 
 echo ""
 log_success "Ready to go! Open the URL above and login with the provided credentials."
-echo ""echo ""
+# Local CI runs before every push (there is no GitHub CI). See .githooks/pre-push.
+git config core.hooksPath .githooks && echo -e "  ${GREEN}✓${NC} pre-push hook on: npm run ci:local runs before every git push"
+
+echo ""
 echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
 echo -e "${GREEN}${BOLD}  Setup complete! Happy developing! ${ROCKET}${NC}"
 echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"

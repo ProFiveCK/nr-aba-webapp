@@ -97,6 +97,18 @@ npm run ci:local
 failure: `npm ci` in backend and client, backend tests against a throwaway
 Postgres in Docker (`npm run test:db`), client lint, build (into `app/client/build`)
 and tests, then `npm audit --omit=dev --audit-level=high` on the backend.
+
+A pre-push hook runs it for you. `./setup-dev.sh` turns it on; in any other
+clone, turn it on once with:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook refuses a push while you have uncommitted changes, or when you push a
+commit other than the one checked out, because the checks would be testing
+different code from what is pushed. Branch deletions skip the checks. In an
+emergency, `git push --no-verify` skips it.
 Docker must be running.
 
 ---

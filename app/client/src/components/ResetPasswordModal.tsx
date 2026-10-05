@@ -26,8 +26,8 @@ export function ResetPasswordModal({ token, onClose, onSuccess }: ResetPasswordM
         }
 
         // Validate password length
-        if (newPassword.length < 6) {
-            setError('Password must be at least 6 characters');
+        if (newPassword.length < 12) {
+            setError('Password must be at least 12 characters');
             return;
         }
 
@@ -99,7 +99,7 @@ export function ResetPasswordModal({ token, onClose, onSuccess }: ResetPasswordM
                                 id="new-password"
                                 type="password"
                                 required
-                                minLength={6}
+                                minLength={12}
                                 maxLength={128}
                                 value={newPassword}
                                 onChange={(e) => setNewPassword(e.target.value)}
@@ -109,7 +109,7 @@ export function ResetPasswordModal({ token, onClose, onSuccess }: ResetPasswordM
                                 autoFocus
                             />
                             <p className="mt-1 text-xs text-gray-500">
-                                Minimum 6 characters
+                                Minimum 12 characters
                             </p>
                         </div>
 
@@ -121,7 +121,7 @@ export function ResetPasswordModal({ token, onClose, onSuccess }: ResetPasswordM
                                 id="confirm-password"
                                 type="password"
                                 required
-                                minLength={6}
+                                minLength={12}
                                 maxLength={128}
                                 value={confirmPassword}
                                 onChange={(e) => setConfirmPassword(e.target.value)}

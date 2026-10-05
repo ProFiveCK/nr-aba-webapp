@@ -126,9 +126,12 @@ function AppContent() {
 
   return (
     <>
-      <Suspense fallback={SPINNER}>
-        <AuthedRoutes />
-      </Suspense>
+      {/* The server refuses everything else until the password is changed. */}
+      {!requiresPasswordChange && (
+        <Suspense fallback={SPINNER}>
+          <AuthedRoutes />
+        </Suspense>
+      )}
       {resetModal}
       {requiresPasswordChange && (
         <ChangePasswordModal
@@ -136,6 +139,8 @@ function AppContent() {
             // Forced password change cannot be dismissed; logout instead.
             logout();
           }}
+          // The new session clears requiresPasswordChange, which closes this.
+          onChanged={() => {}}
         />
       )}
     </>

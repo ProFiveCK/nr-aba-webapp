@@ -215,7 +215,7 @@ if [ "$ENV_NEEDS_CONFIG" = true ]; then
         log_info "👤 Creating Default Admin Account"
         ADMIN_EMAIL="admin@example.com"
         ADMIN_NAME="System Admin"
-        ADMIN_PASS="Admin123!"
+        ADMIN_PASS="$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-20)"
         log_success "Default admin account configured"
         
         # Detect OS and set appropriate web port
@@ -472,7 +472,7 @@ echo -e "${YELLOW}${BOLD}📋 LOGIN TO YOUR APPLICATION:${NC}"
 echo ""
 echo -e "  ${GREEN}${BOLD}URL:${NC}      $FRONTEND_URL"
 echo -e "  ${GREEN}${BOLD}Username:${NC} admin@example.com"
-echo -e "  ${GREEN}${BOLD}Password:${NC} Admin123!"
+echo -e "  ${GREEN}${BOLD}Password:${NC} $(grep "^DEFAULT_ADMIN_PASSWORD=" .env.prod 2>/dev/null | cut -d= -f2-)"
 echo ""
 echo -e "${RED}${BOLD}⚠️  IMPORTANT: Change the password immediately after first login!${NC}"
 echo ""

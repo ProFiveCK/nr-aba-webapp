@@ -38,7 +38,7 @@ What `./setup-dev.sh` does (today):
 The setup script currently bootstraps a default admin account:
 
 - Email: `admin@example.com`
-- Password: `Admin123!`
+- Password: printed at the end of `./setup-dev.sh` (also `DEFAULT_ADMIN_PASSWORD` in `.env.prod`)
 
 Change this password immediately after first login.
 

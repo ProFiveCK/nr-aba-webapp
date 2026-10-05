@@ -25,7 +25,7 @@ The wizard will:
 5. **Build** the frontend bundle
 6. **Start** all services and print the access URL
 
-> **Default admin:** `admin@example.com` / `Admin123!` — change this on first login.
+> **First admin:** the wizard generates a random password and prints it at the end. You must change it at first sign-in, then remove `DEFAULT_ADMIN_PASSWORD` from `.env.prod`.
 
 To verify prerequisites only (no changes):
 
@@ -66,7 +66,7 @@ sudo docker exec -i ron-aba-postgres-prod psql -U postgres -d aba < backup/yourf
 sudo docker compose --env-file .env.prod start api
 ```
 
-> **Fallback access:** after every restart the API bootstraps the `DEFAULT_ADMIN_EMAIL` account from `.env.prod` if needed. So even if you don't know the admin credentials in the restored dump, you can always log in with `admin@example.com` / `Admin123!` as a fallback.
+> **Locked out after a restore?** The API creates the `DEFAULT_ADMIN_EMAIL` account only when the database has **no active administrator**. It refuses a known default or any password shorter than 12 characters. To recover, set a strong `DEFAULT_ADMIN_PASSWORD` in `.env.prod`, deactivate the other admins (or restore into a fresh database), and restart the API.
 
 Backup files live in `./backup/`. See [`scripts/backup-ron-stack.sh`](scripts/backup-ron-stack.sh) for the automated backup script.
 
@@ -123,7 +123,7 @@ Edit it with `nano .env.prod`, then restart: `docker compose --env-file .env.pro
 | `JWT_SECRET` | Signs reviewer sessions — rotate in production |
 | `WEB_PORT` | Exposed HTTP port (`80` Linux · `8080` macOS) |
 | `FRONTEND_BASE_URL` | Absolute URL used in outbound email links |
-| `DEFAULT_ADMIN_EMAIL/PASSWORD/NAME` | Bootstrap admin — remove after provisioning |
+| `DEFAULT_ADMIN_EMAIL/PASSWORD/NAME` | First admin, created only when no active admin exists (password ≥ 12 chars) — remove the password after provisioning |
 | `SMTP_HOST/PORT/USER/PASS/FROM` | Outbound mail (leave blank to disable) |
 | `SFTP_SYNC_METHOD` | `database` (default) · `direct` · `file` |
 | `REVIEWER_SESSION_MINUTES` | Session lifetime (default 480) |

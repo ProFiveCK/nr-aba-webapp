@@ -6,9 +6,11 @@ import type { User } from '../contexts/auth-types';
 
 interface ChangePasswordModalProps {
     onClose: () => void;
+    /** Called instead of onClose after a successful change. */
+    onChanged?: () => void;
 }
 
-export function ChangePasswordModal({ onClose }: ChangePasswordModalProps) {
+export function ChangePasswordModal({ onClose, onChanged }: ChangePasswordModalProps) {
     const { replaceSession } = useAuth();
     const { addToast } = useToast();
     const [currentPassword, setCurrentPassword] = useState('');
@@ -21,8 +23,8 @@ export function ChangePasswordModal({ onClose }: ChangePasswordModalProps) {
         event.preventDefault();
         setError('');
 
-        if (newPassword.length < 6) {
-            setError('New password must be at least 6 characters.');
+        if (newPassword.length < 12) {
+            setError('New password must be at least 12 characters.');
             return;
         }
         if (newPassword !== confirmPassword) {
@@ -47,7 +49,7 @@ export function ChangePasswordModal({ onClose }: ChangePasswordModalProps) {
                 replaceSession(response.token, response.reviewer);
             }
             addToast('Password updated. You are now signed in with the new credentials.', 'success');
-            onClose();
+            (onChanged ?? onClose)();
         } catch (err) {
             setError((err as Error)?.message || 'Unable to change password.');
         } finally {
@@ -64,7 +66,7 @@ export function ChangePasswordModal({ onClose }: ChangePasswordModalProps) {
                 <div className="flex items-start justify-between">
                     <div>
                         <h2 className="text-xl font-semibold text-gray-900">Change Password</h2>
-                        <p className="text-sm text-gray-500 mt-1">Enter your current password and a new password (minimum 6 characters).</p>
+                        <p className="text-sm text-gray-500 mt-1">Enter your current password and a new password (minimum 12 characters).</p>
                     </div>
                     <button
                         type="button"
@@ -97,7 +99,7 @@ export function ChangePasswordModal({ onClose }: ChangePasswordModalProps) {
                             onChange={(e) => setNewPassword(e.target.value)}
                             className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                             autoComplete="new-password"
-                            minLength={6}
+                            minLength={12}
                             required
                         />
                     </label>
@@ -110,7 +112,7 @@ export function ChangePasswordModal({ onClose }: ChangePasswordModalProps) {
                             onChange={(e) => setConfirmPassword(e.target.value)}
                             className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                             autoComplete="new-password"
-                            minLength={6}
+                            minLength={12}
                             required
                         />
                     </label>

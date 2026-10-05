@@ -38,6 +38,9 @@ export const PAYROLL_PYTHON_BIN = process.env.PAYROLL_PYTHON_BIN || process.env.
 export const PAYROLL_MAX_FILE_BYTES = 10 * 1024 * 1024;
 export const AUTH_LOCKOUT_WINDOW_MS = Number(process.env.AUTH_LOCKOUT_WINDOW_MS || 15 * 60 * 1000);
 export const AUTH_MAX_FAILED_ATTEMPTS = Number(process.env.AUTH_MAX_FAILED_ATTEMPTS || 5);
+// Applies whenever a password is set. Existing shorter passwords still sign
+// in; they are replaced at the next change or reset.
+export const PASSWORD_MIN_LENGTH = 12;
 export const EXCEL_MIME_TYPES = new Set([
   'application/vnd.ms-excel',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

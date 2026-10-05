@@ -289,7 +289,6 @@ export function Login() {
                                         id="password"
                                         type="password"
                                         required
-                                        minLength={6}
                                         autoComplete="current-password"
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
@@ -393,7 +392,7 @@ export function Login() {
                                         id="signup-password"
                                         type="password"
                                         required
-                                        minLength={6}
+                                        minLength={12}
                                         autoComplete="new-password"
                                         value={signupPassword}
                                         onChange={(e) => setSignupPassword(e.target.value)}

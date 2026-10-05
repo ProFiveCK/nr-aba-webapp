@@ -4,7 +4,6 @@ import { EmptyState, Icon, LoadingState } from '../components/Ui';
 import { useAuth } from '../contexts/useAuth';
 import { useToast } from '../contexts/useToast';
 import type { BatchDetail, BatchStage } from './MyBatches/types';
-import type { HeaderData, Transaction as GeneratorTransaction } from './Generator/types';
 import {
     downloadBase64File,
     formatIsoDateTime,
@@ -12,10 +11,8 @@ import {
     formatPdNumber,
     formatBatchCode,
     getBatchStageBadgeClasses,
-    toBase64,
 } from '../lib/utils';
-import { CREDIT_CODE_SET, CREDIT_TXN_CODES, HEADER_PRESETS, STAGE_META } from '../lib/constants';
-import { buildAbaFile } from '../lib/generator-utils';
+import { HEADER_PRESETS, STAGE_META } from '../lib/constants';
 
 interface ReviewerProps {
     onSwitchToReader?: () => void;
@@ -55,16 +52,6 @@ interface ArchivePage {
 }
 
 const ARCHIVE_LIMIT = 40;
-
-type PayloadTransaction = {
-    bsb?: string;
-    account?: string;
-    amount?: number | string;
-    cents?: number;
-    accountTitle?: string;
-    lodgementRef?: string;
-    txnCode?: string;
-};
 
 export function Reviewer({ onSwitchToReader }: ReviewerProps) {
     const { user } = useAuth();
@@ -189,7 +176,6 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
     const metrics = selectedBatch?.transactions?.metrics;
     const duplicates = selectedBatch?.transactions?.duplicates as { sets?: number; rows?: number } | undefined;
     const payloadHeader = selectedBatch?.transactions?.payload?.header as Record<string, unknown> | undefined;
-    const payloadTransactions = selectedBatch?.transactions?.payload?.transactions as PayloadTransaction[] | undefined;
     const traceBsb = (payloadHeader?.trace_bsb as string | undefined) || '';
     const traceAcct = (payloadHeader?.trace_acct as string | undefined) || '';
     const balanceBsb = (payloadHeader?.balance_bsb as string | undefined) || '';
@@ -262,26 +248,15 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
             setValueDateError('Processing date must be DDMMYY (6 digits).');
             return;
         }
-        const normalizedTransactions = normalizePayloadTransactions(payloadTransactions);
-        if (!normalizedTransactions.length) {
-            setValueDateError('Original transaction payload not available.');
-            return;
-        }
-        const headerData = buildHeaderDataFromPayload(payloadHeader);
-        headerData.proc = trimmedProc;
         const sanitizedDesc = valueDateDesc.trim().slice(0, 12);
         const sanitizedRemitter = valueDateRemitter.trim().slice(0, 16);
-        if (sanitizedDesc) headerData.desc = sanitizedDesc;
-        if (sanitizedRemitter) headerData.remitter = sanitizedRemitter;
         try {
             setValueDateLoading(true);
-            const abaText = buildAbaFile(headerData, normalizedTransactions);
-            const abaBase64 = toBase64(abaText);
+            // The server amends the stored file itself; only the new values are sent.
             await apiClient.patch(`/batches/${encodeURIComponent(selectedBatch.code)}/value-date`, {
                 proc: trimmedProc,
                 desc: sanitizedDesc || undefined,
                 remitter: sanitizedRemitter || undefined,
-                aba_content: abaBase64,
             });
             addToast('Processing date updated successfully.', 'success');
             setValueDateModalOpen(false);
@@ -730,68 +705,3 @@ function normalizeAccount(value?: string) {
     return value.replace(/[^0-9]/g, '').slice(0, 16);
 }
 
-function normalizePayloadTransactions(items?: PayloadTransaction[]): GeneratorTransaction[] {
-    if (!Array.isArray(items)) return [];
-    return items
-        .map((tx) => {
-            const rawCode = (tx.txnCode || '53').toString();
-            const creditCode = CREDIT_CODE_SET.has(rawCode as typeof CREDIT_TXN_CODES[number])
-                ? (rawCode as typeof CREDIT_TXN_CODES[number])
-                : '53';
-            const numericAmount =
-                typeof tx.amount === 'number'
-                    ? tx.amount
-                    : typeof tx.amount === 'string'
-                    ? Number(tx.amount)
-                    : undefined;
-            const centsAmount = typeof tx.cents === 'number' ? tx.cents / 100 : undefined;
-            const amount = centsAmount ?? numericAmount ?? 0;
-            return {
-                bsb: tx.bsb || '',
-                account: tx.account || '',
-                amount,
-                accountTitle: tx.accountTitle || '',
-                lodgementRef: tx.lodgementRef || '',
-                txnCode: creditCode,
-            };
-        })
-        .filter((tx) => tx.bsb && tx.account && tx.amount > 0);
-}
-
-function buildHeaderDataFromPayload(payloadHeader?: Record<string, unknown>): HeaderData {
-    const preset = HEADER_PRESETS['CBA-RON'];
-    const fallbackProc = typeof preset.proc === 'string' ? preset.proc : '';
-    const getString = (key: string, fallback: string) => {
-        if (!payloadHeader) return fallback;
-        const value = payloadHeader[key];
-        if (typeof value === 'string' || typeof value === 'number') return String(value);
-        return fallback;
-    };
-    const getBoolean = (key: string, fallback: boolean) => {
-        if (!payloadHeader) return fallback;
-        const value = payloadHeader[key];
-        if (typeof value === 'boolean') return value;
-        if (typeof value === 'string') {
-            const normalized = value.trim().toLowerCase();
-            if (['true', 't', '1', 'yes', 'y'].includes(normalized)) return true;
-            if (['false', 'f', '0', 'no', 'n'].includes(normalized)) return false;
-        }
-        return fallback;
-    };
-    return {
-        fi: getString('fi', preset.fi),
-        reel: getString('reel', preset.reel),
-        user: getString('user', preset.user),
-        apca: getString('apca', preset.apca),
-        desc: getString('desc', preset.desc),
-        proc: getString('proc', fallbackProc),
-        trace_bsb: getString('trace_bsb', preset.trace_bsb),
-        trace_acct: getString('trace_acct', preset.trace_acct),
-        remitter: getString('remitter', preset.remitter),
-        balance_required: getBoolean('balance_required', Boolean(preset.balance_required)),
-        balance_txn_code: getString('balance_txn_code', preset.balance_txn_code || '13'),
-        balance_bsb: getString('balance_bsb', preset.balance_bsb),
-        balance_acct: getString('balance_acct', preset.balance_acct),
-        balance_title: getString('balance_title', preset.balance_title),
-    };
-}

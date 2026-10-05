@@ -749,7 +749,7 @@ export async function initSchema() {
     await client.query(`
       CREATE TABLE IF NOT EXISTS audit_log (
         id BIGSERIAL PRIMARY KEY,
-        actor_id UUID REFERENCES reviewers(id),
+        actor_id UUID,
         actor_email TEXT,
         action TEXT NOT NULL,
         entity_type TEXT NOT NULL,
@@ -763,6 +763,31 @@ export async function initSchema() {
     `);
     await client.query('CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id, created_at DESC)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor_id, created_at DESC)');
+    // The trail outlives the accounts in it: actor_email names whoever acted,
+    // and a foreign key would make deleting any audited account fail.
+    await client.query('ALTER TABLE audit_log DROP CONSTRAINT IF EXISTS audit_log_actor_id_fkey');
+    // Append-only in the database itself, not just by convention: no UPDATE,
+    // DELETE or TRUNCATE gets through, whatever the application asks for.
+    // ponytail: a superuser can still drop these triggers; connecting the app
+    // as its own non-superuser role is the upgrade if that threat matters.
+    await client.query(`
+      CREATE OR REPLACE FUNCTION audit_log_append_only() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'audit_log is append-only';
+      END
+      $$
+    `);
+    await client.query(`
+      CREATE OR REPLACE TRIGGER audit_log_no_change
+        BEFORE UPDATE OR DELETE ON audit_log
+        FOR EACH ROW EXECUTE FUNCTION audit_log_append_only()
+    `);
+    await client.query(`
+      CREATE OR REPLACE TRIGGER audit_log_no_truncate
+        BEFORE TRUNCATE ON audit_log
+        FOR EACH STATEMENT EXECUTE FUNCTION audit_log_append_only()
+    `);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS login_attempts (

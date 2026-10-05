@@ -354,7 +354,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
     const [loading, setLoading] = useState(true);
     const [balanceReport, setBalanceReport] = useState<StaffBalancesResponse | null>(null);
     const [balanceReportLoading, setBalanceReportLoading] = useState(true);
-    const [furloughLineOverride, setFurloughLineOverride] = useState<number | null>(null);
+    const [furloughReviewLine, setFurloughReviewLine] = useState(0);
     const [planningType, setPlanningType] = useState<'any' | 'Annual' | 'Furlough'>('any');
     const [planningDepartment, setPlanningDepartment] = useState('all');
     const [drill, setDrill] = useState<{ dimension: Dimension; value: string; rows: BreakdownRow[] } | null>(null);
@@ -383,6 +383,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
         let cancelled = false;
         apiClient.get<StaffBalancesResponse>('/hr/employees/balances')
             .then(async (result) => {
+                const settings = await apiClient.get<{ furlough_review_days: number }>('/hr/planning/settings');
                 let rules = result.leave_type_rules;
                 if (!rules?.length) {
                     const leaveTypes = await apiClient.get<Array<{
@@ -396,7 +397,10 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                         is_accruable: type.is_accruable,
                     }));
                 }
-                if (!cancelled) setBalanceReport({ ...result, leave_type_rules: rules });
+                if (!cancelled) {
+                    setFurloughReviewLine(Number(settings?.furlough_review_days) || 0);
+                    setBalanceReport({ ...result, leave_type_rules: rules });
+                }
             })
             .catch((err) => {
                 if (!cancelled) addToast((err as Error)?.message || 'Unable to load leave balance planning.', 'error');
@@ -436,7 +440,6 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
     const annualAllocation = annualRule && Number.isFinite(Number(annualRule.default_days))
         ? Number(annualRule.default_days)
         : null;
-    const furloughReviewLine = furloughLineOverride ?? 0;
     const planningSummary = balanceReport && annualAllocation !== null
         ? summarizeLeavePlanning(balanceReport.employees, annualAllocation, furloughReviewLine)
         : null;
@@ -748,17 +751,14 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
 
                         <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
                             <p className="max-w-4xl text-sm leading-5 text-slate-700">
-                                Available days = balance minus pending leave. Annual is compared with its allocation from HR Policies → Leave types. Furlough is shown when it is above the threshold below; 0 includes every positive balance.
+                                Available days = balance minus pending leave. Staff are listed when they hold more than the amounts below. A Leave Admin sets these in HR Policies.
                             </p>
-                            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(12rem,1fr)_minmax(12rem,1fr)_auto] lg:items-end">
-                                <label className="text-xs font-medium text-slate-600">Furlough: flag balances above
-                                    <span className="mt-1 flex items-center gap-2">
-                                        <input type="number" min="0" step="0.5" value={furloughReviewLine}
-                                            onChange={(event) => setFurloughLineOverride(Math.max(0, Number(event.target.value) || 0))}
-                                            className="w-28 rounded border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900" />
-                                        <span>days</span>
-                                    </span>
-                                </label>
+                            {annualAllocation !== null && (
+                                <p className="mt-2 text-sm font-medium text-slate-800">
+                                    Annual: above {annualAllocation} days (yearly allocation) · Furlough: above {furloughReviewLine} days
+                                </p>
+                            )}
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
                                 <label className="text-xs font-medium text-slate-600">Show
                                     <select value={planningType} onChange={(event) => setPlanningType(event.target.value as typeof planningType)}
                                         className="mt-1 block w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900">
@@ -775,11 +775,6 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                     </select>
                                 </label>
                             </div>
-                            {annualAllocation !== null && (
-                                <p className="mt-3 text-xs text-slate-600">
-                                    Current comparison: Annual above {annualAllocation} days · Furlough above {furloughReviewLine} days
-                                </p>
-                            )}
                         </div>
 
                         {balanceReportLoading ? (

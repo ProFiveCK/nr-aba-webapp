@@ -330,6 +330,10 @@ export async function initSchema() {
       ALTER TABLE reviewer_settings
         ADD COLUMN IF NOT EXISTS accrual_anchor_date DATE
     `);
+    await client.query(`
+      ALTER TABLE reviewer_settings
+        ADD COLUMN IF NOT EXISTS furlough_review_days NUMERIC(6,2) NOT NULL DEFAULT 0
+    `);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS batch_reviews (

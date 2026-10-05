@@ -36,7 +36,7 @@ export async function connectTestDatabase() {
 export async function resetLeaveTables(pool) {
   await pool.query(`TRUNCATE hr_leave_adjustments, hr_leave_applications, hr_leave_balances,
                              hr_accrual_runs, hr_public_holidays, hr_employees RESTART IDENTITY CASCADE`);
-  await pool.query(`UPDATE reviewer_settings SET accrual_anchor_date = NULL WHERE id = TRUE`);
+  await pool.query(`UPDATE reviewer_settings SET accrual_anchor_date = NULL, furlough_review_days = 0 WHERE id = TRUE`);
 }
 
 /** A leave type, created or updated by name so a rerun is safe. */

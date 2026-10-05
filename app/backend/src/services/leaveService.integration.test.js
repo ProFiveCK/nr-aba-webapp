@@ -498,7 +498,7 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
 
   describe('pay rate visibility', () => {
     /** Calls an HR endpoint as an account with exactly these capabilities. */
-    async function callAs(permissions, path) {
+    async function callAs(permissions, path, { method = 'GET', body } = {}) {
       const express = (await import('express')).default;
       const { default: hrRouter } = await import('../routes/hr.js');
       const auth = await import('./authService.js');
@@ -520,7 +520,9 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       try {
         const { port } = server.address();
         const res = await fetch(`http://127.0.0.1:${port}/api/hr${path}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          method,
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: body === undefined ? undefined : JSON.stringify(body),
         });
         return { status: res.status, body: await res.json() };
       } finally {
@@ -543,6 +545,20 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       const row = body.find((e) => e.id === ana.id);
       assert.ok(row, 'the row is still returned');
       assert.equal(Object.hasOwn(row, 'daily_rate'), false, 'but not what they are paid');
+    });
+
+    test('only a leave administrator can read or change the furlough threshold', async () => {
+      const staff = { hr_staff_manage: true, hr_access: true };
+      assert.equal((await callAs(staff, '/planning/settings')).status, 403);
+      assert.equal((await callAs(staff, '/planning/settings', { method: 'PUT', body: { furlough_review_days: 10 } })).status, 403);
+
+      const saved = await callAs({ hr_admin: true }, '/planning/settings', { method: 'PUT', body: { furlough_review_days: 12.5 } });
+      assert.equal(saved.status, 200);
+      const read = await callAs({ hr_admin: true }, '/planning/settings');
+      assert.equal(read.body.furlough_review_days, 12.5, 'the value is remembered');
+
+      const invalid = await callAs({ hr_admin: true }, '/planning/settings', { method: 'PUT', body: { furlough_review_days: -1 } });
+      assert.equal(invalid.status, 422);
     });
 
     test('the team list does not leak the rate to a manager', async () => {

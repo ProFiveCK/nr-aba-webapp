@@ -44,6 +44,8 @@ export function Policies() {
     const [runningAccrual, setRunningAccrual] = useState(false);
     const [anchorDate, setAnchorDate] = useState('');
     const [savingAnchor, setSavingAnchor] = useState(false);
+    const [furloughReviewDays, setFurloughReviewDays] = useState('0');
+    const [savingFurlough, setSavingFurlough] = useState(false);
 
     const [editing, setEditing] = useState<LeaveType | null>(null);
     const [draft, setDraft] = useState<EditDraft | null>(null);
@@ -52,12 +54,14 @@ export function Policies() {
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [policies, accrualSettings] = await Promise.all([
+            const [policies, accrualSettings, planningSettings] = await Promise.all([
                 apiClient.get<LeaveType[]>('/hr/policies'),
                 apiClient.get<{ accrual_anchor_date: string | null }>('/hr/accrual/settings'),
+                apiClient.get<{ furlough_review_days: number }>('/hr/planning/settings'),
             ]);
             setTypes(policies || []);
             setAnchorDate(accrualSettings?.accrual_anchor_date || '');
+            setFurloughReviewDays(String(planningSettings?.furlough_review_days ?? 0));
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to load leave policies.', 'error');
         } finally {
@@ -132,6 +136,24 @@ export function Policies() {
             addToast((err as Error)?.message || 'Unable to save the accrual schedule.', 'error');
         } finally {
             setSavingAnchor(false);
+        }
+    };
+
+    const saveFurloughThreshold = async () => {
+        const days = Number(furloughReviewDays);
+        if (!Number.isFinite(days) || days < 0) {
+            addToast('Enter zero or more days.', 'error');
+            return;
+        }
+        setSavingFurlough(true);
+        try {
+            await apiClient.put('/hr/planning/settings', { furlough_review_days: days });
+            addToast('Furlough planning threshold saved.', 'success');
+            await load();
+        } catch (err) {
+            addToast((err as Error)?.message || 'Unable to save the threshold.', 'error');
+        } finally {
+            setSavingFurlough(false);
         }
     };
 
@@ -215,6 +237,37 @@ export function Policies() {
                         className="rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50"
                     >
                         {savingAnchor ? 'Saving…' : 'Save schedule'}
+                    </button>
+                </div>
+            </div>
+
+            <div className="space-y-3 app-panel p-4">
+                <div>
+                    <h2 className="text-sm font-semibold text-zinc-900">Leave planning thresholds</h2>
+                    <p className="mt-1 text-xs text-zinc-500">
+                        The Overview lists staff holding more leave than these amounts so managers can plan time off with them.
+                        Annual uses its Days / year in the table below. Furlough has no yearly allocation, so set its amount here.
+                    </p>
+                </div>
+                <div className="flex flex-wrap items-end gap-3">
+                    <label className="text-sm">
+                        <span className="mb-1 block font-medium text-zinc-700">Furlough: plan leave when balance is above (days)</span>
+                        <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={furloughReviewDays}
+                            onChange={(e) => setFurloughReviewDays(e.target.value)}
+                            className="w-32 rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        />
+                    </label>
+                    <button
+                        type="button"
+                        onClick={saveFurloughThreshold}
+                        disabled={savingFurlough}
+                        className="rounded-md bg-[#002B7F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#001f5c] disabled:opacity-50"
+                    >
+                        {savingFurlough ? 'Saving…' : 'Save threshold'}
                     </button>
                 </div>
             </div>

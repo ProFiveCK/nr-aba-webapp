@@ -1,5 +1,6 @@
 import express from 'express';
 import crypto from 'crypto';
+import fs from 'fs/promises';
 import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import { body, handleValidation } from '../middleware/validation.js';
@@ -245,9 +246,6 @@ router.post('/saas/sync-trigger', requireAuth(['admin']), async (req, res) => {
       } else if (SFTP_SYNC_METHOD === 'file' && SYNC_TRIGGER_PATH) {
         // File-based trigger
         try {
-          const fs = require('fs').promises;
-          const path = require('path');
-          
           const triggerData = {
             requestId,
             requestedBy: requesterEmail,

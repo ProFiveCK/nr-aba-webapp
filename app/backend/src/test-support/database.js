@@ -35,7 +35,8 @@ export async function connectTestDatabase() {
 /** Empties the leave tables between tests so each starts from a known state. */
 export async function resetLeaveTables(pool) {
   await pool.query(`TRUNCATE hr_leave_adjustments, hr_leave_applications, hr_leave_balances,
-                             hr_accrual_runs, hr_public_holidays, hr_employees RESTART IDENTITY CASCADE`);
+                             hr_accrual_runs, hr_public_holidays, hr_employees, hr_divisions, hr_departments
+                             RESTART IDENTITY CASCADE`);
   await pool.query(`UPDATE reviewer_settings SET accrual_anchor_date = NULL, furlough_review_days = 0 WHERE id = TRUE`);
 }
 

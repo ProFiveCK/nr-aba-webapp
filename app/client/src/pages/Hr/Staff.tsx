@@ -15,9 +15,19 @@ import type {
     ImportRow,
     StaffBalancesResponse,
 } from '../../features/hr/staffTypes';
-import type { Employee, LeaveBalance, LeaveType } from '../../features/hr/types';
+import type { Employee, LeaveBalance, LeaveType, OrgDepartment } from '../../features/hr/types';
 
 const FIXED_COLUMNS = ['display_name', 'department_code', 'division_code', 'join_date'];
+
+/** Options for a list-backed select. A saved value that is no longer in the list stays selectable. */
+function OrgOptions({ names, current }: { names: string[]; current: string }) {
+    return (
+        <>
+            {names.map((name) => <option key={name} value={name}>{name}</option>)}
+            {current && !names.includes(current) && <option value={current}>{current} (not in list)</option>}
+        </>
+    );
+}
 
 type ViewMode = 'directory' | 'report';
 type LoginFilter = 'all' | 'linked' | 'unlinked';
@@ -56,6 +66,7 @@ export function Staff() {
     const canSeePay = user?.permissions?.hr_admin === true;
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [types, setTypes] = useState<LeaveType[]>([]);
+    const [orgUnits, setOrgUnits] = useState<OrgDepartment[]>([]);
     const [loading, setLoading] = useState(true);
     const [viewMode, setViewMode] = useState<ViewMode>('directory');
     const [search, setSearch] = useState('');
@@ -110,12 +121,14 @@ export function Staff() {
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [staff, leaveTypes] = await Promise.all([
+            const [staff, leaveTypes, departments] = await Promise.all([
                 apiClient.get<Employee[]>('/hr/employees'),
                 apiClient.get<LeaveType[]>('/hr/leave-types'),
+                apiClient.get<OrgDepartment[]>('/hr/org-units'),
             ]);
             setEmployees(staff || []);
             setTypes(leaveTypes || []);
+            setOrgUnits(departments || []);
             if (leaveTypes?.length && !adjustType) setAdjustType(leaveTypes[0].id);
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to load staff.', 'error');
@@ -145,10 +158,24 @@ export function Staff() {
         if (viewMode === 'report' && !report && !reportLoading) loadReport();
     }, [viewMode, report, reportLoading, loadReport]);
 
-    const departmentOptions = useMemo(
-        () => Array.from(new Set(employees.map((e) => e.department_code || 'Unassigned'))).sort(),
+    const departmentOptions = useMemo(() => {
+        const names = new Set(orgUnits.map((d) => d.name));
+        let hasUnassigned = false;
+        for (const e of employees) {
+            const department = (e.department_code || '').trim();
+            if (department) names.add(department);
+            else hasUnassigned = true;
+        }
+        const sorted = Array.from(names).sort((a, b) => a.localeCompare(b));
+        return hasUnassigned ? [...sorted, 'Unassigned'] : sorted;
+    }, [employees, orgUnits]);
+    const departmentsInUse = useMemo(
+        () => new Set(employees.map((e) => (e.department_code || '').trim().toLowerCase()).filter(Boolean)).size,
         [employees]
     );
+    const departmentNames = useMemo(() => orgUnits.map((d) => d.name), [orgUnits]);
+    const divisionNamesFor = (department: string) =>
+        orgUnits.find((d) => d.name === department)?.divisions.map((v) => v.name) ?? [];
     const noLoginCount = useMemo(() => employees.filter((e) => !e.reviewer_id).length, [employees]);
     // Flags names that collapse to the same key once punctuation/spacing is
     // ignored — e.g. "Val-cade" and "Valcade" — which is how two records for
@@ -347,7 +374,7 @@ export function Staff() {
 
     const downloadTemplate = () => {
         const header = [...FIXED_COLUMNS, ...types.map((t) => t.name)];
-        const example = ['Jane Example', 'Department of Finance', 'Treasury', '2024-01-15', ...types.map(() => '')];
+        const example = ['Jane Example', 'Finance', 'Treasury', '2024-01-15', ...types.map(() => '')];
         const csv = [header, example].map((line) => line.map(csvCell).join(',')).join('\r\n');
         const bom = String.fromCharCode(0xfeff);
         const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
@@ -361,10 +388,11 @@ export function Staff() {
 
     const exportReport = () => {
         if (!report) return;
-        const header = ['Name', 'Department', 'Login', ...report.leave_types];
+        const header = ['Name', 'Department', 'Division', 'Login', ...report.leave_types];
         const rows = report.employees.map((e) => [
             e.display_name,
             e.department_code || '',
+            e.division_code || '',
             e.reviewer_id ? (e.email || 'Linked') : 'No login',
             ...report.leave_types.map((t) => {
                 const entry = e.balances[t];
@@ -533,7 +561,7 @@ export function Staff() {
                     value={String(noLoginCount)}
                     hint={noLoginCount ? 'Link one from User Management' : 'Everyone is linked'}
                 />
-                <StatTile label="Departments" value={String(departmentOptions.length)} />
+                <StatTile label="Departments" value={String(departmentsInUse)} />
                 <StatTile label="Avg. tenure" value={avgTenureYears === null ? '—' : `${avgTenureYears.toFixed(1)}y`} />
             </div>
 
@@ -610,7 +638,8 @@ export function Staff() {
                     <p className="text-xs text-zinc-500">
                         Bulk-create staff records (each starts with no login — link one in User Management, or it
                         links itself the first time that person opens Leave). Download the template, fill it in,
-                        and upload it back here.
+                        and upload it back here. Department and division must match the lists in Policies;
+                        rows that do not are skipped with the reason.
                     </p>
                     <div className="flex flex-wrap items-center gap-2">
                         <button
@@ -709,22 +738,25 @@ export function Staff() {
                             placeholder="Full name"
                             className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
                         />
-                        <input
-                            type="text"
+                        <select
                             value={newDept}
-                            onChange={(e) => setNewDept(e.target.value)}
-                            placeholder="Department, e.g. Department of Finance"
-                            maxLength={60}
+                            onChange={(e) => { setNewDept(e.target.value); setNewDivision(''); }}
+                            aria-label="Department"
                             className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                        />
-                        <input
-                            type="text"
+                        >
+                            <option value="">Department (optional)</option>
+                            <OrgOptions names={departmentNames} current="" />
+                        </select>
+                        <select
                             value={newDivision}
                             onChange={(e) => setNewDivision(e.target.value)}
-                            placeholder="Division, e.g. Treasury"
-                            maxLength={60}
-                            className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                        />
+                            disabled={!newDept}
+                            aria-label="Division"
+                            className="rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
+                        >
+                            <option value="">{newDept ? 'Division (optional)' : 'Choose a department first'}</option>
+                            <OrgOptions names={divisionNamesFor(newDept)} current="" />
+                        </select>
                         <input
                             type="text"
                             value={newPosition}
@@ -951,25 +983,26 @@ export function Staff() {
                                 <div className="grid gap-4 sm:grid-cols-3">
                                     <label className="text-sm font-medium text-slate-700">
                                         Department
-                                        <input
-                                            type="text"
-                                            maxLength={60}
+                                        <select
                                             value={draft.departmentCode}
-                                            onChange={(event) => setDraft({ ...draft, departmentCode: event.target.value })}
-                                            placeholder="e.g. Department of Finance"
+                                            onChange={(event) => setDraft({ ...draft, departmentCode: event.target.value, divisionCode: '' })}
                                             className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
-                                        />
+                                        >
+                                            <option value="">Not set</option>
+                                            <OrgOptions names={departmentNames} current={draft.departmentCode} />
+                                        </select>
                                     </label>
                                     <label className="text-sm font-medium text-slate-700">
                                         Division
-                                        <input
-                                            type="text"
-                                            maxLength={60}
+                                        <select
                                             value={draft.divisionCode}
                                             onChange={(event) => setDraft({ ...draft, divisionCode: event.target.value })}
-                                            placeholder="e.g. Treasury"
-                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100"
-                                        />
+                                            disabled={!draft.departmentCode}
+                                            className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-[#002B7F] focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+                                        >
+                                            <option value="">{draft.departmentCode ? 'Not set' : 'Choose a department first'}</option>
+                                            <OrgOptions names={divisionNamesFor(draft.departmentCode)} current={draft.divisionCode} />
+                                        </select>
                                     </label>
                                     <label className="text-sm font-medium text-slate-700">
                                         Joining date

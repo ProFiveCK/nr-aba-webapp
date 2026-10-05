@@ -798,6 +798,43 @@ export async function initSchema() {
     // separate field for it that department_code alone can't fill.
     await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS division_code TEXT');
 
+    // Departments and divisions a leave administrator manages; staff records
+    // store the chosen names as text. Seeded once from what staff already use.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_departments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_departments_name ON hr_departments (lower(name))');
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_divisions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        department_id UUID NOT NULL REFERENCES hr_departments(id) ON DELETE RESTRICT,
+        name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_divisions_name ON hr_divisions (department_id, lower(name))');
+    await client.query(`
+      INSERT INTO hr_departments (name)
+      SELECT DISTINCT ON (lower(btrim(department_code))) btrim(department_code)
+        FROM hr_employees
+       WHERE btrim(COALESCE(department_code, '')) <> ''
+         AND NOT EXISTS (SELECT 1 FROM hr_departments)
+       ORDER BY lower(btrim(department_code)), btrim(department_code)
+    `);
+    await client.query(`
+      INSERT INTO hr_divisions (department_id, name)
+      SELECT DISTINCT ON (d.id, lower(btrim(e.division_code))) d.id, btrim(e.division_code)
+        FROM hr_employees e
+        JOIN hr_departments d ON lower(d.name) = lower(btrim(e.department_code))
+       WHERE btrim(COALESCE(e.division_code, '')) <> ''
+         AND NOT EXISTS (SELECT 1 FROM hr_divisions)
+       ORDER BY d.id, lower(btrim(e.division_code)), btrim(e.division_code)
+    `);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS hr_leave_types (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

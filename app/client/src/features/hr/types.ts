@@ -15,6 +15,17 @@ export interface LeaveType {
     usage_count?: number;
 }
 
+export interface OrgDivision {
+    id: string;
+    name: string;
+}
+
+export interface OrgDepartment {
+    id: string;
+    name: string;
+    divisions: OrgDivision[];
+}
+
 export interface LeaveBalance {
     id: string;
     leave_type_id: string;

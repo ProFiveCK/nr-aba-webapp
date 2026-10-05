@@ -59,6 +59,9 @@ export function BalancesReport({
                             <th className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
                                 Dept
                             </th>
+                            <th className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                                Division
+                            </th>
                             {report.leave_types.map((t) => (
                                 <th
                                     key={t}
@@ -81,6 +84,7 @@ export function BalancesReport({
                                     )}
                                 </td>
                                 <td className="border-b border-zinc-100 px-3 py-2 text-zinc-600">{e.department_code || '—'}</td>
+                                <td className="border-b border-zinc-100 px-3 py-2 text-zinc-600">{e.division_code || '—'}</td>
                                 {report.leave_types.map((t) => {
                                     const entry = e.balances[t];
                                     const available = entry ? entry.balance - entry.pending : 0;

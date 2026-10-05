@@ -265,8 +265,7 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       const other = await createLogin('leave-outsider@test', outsider.id);
       const reportAdminEmployee = await createEmployee(pool, { name: 'Report Admin' });
       const reportAdmin = await createLogin('leave-report-admin@test', reportAdminEmployee.id, { hr_admin: true });
-      await pool.query("UPDATE hr_employees SET department_code = 'FIN' WHERE id = $1", [ana.id]);
-      await pool.query("UPDATE reviewers SET division_code = '01' WHERE id = $1", [owner.id]);
+      await pool.query("UPDATE hr_employees SET department_code = 'FIN', division_code = 'Treasury' WHERE id = $1", [ana.id]);
       const { application } = await apply();
       await service.decideLeave(pool, {
         applicationId: application.id, decision: 'approved', note: '', actorId: supervisor.id, canAct: allowAll,
@@ -283,7 +282,7 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
         });
         assert.equal(balanceResponse.status, 200);
         const balanceData = await balanceResponse.json();
-        assert.equal(balanceData.employees.find((employee) => employee.id === ana.id).division_code, '01');
+        assert.equal(balanceData.employees.find((employee) => employee.id === ana.id).division_code, 'Treasury');
         assert.ok(balanceData.leave_type_rules.some((rule) => rule.name === 'T:Annual' && rule.default_days === 20));
 
         const getForm = (id, token) => fetch(`http://127.0.0.1:${port}/api/hr/leaves/${id}/payroll-form`, {
@@ -559,6 +558,70 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
 
       const invalid = await callAs({ hr_admin: true }, '/planning/settings', { method: 'PUT', body: { furlough_review_days: -1 } });
       assert.equal(invalid.status, 422);
+    });
+
+    test('only a leave administrator manages departments and divisions', async () => {
+      const staff = { hr_staff_manage: true, hr_access: true };
+      assert.equal((await callAs(staff, '/org-units')).status, 200, 'staff managers can read the list');
+      assert.equal((await callAs(staff, '/departments', { method: 'POST', body: { name: 'Finance' } })).status, 403);
+
+      const admin = { hr_admin: true };
+      const created = await callAs(admin, '/departments', { method: 'POST', body: { name: 'Finance' } });
+      assert.equal(created.status, 201);
+      assert.equal((await callAs(admin, '/departments', { method: 'POST', body: { name: ' finance ' } })).status, 409,
+        'a different spelling of the same name is a duplicate');
+      assert.equal((await callAs(staff, `/departments/${created.body.id}/divisions`, { method: 'POST', body: { name: 'Treasury' } })).status, 403);
+      assert.equal((await callAs(admin, `/departments/${created.body.id}/divisions`, { method: 'POST', body: { name: 'Treasury' } })).status, 201);
+
+      const { body } = await callAs(staff, '/org-units');
+      assert.deepEqual(body.map((d) => [d.name, d.divisions.map((v) => v.name)]), [['Finance', ['Treasury']]]);
+    });
+
+    test('staff must be given a listed department and division', async () => {
+      const admin = { hr_admin: true };
+      const staff = { hr_staff_manage: true, hr_access: true };
+      const finance = (await callAs(admin, '/departments', { method: 'POST', body: { name: 'Finance' } })).body;
+      await callAs(admin, `/departments/${finance.id}/divisions`, { method: 'POST', body: { name: 'Treasury' } });
+      const health = (await callAs(admin, '/departments', { method: 'POST', body: { name: 'Health' } })).body;
+      await callAs(admin, `/departments/${health.id}/divisions`, { method: 'POST', body: { name: 'Clinics' } });
+      const create = (fields) => callAs(staff, '/employees', { method: 'POST', body: { display_name: 'New Person', ...fields } });
+
+      const ok = await create({ department_code: 'finance', division_code: 'treasury' });
+      assert.equal(ok.status, 201);
+      assert.equal(ok.body.department_code, 'Finance', 'stored with the list\'s spelling');
+      assert.equal(ok.body.division_code, 'Treasury');
+
+      assert.equal((await create({ department_code: 'Nowhere' })).status, 400);
+      assert.equal((await create({ division_code: 'Treasury' })).status, 400, 'a division needs a department');
+      assert.equal((await create({ department_code: 'Finance', division_code: 'Clinics' })).status, 400,
+        'a division belongs to one department');
+
+      const edit = (fields) => callAs(staff, `/employees/${ok.body.id}`, { method: 'PUT', body: fields });
+      assert.equal((await edit({ division_code: 'Clinics' })).status, 400);
+      const moved = await edit({ department_code: 'Health', division_code: 'Clinics' });
+      assert.equal(moved.status, 200);
+      assert.equal(moved.body.department_code, 'Health');
+
+      await pool.query("UPDATE hr_employees SET department_code = 'Old Name' WHERE id = $1", [ok.body.id]);
+      assert.equal((await edit({ position_title: 'Clerk' })).status, 200, 'an older unlisted value does not block other edits');
+    });
+
+    test('a department or division still in use cannot be removed', async () => {
+      const admin = { hr_admin: true };
+      const finance = (await callAs(admin, '/departments', { method: 'POST', body: { name: 'Finance' } })).body;
+      const treasury = (await callAs(admin, `/departments/${finance.id}/divisions`, { method: 'POST', body: { name: 'Treasury' } })).body;
+      const spare = (await callAs(admin, `/departments/${finance.id}/divisions`, { method: 'POST', body: { name: 'Audit' } })).body;
+      await pool.query("UPDATE hr_employees SET department_code = 'Finance', division_code = 'Treasury' WHERE id = $1", [ana.id]);
+
+      assert.equal((await callAs(admin, `/divisions/${treasury.id}`, { method: 'DELETE' })).status, 409, 'staff are in it');
+      assert.equal((await callAs(admin, `/departments/${finance.id}`, { method: 'DELETE' })).status, 409, 'it still has divisions');
+      assert.equal((await callAs(admin, `/divisions/${spare.id}`, { method: 'DELETE' })).status, 200);
+
+      await pool.query('UPDATE hr_employees SET division_code = NULL WHERE id = $1', [ana.id]);
+      assert.equal((await callAs(admin, `/divisions/${treasury.id}`, { method: 'DELETE' })).status, 200);
+      assert.equal((await callAs(admin, `/departments/${finance.id}`, { method: 'DELETE' })).status, 409, 'staff are in it');
+      await pool.query('UPDATE hr_employees SET department_code = NULL WHERE id = $1', [ana.id]);
+      assert.equal((await callAs(admin, `/departments/${finance.id}`, { method: 'DELETE' })).status, 200);
     });
 
     test('the team list does not leak the rate to a manager', async () => {

@@ -68,11 +68,11 @@ async function currentEmployee(req) {
   }
 
   const { rows: created } = await pool.query(
-    `INSERT INTO hr_employees (reviewer_id, display_name, email, department_code, division_code)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO hr_employees (reviewer_id, display_name, email, department_code)
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT (reviewer_id) DO UPDATE SET updated_at = NOW()
      RETURNING *`,
-    [req.user.id, name, req.user.email, req.user.department_code, req.user.division_code]
+    [req.user.id, name, req.user.email, req.user.department_code]
   );
   return created[0];
 }
@@ -431,6 +431,184 @@ router.post(
 
 // ===== Staff administration =====
 
+/**
+ * Checks a department/division pair against the managed list and returns the
+ * list's own spelling, so staff records cannot drift into near-duplicates.
+ */
+async function resolveOrgUnit(departmentInput, divisionInput) {
+  const department = String(departmentInput ?? '').trim();
+  const division = String(divisionInput ?? '').trim();
+  if (!department) {
+    return division ? { error: 'Choose a department before a division.' } : { department: null, division: null };
+  }
+  const { rows: departments } = await pool.query(
+    'SELECT id, name FROM hr_departments WHERE lower(name) = lower($1)', [department]
+  );
+  if (!departments.length) {
+    return { error: `Department "${department}" is not in the list. A leave administrator can add it in Policies.` };
+  }
+  if (!division) return { department: departments[0].name, division: null };
+  const { rows: divisions } = await pool.query(
+    'SELECT name FROM hr_divisions WHERE department_id = $1 AND lower(name) = lower($2)',
+    [departments[0].id, division]
+  );
+  if (!divisions.length) {
+    return { error: `Division "${division}" is not listed under ${departments[0].name}. A leave administrator can add it in Policies.` };
+  }
+  return { department: departments[0].name, division: divisions[0].name };
+}
+
+router.get('/org-units', requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN), async (_req, res) => {
+  const [{ rows: departments }, { rows: divisions }] = await Promise.all([
+    pool.query('SELECT id, name FROM hr_departments ORDER BY lower(name)'),
+    pool.query('SELECT id, department_id, name FROM hr_divisions ORDER BY lower(name)'),
+  ]);
+  res.json(departments.map((department) => ({
+    id: department.id,
+    name: department.name,
+    divisions: divisions
+      .filter((division) => division.department_id === department.id)
+      .map((division) => ({ id: division.id, name: division.name })),
+  })));
+});
+
+router.post(
+  '/departments',
+  requirePermission(PERMISSIONS.HR_ADMIN),
+  [body('name').isString().trim().isLength({ min: 1, max: 60 })],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    let created;
+    try {
+      const { rows } = await pool.query(
+        'INSERT INTO hr_departments (name) VALUES ($1) RETURNING id, name', [req.body.name.trim()]
+      );
+      created = rows[0];
+    } catch (err) {
+      if (err.code === '23505') {
+        res.status(409).json({ message: 'That department already exists.' });
+        return;
+      }
+      throw err;
+    }
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.department.created',
+      entityType: 'hr_department',
+      entityId: created.id,
+      after: { name: created.name },
+    });
+    res.status(201).json({ ...created, divisions: [] });
+  }
+);
+
+router.delete(
+  '/departments/:id',
+  requirePermission(PERMISSIONS.HR_ADMIN),
+  [param('id').isUUID()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const { rows } = await pool.query('SELECT id, name FROM hr_departments WHERE id = $1', [req.params.id]);
+    if (!rows.length) {
+      res.status(404).json({ message: 'Department not found.' });
+      return;
+    }
+    const [{ rows: divisions }, { rows: staff }] = await Promise.all([
+      pool.query('SELECT 1 FROM hr_divisions WHERE department_id = $1 LIMIT 1', [req.params.id]),
+      pool.query('SELECT COUNT(*)::int AS count FROM hr_employees WHERE lower(btrim(department_code)) = lower($1)', [rows[0].name]),
+    ]);
+    if (divisions.length) {
+      res.status(409).json({ message: 'Remove this department\'s divisions first.' });
+      return;
+    }
+    if (staff[0].count > 0) {
+      res.status(409).json({ message: `${staff[0].count} staff are assigned to this department. Move them first.` });
+      return;
+    }
+    await pool.query('DELETE FROM hr_departments WHERE id = $1', [req.params.id]);
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.department.deleted',
+      entityType: 'hr_department',
+      entityId: rows[0].id,
+      before: { name: rows[0].name },
+    });
+    res.json({ message: 'Department removed.' });
+  }
+);
+
+router.post(
+  '/departments/:id/divisions',
+  requirePermission(PERMISSIONS.HR_ADMIN),
+  [param('id').isUUID(), body('name').isString().trim().isLength({ min: 1, max: 60 })],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const { rows: department } = await pool.query('SELECT id, name FROM hr_departments WHERE id = $1', [req.params.id]);
+    if (!department.length) {
+      res.status(404).json({ message: 'Department not found.' });
+      return;
+    }
+    let created;
+    try {
+      const { rows } = await pool.query(
+        'INSERT INTO hr_divisions (department_id, name) VALUES ($1, $2) RETURNING id, name',
+        [req.params.id, req.body.name.trim()]
+      );
+      created = rows[0];
+    } catch (err) {
+      if (err.code === '23505') {
+        res.status(409).json({ message: 'That division already exists in this department.' });
+        return;
+      }
+      throw err;
+    }
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.division.created',
+      entityType: 'hr_division',
+      entityId: created.id,
+      after: { name: created.name, department: department[0].name },
+    });
+    res.status(201).json(created);
+  }
+);
+
+router.delete(
+  '/divisions/:id',
+  requirePermission(PERMISSIONS.HR_ADMIN),
+  [param('id').isUUID()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const { rows } = await pool.query(
+      `SELECT v.id, v.name, d.name AS department_name
+         FROM hr_divisions v JOIN hr_departments d ON d.id = v.department_id WHERE v.id = $1`,
+      [req.params.id]
+    );
+    if (!rows.length) {
+      res.status(404).json({ message: 'Division not found.' });
+      return;
+    }
+    const { rows: staff } = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM hr_employees
+        WHERE lower(btrim(department_code)) = lower($1) AND lower(btrim(division_code)) = lower($2)`,
+      [rows[0].department_name, rows[0].name]
+    );
+    if (staff[0].count > 0) {
+      res.status(409).json({ message: `${staff[0].count} staff are assigned to this division. Move them first.` });
+      return;
+    }
+    await pool.query('DELETE FROM hr_divisions WHERE id = $1', [req.params.id]);
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.division.deleted',
+      entityType: 'hr_division',
+      entityId: rows[0].id,
+      before: { name: rows[0].name, department: rows[0].department_name },
+    });
+    res.json({ message: 'Division removed.' });
+  }
+);
+
 router.get('/employees', requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN), async (req, res) => {
   const { rows } = await pool.query(
     `SELECT e.*, m.display_name AS manager_name
@@ -456,14 +634,10 @@ router.get(
     const year = Number(req.query.year) || new Date().getFullYear();
     const [{ rows: employees }, { rows: types }, { rows: balances }] = await Promise.all([
       pool.query(
-        `SELECT e.id, e.display_name,
-          COALESCE(e.department_code, r.department_code) AS department_code,
-          COALESCE(e.division_code, r.division_code) AS division_code,
-          e.status, e.reviewer_id, e.email, e.join_date
-           FROM hr_employees e
-           LEFT JOIN reviewers r ON r.id = e.reviewer_id
-          WHERE e.status = 'active' AND e.leave_entitled = TRUE
-          ORDER BY e.display_name`
+        `SELECT id, display_name, department_code, division_code, status, reviewer_id, email, join_date
+           FROM hr_employees
+          WHERE status = 'active' AND leave_entitled = TRUE
+          ORDER BY display_name`
       ),
       pool.query('SELECT id, name, default_days, is_accruable FROM hr_leave_types WHERE is_active = TRUE ORDER BY name'),
       pool.query('SELECT employee_id, leave_type_id, balance, pending FROM hr_leave_balances WHERE year = $1', [year]),
@@ -515,6 +689,12 @@ router.post(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
 
+    const orgUnit = await resolveOrgUnit(req.body.department_code, req.body.division_code);
+    if (orgUnit.error) {
+      res.status(400).json({ message: orgUnit.error });
+      return;
+    }
+
     // Catches a re-typed name before it becomes a second permanent record —
     // e.g. "Val-cade" entered here when "Valcade" already exists. Two people
     // can legitimately share a name, so this warns rather than blocks: the
@@ -557,8 +737,8 @@ router.post(
     const { rows } = await pool.query(
       `INSERT INTO hr_employees (display_name, position_title, department_code, division_code, manager_id, join_date, leave_entitled)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [req.body.display_name, req.body.position_title || null, req.body.department_code || null,
-       req.body.division_code || null, req.body.manager_id || null, req.body.join_date || null, req.body.leave_entitled ?? true]
+      [req.body.display_name, req.body.position_title || null, orgUnit.department,
+       orgUnit.division, req.body.manager_id || null, req.body.join_date || null, req.body.leave_entitled ?? true]
     );
     await recordAudit({
       actor: { id: req.user.id, email: req.user.email, ip: req.ip },
@@ -649,6 +829,21 @@ router.put(
     if (!existing.length) {
       res.status(404).json({ message: 'Employee not found.' });
       return;
+    }
+
+    // Only a changed department or division is checked, so an older record with
+    // a value that is not in the list can still be edited for other reasons.
+    if (Object.hasOwn(updates, 'department_code') || Object.hasOwn(updates, 'division_code')) {
+      const orgUnit = await resolveOrgUnit(
+        Object.hasOwn(updates, 'department_code') ? updates.department_code : existing[0].department_code,
+        Object.hasOwn(updates, 'division_code') ? updates.division_code : existing[0].division_code
+      );
+      if (orgUnit.error) {
+        res.status(400).json({ message: orgUnit.error });
+        return;
+      }
+      updates.department_code = orgUnit.department;
+      updates.division_code = orgUnit.division;
     }
 
     // The contact address follows the linked login: linking adopts the
@@ -823,12 +1018,17 @@ router.post(
         skipped.push({ display_name: name, reason: 'A portal login with this name already exists without a staff record. Link it from User Management instead of importing it here.' });
         continue;
       }
+      const orgUnit = await resolveOrgUnit(row.department_code, row.division_code);
+      if (orgUnit.error) {
+        skipped.push({ display_name: name, reason: orgUnit.error });
+        continue;
+      }
       try {
         const employeeId = await withTransaction(pool, async (client) => {
           const { rows: inserted } = await client.query(
             `INSERT INTO hr_employees (display_name, department_code, division_code, join_date)
              VALUES ($1, $2, $3, $4) RETURNING id`,
-            [name, row.department_code || null, row.division_code || null, row.join_date || null]
+            [name, orgUnit.department, orgUnit.division, row.join_date || null]
           );
           const id = inserted[0].id;
           for (const [typeName, rawAmount] of Object.entries(row.balances || {})) {

@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { UserRound } from 'lucide-react';
 import { useAuth } from '../contexts/useAuth';
 import { ChangePasswordModal } from './ChangePasswordModal';
+import { Button, Modal, ModalActions } from './Ui';
 import { AppBar } from './AppBar';
 import { AppChromeContext, type AppSection } from './appChrome';
 import { findAppByPath, getAllowedApps, SYSTEM_PAGES, type AppDef } from '../lib/apps';
@@ -118,42 +119,17 @@ export function Layout() {
         </div>
         {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)} />}
         {showSignOutModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setShowSignOutModal(false)}>
-                <div
-                    className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl"
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <div className="flex items-start justify-between">
-                        <div>
-                            <h2 className="text-xl font-semibold text-gray-900">Sign out</h2>
-                            <p className="text-sm text-gray-500 mt-1">You will need to enter your email and password again to sign back in.</p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setShowSignOutModal(false)}
-                            className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-                        >
-                            ×
-                        </button>
-                    </div>
-                    <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
-                        <button
-                            type="button"
-                            onClick={() => setShowSignOutModal(false)}
-                            className="rounded-full border border-gray-300 px-5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="button"
-                            onClick={confirmSignOut}
-                            className="rounded-full bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-amber-400"
-                        >
-                            Sign Out
-                        </button>
-                    </div>
-                </div>
-            </div>
+            <Modal
+                title="Sign out"
+                description="You will need to enter your email and password again to sign back in."
+                onClose={() => setShowSignOutModal(false)}
+                size="sm"
+            >
+                <ModalActions>
+                    <Button variant="secondary" onClick={() => setShowSignOutModal(false)}>Cancel</Button>
+                    <Button onClick={confirmSignOut}>Sign out</Button>
+                </ModalActions>
+            </Modal>
         )}
         </>
     );

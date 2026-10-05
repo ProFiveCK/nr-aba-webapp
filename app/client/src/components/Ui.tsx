@@ -1,4 +1,5 @@
-import type { ReactNode, SVGProps } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+import type { ButtonHTMLAttributes, KeyboardEvent, ReactNode, SVGProps } from 'react';
 
 type IconName =
     | 'alert'
@@ -175,4 +176,139 @@ export function StatTile({
             {hint && <p className="mt-1 text-xs text-gray-500">{hint}</p>}
         </div>
     );
+}
+
+const buttonVariants = {
+    primary: 'border-brand bg-brand text-white shadow-sm hover:bg-brand-hover',
+    secondary: 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
+    danger: 'border-rose-600 bg-rose-600 text-white shadow-sm hover:bg-rose-500',
+    ghost: 'border-transparent text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+};
+
+/**
+ * The portal's one button. `loading` disables it and shows a spinner, so a
+ * double click cannot submit twice.
+ */
+export function Button({
+    variant = 'primary', loading = false, disabled, className = '', type = 'button', children, ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: keyof typeof buttonVariants; loading?: boolean }) {
+    return (
+        <button
+            {...props}
+            type={type}
+            disabled={disabled || loading}
+            aria-busy={loading || undefined}
+            className={`inline-flex items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${buttonVariants[variant]} ${className}`.trim()}
+        >
+            {loading && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />}
+            {children}
+        </button>
+    );
+}
+
+const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
+const modalSizes = { sm: 'max-w-sm', md: 'max-w-md', lg: 'max-w-lg', xl: 'max-w-xl', '2xl': 'max-w-2xl', '3xl': 'max-w-3xl', '4xl': 'max-w-4xl' };
+
+/**
+ * An accessible dialog: labelled by its title, keeps Tab inside, closes on
+ * Escape and backdrop click, and hands focus back to whatever opened it.
+ * Render it conditionally (`{open && <Modal …/>}`); mounting is opening.
+ *
+ * `closeDisabled` blocks every way of closing (use while a request runs).
+ * `placement="right"` turns it into a full-height side panel.
+ */
+export function Modal({
+    title, description, onClose, children, size = 'md', placement = 'center',
+    closeDisabled = false, closeOnBackdrop = true, closeLabel = 'Close dialog',
+}: {
+    title: ReactNode;
+    description?: ReactNode;
+    onClose: () => void;
+    children: ReactNode;
+    size?: keyof typeof modalSizes;
+    placement?: 'center' | 'right';
+    closeDisabled?: boolean;
+    closeOnBackdrop?: boolean;
+    closeLabel?: string;
+}) {
+    const titleId = useId();
+    const descriptionId = useId();
+    const panelRef = useRef<HTMLDivElement>(null);
+    // Read on the first render, before an autoFocus child moves focus inside.
+    const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
+
+    useEffect(() => {
+        const panel = panelRef.current;
+        if (panel && !panel.contains(document.activeElement)) panel.focus();
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            opener?.focus();
+        };
+    }, [opener]);
+
+    const requestClose = () => {
+        if (!closeDisabled) onClose();
+    };
+
+    const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.key === 'Escape') {
+            event.stopPropagation();
+            requestClose();
+            return;
+        }
+        if (event.key !== 'Tab' || !panelRef.current) return;
+        const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE));
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        if (event.shiftKey && (active === first || active === panelRef.current)) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && active === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    };
+
+    const right = placement === 'right';
+    return (
+        <div className={`fixed inset-0 z-50 flex ${right ? 'justify-end' : 'items-center justify-center px-4 py-6'}`} onKeyDown={handleKeyDown}>
+            <div className="absolute inset-0 bg-gray-900/60" aria-hidden="true" onClick={closeOnBackdrop ? requestClose : undefined} />
+            <div
+                ref={panelRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby={titleId}
+                aria-describedby={description ? descriptionId : undefined}
+                tabIndex={-1}
+                className={`relative flex w-full flex-col bg-white shadow-2xl focus:outline-none ${modalSizes[size]} ${right ? 'h-dvh' : 'max-h-full rounded-2xl'}`}
+            >
+                <div className={`flex shrink-0 items-start justify-between gap-4 px-6 pt-6 ${right ? 'border-b border-gray-200 pb-4' : ''}`}>
+                    <div className="min-w-0">
+                        <h2 id={titleId} className="text-xl font-semibold text-gray-900">{title}</h2>
+                        {description && <div id={descriptionId} className="mt-1 text-sm text-gray-500">{description}</div>}
+                    </div>
+                    <button
+                        type="button"
+                        onClick={requestClose}
+                        disabled={closeDisabled}
+                        aria-label={closeLabel}
+                        className="-mr-2 -mt-1 shrink-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50"
+                    >
+                        <Icon name="x" className="h-5 w-5" />
+                    </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-4">{children}</div>
+            </div>
+        </div>
+    );
+}
+
+/** Right-aligned action row for the bottom of a modal; stacks on phones. */
+export function ModalActions({ children }: { children: ReactNode }) {
+    return <div className="mt-6 flex flex-col-reverse first:mt-2 gap-2 sm:flex-row sm:justify-end">{children}</div>;
 }

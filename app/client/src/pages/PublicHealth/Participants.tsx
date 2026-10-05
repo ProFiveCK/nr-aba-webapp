@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
 import { useConfirm } from '../../contexts/useConfirm';
-import { EmptyState, LoadingState } from '../../components/Ui';
+import { Button, EmptyState, LoadingState, Modal, ModalActions } from '../../components/Ui';
 import { parseCsvRows, formatBSB } from '../../lib/utils';
 import { printReport } from '../../lib/print';
 import type { PublicHealthParticipant, PublicHealthTierCode } from '../../features/public-health/types';
@@ -377,13 +377,8 @@ export function Participants() {
       </section>
 
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setModalOpen(false)}>
-          <div className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl sm:p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between">
-              <h2 className="text-xl font-semibold text-gray-900">{editing ? 'Edit Participant' : 'Add Participant'}</h2>
-              <button onClick={() => setModalOpen(false)} aria-label="Close participant form" className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
-            </div>
-            <div className="mt-4 space-y-3">
+        <Modal title={editing ? 'Edit participant' : 'Add participant'} onClose={() => setModalOpen(false)} closeDisabled={saving} closeLabel="Close participant form" size="lg">
+            <div className="space-y-3">
               <Field label="Full name *">
                 <input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="e.g. Jane Doe" />
               </Field>
@@ -405,23 +400,22 @@ export function Participants() {
                 <input value={form.external_ref} onChange={(e) => setForm({ ...form, external_ref: e.target.value })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="Optional identifier" />
               </Field>
             </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <button onClick={() => setModalOpen(false)} className="toolbar-button">Cancel</button>
-              <button onClick={save} disabled={saving} className="toolbar-button bg-teal-600 text-white border-teal-600 hover:bg-teal-700 disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button>
-            </div>
-          </div>
-        </div>
+            <ModalActions>
+              <Button variant="secondary" onClick={() => setModalOpen(false)} disabled={saving}>Cancel</Button>
+              <Button onClick={save} loading={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+            </ModalActions>
+        </Modal>
       )}
 
       {levelOpen && levelParticipant && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setLevelOpen(false)}>
-          <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl sm:p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between">
-              <h2 className="text-xl font-semibold text-gray-900">Change Level</h2>
-              <button onClick={() => setLevelOpen(false)} aria-label="Close level form" className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
-            </div>
-            <p className="mt-1 text-sm text-gray-500">Current level: <span className="font-medium">{levelParticipant.current_level || 'LV1'}</span></p>
-            <div className="mt-4 space-y-3">
+        <Modal
+          title="Change level"
+          description={<>Current level: <span className="font-medium">{levelParticipant.current_level || 'LV1'}</span></>}
+          onClose={() => setLevelOpen(false)}
+          closeDisabled={savingLevel}
+          closeLabel="Close level form"
+        >
+            <div className="space-y-3">
               <Field label="New level">
                 <select value={levelForm.level} onChange={(e) => setLevelForm({ ...levelForm, level: e.target.value as PublicHealthTierCode })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500">
                   {LEVELS.map((l) => <option key={l} value={l}>{l}{l === 'LV0' ? ' (no payment)' : ''}</option>)}
@@ -431,12 +425,11 @@ export function Participants() {
                 <textarea rows={3} value={levelForm.reason} onChange={(e) => setLevelForm({ ...levelForm, reason: e.target.value })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" placeholder="e.g. Met milestone 2" />
               </Field>
             </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <button onClick={() => setLevelOpen(false)} className="toolbar-button">Cancel</button>
-              <button onClick={saveLevel} disabled={savingLevel} className="toolbar-button bg-teal-600 text-white border-teal-600 hover:bg-teal-700 disabled:opacity-60">{savingLevel ? 'Saving…' : 'Save Level'}</button>
-            </div>
-          </div>
-        </div>
+            <ModalActions>
+              <Button variant="secondary" onClick={() => setLevelOpen(false)} disabled={savingLevel}>Cancel</Button>
+              <Button onClick={saveLevel} loading={savingLevel}>{savingLevel ? 'Saving…' : 'Save level'}</Button>
+            </ModalActions>
+        </Modal>
       )}
     </div>
   );

@@ -10,13 +10,12 @@ import {
     Plus,
     Power,
     Trash2,
-    X,
 } from 'lucide-react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from '../contexts/useAuth';
 import { useToast } from '../contexts/useToast';
 import { useConfirm } from '../contexts/useConfirm';
-import { EmptyState, Icon, LoadingState } from '../components/Ui';
+import { Button, EmptyState, Icon, LoadingState, Modal, ModalActions } from '../components/Ui';
 import { useAppSections } from '../components/appChrome';
 import { apiClient } from '../lib/api';
 import {
@@ -1003,29 +1002,15 @@ function UserManagementPanel() {
             </div>
 
             {isFormOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={closeForm}>
-                    <div
-                        className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="mb-4 flex items-start justify-between gap-4">
-                            <div>
-                                <h2 className="text-xl font-semibold text-gray-900">{isEditing ? 'Edit user' : 'Add user'}</h2>
-                                <p className="text-sm text-gray-500">
-                                    {isEditing
-                                        ? "Update a user's role, department, and notification preferences."
-                                        : 'Create a new account for a submitter, banking officer, payroll user, reviewer, or admin.'}
-                                </p>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={closeForm}
-                                className="text-gray-400 hover:text-gray-600"
-                                aria-label="Close"
-                            >
-                                <X className="h-5 w-5" />
-                            </button>
-                        </div>
+                <Modal
+                    title={isEditing ? 'Edit user' : 'Add user'}
+                    description={isEditing
+                        ? "Update a user's role, department, and notification preferences."
+                        : 'Create a new account for a submitter, banking officer, payroll user, reviewer, or admin.'}
+                    onClose={closeForm}
+                    closeDisabled={saving}
+                    size="2xl"
+                >
                         <form ref={formRef} onSubmit={handleFormSubmit} className="space-y-4">
                     <div className="grid gap-4 md:grid-cols-2">
                         <label className="text-sm font-medium text-gray-700">
@@ -1204,40 +1189,26 @@ function UserManagementPanel() {
                         </p>
                     </label>
 
-                    {formError && <p className="text-sm text-red-600">{formError}</p>}
+                    {formError && <p role="alert" className="text-sm text-red-600">{formError}</p>}
 
-                    <div className="flex flex-wrap gap-3">
-                        <button
-                            type="submit"
-                            disabled={saving}
-                            className="rounded-full bg-amber-500 px-6 py-2 text-sm font-semibold text-white shadow hover:bg-amber-600 disabled:opacity-60"
-                        >
+                    <ModalActions>
+                        <Button variant="secondary" onClick={closeForm} disabled={saving}>Cancel</Button>
+                        <Button type="submit" loading={saving}>
                             {saving ? 'Saving…' : isEditing ? 'Save changes' : 'Create user'}
-                        </button>
-                        <button
-                            type="button"
-                            onClick={closeForm}
-                            className="rounded-full border border-gray-300 px-6 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                        >
-                            Cancel
-                        </button>
-                    </div>
+                        </Button>
+                    </ModalActions>
                         </form>
-                    </div>
-                </div>
+                </Modal>
             )}
 
             {tempPassword && (
-                <div
-                    className="fixed inset-0 z-[70] flex items-center justify-center bg-gray-900/60 px-4 py-6"
-                    onClick={() => setTempPassword(null)}
+                <Modal
+                    title="Temporary password"
+                    description={`For ${tempPassword.email}. They must change it on next login. This won't be shown again, so copy it now.`}
+                    onClose={() => setTempPassword(null)}
+                    size="sm"
                 >
-                    <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-                        <h2 className="text-lg font-semibold text-gray-900">Temporary password</h2>
-                        <p className="mt-1 text-sm text-gray-500">
-                            For {tempPassword.email}. They must change it on next login. This won't be shown again, so copy it now.
-                        </p>
-                        <div className="mt-4 flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2">
+                        <div className="flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2">
                             <code className="flex-1 select-all font-mono text-sm text-gray-900">{tempPassword.value}</code>
                             <button
                                 type="button"
@@ -1248,17 +1219,10 @@ function UserManagementPanel() {
                                 {passwordCopied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
                             </button>
                         </div>
-                        <div className="mt-5 flex justify-end">
-                            <button
-                                type="button"
-                                onClick={() => setTempPassword(null)}
-                                className="rounded-full bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-amber-600"
-                            >
-                                Done
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                        <ModalActions>
+                            <Button onClick={() => setTempPassword(null)}>Done</Button>
+                        </ModalActions>
+                </Modal>
             )}
         </section>
     );
@@ -1803,48 +1767,18 @@ function AdminArchivesPanel() {
                 </div>
             </div>
             {deleteTarget && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={closeDeleteModal}>
-                    <div
-                        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="flex items-start justify-between">
-                            <div>
-                                <p className="text-sm text-gray-500">Permanent action</p>
-                                <h3 className="text-2xl font-semibold text-gray-900">Delete {formatBatchCode(deleteTarget.code)}?</h3>
-                                <p className="mt-1 text-sm text-gray-600">
-                                    This removes the batch from the archive and cannot be undone.
-                                </p>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={closeDeleteModal}
-                                className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-                            >
-                                ×
-                            </button>
-                        </div>
-                        {deleteError && <p className="mt-3 text-sm text-rose-600">{deleteError}</p>}
-                        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
-                            <button
-                                type="button"
-                                onClick={closeDeleteModal}
-                                disabled={deleteLoading}
-                                className="rounded-full border border-gray-300 px-5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                onClick={confirmDelete}
-                                disabled={deleteLoading}
-                                className="rounded-full bg-rose-600 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-rose-500 disabled:opacity-60"
-                            >
-                                {deleteLoading ? 'Deleting…' : 'Delete batch'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <Modal
+                    title={<><span className="block text-sm font-normal text-gray-500">Permanent action</span>Delete {formatBatchCode(deleteTarget.code)}?</>}
+                    description="This removes the batch from the archive and cannot be undone."
+                    onClose={closeDeleteModal}
+                    closeDisabled={deleteLoading}
+                >
+                        {deleteError && <p role="alert" className="text-sm text-rose-600">{deleteError}</p>}
+                        <ModalActions>
+                            <Button variant="secondary" onClick={closeDeleteModal} disabled={deleteLoading}>Cancel</Button>
+                            <Button variant="danger" onClick={confirmDelete} loading={deleteLoading}>{deleteLoading ? 'Deleting…' : 'Delete batch'}</Button>
+                        </ModalActions>
+                </Modal>
             )}
         </section>
     );
@@ -2705,34 +2639,13 @@ function SmtpSettingsPanel() {
             </form>
 
             {testModalOpen && (
-                <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6"
-                    onClick={() => !testLoading && setTestModalOpen(false)}
+                <Modal
+                    title="Send test email"
+                    description="Verify delivery using the active SMTP settings."
+                    onClose={() => setTestModalOpen(false)}
+                    closeDisabled={testLoading}
                 >
-                    <div
-                        role="dialog"
-                        aria-modal="true"
-                        aria-labelledby="smtp-test-title"
-                        className="w-full max-w-md rounded-lg bg-white p-6 shadow-2xl"
-                        onClick={(event) => event.stopPropagation()}
-                    >
-                        <div className="flex items-start justify-between gap-4">
-                            <div>
-                                <h3 id="smtp-test-title" className="text-lg font-semibold text-gray-900">Send test email</h3>
-                                <p className="mt-1 text-sm text-gray-500">Verify delivery using the active SMTP settings.</p>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => setTestModalOpen(false)}
-                                disabled={testLoading}
-                                className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-50"
-                                aria-label="Close test email modal"
-                            >
-                                <Icon name="x" className="h-5 w-5" />
-                            </button>
-                        </div>
-
-                        <form onSubmit={handleTest} className="mt-6 space-y-4">
+                        <form onSubmit={handleTest} className="space-y-4">
                             <div className="rounded-md bg-gray-50 px-3 py-2">
                                 <p className="text-xs font-medium text-gray-500">From Email</p>
                                 <p className="mt-1 break-all text-sm text-gray-900">{configuredFromEmail || 'Not configured'}</p>
@@ -2751,27 +2664,13 @@ function SmtpSettingsPanel() {
                                     className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                                 />
                             </label>
-                            {testError && <p className="text-sm text-red-600">{testError}</p>}
-                            <div className="flex justify-end gap-3 border-t border-gray-200 pt-4">
-                                <button
-                                    type="button"
-                                    onClick={() => setTestModalOpen(false)}
-                                    disabled={testLoading}
-                                    className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={testLoading}
-                                    className="rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-60"
-                                >
-                                    {testLoading ? 'Sending...' : 'Send Test'}
-                                </button>
-                            </div>
+                            {testError && <p role="alert" className="text-sm text-red-600">{testError}</p>}
+                            <ModalActions>
+                                <Button variant="secondary" onClick={() => setTestModalOpen(false)} disabled={testLoading}>Cancel</Button>
+                                <Button type="submit" loading={testLoading}>{testLoading ? 'Sending…' : 'Send test'}</Button>
+                            </ModalActions>
                         </form>
-                    </div>
-                </div>
+                </Modal>
             )}
         </section>
     );

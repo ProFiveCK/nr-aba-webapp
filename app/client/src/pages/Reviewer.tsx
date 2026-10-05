@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { apiClient } from '../lib/api';
-import { EmptyState, Icon, LoadingState } from '../components/Ui';
+import { Button, EmptyState, Icon, LoadingState, Modal, ModalActions } from '../components/Ui';
 import { useAuth } from '../contexts/useAuth';
 import { useToast } from '../contexts/useToast';
 import type { BatchDetail, BatchStage } from './MyBatches/types';
@@ -598,69 +598,26 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
         </div>
 
         {readerNoticeOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setReaderNoticeOpen(false)}>
-                <div
-                    className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
-                    onClick={(e) => e.stopPropagation()}
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby="reader-notice-title"
-                >
-                    <div className="flex items-start gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
-                            <Icon name="alert" />
-                        </div>
-                        <div className="min-w-0">
-                            <h3 id="reader-notice-title" className="text-lg font-semibold text-gray-900">ABA file not available</h3>
-                            <p className="mt-1 text-sm text-gray-600">
-                                The ABA file is not available for this batch.
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setReaderNoticeOpen(false)}
-                            className="icon-button -mr-2 -mt-2 shrink-0"
-                            aria-label="Close"
-                        >
-                            <Icon name="x" />
-                        </button>
-                    </div>
-                    <div className="mt-6 flex justify-end">
-                        <button
-                            type="button"
-                            onClick={() => setReaderNoticeOpen(false)}
-                            className="toolbar-button toolbar-button-primary"
-                        >
-                            OK
-                        </button>
-                    </div>
-                </div>
-            </div>
+            <Modal
+                title="ABA file not available"
+                description="The ABA file is not available for this batch."
+                onClose={() => setReaderNoticeOpen(false)}
+            >
+                <ModalActions>
+                    <Button onClick={() => setReaderNoticeOpen(false)}>OK</Button>
+                </ModalActions>
+            </Modal>
         )}
 
         {valueDateModalOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setValueDateModalOpen(false)}>
-                <div
-                    className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <div className="flex items-start justify-between">
-                        <div>
-                            <h3 className="text-xl font-semibold text-gray-900">Adjust processing date</h3>
-                            <p className="text-sm text-gray-500 mt-1">
-                                Update the value date the bank will use. Enter DDMMYY (six digits) and optionally adjust the description or remitter.
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setValueDateModalOpen(false)}
-                            className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-                        >
-                            ×
-                        </button>
-                    </div>
-
-                    <div className="mt-4 space-y-3">
+            <Modal
+                title="Adjust processing date"
+                description="Update the value date the bank will use. Enter DDMMYY (six digits) and optionally adjust the description or remitter."
+                onClose={() => setValueDateModalOpen(false)}
+                closeDisabled={valueDateLoading}
+                size="lg"
+            >
+                    <div className="space-y-3">
                         <label className="text-sm font-medium text-gray-700">
                             Processing date (DDMMYY)
                             <input
@@ -693,28 +650,13 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
                                 className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                             />
                         </label>
-                        {valueDateError && <p className="text-sm text-rose-600">{valueDateError}</p>}
-                        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end pt-2">
-                            <button
-                                type="button"
-                                onClick={() => setValueDateModalOpen(false)}
-                                className="rounded-full border border-gray-300 px-5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                                disabled={valueDateLoading}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleValueDateSubmit}
-                                disabled={valueDateLoading}
-                                className="rounded-full bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-amber-400 disabled:opacity-60"
-                            >
-                                {valueDateLoading ? 'Saving…' : 'Update date'}
-                            </button>
-                        </div>
+                        {valueDateError && <p role="alert" className="text-sm text-rose-600">{valueDateError}</p>}
+                        <ModalActions>
+                            <Button variant="secondary" onClick={() => setValueDateModalOpen(false)} disabled={valueDateLoading}>Cancel</Button>
+                            <Button onClick={handleValueDateSubmit} loading={valueDateLoading}>{valueDateLoading ? 'Saving…' : 'Update date'}</Button>
+                        </ModalActions>
                     </div>
-                </div>
-            </div>
+            </Modal>
         )}
         </>
     );

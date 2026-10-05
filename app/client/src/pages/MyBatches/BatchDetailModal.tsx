@@ -1,6 +1,7 @@
 import type { BatchDetail } from './types';
 import { formatIsoDateTime, formatPdNumber, getBatchStageBadgeClasses, getBatchStageMetadata } from '../../lib/utils';
 import { useToast } from '../../contexts/useToast';
+import { Button, Modal, ModalActions } from '../../components/Ui';
 
 interface BatchDetailModalProps {
     batch: BatchDetail | null;
@@ -50,26 +51,7 @@ export function BatchDetailModal({ batch, onClose }: BatchDetailModalProps) {
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" onClick={onClose}>
-            <div
-                className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-auto m-4"
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div className="p-6">
-                    {/* Header */}
-                    <div className="flex items-start justify-between mb-4">
-                        <h2 className="text-2xl font-bold text-gray-900">
-                            Batch {batch.code}
-                        </h2>
-                        <button
-                            onClick={onClose}
-                            className="text-gray-400 hover:text-gray-600 text-2xl"
-                            aria-label="Close"
-                        >
-                            ×
-                        </button>
-                    </div>
-
+        <Modal title={`Batch ${batch.code}`} onClose={onClose} size="3xl">
                     {/* Batch Details */}
                     <div className="space-y-4">
                         {/* Status Badge */}
@@ -179,25 +161,10 @@ export function BatchDetailModal({ batch, onClose }: BatchDetailModalProps) {
                         </div>
                     </div>
 
-                    {/* Footer */}
-                    <div className="flex flex-col gap-3 sm:flex-row sm:justify-end mt-6 pt-4 border-t border-gray-200">
-                        {canLoadInGenerator && (
-                            <button
-                                onClick={handleLoadIntoGenerator}
-                                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-500 font-medium"
-                            >
-                                Load in Generator
-                            </button>
-                        )}
-                        <button
-                            onClick={onClose}
-                            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 font-medium"
-                        >
-                            Close
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
+                    <ModalActions>
+                        <Button variant="secondary" onClick={onClose}>Close</Button>
+                        {canLoadInGenerator && <Button onClick={handleLoadIntoGenerator}>Load in Generator</Button>}
+                    </ModalActions>
+        </Modal>
     );
 }

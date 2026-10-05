@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { apiClient } from '../lib/api';
+import { Button, Modal, ModalActions } from './Ui';
 
 interface ResetPasswordModalProps {
     token: string;
@@ -54,39 +55,15 @@ export function ResetPasswordModal({ token, onClose, onSuccess }: ResetPasswordM
     };
 
     return (
-        <div 
-            className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6"
-            onClick={onClose}
-        >
-            <div
-                className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div className="flex items-start justify-between">
-                    <div>
-                        <h2 className="text-xl font-semibold text-gray-900">Reset Your Password</h2>
-                        <p className="text-sm text-gray-500 mt-1">
-                            Enter your new password below
-                        </p>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-                        disabled={loading}
-                    >
-                        ×
-                    </button>
-                </div>
-
+        <Modal title="Reset your password" description="Enter your new password below." onClose={onClose} closeDisabled={loading}>
                 {success ? (
-                    <div className="mt-4 text-sm text-green-600 bg-green-50 border border-green-200 rounded-md p-3">
+                    <div className="text-sm text-green-600 bg-green-50 border border-green-200 rounded-md p-3">
                         Password reset successful! You can now sign in with your new password.
                     </div>
                 ) : (
-                    <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+                    <form onSubmit={handleSubmit} className="space-y-4">
                         {error && (
-                            <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-3">
+                            <div role="alert" className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-3">
                                 {error}
                             </div>
                         )}
@@ -131,26 +108,12 @@ export function ResetPasswordModal({ token, onClose, onSuccess }: ResetPasswordM
                             />
                         </div>
 
-                        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end pt-2">
-                            <button
-                                type="button"
-                                onClick={onClose}
-                                className="rounded-full border border-gray-300 px-5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                                disabled={loading}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="submit"
-                                disabled={loading}
-                            className="rounded-full bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-amber-600 disabled:opacity-60"
-                            >
-                                {loading ? 'Resetting...' : 'Reset Password'}
-                            </button>
-                        </div>
+                        <ModalActions>
+                            <Button variant="secondary" onClick={onClose} disabled={loading}>Cancel</Button>
+                            <Button type="submit" loading={loading}>{loading ? 'Resetting…' : 'Reset password'}</Button>
+                        </ModalActions>
                     </form>
                 )}
-            </div>
-        </div>
+        </Modal>
     );
 }

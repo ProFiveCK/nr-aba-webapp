@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiClient } from '../../lib/api';
 import { useAuth } from '../../contexts/useAuth';
 import { useToast } from '../../contexts/useToast';
-import { EmptyState, LoadingState } from '../../components/Ui';
+import { Button, EmptyState, LoadingState, Modal, ModalActions } from '../../components/Ui';
 import { buildAbaFile } from '../../lib/generator-utils';
 import { toBase64 } from '../../lib/utils';
 import { HEADER_PRESETS } from '../../lib/constants';
@@ -387,24 +387,18 @@ export function PayPeriods() {
       </section>
 
       {createOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setCreateOpen(false)}>
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between">
-              <h2 className="text-xl font-semibold text-gray-900">New Pay Run</h2>
-              <button onClick={() => setCreateOpen(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
-            </div>
-            <div className="mt-4 space-y-3">
+        <Modal title="New pay run" onClose={() => setCreateOpen(false)} closeDisabled={saving} size="sm">
+            <div className="space-y-3">
               <label className="block text-sm font-medium text-gray-700">Paid date (value date)
                 <input type="date" value={paidDate} onChange={(e) => setPaidDate(e.target.value)} className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500" />
               </label>
               <p className="text-xs text-gray-500">Paid from CBA-RON ({HEADER_PRESETS['CBA-RON'].trace_bsb} {HEADER_PRESETS['CBA-RON'].trace_acct}). Description: ALLOWANCE-Health.</p>
             </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <button onClick={() => setCreateOpen(false)} className="toolbar-button">Cancel</button>
-              <button onClick={createPeriod} disabled={saving} className="toolbar-button bg-teal-600 text-white border-teal-600 hover:bg-teal-700 disabled:opacity-60">Create</button>
-            </div>
-          </div>
-        </div>
+            <ModalActions>
+              <Button variant="secondary" onClick={() => setCreateOpen(false)} disabled={saving}>Cancel</Button>
+              <Button onClick={createPeriod} loading={saving}>Create</Button>
+            </ModalActions>
+        </Modal>
       )}
     </div>
   );

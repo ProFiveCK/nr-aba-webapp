@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../../lib/api';
 import { useToast } from '../../../contexts/useToast';
 import { useConfirm } from '../../../contexts/useConfirm';
-import { LoadingState } from '../../../components/Ui';
+import { Button, LoadingState, Modal, ModalActions } from '../../../components/Ui';
 import type { LeaveType, ResetPeriod } from '../types';
 import { PublicHolidays } from '../PublicHolidays';
 import { OrgUnits } from '../OrgUnits';
@@ -382,21 +382,13 @@ export function Policies() {
             </div>
 
             {editing && draft && (
-                <div className="fixed inset-0 z-50 flex justify-end">
-                    <div className="absolute inset-0 bg-gray-900/40" onClick={() => { setEditing(null); setDraft(null); }} />
-                    <div className="relative flex h-full w-full max-w-md flex-col overflow-y-auto bg-white shadow-2xl">
-                        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
-                            <h2 className="text-base font-semibold text-gray-900">Edit {editing.name}</h2>
-                            <button
-                                type="button"
-                                onClick={() => { setEditing(null); setDraft(null); }}
-                                className="rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                                aria-label="Close"
-                            >
-                                ×
-                            </button>
-                        </div>
-                        <div className="flex-1 space-y-4 p-5">
+                <Modal
+                    title={`Edit ${editing.name}`}
+                    onClose={() => { setEditing(null); setDraft(null); }}
+                    closeDisabled={savingEdit}
+                    placement="right"
+                >
+                        <div className="space-y-4">
                             <label className="block text-sm">
                                 <span className="mb-1 block font-medium text-gray-700">Name</span>
                                 <input
@@ -497,25 +489,11 @@ export function Policies() {
                                 </label>
                             )}
                         </div>
-                        <div className="flex items-center justify-end gap-2 border-t border-gray-200 px-5 py-4">
-                            <button
-                                type="button"
-                                onClick={() => { setEditing(null); setDraft(null); }}
-                                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                onClick={saveEdit}
-                                disabled={savingEdit}
-                                className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
-                            >
-                                {savingEdit ? 'Saving…' : 'Save'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                        <ModalActions>
+                            <Button variant="secondary" onClick={() => { setEditing(null); setDraft(null); }} disabled={savingEdit}>Cancel</Button>
+                            <Button onClick={saveEdit} loading={savingEdit}>{savingEdit ? 'Saving…' : 'Save'}</Button>
+                        </ModalActions>
+                </Modal>
             )}
         </div>
     );

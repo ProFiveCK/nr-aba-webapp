@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Building2, ChevronDown, LayoutGrid, Loader2, LockKeyhole, Mail, User } from 'lucide-react';
+import { Button, Modal, ModalActions } from '../components/Ui';
 import { useAuth } from '../contexts/useAuth';
 import { apiClient } from '../lib/api';
 import { loadGoogleIdentity } from '../lib/googleSignIn';
@@ -550,28 +551,13 @@ export function Login() {
         </div>
 
         {resetOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 px-4 py-6" onClick={() => setResetOpen(false)}>
-                <div
-                    className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl"
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <div className="flex items-start justify-between">
-                        <div>
-                            <h2 className="text-xl font-semibold text-brand">Reset Password</h2>
-                            <p className="text-sm text-gray-500 mt-1">
-                                Enter your email and we’ll send reset instructions if the account exists.
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setResetOpen(false)}
-                            className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-                        >
-                            ×
-                        </button>
-                    </div>
-
-                    <form onSubmit={handleResetPassword} className="mt-4 space-y-3">
+            <Modal
+                title="Reset password"
+                description="Enter your email and we’ll send reset instructions if the account exists."
+                onClose={() => setResetOpen(false)}
+                closeDisabled={resetLoading}
+            >
+                    <form onSubmit={handleResetPassword} className="space-y-3">
                         <label className="text-sm font-medium text-gray-700">
                             Email address
                             <input
@@ -584,26 +570,12 @@ export function Login() {
                             />
                         </label>
                         {resetMessage && <p className="text-sm text-gray-600">{resetMessage}</p>}
-                        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                            <button
-                                type="button"
-                                onClick={() => setResetOpen(false)}
-                                className="rounded-md border border-gray-300 px-5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                                disabled={resetLoading}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="submit"
-                                disabled={resetLoading}
-                                className="rounded-md bg-accent px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-accent-hover disabled:opacity-60"
-                            >
-                                {resetLoading ? 'Sending…' : 'Send reset link'}
-                            </button>
-                        </div>
+                        <ModalActions>
+                            <Button variant="secondary" onClick={() => setResetOpen(false)} disabled={resetLoading}>Cancel</Button>
+                            <Button type="submit" loading={resetLoading}>{resetLoading ? 'Sending…' : 'Send reset link'}</Button>
+                        </ModalActions>
                     </form>
-                </div>
-            </div>
+            </Modal>
         )}
         </>
     );

@@ -52,6 +52,47 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
     employee: ana, leaveTypeId: annual.id, startDate: START, endDate: END, reason: 'Family', ...overrides,
   });
 
+  // Who hears about a new application. The rule matters because a staff
+  // record with no manager used to notify nobody: the request reached the
+  // administrators' queue but no email reached them.
+  describe('who is told about a new application', () => {
+    async function makeAdmin(email) {
+      const { rows } = await pool.query(
+        `INSERT INTO reviewers (email, display_name, role, password_hash, permissions, status)
+         VALUES ($1, $1, 'user', 'x', '{"hr_admin": true}'::jsonb, 'active') RETURNING id`,
+        [email]
+      );
+      return rows[0].id;
+    }
+
+    test('the manager, when the staff record names one', async () => {
+      await pool.query("UPDATE hr_employees SET email = 'manager@example.test' WHERE id = $1", [manager.id]);
+      const fresh = (await pool.query('SELECT * FROM hr_employees WHERE id = $1', [ana.id])).rows[0];
+
+      const approvers = await service.leaveApprovers(pool, fresh);
+      assert.deepEqual(approvers.map((a) => a.email), ['manager@example.test']);
+    });
+
+    test('the administrators, when no manager is set', async () => {
+      await makeAdmin('admin-one@example.test');
+      const orphan = await createEmployee(pool, { name: 'No Manager' });
+
+      const approvers = await service.leaveApprovers(pool, orphan);
+      assert.ok(approvers.some((a) => a.email === 'admin-one@example.test'),
+        'an application from someone with no manager still reaches an administrator');
+    });
+
+    test('the administrators, when the manager has no address on file', async () => {
+      await makeAdmin('admin-two@example.test');
+      await pool.query('UPDATE hr_employees SET email = NULL WHERE id = $1', [manager.id]);
+      const fresh = (await pool.query('SELECT * FROM hr_employees WHERE id = $1', [ana.id])).rows[0];
+
+      const approvers = await service.leaveApprovers(pool, fresh);
+      assert.ok(approvers.length > 0, 'it does not fall silent just because the manager has no email');
+      assert.ok(approvers.every((a) => a.email), 'and never returns an approver with no address');
+    });
+  });
+
   describe('applying', () => {
     test('holds the days against pending without touching the balance', async () => {
       const { application } = await apply();

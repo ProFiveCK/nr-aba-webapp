@@ -12,6 +12,18 @@ import {
 } from '../config.js';
 import { lowerEmail } from '../utils/helpers.js';
 
+/**
+ * A link into the portal.
+ *
+ * Leave now lives at real URLs rather than behind a `#`, and the base URL may
+ * or may not carry a trailing slash, so joining by hand is how an email ends
+ * up pointing at `...info//leave`. Everything still on a hash keeps using
+ * `FRONTEND_BASE_URL` directly until its app is converted.
+ */
+function appUrl(path) {
+  return `${FRONTEND_BASE_URL.replace(/\/+$/, '')}/${String(path).replace(/^\/+/, '')}`;
+}
+
 let testingModeEnabled = false;
 let testingModeState = {
   updatedAt: null,
@@ -314,12 +326,24 @@ function leaveDates(application) {
 }
 
 /** Tells the approving manager that leave is waiting for them. */
-export async function notifyLeaveSubmitted({ application, employee, manager }) {
+/**
+ * Tells whoever will decide a leave application that it is waiting.
+ *
+ * `approvers` is a list rather than the applicant's manager alone, because a
+ * staff record with no manager set used to notify nobody at all: the request
+ * appeared in the administrators' queue and sat there unannounced. The caller
+ * decides who they are; this only has to reach all of them.
+ *
+ * Returns the addresses written to, which is what the caller logs.
+ */
+export async function notifyLeaveSubmitted({ application, employee, approvers }) {
   if (!mailTransport || testingModeEnabled) return [];
-  const to = lowerEmail(manager?.email || '');
-  if (!to) return [];
+  const to = [...new Set(
+    (approvers || []).map((approver) => lowerEmail(approver?.email || '')).filter(Boolean)
+  )];
+  if (!to.length) return [];
 
-  const link = `${FRONTEND_BASE_URL}#hr/approvals`;
+  const link = appUrl('leave/approvals');
   const text = `${employee.display_name} has applied for leave and needs your approval.
 
 Type: ${application.leave_type_name}
@@ -328,8 +352,8 @@ Working days: ${application.days}
 ${application.reason ? `Reason: ${application.reason}\n` : ''}
 Review it here: ${link}
 `;
-  await sendMail({ to, subject: `Leave approval needed — ${employee.display_name}`, text });
-  return [to];
+  await sendMail({ to: to.join(', '), subject: `Leave approval needed — ${employee.display_name}`, text });
+  return to;
 }
 
 /** Tells the applicant what was decided. Rejections always carry the reason. */
@@ -343,7 +367,7 @@ export async function notifyLeaveDecision({ application, employee, decision, not
 
 Your ${application.leave_type_name} leave request for ${leaveDates(application)} (${application.days} working days) has been ${outcome}${decidedBy ? ` by ${decidedBy}` : ''}.
 ${note ? `\nReason: ${note}\n` : ''}
-You can see your leave at ${FRONTEND_BASE_URL}#hr/my-leave
+You can see your leave at ${appUrl('leave/my-leave')}
 `;
   await sendMail({ to, subject: `Your leave request was ${outcome}`, text });
   return [to];

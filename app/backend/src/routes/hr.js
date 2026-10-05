@@ -10,6 +10,7 @@ import {
   applyForLeave,
   cancelLeave,
   decideLeave,
+  leaveApprovers,
   setOpeningBalance,
 } from '../services/leaveService.js';
 import { withTransaction } from '../lib/transaction.js';
@@ -379,17 +380,13 @@ router.post(
 
     // After the response, and best effort: a mail failure must not fail an
     // application the database has already accepted.
-    if (employee.manager_id) {
-      const { rows: managers } = await pool.query(
-        'SELECT display_name, email FROM hr_employees WHERE id = $1',
-        [employee.manager_id]
-      );
-      notifyLeaveSubmitted({
+    leaveApprovers(pool, employee)
+      .then((approvers) => notifyLeaveSubmitted({
         application: { ...application, leave_type_name: leaveType.name },
         employee,
-        manager: managers[0],
-      }).catch((err) => console.error('Failed to notify manager of leave application', err));
-    }
+        approvers,
+      }))
+      .catch((err) => console.error('Failed to notify the approver of a leave application', err));
   }
 );
 

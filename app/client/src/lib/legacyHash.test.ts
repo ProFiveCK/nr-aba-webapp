@@ -23,9 +23,11 @@ describe('migrateLegacyHash', () => {
         expect(replaced).toEqual(['/aba']);
     });
 
+    // The id stays `public-health` (it is baked into capabilities and table
+    // names); only what people see was renamed to Fit for Duty.
     it('maps an app whose path differs from its id', () => {
         const replaced = rewritesTo('/', '#public-health/participants');
-        expect(replaced).toEqual(['/wellness/participants']);
+        expect(replaced).toEqual(['/fit-for-duty/participants']);
     });
 
     // A reset link arrives from an email and is read from the hash by App.

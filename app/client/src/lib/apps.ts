@@ -97,12 +97,12 @@ export const APPS: AppDef[] = [
   },
   {
     id: 'public-health',
-    path: 'wellness',
-    label: 'Wellness Program',
-    shortLabel: 'Wellness Program',
+    path: 'fit-for-duty',
+    label: 'Fit for Duty',
+    shortLabel: 'Fit for Duty',
     icon: Activity,
     capability: 'public_health_access',
-    description: 'Manage wellness allowance participants and payment runs.',
+    description: 'Manage Fit for Duty allowance participants and payment runs.',
     color: 'bg-teal-600',
   },
   {

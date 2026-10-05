@@ -1822,8 +1822,8 @@ async function notifyPublicHealthReviewers(batch, metadata) {
   const participantCount = metadata?.participant_count ?? 'N/A';
   const submitter = metadata?.prepared_by || batch.submitted_email || 'Unknown';
   const reviewLink = `${FRONTEND_BASE_URL}#public-health/review`;
-  const subject = `Wellness Program pay run submitted — ${formattedCode}`;
-  const text = `A new Wellness Program (Public Health) allowance pay run has been submitted for review.\n\nReference code: ${formattedCode}\nPaid date: ${paidDate}\nParticipants: ${participantCount}\nSubmitted by: ${submitter}\n\nReview it here: ${reviewLink}\n`;
+  const subject = `Fit for Duty pay run submitted — ${formattedCode}`;
+  const text = `A new Fit for Duty allowance pay run has been submitted for review.\n\nReference code: ${formattedCode}\nPaid date: ${paidDate}\nParticipants: ${participantCount}\nSubmitted by: ${submitter}\n\nReview it here: ${reviewLink}\n`;
   const [primaryRecipient, ...bccRecipients] = recipients;
   const mailOptions = {
     to: primaryRecipient,

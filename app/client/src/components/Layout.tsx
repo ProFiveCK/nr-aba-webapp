@@ -1,15 +1,21 @@
-import { useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Outlet, useLocation } from 'react-router-dom';
 import { UserRound } from 'lucide-react';
 import { useAuth } from '../contexts/useAuth';
 import { ChangePasswordModal } from './ChangePasswordModal';
-import { getAllowedApps, SYSTEM_PAGES, pathForApp, type AppDef } from '../lib/apps';
+import { AppBar } from './AppBar';
+import { AppChromeContext, type AppSection } from './appChrome';
+import { findAppByPath, getAllowedApps, SYSTEM_PAGES, type AppDef } from '../lib/apps';
 
 /**
- * The portal chrome every app sits inside: the Naoero header, the app nav and
- * the page container. It renders whichever app the route selected through
- * `<Outlet />`, and no longer knows anything about the apps themselves — the
- * page heading moved to `AppPageHeader`, which each app opts into.
+ * The portal chrome: the Naoero header, the current app's bar, and the page
+ * container that renders whichever app the route selected.
+ *
+ * The header is all that survives across apps. Inside an app the bar below it
+ * belongs to that app — a way back to the dashboard, the app's name, and the
+ * app's own sections, which it publishes through `useAppSections`. The portal
+ * no longer prints a title above anyone's content, so every app's page starts
+ * with its own first thing.
  */
 export function Layout() {
     const { user, logout } = useAuth();
@@ -38,9 +44,18 @@ export function Layout() {
     const systemPages = SYSTEM_PAGES.filter(
         (p) => p.id !== 'dashboard' && (p.id !== 'admin' || user?.role === 'admin')
     );
-    const dashboard = SYSTEM_PAGES.find((p) => p.id === 'dashboard') as AppDef;
-    const navItems = [dashboard, ...allowedApps, ...systemPages];
-    const [navOpen, setNavOpen] = useState(false);
+    const switchable: AppDef[] = [...allowedApps, ...systemPages];
+
+    // Which app the URL is in. The dashboard is not an app you are "inside":
+    // it is the launcher, and it lists everything itself, so it gets no bar.
+    const { pathname } = useLocation();
+    const currentApp = findAppByPath(pathname.split('/')[1] ?? '');
+    const insideApp = currentApp && currentApp.id !== 'dashboard' ? currentApp : null;
+
+    // The open app publishes its sections here (see useAppSections) so they
+    // can be drawn in the sticky bar instead of scrolling away with the page.
+    const [sections, setSections] = useState<AppSection[]>([]);
+    const chrome = useMemo(() => ({ sections, setSections }), [sections]);
 
     return (
         <>
@@ -71,19 +86,11 @@ export function Layout() {
                         </button>
                     </div>
                     <div className="flex items-center gap-2 sm:hidden">
+                        {/* No hamburger: the app list is the dashboard, and
+                            the bar below belongs to the app you are in. */}
                         <button
                             type="button"
-                            onClick={() => { setShowAccountMenu(false); setNavOpen((v) => !v); }}
-                            className="rounded-lg border border-white/30 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-white/10"
-                            aria-label="Toggle navigation"
-                            aria-expanded={navOpen}
-                            aria-controls="primary-navigation"
-                        >
-                            ☰
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => { setNavOpen(false); setShowAccountMenu((open) => !open); }}
+                            onClick={() => setShowAccountMenu((open) => !open)}
                             className="rounded-lg border border-white/30 p-2 text-white transition-colors hover:bg-white/10"
                             aria-label="Account actions"
                             aria-expanded={showAccountMenu}
@@ -101,32 +108,12 @@ export function Layout() {
                     )}
                 </div>
             </div>
-            <div className="border-b border-slate-200 bg-white px-4 shadow-sm sm:px-6 lg:px-8">
-                <nav id="primary-navigation" aria-label="Applications" className={`mx-auto max-h-[60dvh] max-w-7xl overflow-y-auto sm:max-h-none sm:overflow-visible ${navOpen ? 'block' : 'hidden sm:block'}`}>
-                    <div className="flex flex-wrap gap-1 py-2">
-                        {/* Links, not buttons: ctrl-click and middle-click open
-                            an app in a new tab, which a button cannot do. */}
-                        {navItems.map((item) => (
-                            <NavLink
-                                key={item.id}
-                                to={pathForApp(item)}
-                                end={item.id === 'dashboard'}
-                                onClick={() => setNavOpen(false)}
-                                className={({ isActive }) => `rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                                    isActive
-                                        ? 'bg-[#002B7F] text-white shadow-sm'
-                                        : 'text-slate-600 hover:bg-blue-50 hover:text-[#002B7F]'
-                                }`}
-                            >
-                                {item.shortLabel}
-                            </NavLink>
-                        ))}
-                    </div>
-                </nav>
-            </div>
+            {insideApp && <AppBar app={insideApp} apps={switchable} sections={sections} />}
             </header>
             <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-                <main><Outlet /></main>
+                <main>
+                    <AppChromeContext.Provider value={chrome}><Outlet /></AppChromeContext.Provider>
+                </main>
             </div>
         </div>
         {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)} />}

@@ -76,7 +76,7 @@ export const ROLE_LABELS = {
     user: 'Level 1 User',
     banking: 'Level 2 Banking',
     payroll: 'Level 3 Payroll',
-    public_health: 'Wellness Program Staff',
+    public_health: 'Fit for Duty Staff',
     reviewer: 'Level 4 Reviewer',
     admin: 'Level 5 Administrator',
 } as const;

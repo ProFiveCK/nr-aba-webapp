@@ -251,8 +251,8 @@ export function Participants() {
     const rows = filtered.map((p) => (
       `<tr><td>${esc(p.full_name)}</td><td>${esc(p.village)}</td><td>${p.current_level || 'LV1'}</td><td>${esc(p.bank_bsb)}</td><td>${esc(p.bank_account)}</td><td>${p.status}</td></tr>`
     )).join('');
-    const body = `<h1>Wellness Program Participants</h1><div class="meta">${filtered.length} participants · ${new Date().toLocaleString()}</div><table><thead><tr><th>Name</th><th>Village</th><th>Level</th><th>BSB</th><th>Account</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
-    printReport('Wellness Program Participants', body);
+    const body = `<h1>Fit for Duty Participants</h1><div class="meta">${filtered.length} participants · ${new Date().toLocaleString()}</div><table><thead><tr><th>Name</th><th>Village</th><th>Level</th><th>BSB</th><th>Account</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+    printReport('Fit for Duty Participants', body);
   };
 
   return (

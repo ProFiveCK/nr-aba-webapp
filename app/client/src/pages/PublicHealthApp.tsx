@@ -1,8 +1,6 @@
-import { useEffect, useState } from 'react';
-import { ClipboardCheck, Settings2, UsersRound, WalletCards } from 'lucide-react';
-import { AppSectionNav } from '../components/AppSectionNav';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from '../contexts/useAuth';
-import { readHash, setHash } from '../lib/hash';
+import { useAppSections } from '../components/appChrome';
 import { Participants } from './PublicHealth/Participants';
 import { PayPeriods } from './PublicHealth/PayPeriods';
 import { SettingsPanel } from './PublicHealth/Settings';
@@ -11,51 +9,47 @@ import './PublicHealth/wellness.css';
 
 type Tab = 'participants' | 'periods' | 'settings' | 'review';
 
+/**
+ * Fit for Duty — the allowance programme formerly labelled Wellness Program.
+ * Only the name people see changed: the capability is still
+ * `public_health_access` and the tables are still `public_health_*`, because
+ * renaming those would be a migration with nothing to show for it.
+ */
 export function PublicHealthApp() {
   const { user } = useAuth();
   const isManager = user?.role === 'public_health' || user?.role === 'admin';
   const isReviewer = user?.role === 'reviewer' || user?.role === 'admin';
 
-  const tabs: { id: Tab; label: string; detail: string; icon: typeof UsersRound; show: boolean }[] = [
-    { id: 'participants', label: 'Participants', detail: 'People and levels', icon: UsersRound, show: isManager },
-    { id: 'periods', label: 'Pay runs', detail: 'Prepare payments', icon: WalletCards, show: isManager },
-    { id: 'settings', label: 'Settings', detail: 'Allowance tiers', icon: Settings2, show: isManager },
-    { id: 'review', label: 'Review', detail: 'Approve batches', icon: ClipboardCheck, show: isReviewer },
+  const tabs: { id: Tab; label: string; show: boolean }[] = [
+    { id: 'participants', label: 'Participants', show: isManager },
+    { id: 'periods', label: 'Pay runs', show: isManager },
+    { id: 'settings', label: 'Settings', show: isManager },
+    { id: 'review', label: 'Review', show: isReviewer },
   ];
-  const visible = tabs.filter((t) => t.show);
-  const validIds = visible.map((t) => t.id);
-  const visibleKey = validIds.join('|');
-  const [tab, setTab] = useState<Tab>(() => {
-    const fromHash = readHash().tab as Tab;
-    return validIds.includes(fromHash) ? fromHash : (validIds[0] ?? 'review');
-  });
+  const visible = tabs.filter((tab) => tab.show);
+  useAppSections(visible.map((tab) => ({ to: `/fit-for-duty/${tab.id}`, label: tab.label })));
 
-  useEffect(() => {
-    const syncTab = () => {
-      const requested = readHash().tab as Tab;
-      const allowed = visibleKey.split('|');
-      setTab(allowed.includes(requested) ? requested : ((allowed[0] || 'review') as Tab));
-    };
-    syncTab();
-    window.addEventListener('hashchange', syncTab);
-    return () => window.removeEventListener('hashchange', syncTab);
-  }, [visibleKey]);
-
-  const activeTab = validIds.includes(tab) ? tab : validIds[0];
-  const changeTab = (next: Tab) => {
-    if (!validIds.includes(next)) return;
-    setTab(next);
-    setHash('public-health', next);
-  };
+  const fallback = visible[0]?.id;
+  if (!fallback) {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-900">
+        <h2 className="text-xl font-semibold">Fit for Duty access required</h2>
+        <p className="mt-2 text-sm text-amber-800">No Fit for Duty functions are enabled for your account.</p>
+      </div>
+    );
+  }
+  const has = (id: Tab) => visible.some((tab) => tab.id === id);
 
   return (
-    <div className="wellness space-y-5">
-      <AppSectionNav label="Wellness Program sections" sections={visible} activeId={activeTab} onChange={changeTab} />
-
-      {activeTab === 'participants' && <Participants />}
-      {activeTab === 'periods' && <PayPeriods />}
-      {activeTab === 'settings' && <SettingsPanel />}
-      {activeTab === 'review' && <Review />}
+    <div className="wellness">
+      <Routes>
+        <Route index element={<Navigate to={fallback} replace />} />
+        {has('participants') && <Route path="participants" element={<Participants />} />}
+        {has('periods') && <Route path="periods" element={<PayPeriods />} />}
+        {has('settings') && <Route path="settings" element={<SettingsPanel />} />}
+        {has('review') && <Route path="review" element={<Review />} />}
+        <Route path="*" element={<Navigate to={fallback} replace />} />
+      </Routes>
     </div>
   );
 }

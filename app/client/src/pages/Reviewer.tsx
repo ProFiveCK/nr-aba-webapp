@@ -427,7 +427,7 @@ export function Reviewer({ onSwitchToReader }: ReviewerProps) {
                             <p className="text-sm text-gray-700">
                                 {isAbaBatch
                                     ? 'Departmental ABA submissions are saved as submitted and remain in that status unless a reviewer rejects them.'
-                                    : 'Public health pay runs are reviewed and approved from the Wellness Program review queue.'}
+                                    : 'Fit for Duty pay runs are reviewed and approved from the Fit for Duty review queue.'}
                             </p>
                             <div className="rounded-lg bg-white/70 px-3 py-2 text-sm text-gray-700">
                                 <span className="font-medium">Status:</span> {stageInfo.label}

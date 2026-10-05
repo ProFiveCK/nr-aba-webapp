@@ -162,9 +162,9 @@ export const CAPABILITY_CATALOGUE = [
   },
   {
     app: 'public-health',
-    label: 'Wellness Program',
+    label: 'Fit for Duty',
     capabilities: [
-      { key: PERMISSIONS.PUBLIC_HEALTH_ACCESS, label: 'Open the Wellness Program app' },
+      { key: PERMISSIONS.PUBLIC_HEALTH_ACCESS, label: 'Open the Fit for Duty app' },
       { key: PERMISSIONS.PUBLIC_HEALTH_MANAGE, label: 'Manage participants and pay periods' },
       { key: PERMISSIONS.PUBLIC_HEALTH_REVIEW, label: 'Review wellness batches' },
     ],
@@ -201,7 +201,7 @@ export const SIGNUP_APPS = [
   { id: 'forex-tt', label: 'FOREX TT', grants: [PERMISSIONS.FOREX_TT_ACCESS, PERMISSIONS.SUBMIT_FOREX_TT] },
   { id: 'banking', label: 'Banking', grants: [PERMISSIONS.BANKING_ACCESS] },
   { id: 'payroll', label: 'Payroll', grants: [PERMISSIONS.PAYROLL_ACCESS] },
-  { id: 'public-health', label: 'Wellness Program', grants: [PERMISSIONS.PUBLIC_HEALTH_ACCESS] },
+  { id: 'public-health', label: 'Fit for Duty', grants: [PERMISSIONS.PUBLIC_HEALTH_ACCESS] },
   { id: 'hr', label: 'Leave', grants: [PERMISSIONS.HR_ACCESS, PERMISSIONS.HR_LEAVE_APPLY] },
 ];
 
@@ -234,7 +234,7 @@ export const ROLE_CAPABILITIES = {
   admin: ALL_CAPABILITIES,
 };
 
-// Public Health (Wellness Program) tier codes. LV0 = demoted, no payment.
+// Public Health (Fit for Duty) tier codes. LV0 = demoted, no payment.
 export const PUBLIC_HEALTH_TIERS = ['LV0', 'LV1', 'LV2', 'LV3'];
 
 // Leave application state machine

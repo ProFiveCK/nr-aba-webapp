@@ -12,10 +12,12 @@ import {
     Trash2,
     X,
 } from 'lucide-react';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from '../contexts/useAuth';
 import { useToast } from '../contexts/useToast';
 import { useConfirm } from '../contexts/useConfirm';
 import { EmptyState, Icon, LoadingState } from '../components/Ui';
+import { useAppSections } from '../components/appChrome';
 import { apiClient } from '../lib/api';
 import {
     formatIsoDateTime,
@@ -178,11 +180,26 @@ const EMPTY_BLACKLIST_FORM: BlacklistFormState = {
     active: 'yes',
 };
 
+const ADMIN_SECTIONS: { id: AdminSection; label: string }[] = [
+    { id: 'signups', label: 'Signup Requests' },
+    { id: 'accounts', label: 'User Management' },
+    { id: 'profiles', label: 'Department Profiles' },
+    { id: 'blacklist', label: 'Blacklist' },
+    { id: 'archives', label: 'Archives' },
+    { id: 'testing', label: 'Testing Mode' },
+    { id: 'smtp', label: 'Email Settings' },
+];
+
 export function Admin() {
     const { user } = useAuth();
-    const [section, setSection] = useState<AdminSection>('signups');
+    const isAdmin = user?.role === 'admin';
 
-    if (!user || user.role !== 'admin') {
+    // Admin's panels had no URLs at all — they were component state, so a
+    // reload always dropped you back on Signup Requests and no panel could be
+    // linked to. They are routes now, like every other app's sections.
+    useAppSections(isAdmin ? ADMIN_SECTIONS.map((s) => ({ to: `/admin/${s.id}`, label: s.label })) : []);
+
+    if (!isAdmin) {
         return (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-900">
                 <h2 className="text-xl font-semibold">Admin access required</h2>
@@ -194,45 +211,17 @@ export function Admin() {
     }
 
     return (
-        <div className="space-y-6">
-            <section className="rounded-2xl bg-white p-6 shadow">
-                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                    <div>
-                        <h1 className="text-2xl font-bold text-gray-900">System Control Centre</h1>
-                        <p className="text-sm text-gray-600">Manage signups, user access, blacklist enforcement, and testing mode.</p>
-                    </div>
-                </div>
-                <nav className="mt-6 flex flex-wrap gap-2">
-                    {[
-                        { id: 'signups', label: 'Signup Requests' },
-                        { id: 'accounts', label: 'User Management' },
-                        { id: 'profiles', label: 'Department Profiles' },
-                        { id: 'blacklist', label: 'Blacklist' },
-                        { id: 'archives', label: 'Archives' },
-                        { id: 'testing', label: 'Testing Mode' },
-                        { id: 'smtp', label: 'Email Settings' },
-                    ].map(({ id, label }) => (
-                        <button
-                            key={id}
-                            onClick={() => setSection(id as AdminSection)}
-                            className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                                section === id ? 'bg-amber-500 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                            }`}
-                        >
-                            {label}
-                        </button>
-                    ))}
-                </nav>
-            </section>
-
-            {section === 'signups' && <SignupRequestsPanel />}
-            {section === 'accounts' && <UserManagementPanel />}
-            {section === 'profiles' && <DepartmentProfilesPanel />}
-            {section === 'blacklist' && <BlacklistPanel />}
-            {section === 'archives' && <AdminArchivesPanel />}
-            {section === 'testing' && <TestingModePanel />}
-            {section === 'smtp' && <SmtpSettingsPanel />}
-        </div>
+        <Routes>
+            <Route index element={<Navigate to="signups" replace />} />
+            <Route path="signups" element={<SignupRequestsPanel />} />
+            <Route path="accounts" element={<UserManagementPanel />} />
+            <Route path="profiles" element={<DepartmentProfilesPanel />} />
+            <Route path="blacklist" element={<BlacklistPanel />} />
+            <Route path="archives" element={<AdminArchivesPanel />} />
+            <Route path="testing" element={<TestingModePanel />} />
+            <Route path="smtp" element={<SmtpSettingsPanel />} />
+            <Route path="*" element={<Navigate to="signups" replace />} />
+        </Routes>
     );
 }
 
@@ -857,7 +846,7 @@ function UserManagementPanel() {
                             <option value="user">User</option>
                             <option value="banking">Banking</option>
                             <option value="payroll">Payroll</option>
-                            <option value="public_health">Wellness Program</option>
+                            <option value="public_health">Fit for Duty</option>
                             <option value="reviewer">Reviewer</option>
                             <option value="admin">Admin</option>
                         </select>
@@ -1081,7 +1070,7 @@ function UserManagementPanel() {
                                 <option value="user">User</option>
                                 <option value="banking">Banking</option>
                                 <option value="payroll">Payroll</option>
-                                <option value="public_health">Wellness Program</option>
+                                <option value="public_health">Fit for Duty</option>
                                 <option value="reviewer">Reviewer</option>
                                 <option value="admin">Admin</option>
                             </select>

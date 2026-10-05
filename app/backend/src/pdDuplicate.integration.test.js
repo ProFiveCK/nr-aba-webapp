@@ -4,35 +4,15 @@
  * resubmission of the same batch (same root_batch_id). Rejected batches and
  * drafts do not hold the number; archived ones still do.
  *
- * The check is SQL inside two route handlers in server.js (GET /api/pd/:pd and
- * POST /api/batches), not an exported function, so — as in
- * routes/hr.staffDuplicates.integration.test.js — this runs that exact query.
- * ponytail: a copy of the SQL; if the handlers change, change it here too, or
- * move the query into a module both can import.
+ * GET /api/pd/:pd and POST /api/batches both call lib/pdNumber.js, so this
+ * tests the check the routes actually run.
  */
 
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after, before, beforeEach, describe } from 'node:test';
 import { connectTestDatabase, skipWithoutDatabase } from './test-support/database.js';
-
-// Verbatim from server.js; the caller decides what $1 is (see the todo below).
-function findPdConflict(pool, pdParam, rootBatchId = null) {
-  const duplicateParams = [pdParam];
-  let duplicateQuery = `
-      SELECT code, stage, department_code, root_batch_id, is_draft
-        FROM combined_batch_archives
-       WHERE REGEXP_REPLACE(COALESCE(pd_number, ''), '\\D', '', 'g') = $1
-         AND COALESCE(is_draft, FALSE) = FALSE
-         AND stage <> 'rejected'
-    `;
-  if (rootBatchId) {
-    duplicateQuery += ' AND root_batch_id <> $2';
-    duplicateParams.push(rootBatchId);
-  }
-  duplicateQuery += ' ORDER BY created_at DESC LIMIT 1';
-  return pool.query(duplicateQuery, duplicateParams).then(({ rows }) => rows[0] || null);
-}
+import { findPdConflict } from './lib/pdNumber.js';
 
 describe('PD number duplicate rule', { skip: skipWithoutDatabase }, () => {
   let pool;
@@ -99,15 +79,17 @@ describe('PD number duplicate rule', { skip: skipWithoutDatabase }, () => {
     assert.ok(await findPdConflict(pool, '123456'));
   });
 
-  // BUG: GET /api/pd/:pd passes the PD's digits as $1, but POST /api/batches
-  // (server.js, `const duplicateParams = [pdNumber];`) passes the raw trimmed
-  // value. Digits never equal "PD123456", so a POST with pd_number "PD123456"
-  // (or "12-3456") skips the duplicate check and stores a second batch on a PD
-  // that is already paid. The Generator only sends six bare digits, so the gap
-  // is reached by the manual-reference path or a direct API call.
-  test('POST checks the PD by its digits, as GET does', { todo: 'POST /api/batches compares the raw pd_number' }, async () => {
+  // Submissions used to compare the raw value, so "PD123456" slipped past a
+  // stored 123456 and paid the same PD twice.
+  test('any spelling of the PD is compared on its digits', async () => {
     await storeBatch({ pd: '123456' });
-    const postParam = 'PD123456'.trim(); // what POST /api/batches binds as $1
-    assert.ok(await findPdConflict(pool, postParam), 'PD123456 should collide with the stored 123456');
+    assert.ok(await findPdConflict(pool, 'PD123456'));
+    assert.ok(await findPdConflict(pool, '12-3456'));
+  });
+
+  test('a reference with no digits is compared as written', async () => {
+    await storeBatch({ pd: 'MANUAL-REF' });
+    assert.ok(await findPdConflict(pool, ' MANUAL-REF '));
+    assert.equal(await findPdConflict(pool, 'OTHER-REF'), null);
   });
 });

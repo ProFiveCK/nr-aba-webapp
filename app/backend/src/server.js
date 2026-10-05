@@ -20,6 +20,7 @@ import { runDueLeaveAccruals } from './services/leaveAccrual.js';
 import { LOCK_KEYS, withAdvisoryLock } from './lib/advisoryLock.js';
 import { amendValueDate, parseAbaFile } from './lib/abaFile.js';
 import { ServiceError } from './lib/serviceError.js';
+import { findPdConflict } from './lib/pdNumber.js';
 import {
   buildCookieParser,
   buildTokenPayload,
@@ -2674,23 +2675,8 @@ app.get(
     }
 
     const rootBatchIdRaw = typeof req.query.root_batch_id === 'string' ? req.query.root_batch_id : null;
-    const duplicateParams = [digitsOnly];
-    let duplicateQuery = `
-      SELECT code, stage, department_code, root_batch_id, is_draft
-        FROM combined_batch_archives
-       WHERE REGEXP_REPLACE(COALESCE(pd_number, ''), '\\D', '', 'g') = $1
-         AND COALESCE(is_draft, FALSE) = FALSE
-         AND stage <> 'rejected'
-    `;
-    if (rootBatchIdRaw && UUID_REGEX.test(rootBatchIdRaw)) {
-      duplicateQuery += ' AND root_batch_id <> $2';
-      duplicateParams.push(rootBatchIdRaw);
-    }
-    duplicateQuery += ' ORDER BY created_at DESC LIMIT 1';
-
-    const { rows } = await pool.query(duplicateQuery, duplicateParams);
-    if (rows.length) {
-      const conflict = rows[0];
+    const conflict = await findPdConflict(pool, digitsOnly, UUID_REGEX.test(rootBatchIdRaw || '') ? rootBatchIdRaw : null);
+    if (conflict) {
       const conflictLabel = conflict.code ? formatBatchCode(conflict.code) : 'an existing batch';
       const deptLabel = conflict.department_code ? ` for department ${conflict.department_code}` : '';
       const stageLabel = conflict.stage ? ` (currently ${conflict.stage})` : '';
@@ -2749,23 +2735,8 @@ app.post(
       rootBatchId = rootBatchIdRaw;
     }
 
-    const duplicateParams = [pdNumber];
-    let duplicateQuery = `
-      SELECT code, stage, department_code, root_batch_id, is_draft
-        FROM combined_batch_archives
-       WHERE REGEXP_REPLACE(COALESCE(pd_number, ''), '\\D', '', 'g') = $1
-         AND COALESCE(is_draft, FALSE) = FALSE
-         AND stage <> 'rejected'
-    `;
-    if (rootBatchId) {
-      duplicateQuery += ' AND root_batch_id <> $2';
-      duplicateParams.push(rootBatchId);
-    }
-    duplicateQuery += ' ORDER BY created_at DESC LIMIT 1';
-
-    const { rows: duplicateRows } = await pool.query(duplicateQuery, duplicateParams);
-    if (duplicateRows.length) {
-      const conflict = duplicateRows[0];
+    const conflict = await findPdConflict(pool, pdNumber, rootBatchId);
+    if (conflict) {
       const conflictLabel = conflict.code ? formatBatchCode(conflict.code) : 'an existing batch';
       const deptLabel = conflict.department_code ? ` for department ${conflict.department_code}` : '';
       const stageLabel = conflict.stage ? ` (currently ${conflict.stage})` : '';

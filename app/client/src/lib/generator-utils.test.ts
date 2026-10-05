@@ -144,12 +144,8 @@ describe('buildAbaFile: amounts and totals', () => {
         expect(() => buildAbaFile(HEADER, [tx({ amount: 99999999.99 })])).not.toThrow();
     });
 
-    // BUG: generator-utils.ts checks each row against 9999999999 cents but never
-    // the running total. Two rows of $60,000,000.00 sum to 12000000000 cents
-    // (11 digits); padL(..., 10) keeps the last ten, so the balancing debit and
-    // the type-7 credits/debits read 2000000000 ($20,000,000.00) and the file
-    // silently disagrees with its own detail lines.
-    it.todo('rejects a batch whose total overflows the 10-digit trailer fields', () => {
+    // Only rows were checked once: two $60m rows wrapped the 10-digit totals to $20m.
+    it('rejects a batch whose total overflows the 10-digit trailer fields', () => {
         expect(() =>
             buildAbaFile(HEADER, [tx({ amount: 60000000, lodgementRef: 'A' }), tx({ amount: 60000000, lodgementRef: 'B' })])
         ).toThrow();
@@ -186,11 +182,8 @@ describe('buildAbaFile: BSB and field widths', () => {
         for (const line of lines(file)) expect(line).toHaveLength(120);
     });
 
-    // BUG: the 120-character check is on UTF-16 units, but the file is shipped
-    // as UTF-8 (toBase64 encodes UTF-8). A payee title such as "José" makes
-    // that record 121 bytes, which a fixed-width bank parser misreads. Non-ASCII
-    // text is neither rejected nor transliterated in generator-utils.ts.
-    it.todo('keeps every record at 120 bytes when a name has non-ASCII letters', () => {
+    // The file ships as UTF-8, so a non-ASCII name once made a 121-byte record.
+    it('keeps every record at 120 bytes when a name has non-ASCII letters', () => {
         const file = buildAbaFile(HEADER, [tx({ accountTitle: 'José Example' })]);
         for (const line of lines(file)) expect(new TextEncoder().encode(line)).toHaveLength(120);
     });
@@ -211,10 +204,8 @@ describe('buildAbaFile: rejects invalid input', () => {
         rejects({ account: '1234567890' }, /Account must be 5–9 digits/);
     });
 
-    // BUG: generator-utils.ts strips every non-digit before the length check, so
-    // a mistyped letter O for a zero passes: "12345678O" is accepted as account
-    // 12345678 — a different, valid-length account receives the money.
-    it.todo('account containing letters', () => {
+    // Letters were once stripped silently: "12345678O" paid account 12345678.
+    it('account containing letters', () => {
         rejects({ account: '12345678O' }, /Account must be 5–9 digits/);
     });
 

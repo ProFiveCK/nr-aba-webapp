@@ -44,7 +44,16 @@ import {
   setCapabilities,
 } from './services/authService.js';
 import { recordAudit } from './services/auditService.js';
-import { buildBlacklistKey, normalizeAccountNumber, normalizeBsb } from './utils/helpers.js';
+import {
+  buildBlacklistKey,
+  decodeBase64File,
+  formatBatchCode,
+  lowerEmail,
+  normalizeAccountNumber,
+  normalizeAccountNumber as normalizeSupplierAccount,
+  normalizeBsb,
+  normalizeBsb as normalizeSupplierBsb,
+} from './utils/helpers.js';
 import {
   enableAsyncErrors,
   errorHandler,
@@ -1473,13 +1482,6 @@ function buildPayrollOutputName(fileName) {
   return `${stem} - Reformatted.xlsx`;
 }
 
-function decodeBase64File(fileData) {
-  const normalized = String(fileData).includes(',')
-    ? String(fileData).split(',').pop()
-    : String(fileData);
-  return Buffer.from(normalized, 'base64');
-}
-
 async function runPayrollScript(inputPath, outputPath) {
   try {
     await fs.access(PAYROLL_SCRIPT_PATH);
@@ -1516,18 +1518,6 @@ async function runPayrollScript(inputPath, outputPath) {
     });
   });
 }
-
-
-function formatBatchCode(code) {
-  if (!code) return '';
-  const str = String(code);
-  if (str.includes('-')) return str;
-  const digits = str.replace(/[^0-9]/g, '');
-  if (digits.length <= 2) return digits;
-  return `${digits.slice(0, 2)}-${digits.slice(2)}`;
-}
-
-const lowerEmail = (email) => String(email || '').trim().toLowerCase();
 
 async function recordLoginAttempt(email, ip, successful) {
   const normalizedEmail = lowerEmail(email);
@@ -1699,7 +1689,6 @@ function buildBatchReviewLink(code) {
     return `${FRONTEND_BASE_URL}?batch=${encodeURIComponent(formatted)}`;
   }
 }
-
 
 async function sendReviewerWelcomeEmail({ email, display_name, role }, tempPassword) {
   const name = display_name || email;
@@ -2488,16 +2477,6 @@ app.delete('/api/blacklist/:id', [requireAuth(['admin']), param('id').isInt({ gt
 // ===== Suppliers =====
 const SUPPLIER_MANAGE_ROLES = ['banking', 'reviewer', 'admin'];
 const SUPPLIER_STATUS_VALUES = ['blocked', 'enabled', 'removed'];
-
-function normalizeSupplierBsb(value) {
-  const digits = String(value || '').replace(/\D/g, '').slice(0, 6);
-  if (digits.length !== 6) return null;
-  return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-}
-
-function normalizeSupplierAccount(value) {
-  return String(value || '').replace(/[^0-9]/g, '').trim();
-}
 
 function supplierNeedsCbaBankAccount(row) {
   return row.status !== 'enabled';

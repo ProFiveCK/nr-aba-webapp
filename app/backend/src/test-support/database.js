@@ -41,17 +41,19 @@ export async function resetLeaveTables(pool) {
 }
 
 /** A leave type, created or updated by name so a rerun is safe. */
-export async function upsertLeaveType(pool, { name, defaultDays = 0, accruable = false, perFortnight = 0, resetPeriod = 'none', active = true, maxBalance = null }) {
+export async function upsertLeaveType(pool, { name, defaultDays = 0, accruable = false, perFortnight = 0, resetPeriod = 'none', active = true, maxBalance = null, requiresAttachment = false, attachmentLabel = null }) {
   const { rows } = await pool.query(
-    `INSERT INTO hr_leave_types (name, default_days, is_accruable, requires_note, accrual_days_per_fortnight, reset_period, is_active, max_balance)
-     VALUES ($1, $2, $3, FALSE, $4, $5, $6, $7)
+    `INSERT INTO hr_leave_types (name, default_days, is_accruable, requires_note, accrual_days_per_fortnight, reset_period, is_active, max_balance, requires_attachment, attachment_label)
+     VALUES ($1, $2, $3, FALSE, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (name) DO UPDATE SET
        default_days = EXCLUDED.default_days, is_accruable = EXCLUDED.is_accruable,
        accrual_days_per_fortnight = EXCLUDED.accrual_days_per_fortnight,
        reset_period = EXCLUDED.reset_period, is_active = EXCLUDED.is_active,
-       max_balance = EXCLUDED.max_balance
+       max_balance = EXCLUDED.max_balance,
+       requires_attachment = EXCLUDED.requires_attachment,
+       attachment_label = EXCLUDED.attachment_label
      RETURNING *`,
-    [name, defaultDays, accruable, perFortnight, resetPeriod, active, maxBalance]
+    [name, defaultDays, accruable, perFortnight, resetPeriod, active, maxBalance, requiresAttachment, attachmentLabel]
   );
   return rows[0];
 }

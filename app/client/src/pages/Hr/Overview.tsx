@@ -49,6 +49,8 @@ interface OverviewResponse {
         negative_balances: number;
         excess_balances: number;
         excess_employee_names?: string[];
+        study_leave_return_due?: number;
+        study_leave_return_names?: string[];
         coverage_risks: {
             department_code: string;
             day: string;
@@ -65,6 +67,7 @@ const NO_EXCEPTIONS = {
     oldest_pending_days: 0,
     negative_balances: 0,
     excess_balances: 0,
+    study_leave_return_due: 0,
     coverage_risks: [],
 };
 
@@ -436,6 +439,13 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
     const excessDetail = excessNames.length
         ? `${excessNames.join(', ')}${exceptions.excess_balances > excessNames.length ? ` +${exceptions.excess_balances - excessNames.length} more` : ''}`
         : 'Holding over twice their entitlement';
+    // Nothing restores eligibility when a study-leave return date passes, so
+    // until someone does the person accrues nothing and cannot apply for leave.
+    const studyReturnNames = exceptions.study_leave_return_names ?? [];
+    const studyReturnCount = exceptions.study_leave_return_due ?? 0;
+    const studyReturnDetail = studyReturnNames.length
+        ? `${studyReturnNames.join(', ')}${studyReturnCount > studyReturnNames.length ? ` +${studyReturnCount - studyReturnNames.length} more` : ''} — restore their leave eligibility`
+        : 'Still marked as away; restore their leave eligibility';
     const annualRule = balanceReport?.leave_type_rules?.find((rule) => rule.name.toLowerCase() === 'annual');
     const annualAllocation = annualRule && Number.isFinite(Number(annualRule.default_days))
         ? Number(annualRule.default_days)
@@ -443,6 +453,9 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
     const planningSummary = balanceReport && annualAllocation !== null
         ? summarizeLeavePlanning(balanceReport.employees, annualAllocation, furloughReviewLine)
         : null;
+    // A threshold of 0 means furlough is not being flagged at all, so the
+    // column, the filter and the metric all have nothing to say.
+    const furloughFlagged = furloughReviewLine > 0;
     const departmentOptions = balanceReport
         ? Array.from(new Set(balanceReport.employees.map((employee) => employee.department_code || 'Unassigned'))).sort()
         : [];
@@ -450,7 +463,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
         const department = row.department_code || 'Unassigned';
         if (planningDepartment !== 'all' && department !== planningDepartment) return false;
         if (planningType === 'Annual') return row.annual.aboveLine > 0;
-        if (planningType === 'Furlough') return row.furlough.aboveLine > 0;
+        if (planningType === 'Furlough' && furloughFlagged) return row.furlough.aboveLine > 0;
         return true;
     }) ?? [];
     const exportPlanningRows = () => {
@@ -492,6 +505,10 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
         },
         { key: 'negative', label: 'Negative balances', count: exceptions.negative_balances, detail: 'More leave taken than earned', tone: 'danger', tab: 'report' },
         { key: 'excess', label: 'Excess balances', count: exceptions.excess_balances, detail: excessDetail, tab: 'staff' },
+        {
+            key: 'study-return', label: 'Study leave return date passed',
+            count: exceptions.study_leave_return_due ?? 0, detail: studyReturnDetail, tab: 'staff',
+        },
         { key: 'coverage', label: 'Coverage risks', count: exceptions.coverage_risks.length, detail: 'A third of a team away on one day', tab: 'calendar' },
     ];
 
@@ -759,7 +776,9 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                             </p>
                             {annualAllocation !== null && (
                                 <p className="mt-2 text-sm font-medium text-slate-800">
-                                    Annual: above {annualAllocation} days (yearly allocation) · Furlough: above {furloughReviewLine} days
+                                    Annual: above {annualAllocation} days (yearly allocation) · Furlough: {furloughFlagged
+                                        ? `above ${furloughReviewLine} days`
+                                        : 'not flagged (no threshold set)'}
                                 </p>
                             )}
                             <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -768,7 +787,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                         className="mt-1 block w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900">
                                         <option value="any">Both leave types</option>
                                         <option value="Annual">Annual only</option>
-                                        <option value="Furlough">Furlough only</option>
+                                        {furloughFlagged && <option value="Furlough">Furlough only</option>}
                                     </select>
                                 </label>
                                 <label className="text-xs font-medium text-slate-600">Department
@@ -790,7 +809,12 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                 <dl className="grid grid-cols-1 divide-y divide-slate-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
                                     <PlanningMetric label="People to plan with" value={String(planningSummary.staffToReview)} detail="Above at least one comparison amount" />
                                     <PlanningMetric label="Annual days above allocation" value={`${planningSummary.annualDaysAbove.toFixed(1)}d`} detail={`${planningSummary.annualStaffAbove} people · ${planningSummary.annualAvailable.toFixed(1)}d available in total`} />
-                                    <PlanningMetric label="Furlough days above threshold" value={`${planningSummary.furloughDaysAbove.toFixed(1)}d`} detail={`${planningSummary.furloughStaffAbove} people · ${planningSummary.furloughAvailable.toFixed(1)}d available in total`} />
+                                    <PlanningMetric
+                                        label="Furlough days above threshold"
+                                        value={furloughFlagged ? `${planningSummary.furloughDaysAbove.toFixed(1)}d` : 'Not flagged'}
+                                        detail={furloughFlagged
+                                            ? `${planningSummary.furloughStaffAbove} people · ${planningSummary.furloughAvailable.toFixed(1)}d available in total`
+                                            : `${planningSummary.furloughAvailable.toFixed(1)}d available in total · set a threshold in HR Policies to flag it`} />
                                 </dl>
 
                                 <div className="max-h-[28rem] overflow-auto">
@@ -813,7 +837,9 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                                         <span className="block text-xs text-slate-500">{row.annual.available.toFixed(1)}d available{row.annual.pending > 0 ? ` · ${row.annual.pending}d pending` : ''}</span>
                                                     </td>
                                                     <td className="px-3 py-2 text-right tabular-nums">
-                                                        <span className="font-semibold text-amber-800">{row.furlough.aboveLine.toFixed(1)}d above</span>
+                                                        {furloughFlagged
+                                                            ? <span className="font-semibold text-amber-800">{row.furlough.aboveLine.toFixed(1)}d above</span>
+                                                            : <span className="text-slate-400">Not flagged</span>}
                                                         <span className="block text-xs text-slate-500">{row.furlough.available.toFixed(1)}d available{row.furlough.pending > 0 ? ` · ${row.furlough.pending}d pending` : ''}</span>
                                                     </td>
                                                 </tr>

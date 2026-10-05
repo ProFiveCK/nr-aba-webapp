@@ -84,6 +84,21 @@ export const FOREX_TT_ALLOWED_MIMES = new Set([
 ]);
 export const FOREX_TT_ALLOWED_EXTENSIONS = new Set(['.pdf', '.png', '.jpg', '.jpeg']);
 
+// Supporting documents on a leave application — a partner's invitation letter
+// for official leave, a medical certificate for sick leave. Word documents are
+// allowed on top of the FOREX set because an invitation usually arrives as one.
+export const LEAVE_ATTACHMENT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+export const LEAVE_ATTACHMENT_MAX_FILES = 5;
+export const LEAVE_ATTACHMENT_ALLOWED_MIMES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
+export const LEAVE_ATTACHMENT_ALLOWED_EXTENSIONS = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.doc', '.docx']);
+
 // Permissions
 export const PERMISSIONS = {
   SUBMIT_ABA: 'submit_aba',

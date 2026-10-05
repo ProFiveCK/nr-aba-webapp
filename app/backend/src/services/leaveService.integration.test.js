@@ -104,6 +104,76 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
     });
   });
 
+  // Official leave rests on the partner's invitation and certified sick leave
+  // on the certificate: the type says a document is required, and without one
+  // there is nothing for an approver to judge.
+  describe('supporting documents', () => {
+    let official;
+    const invitation = () => [{
+      fileName: 'invitation.pdf',
+      contentType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4 invitation'),
+      checksum: 'a'.repeat(64),
+    }];
+
+    beforeEach(async () => {
+      official = await upsertLeaveType(pool, {
+        name: 'T:Official', defaultDays: 10,
+        requiresAttachment: true, attachmentLabel: 'Invitation letter from the partner organisation',
+      });
+    });
+
+    test('refuses an application for a type that requires one, naming the document', async () => {
+      await assert.rejects(
+        () => apply({ leaveTypeId: official.id }),
+        /requires Invitation letter from the partner organisation/
+      );
+    });
+
+    test('stores the document against the application it was filed with', async () => {
+      const { application } = await apply({ leaveTypeId: official.id, attachments: invitation() });
+
+      const { rows } = await pool.query(
+        'SELECT file_name, content_type, byte_size, file_data FROM hr_leave_attachments WHERE application_id = $1',
+        [application.id]
+      );
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].file_name, 'invitation.pdf');
+      assert.equal(rows[0].content_type, 'application/pdf');
+      assert.equal(rows[0].byte_size, Buffer.from('%PDF-1.4 invitation').length);
+      assert.equal(rows[0].file_data.toString(), '%PDF-1.4 invitation');
+    });
+
+    // The hold on the balance and the document are one decision, so a failure
+    // after the insert must not leave an application standing without it.
+    test('refusing for want of a document leaves no hold and no application', async () => {
+      await assert.rejects(() => apply({ leaveTypeId: official.id }));
+
+      const balance = await readBalance(pool, ana.id, official.id, YEAR);
+      assert.equal(balance === null || balance.pending === 0, true);
+      const { rows } = await pool.query(
+        'SELECT 1 FROM hr_leave_applications WHERE employee_id = $1 AND leave_type_id = $2',
+        [ana.id, official.id]
+      );
+      assert.equal(rows.length, 0);
+    });
+
+    test('a type that does not require one still accepts an application without it', async () => {
+      const { application } = await apply();
+      assert.equal(application.status, 'pending');
+    });
+
+    test('a type that does not require one still keeps a document that was offered', async () => {
+      const { application } = await apply({ attachments: invitation() });
+
+      const { rows } = await pool.query(
+        'SELECT COUNT(*)::int AS count FROM hr_leave_attachments WHERE application_id = $1',
+        [application.id]
+      );
+      assert.equal(rows[0].count, 1);
+    });
+  });
+
   describe('public holidays', () => {
     // Mon 8 Jun to Fri 12 Jun 2026: a five-day working week.
     const WEEK_START = '2026-06-08';
@@ -207,6 +277,46 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       const balance = await readBalance(pool, ana.id, annual.id, YEAR);
       assert.equal(balance.pending, 5);
       assert.equal(balance.balance, 20);
+    });
+
+    // An administrator can record that someone is away — on study leave, say —
+    // after they have already applied for leave. The entitlement check at
+    // submission cannot see that coming, so approval checks again.
+    test('leave cannot be approved once the applicant is recorded as away on study leave', async () => {
+      const { application } = await apply();
+      await pool.query(
+        `UPDATE hr_employees
+            SET leave_entitled = FALSE, ineligible_reason = 'study_leave', study_leave_start = CURRENT_DATE
+          WHERE id = $1`,
+        [ana.id]
+      );
+
+      await assert.rejects(() => service.decideLeave(pool, {
+        applicationId: application.id, decision: 'approved', note: '', actorId: null, canAct: allowAll,
+      }), /away on study leave/);
+
+      // Refused without disturbing anything: the hold stands until the request
+      // is actually resolved.
+      const balance = await readBalance(pool, ana.id, annual.id, YEAR);
+      assert.equal(balance.pending, 5);
+      assert.equal(balance.balance, 20);
+    });
+
+    test('the stale request can still be rejected, which releases the hold', async () => {
+      const { application } = await apply();
+      await pool.query(
+        `UPDATE hr_employees SET leave_entitled = FALSE, ineligible_reason = 'temporary' WHERE id = $1`,
+        [ana.id]
+      );
+
+      await service.decideLeave(pool, {
+        applicationId: application.id, decision: 'rejected', note: 'No longer entitled to leave.',
+        actorId: null, canAct: allowAll,
+      });
+
+      const balance = await readBalance(pool, ana.id, annual.id, YEAR);
+      assert.equal(balance.pending, 0, 'the hold is released');
+      assert.equal(balance.balance, 20, 'and nothing was spent');
     });
 
     test('approval moves the days out of the balance and clears the hold', async () => {

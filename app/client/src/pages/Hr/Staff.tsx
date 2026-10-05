@@ -345,11 +345,17 @@ export function Staff() {
         }
         setSavingDetails(true);
         try {
-            const updated = await apiClient.put<Employee>(`/hr/employees/${selected.id}`, updates);
+            const updated = await apiClient.put<Employee & { pending_leave_warning?: string | null }>(
+                `/hr/employees/${selected.id}`, updates
+            );
             setSelected(updated);
             setDraft(draftFor(updated));
             setEmployees((current) => current.map((employee) => employee.id === updated.id ? updated : employee));
             addToast('Employee details saved.', 'success');
+            // Requests already in an approver's queue are not cleared by this
+            // change, and can no longer be approved — the administrator needs
+            // to know now, not when an approver hits the error.
+            if (updated.pending_leave_warning) addToast(updated.pending_leave_warning, 'error');
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to save employee details.', 'error');
         } finally {

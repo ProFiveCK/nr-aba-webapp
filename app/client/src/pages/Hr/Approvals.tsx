@@ -5,6 +5,7 @@ import { useConfirm } from '../../contexts/useConfirm';
 import { EmptyState, LoadingState } from '../../components/Ui';
 import { formatDate } from '../../features/hr/types';
 import { printApprovedLeaveForm } from '../../features/hr/payrollForm';
+import { LeaveAttachmentLinks } from '../../features/hr/LeaveAttachmentLinks';
 import type { LeaveApplication } from '../../features/hr/types';
 
 export function Approvals() {
@@ -114,6 +115,12 @@ export function Approvals() {
                             )}
                             {!application.reason && (
                                 <p className="mt-2 rounded-md bg-amber-50 p-2 text-sm text-amber-900">No explanation recorded. Ask the applicant to cancel and resubmit this request with a reason.</p>
+                            )}
+                            {(application.attachments?.length ?? 0) > 0 && (
+                                <div className="mt-2">
+                                    <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Supporting documents</p>
+                                    <LeaveAttachmentLinks application={application} onError={(message) => addToast(message, 'error')} />
+                                </div>
                             )}
                             <p className="mt-2 text-xs text-zinc-400">Applied {formatDate(application.applied_at)}</p>
                         </div>

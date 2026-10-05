@@ -10,6 +10,13 @@ import {
     formatDate,
     STATUS_STYLES,
 } from '../../features/hr/types';
+import {
+    LEAVE_ATTACHMENT_ACCEPT,
+    LEAVE_ATTACHMENT_MAX_BYTES,
+    LEAVE_ATTACHMENT_MAX_FILES,
+    formatFileSize,
+} from '../../features/hr/leaveAttachments';
+import { LeaveAttachmentLinks } from '../../features/hr/LeaveAttachmentLinks';
 import type { LeaveApplication, LeaveType, MyLeaveResponse, PublicHoliday } from '../../features/hr/types';
 
 export function MyLeave() {
@@ -29,6 +36,9 @@ export function MyLeave() {
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     const [reason, setReason] = useState('');
+    const [documents, setDocuments] = useState<File[]>([]);
+    // Bumped to rebuild the file input, which cannot be cleared by state alone.
+    const [documentsKey, setDocumentsKey] = useState(0);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -77,6 +87,13 @@ export function MyLeave() {
             : []),
         [holidays, startDate, endDate]
     );
+    const selectedType = types.find((type) => type.id === leaveTypeId);
+    // Official leave rests on the partner's invitation, certified sick leave on
+    // the certificate: without the document there is nothing to approve, so the
+    // form asks for it before it will submit. The server enforces the same rule.
+    const documentRequired = selectedType?.requires_attachment === true;
+    const documentLabel = selectedType?.attachment_label?.trim() || 'a supporting document';
+    const documentMissing = documentRequired && documents.length === 0;
     const selectedBalance = summary?.balances.find((b) => b.leave_type_id === leaveTypeId);
     const availableDays = selectedBalance ? Number(selectedBalance.balance) - Number(selectedBalance.pending) : 0;
     const insufficient = calendarAvailable && previewDays > 0 && previewDays > availableDays;
@@ -95,18 +112,34 @@ export function MyLeave() {
             addToast('The selected dates contain no working days.', 'error');
             return;
         }
+        if (documentMissing) {
+            addToast(`Attach ${documentLabel} before submitting.`, 'error');
+            return;
+        }
         setSubmitting(true);
         try {
-            await apiClient.post('/hr/leaves', {
+            const fields = {
                 leave_type_id: leaveTypeId,
                 start_date: startDate,
                 end_date: endDate,
                 reason: reason.trim(),
-            });
+            };
+            // Only an application carrying documents is sent as multipart; the
+            // ordinary one stays plain JSON, as it has always been.
+            if (documents.length) {
+                const form = new FormData();
+                for (const [field, value] of Object.entries(fields)) form.append(field, value);
+                for (const file of documents) form.append('documents', file);
+                await apiClient.upload('/hr/leaves', form);
+            } else {
+                await apiClient.post('/hr/leaves', fields);
+            }
             addToast('Leave application submitted.', 'success');
             setStartDate('');
             setEndDate('');
             setReason('');
+            setDocuments([]);
+            setDocumentsKey((key) => key + 1);
             await load();
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to submit your application.', 'error');
@@ -264,10 +297,49 @@ export function MyLeave() {
                     <span className="mt-1 block text-xs text-slate-500">This explanation appears on the approved form for the personnel file.</span>
                 </label>
 
+                <label className="block text-sm">
+                    <span className="mb-1 block font-medium text-zinc-700">
+                        Supporting documents{' '}
+                        {documentRequired
+                            ? <span className="text-red-600">(required)</span>
+                            : <span className="font-normal text-slate-500">(optional)</span>}
+                    </span>
+                    {documentRequired && (
+                        <span className="mb-2 block rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-sm text-amber-900">
+                            {selectedType?.name} leave requires {documentLabel}. Attach it here — your approver
+                            needs to see it before this can be granted.
+                        </span>
+                    )}
+                    <input
+                        key={documentsKey}
+                        type="file"
+                        multiple
+                        accept={LEAVE_ATTACHMENT_ACCEPT}
+                        onChange={(e) => {
+                            const chosen = Array.from(e.target.files ?? []);
+                            const tooBig = chosen.find((file) => file.size > LEAVE_ATTACHMENT_MAX_BYTES);
+                            if (tooBig) {
+                                addToast(`"${tooBig.name}" is larger than ${formatFileSize(LEAVE_ATTACHMENT_MAX_BYTES)}.`, 'error');
+                                return;
+                            }
+                            if (chosen.length > LEAVE_ATTACHMENT_MAX_FILES) {
+                                addToast(`Attach at most ${LEAVE_ATTACHMENT_MAX_FILES} documents.`, 'error');
+                                return;
+                            }
+                            setDocuments(chosen);
+                        }}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700"
+                    />
+                    <span className="mt-1 block text-xs text-slate-500">
+                        PDF, JPG, PNG or Word, up to {formatFileSize(LEAVE_ATTACHMENT_MAX_BYTES)} each.
+                        {documents.length > 0 && ` Attached: ${documents.map((file) => file.name).join(', ')}.`}
+                    </span>
+                </label>
+
                 <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-5">
                     <button
                         type="submit"
-                        disabled={submitting || previewDays <= 0 || insufficient}
+                        disabled={submitting || previewDays <= 0 || insufficient || documentMissing}
                         className="rounded-lg bg-[#002B7F] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#174495] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         {submitting ? 'Submitting…' : 'Submit application'}
@@ -282,6 +354,9 @@ export function MyLeave() {
                         </p>
                     )}
                 </div>
+                {documentMissing && (
+                    <p className="text-sm font-medium text-red-600">Attach {documentLabel} to enable Submit.</p>
+                )}
                 {!calendarAvailable && (
                     <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                         Public holidays could not be loaded. The final working day count and balance will be checked when you submit.
@@ -325,6 +400,7 @@ export function MyLeave() {
                                     <span className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${STATUS_STYLES[application.status]}`}>{application.status}</span>
                                 </div>
                                 <p className="text-sm text-slate-600">{application.days} working days</p>
+                                <LeaveAttachmentLinks application={application} onError={(message) => addToast(message, 'error')} />
                                 {application.reviewer_note && <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{application.reviewer_note}</p>}
                                 {application.status === 'approved' && <button type="button" onClick={() => void printForm(application)} className="text-sm font-semibold text-[#002B7F]">Open approved leave PDF</button>}
                                 {application.status === 'pending' && <button type="button" onClick={() => cancel(application)} className="text-sm font-semibold text-red-700">Cancel request</button>}
@@ -347,7 +423,10 @@ export function MyLeave() {
                             <tbody className="divide-y divide-zinc-100">
                                 {visibleApplications.map((application) => (
                                     <tr key={application.id}>
-                                        <td className="px-4 py-2 font-medium text-zinc-900">{application.leave_type_name}</td>
+                                        <td className="px-4 py-2 font-medium text-zinc-900">
+                                            {application.leave_type_name}
+                                            <LeaveAttachmentLinks application={application} onError={(message) => addToast(message, 'error')} />
+                                        </td>
                                         <td className="px-4 py-2 text-zinc-600">
                                             {formatDate(application.start_date)} – {formatDate(application.end_date)}
                                         </td>

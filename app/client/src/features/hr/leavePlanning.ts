@@ -18,6 +18,8 @@ export interface LeavePlanningSummary {
     furloughAvailable: number;
     furloughStaffAbove: number;
     furloughDaysAbove: number;
+    /** False when no furlough threshold is set, so furlough is not flagged at all. */
+    furloughFlagged: boolean;
     staffToReview: number;
 }
 
@@ -27,16 +29,30 @@ function balanceFor(employee: StaffBalanceRow, leaveType: string) {
     return { available, pending: balance?.pending ?? 0 };
 }
 
+/**
+ * A `furloughReviewLine` of zero means no threshold has been set, not a
+ * threshold of nothing: furlough is then left out of the review entirely
+ * rather than flagging every positive balance.
+ *
+ * Annual is compared with its yearly allocation, which always exists. Furlough
+ * has no allocation, so the only line it can be above is one a Leave Admin
+ * names; until they do, "above" has nothing to mean. Treating zero as a real
+ * line was how clearing the setting put every furlough holder on the list.
+ */
 export function summarizeLeavePlanning(
     employees: StaffBalanceRow[],
     annualReviewLine: number,
     furloughReviewLine: number
 ): LeavePlanningSummary {
+    const furloughFlagged = Number(furloughReviewLine) > 0;
     const allRows = employees.map((employee) => {
         const annualBalance = balanceFor(employee, 'Annual');
         const furloughBalance = balanceFor(employee, 'Furlough');
         const annual = { ...annualBalance, aboveLine: Math.max(0, annualBalance.available - annualReviewLine) };
-        const furlough = { ...furloughBalance, aboveLine: Math.max(0, furloughBalance.available - furloughReviewLine) };
+        const furlough = {
+            ...furloughBalance,
+            aboveLine: furloughFlagged ? Math.max(0, furloughBalance.available - furloughReviewLine) : 0,
+        };
         return {
             id: employee.id,
             display_name: employee.display_name,
@@ -59,6 +75,7 @@ export function summarizeLeavePlanning(
         furloughAvailable: allRows.reduce((total, row) => total + row.furlough.available, 0),
         furloughStaffAbove: allRows.filter((row) => row.furlough.aboveLine > 0).length,
         furloughDaysAbove: allRows.reduce((total, row) => total + row.furlough.aboveLine, 0),
+        furloughFlagged,
         staffToReview: rows.length,
     };
 }

@@ -2,125 +2,24 @@ import express from 'express';
 import cors from 'cors';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import helmet from 'helmet';
-import { body, param, query } from 'express-validator';
-import { handleValidation } from './middleware/validation.js';
 import { pool, initSchema } from './db.js';
 import dotenv from 'dotenv';
-import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import nodemailer from 'nodemailer';
-import OpenAI from 'openai';
-import { spawn } from 'child_process';
-import fs from 'fs/promises';
-import os from 'os';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { setTestingMode } from './services/notificationService.js';
 import { runDueLeaveAccruals } from './services/leaveAccrual.js';
 import { LOCK_KEYS, withAdvisoryLock } from './lib/advisoryLock.js';
-import { amendValueDate, parseAbaFile } from './lib/abaFile.js';
-import { ServiceError } from './lib/serviceError.js';
-import { findPdConflict } from './lib/pdNumber.js';
-import {
-  buildCookieParser,
-  buildTokenPayload,
-  clearAuthCookie,
-  createSession,
-  csrfGuard,
-  generateTempPassword,
-  hashPassphrase,
-  invalidateSession,
-  isLegacyPassphraseHash,
-  legacyHashPassphrase,
-  loadCapabilities,
-  lookupSession,
-  parsePermissions,
-  requireAuth,
-  resolveAllowedBankPresets,
-  reviewerAllowedPresets,
-  reviewerSummary,
-  setAuthCookie,
-  setCapabilities,
-} from './services/authService.js';
-import { recordAudit } from './services/auditService.js';
-import {
-  buildBlacklistKey,
-  decodeBase64File,
-  formatBatchCode,
-  lowerEmail,
-  normalizeAccountNumber,
-  normalizeAccountNumber as normalizeSupplierAccount,
-  normalizeBsb,
-  normalizeBsb as normalizeSupplierBsb,
-} from './utils/helpers.js';
+import { buildCookieParser, csrfGuard } from './services/authService.js';
+import { lowerEmail } from './utils/helpers.js';
 import {
   enableAsyncErrors,
   errorHandler,
   installProcessGuards,
   notFoundHandler,
 } from './middleware/errors.js';
+import { refreshTestingModeSetting, reloadMailTransport } from './services/mailService.js';
 import {
-  GoogleSignInResult,
-  googleSignInEnabled,
-  resolveGoogleIdentity,
-} from './services/googleAuthService.js';
-import { clearLoginAttempts, isAccountLocked, recordLoginAttempt } from './services/loginAttempts.js';
-import {
-  encryptSmtpPass,
-  mailTransport,
-  notifyAdminsOfSignupRequest,
-  notifyPublicHealthReviewers,
-  notifySubmitterOfApproval,
-  notifySubmitterOfRejection,
-  refreshTestingModeSetting,
-  reloadMailTransport,
-  sendMail,
-  sendReviewerPasswordResetEmail,
-  sendReviewerWelcomeEmail,
-} from './services/mailService.js';
-import {
-  ACCOUNT_ROLES,
-  ACCOUNT_STATUSES,
-  ADMIN_ARCHIVE_LIMIT_DEFAULT,
-  AUTH_LOCKOUT_WINDOW_MS,
-  AUTH_MAX_FAILED_ATTEMPTS,
-  PASSWORD_MIN_LENGTH,
-  ALL_CAPABILITIES,
-  BANK_PRESET_KEYS,
-  BATCH_WORKFLOW_TYPES,
-  SIGNUP_APPS,
-  SIGNUP_APP_IDS,
-  capabilitiesForApps,
-  CAPABILITY_CATALOGUE,
-  ROLE_CAPABILITIES,
-  BSB_REGEX,
-  COOKIE_NAME,
-  DEFAULT_BANK_PRESETS,
-  EXCEL_MIME_TYPES,
   FRONTEND_BASE_URL,
-  GOOGLE_CLIENT_ID,
-  JWT_SECRET,
   PASS_HASH_ROUNDS,
-  PAYROLL_ACCESS_ROLES,
-  PAYROLL_MAX_FILE_BYTES,
-  PAYROLL_PYTHON_BIN,
-  REPLY_TO,
-  REVIEW_ACCESS_ROLES,
-  REVIEWER_ARCHIVE_LIMIT_DEFAULT,
-  SESSION_MINUTES,
-  SIGNUP_ROLES,
-  SMTP_FROM,
-  SMTP_HOST,
-  SMTP_PASS,
-  SMTP_PORT,
-  SMTP_SECURE,
-  SMTP_USER,
-  TEMP_PASSWORD_LENGTH,
-  UUID_REGEX,
-  WORKFLOW_GUIDE_TEXT,
-  isProd,
-  workflowStageTransitions,
+  PASSWORD_MIN_LENGTH,
 } from './config.js';
 
 dotenv.config();

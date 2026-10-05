@@ -45,6 +45,7 @@ interface OverviewResponse {
         oldest_pending_days: number;
         negative_balances: number;
         excess_balances: number;
+        excess_employee_names?: string[];
         coverage_risks: {
             department_code: string;
             day: string;
@@ -381,8 +382,12 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
         }
     };
 
-    const exceptions = data?.exceptions ?? NO_EXCEPTIONS;
+    const exceptions: NonNullable<OverviewResponse['exceptions']> = data?.exceptions ?? NO_EXCEPTIONS;
     const checksAvailable = Boolean(data?.exceptions);
+    const excessNames = exceptions.excess_employee_names ?? [];
+    const excessDetail = excessNames.length
+        ? `${excessNames.join(', ')}${exceptions.excess_balances > excessNames.length ? ` +${exceptions.excess_balances - excessNames.length} more` : ''}`
+        : 'Holding over twice their entitlement';
     const turnaround = data?.applications.avg_turnaround_hours === null || data?.applications.avg_turnaround_hours === undefined
         ? null
         : data.applications.avg_turnaround_hours < 24
@@ -395,7 +400,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
             detail: `Oldest has waited ${exceptions.oldest_pending_days.toFixed(0)} days`, tab: 'approvals',
         },
         { key: 'negative', label: 'Negative balances', count: exceptions.negative_balances, detail: 'More leave taken than earned', tone: 'danger', tab: 'report' },
-        { key: 'excess', label: 'Excess balances', count: exceptions.excess_balances, detail: 'Holding over twice their entitlement', tab: 'staff' },
+        { key: 'excess', label: 'Excess balances', count: exceptions.excess_balances, detail: excessDetail, tab: 'staff' },
         { key: 'coverage', label: 'Coverage risks', count: exceptions.coverage_risks.length, detail: 'A third of a team away on one day', tab: 'calendar' },
     ];
 

@@ -426,6 +426,7 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       const data = await overview();
       // 45 days against a 20-day entitlement is over the 40-day mark.
       assert.equal(data.exceptions.excess_balances, 1);
+      assert.deepEqual(data.exceptions.excess_employee_names, ['Ana']);
     });
 
     test('does not flag an upfront type as an excess balance', async () => {

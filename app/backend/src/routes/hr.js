@@ -1343,13 +1343,21 @@ router.get(
       // type. Both a growing liability and a wellbeing signal: people who
       // never take leave.
       pool.query(
-        `SELECT COUNT(DISTINCT e.id) AS count
-           FROM hr_leave_balances b
-           JOIN hr_leave_types t ON t.id = b.leave_type_id
-           JOIN hr_employees e ON e.id = b.employee_id
-          WHERE e.status = 'active' AND e.leave_entitled = TRUE AND b.year = $1
-            AND t.is_active = TRUE AND t.is_accruable = TRUE AND t.default_days > 0
-            AND (b.balance - b.pending) > 2 * t.default_days`,
+        `WITH excess_people AS (
+           SELECT DISTINCT e.id, e.display_name
+             FROM hr_leave_balances b
+             JOIN hr_leave_types t ON t.id = b.leave_type_id
+             JOIN hr_employees e ON e.id = b.employee_id
+            WHERE e.status = 'active' AND e.leave_entitled = TRUE AND b.year = $1
+              AND t.is_active = TRUE AND t.is_accruable = TRUE AND t.default_days > 0
+              AND (b.balance - b.pending) > 2 * t.default_days
+         )
+         SELECT COUNT(*) AS count,
+                COALESCE((
+                  SELECT json_agg(display_name ORDER BY display_name)
+                    FROM (SELECT display_name FROM excess_people ORDER BY display_name LIMIT 3) preview
+                ), '[]'::json) AS employee_names
+           FROM excess_people`,
         [today.getFullYear()]
       ),
       // Coverage risk: a department with more than a third of its people away
@@ -1470,6 +1478,7 @@ router.get(
         oldest_pending_days: Number(pendingAge.rows[0].oldest_days),
         negative_balances: Number(negative.rows[0].count),
         excess_balances: Number(excess.rows[0].count),
+        excess_employee_names: excess.rows[0].employee_names,
         coverage_risks: coverage.rows.map((r) => ({
           department_code: r.department_code,
           day: r.day,

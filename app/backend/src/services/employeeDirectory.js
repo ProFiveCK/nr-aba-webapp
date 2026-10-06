@@ -27,18 +27,33 @@ export async function linkedEmployee(pool, accountId) {
   return employee;
 }
 
-export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, search = '', departmentId = null, status = null } = {}) {
-  const values = [status, departmentId, search.trim()];
+export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, search = '', departmentId = null, status = null, readiness = '' } = {}) {
+  const values = [status, departmentId, search.trim(), readiness];
   const where = `($1::text IS NULL OR e.status = $1) AND ($2::uuid IS NULL OR e.department_id = $2)
     AND ($3 = '' OR position(lower($3) in lower(e.display_name)) > 0
-      OR EXISTS (SELECT 1 FROM hr_employee_external_ids x WHERE x.employee_id = e.id AND x.external_id = $3))`;
+      OR EXISTS (SELECT 1 FROM hr_employee_external_ids x WHERE x.employee_id = e.id AND x.external_id = $3))
+    AND ($4 = '' OR ($4 = 'unlinked' AND e.reviewer_id IS NULL)
+      OR ($4 = 'missing_id' AND NOT EXISTS (SELECT 1 FROM hr_employee_external_ids x WHERE x.employee_id=e.id))
+      OR ($4 = 'missing_placement' AND (e.department_id IS NULL OR e.division_id IS NULL))
+      OR ($4 = 'missing_pattern' AND NOT EXISTS (SELECT 1 FROM hr_employee_service_periods p WHERE p.employee_id=e.id
+        AND p.start_date <= (NOW() AT TIME ZONE 'Pacific/Nauru')::date
+        AND (p.end_date IS NULL OR p.end_date >= (NOW() AT TIME ZONE 'Pacific/Nauru')::date) AND p.work_pattern_id IS NOT NULL))
+      OR ($4 = 'missing_service' AND NOT EXISTS (SELECT 1 FROM hr_employee_service_periods p WHERE p.employee_id=e.id
+        AND p.start_date <= (NOW() AT TIME ZONE 'Pacific/Nauru')::date
+        AND (p.end_date IS NULL OR p.end_date >= (NOW() AT TIME ZONE 'Pacific/Nauru')::date)
+        AND p.employment_category <> 'unknown' AND p.counts_for_service IS NOT NULL)))`;
   const { rows } = await pool.query(
     `SELECT e.id, e.display_name, e.status, e.reviewer_id, e.department_id, e.division_id,
        e.department_code, e.division_code, d.name AS department_name, v.name AS division_name,
+       p.employment_category, p.is_teacher, p.is_intern, p.counts_for_service,
        COALESCE((SELECT json_agg(json_build_object('source', x.source, 'external_id', x.external_id) ORDER BY x.external_id)
          FROM hr_employee_external_ids x WHERE x.employee_id = e.id), '[]'::json) AS external_ids
      FROM hr_employees e LEFT JOIN hr_departments d ON d.id = e.department_id LEFT JOIN hr_divisions v ON v.id = e.division_id
-     WHERE ${where} ORDER BY lower(e.display_name), e.id LIMIT $4 OFFSET $5`,
+     LEFT JOIN LATERAL (SELECT employment_category,is_teacher,is_intern,counts_for_service FROM hr_employee_service_periods p
+       WHERE p.employee_id=e.id AND p.start_date <= (NOW() AT TIME ZONE 'Pacific/Nauru')::date
+         AND (p.end_date IS NULL OR p.end_date >= (NOW() AT TIME ZONE 'Pacific/Nauru')::date)
+       ORDER BY p.start_date DESC,p.id LIMIT 1) p ON TRUE
+     WHERE ${where} ORDER BY lower(e.display_name), e.id LIMIT $5 OFFSET $6`,
     [...values, pageSize, (page - 1) * pageSize]
   );
   const { rows: [count] } = await pool.query(`SELECT count(*)::int AS total FROM hr_employees e WHERE ${where}`, values);
@@ -47,8 +62,9 @@ export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, sea
 
 export async function employeeProfile(pool, employeeId) {
   const { rows: [employee] } = await pool.query(
-    `SELECT id, display_name, status, reviewer_id, department_id, division_id, department_code, division_code
-       FROM hr_employees WHERE id = $1`, [employeeId]
+    `SELECT e.id,e.display_name,e.position_title,e.email,e.status,e.reviewer_id,e.department_id,e.division_id,e.department_code,e.division_code,
+       e.manager_id,m.display_name AS manager_name,e.join_date,r.display_name AS account_name,r.email AS account_email,r.account_type,r.status AS account_status
+       FROM hr_employees e LEFT JOIN hr_employees m ON m.id=e.manager_id LEFT JOIN reviewers r ON r.id=e.reviewer_id WHERE e.id = $1`, [employeeId]
   );
   if (!employee) throw notFound('Employee not found.');
   const [{ rows: externalIds }, { rows: servicePeriods }, { rows: accountLinks }] = await Promise.all([
@@ -197,6 +213,11 @@ export async function provisionEmployeeAccount(pool, { employeeId, email, actor,
 
 export async function assignLeaveApprover(pool, { assignment, actor, reason }) {
   const verifiedReason = requireReason(reason);
+  if ((assignment.level === 'division' && (!assignment.department_id || !assignment.division_id))
+    || (assignment.level === 'department' && (!assignment.department_id || assignment.division_id))
+    || (assignment.level === 'chief_secretary' && (assignment.department_id || assignment.division_id))) {
+    throw badRequest('Division offices need department and division; HOD offices need only department; Chief Secretary is government-wide.');
+  }
   if (assignment.effective_to && assignment.effective_to < assignment.effective_from) throw badRequest('An approval assignment cannot end before it starts.');
   return withTransaction(pool, async (client) => {
     // Serializes assignment changes even for the government-wide final stage.

@@ -6,7 +6,9 @@ import { Modal, Pager } from '../../components/Ui';
 import type { PayrollImportBatch, PayrollImportCandidate, PayrollImportDecision, PayrollImportResult, PayrollImportRow, PayrollImportView } from './payrollImportTypes';
 
 const ROOT = '/hr/directory/imports';
-const button = 'rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed';
+const buttonBase = 'rounded-lg border px-3 py-2 text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-brand/40 disabled:opacity-50 disabled:cursor-not-allowed';
+const button = `${buttonBase} border-gray-300 bg-white text-gray-700 hover:bg-gray-50`;
+const primaryButton = `${buttonBase} border-brand bg-brand text-white hover:bg-brand-dark`;
 const control = 'w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm';
 const names: Record<string, string> = { display_name: 'Name', status: 'Status', department_code: 'Department', division_code: 'Division', email: 'Contact email', position_title: 'Position', manager_id: 'Manager' };
 const decisionLabel = { create: 'Create employee', update: 'Update employee', review: 'Identity review', skip: 'Skip row' };
@@ -58,7 +60,7 @@ export function PayrollEmployeeImport({ onApplied }: { onApplied: () => void }) 
             <label className="text-sm font-medium text-gray-700">Payroll export date
                 <input className={`${control} mt-1`} type="date" value={exportDate} onChange={(e) => setExportDate(e.target.value)} />
             </label>
-            <button type="button" className={`${button} bg-brand text-white hover:bg-brand-dark`} disabled={!file || !exportDate} onClick={() => void run(async () => {
+            <button type="button" className={primaryButton} disabled={!file || !exportDate} onClick={() => void run(async () => {
                 if (!file) return;
                 if (file.size > 2 * 1024 * 1024) throw new Error('Choose a CSV file of 2 MiB or less.');
                 const csv = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
@@ -113,7 +115,7 @@ export function PayrollEmployeeImport({ onApplied }: { onApplied: () => void }) 
                     <textarea className={`${control} mt-1`} rows={2} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Record how this export and its identity decisions were verified (at least 10 characters)." />
                 </label>
                 <label className="flex items-start gap-2 text-sm text-gray-700"><input className="mt-1" type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />I have reviewed the proposed employee changes and appointment warnings.</label>
-                <button type="button" className={`${button} bg-brand text-white hover:bg-brand-dark`} disabled={view.summary.blocked > 0 || view.summary.ready === 0 || !reviewed || note.trim().length < 10} onClick={() => void run(async () => {
+                <button type="button" className={primaryButton} disabled={view.summary.blocked > 0 || view.summary.ready === 0 || !reviewed || note.trim().length < 10} onClick={() => void run(async () => {
                     if (!(await confirm(`Apply ${view.summary.ready} employee rows and skip ${view.summary.skipped}? This updates the employee master and records an audit trail.`))) return;
                     await apiClient.post<PayrollImportResult>(`${ROOT}/${view.batch.id}/apply`, { revision: view.batch.revision, review_note: note });
                     await loadBatch(view.batch.id); await loadHistory(); onApplied();
@@ -163,7 +165,7 @@ function RowReview({ row, busy, saveError, onClose, onSave }: { row: PayrollImpo
             <label className="block text-sm font-medium text-gray-700">Verification or skip reason
                 <textarea className={`${control} mt-1`} rows={3} value={reason} maxLength={1000} onChange={(e) => setReason(e.target.value)} placeholder="At least 10 characters" />
             </label>
-            <div className="flex justify-end gap-2"><button type="button" className={button} onClick={onClose}>Cancel</button><button type="button" className={`${button} bg-brand text-white hover:bg-brand-dark`} disabled={reason.trim().length < 10 || (decision === 'update' && !selected)} onClick={() => onSave(decision, selected, reason)}>Save row decision</button></div>
+            <div className="flex justify-end gap-2"><button type="button" className={button} onClick={onClose}>Cancel</button><button type="button" className={primaryButton} disabled={reason.trim().length < 10 || (decision === 'update' && !selected)} onClick={() => onSave(decision, selected, reason)}>Save row decision</button></div>
         </fieldset>
     </Modal>;
 }

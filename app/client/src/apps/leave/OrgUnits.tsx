@@ -6,7 +6,7 @@ import { Card, CardHeading, LoadingState } from '../../components/Ui';
 import type { OrgDepartment } from './types';
 
 /** The departments and divisions staff records are chosen from. */
-export function OrgUnits() {
+export function OrgUnits({ onChanged }: { onChanged?: () => void } = {}) {
     const { addToast } = useToast();
     const { confirm } = useConfirm();
     const [departments, setDepartments] = useState<OrgDepartment[]>([]);
@@ -35,6 +35,7 @@ export function OrgUnits() {
             await action();
             addToast(success, 'success');
             await load();
+            onChanged?.();
             return true;
         } catch (err) {
             addToast((err as Error)?.message || 'That change could not be saved.', 'error');
@@ -84,7 +85,7 @@ export function OrgUnits() {
             />
 
             <div className="mt-4 flex flex-wrap items-end gap-3">
-                <label className="flex-1 text-sm">
+                <label className="min-w-0 flex-1 basis-48 text-sm">
                     <span className="mb-1 block font-medium text-gray-700">New department</span>
                     <input
                         type="text"
@@ -146,7 +147,7 @@ export function OrgUnits() {
                                     </span>
                                 ))}
                             </div>
-                            <div className="mt-2 flex items-center gap-2">
+                            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
                                 <input
                                     type="text"
                                     value={newDivisions[department.id] || ''}
@@ -154,7 +155,7 @@ export function OrgUnits() {
                                     placeholder="New division"
                                     aria-label={`New division in ${department.name}`}
                                     onChange={(e) => setNewDivisions((current) => ({ ...current, [department.id]: e.target.value }))}
-                                    className="w-56 rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                                    className="min-w-0 flex-1 basis-48 rounded-md border border-gray-300 px-3 py-1.5 text-sm"
                                 />
                                 <button
                                     type="button"

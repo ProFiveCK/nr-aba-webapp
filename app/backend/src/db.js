@@ -918,7 +918,42 @@ export async function initSchema() {
           OR (level = 'chief_secretary' AND department_id IS NULL AND division_id IS NULL))
       );
       CREATE INDEX IF NOT EXISTS idx_hr_approval_assignments_scope ON hr_approval_assignments(level, department_id, division_id, effective_from, effective_to);
+      CREATE TABLE IF NOT EXISTS hr_employee_import_batches (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        source TEXT NOT NULL DEFAULT 'techone_payroll' CHECK (source = 'techone_payroll'),
+        contract_version INTEGER NOT NULL DEFAULT 1,
+        source_hash TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        export_date DATE NOT NULL,
+        status TEXT NOT NULL DEFAULT 'preview' CHECK (status IN ('preview','applied')),
+        revision INTEGER NOT NULL DEFAULT 1,
+        row_count INTEGER NOT NULL CHECK (row_count BETWEEN 1 AND 3000),
+        created_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        applied_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        applied_at TIMESTAMPTZ,
+        review_note TEXT,
+        result JSONB,
+        UNIQUE (source, contract_version, source_hash, export_date)
+      );
+      CREATE INDEX IF NOT EXISTS idx_hr_employee_import_batches_created ON hr_employee_import_batches(created_at, id);
+      CREATE TABLE IF NOT EXISTS hr_employee_import_rows (
+        batch_id UUID NOT NULL REFERENCES hr_employee_import_batches(id) ON DELETE CASCADE,
+        row_number INTEGER NOT NULL,
+        input JSONB NOT NULL,
+        decision TEXT NOT NULL CHECK (decision IN ('create','update','review','skip')),
+        target_employee_id UUID,
+        snapshot_hash TEXT,
+        errors JSONB NOT NULL DEFAULT '[]',
+        warnings JSONB NOT NULL DEFAULT '[]',
+        review_reason TEXT,
+        applied_outcome TEXT CHECK (applied_outcome IN ('created','updated','unchanged','skipped')),
+        reviewed_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        reviewed_at TIMESTAMPTZ,
+        PRIMARY KEY (batch_id, row_number)
+      );
     `);
+    await client.query('ALTER TABLE hr_employee_import_rows ADD COLUMN IF NOT EXISTS applied_outcome TEXT');
     await client.query(`
       INSERT INTO hr_departments (name)
       SELECT DISTINCT ON (lower(btrim(department_code))) btrim(department_code)

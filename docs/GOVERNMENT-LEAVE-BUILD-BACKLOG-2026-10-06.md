@@ -2,7 +2,7 @@
 
 Date: 6 October 2026
 
-Status: Ready for implementation planning; tasks below have not been implemented by this document
+Status: Packages 1A and 1B implemented locally for review; management UI, scopes, onboarding and later packages remain open
 
 Build the interim portal in six reviewable packages, beginning with employee identity, access control, and calculation foundations. Automate common leave and provide an authorised case process for less common or disputed calculations. The portal will own leave for the expected six-to-twelve-month gap; live TechnologyOne Leave integration is deferred.
 
@@ -17,7 +17,7 @@ The [policy summary and implementation plan](GOVERNMENT-LEAVE-POLICY-IMPLEMENTAT
 - Medical leave is one ten-day allowance with an uncertified-absence counter inside it. Special leave is three days under the supplied policy. Existing local balances and historical types need an approved transition, not an automatic reduction.
 - The owner specified division approver → Head of Department → Chief Secretary final approval on 6 October. Configure this enterprise chain alongside any additional Secretary/Minister consent required by the supplied policy. Salary Unit acknowledgement is a subsequent payroll action. HOD delegation of Chief Secretary grants is not assumed.
 
-Package 1's first backend structural slice is now implemented locally. The [Package 1 structure and 2,000-employee rollout plan](GOVERNMENT-LEAVE-PACKAGE-1-STRUCTURE-2026-10-06.md) records what exists and what remains: import preview/application, management UI, departmental row scopes and bulk onboarding are still open. Government submissions remain gated until the staged workflow is built.
+Package 1's backend foundation and Payroll import/reconciliation slice are implemented locally. The [Package 1 structure and 2,000-employee rollout plan](GOVERNMENT-LEAVE-PACKAGE-1-STRUCTURE-2026-10-06.md) and [Package 1B contract and review guide](GOVERNMENT-LEAVE-PAYROLL-IMPORT-2026-10-07.md) record what exists and what remains: management UI, departmental row scopes and bulk onboarding are open. Government submissions remain gated until the staged workflow is built.
 
 ## Work that can start now
 
@@ -42,7 +42,7 @@ Start with these tickets in this order. This produces a usable staff foundation 
 | --- | --- | --- |
 | LEAVE 01 Employee reference | Add external Payroll IDs as text with source/import provenance, separate from existing employee UUIDs. Introduce effective employment category, status, service dates, teacher/intern designations and work patterns; preserve several source IDs where appointment history requires them. | Leading zeros and letters preserved; category changes recorded with dates; missing ID/category appears as an explicit review issue. Existing employees and leave records remain intact. |
 | LEAVE 02 Access scopes | Add server-enforced department/division scope assignments and distinct HR, evidence, grant, payroll, and central-administration permissions. | Scope applies to employees, applications, balances, PDFs, attachments, reports, imports, and exports. Central access is explicit. Self-approval remains prohibited. |
-| LEAVE 03 Import preview | Extend the existing staff-import flow to map Payroll IDs and proposed employee fields. Validate without writing, show matches/new records/duplicates/conflicts, then apply a reviewed batch. | A second import updates the same records; names alone do not merge people; malformed dates and duplicate references are reported. Imports do not overwrite balances. |
+| LEAVE 03 Import preview — local implementation complete | Separate Payroll CSV review flow maps exact IDs and proposed employee/appointment fields. Preview saves a review batch without changing employees; HR reconciles identities/skips and applies atomically. | Repeat/concurrent application is safe; names alone do not merge people; malformed dates and duplicate references block or require explicit skips. Imports do not overwrite balances. Native Payroll export mapping still needs the actual source file. |
 | LEAVE 04 Verified login linkage | Replace automatic name-based claiming with HR-confirmed login-to-employee linkage or a controlled identity claim. Add employee-only account onboarding, review email/Payroll-ID sign-in coverage, and reconcile existing links. Configure dated division/HOD/Chief Secretary officeholders in the same enterprise structure. | A matching name or knowledge of a Payroll ID cannot claim another employee's leave history. Link/unlink actions have an audit trail and revoke obsolete access. Employee-only accounts do not inherit finance access; government final approval cannot use the legacy decision endpoint. |
 
 Use CSV as the initial supported import contract; an XLSX export can be converted through a reviewed mapping or supported directly if required. Confirm whether a Payroll ID identifies a person or an employment record before fixing its uniqueness scope. Retain any source employer/assignment key needed to distinguish legitimate multiple employments.

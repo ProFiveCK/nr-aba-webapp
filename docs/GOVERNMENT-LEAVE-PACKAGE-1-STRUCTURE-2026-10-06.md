@@ -1,6 +1,6 @@
 # Government Leave — Package 1 structure and 2,000-employee rollout
 
-**Date:** 6 October 2026. **Status:** first backend foundation implemented locally; government rollout is not enabled.
+**Date:** 6 October 2026; updated 7 October. **Status:** Packages 1A and 1B implemented locally; government rollout is not enabled.
 
 This implements the first structural slice of [the build backlog](GOVERNMENT-LEAVE-BUILD-BACKLOG-2026-10-06.md). TechnologyOne Leave is deferred for 6–12 months. TechnologyOne Payroll supplies employee references; the portal will own leave records during the gap. Ordinary recreation uses the owner's three-month choice; temporary recreation retains its separate twelve-month rule. This slice stores appointment facts without changing entitlement calculations.
 
@@ -87,7 +87,7 @@ Start with one pilot department, then add departments in controlled cohorts unti
 | Sequence | Deliverable | Acceptance |
 | --- | --- | --- |
 | 1A — this slice | Schema, secure linking/provisioning services, paginated API, organisation references, officeholder configuration and preview | Local real-PostgreSQL tests pass; inspect diff and rollout plan before deployment |
-| 1B | Payroll export contract, dry-run CSV importer, reconciliation, import batch/hash/provenance, confirmed application | No auto matching by name/email, no ID coercion or implicit account activation; repeat import is safe; no balance overwrite |
+| 1B — implemented locally | Payroll export contract, dry-run CSV importer, reconciliation, import batch/hash/provenance, confirmed application | Local 2,000-person batch and desktop/mobile workflow pass; native export mapping still awaits the actual file. See the [import contract/review guide](GOVERNMENT-LEAVE-PAYROLL-IMPORT-2026-10-07.md). |
 | 1C | Employee directory UI, paginated account selector, service/placement review, organisation and officeholder management screens | HR can prepare all 2,000 records, locate conflicts and review missing facts; desktop/mobile review |
 | 1D | Department/division access assignments and central-admin distinctions across **every** old/new HR endpoint | Cross-department employees, applications, balances, attachments, PDFs, reports and exports cannot be read or changed |
 | 1E | Bulk onboarding, identity verification and activation, login-alias/SSO decision, account reconciliation and offboarding | No public signup auto-claims an employee; account reset/termination/relocation revokes access; no shared initial password |
@@ -95,7 +95,7 @@ Start with one pilot department, then add departments in controlled cohorts unti
 | 3 | Division → HOD → Chief Secretary workflow, exceptions/delegation, queues/timelines and final PDFs | No skipped stages or self-approval; final grant happens once; special policy consents reconciled |
 | 4–6 | Less common case leave, Salary Unit exchange, handover exports, pilot/capacity/recovery testing | Policy sign-off, reconciled exchanges and operational evidence before government rollout |
 
-No production configuration, real employee accounts, live emails, payroll exchanges or deployments were performed in this slice. Full Package 1 remains open until 1B–1E are accepted.
+No production configuration, real employee accounts, live emails, payroll exchanges or deployments were performed. Packages 1A/1B await local user review; full Package 1 remains open until management UI, scopes and onboarding (1C–1E) are accepted.
 
 ## Payroll export and organisation preparation
 
@@ -123,3 +123,5 @@ The first release can give central HR preparation tools. Do not grant department
 On 6 October, the full backend suite passed against a throwaway PostgreSQL 15 instance: **224 tests passed**, including 11 new foundation tests. Checks cover repeat schema startup, preserved staff identity, blocked name claiming, exact/repeated/conflicting Payroll IDs, concurrent exclusive account links, audit rollback, temporary-password replacement, restricted employee access, employee deactivation, 2,000-row pagination/search, dated service/authority overlaps, organisation scope, self-approval and shared-network request budgets. The new employee submission and legacy final-decision gates also pass.
 
 Client lint and production build passed; **103 frontend tests passed**, with one existing test skipped. These changes add client type fields without changing rendered screens. Markdown structure and local document links were checked. No concurrent-user or production-capacity acceptance is claimed.
+
+On 7 October, Package 1B adds the Payroll import screen and audited batch workflow. The backend suite passes **241 tests**, including 17 CSV/import tests; client lint/build and the existing frontend suite pass. A desktop/mobile browser run covers preview, reconciliation, skipped invalid rows and reviewed apply. The [Package 1B guide](GOVERNMENT-LEAVE-PAYROLL-IMPORT-2026-10-07.md) gives the exact contract, local preview instructions and remaining native-export/capacity checks.

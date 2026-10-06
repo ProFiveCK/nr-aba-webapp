@@ -4,12 +4,14 @@ import { body, param, query, handleValidation } from '../middleware/validation.j
 import { requirePermission } from '../services/authService.js';
 import { PERMISSIONS } from '../config.js';
 import { withTransaction } from '../lib/transaction.js';
+import payrollEmployeeImportRouter from './payrollEmployeeImport.js';
 import {
   APPROVAL_LEVELS, EMPLOYMENT_CATEGORIES, addEmployeeExternalId, addServicePeriod, assignLeaveApprover, closeApprovalAssignment, closeServicePeriod,
   employeeProfile, listEmployeeDirectory, previewApprovalChain, provisionEmployeeAccount, setEmployeeAccount, setEmployeeOrganisation,
 } from '../services/employeeDirectory.js';
 
 const router = express.Router();
+router.use('/imports', payrollEmployeeImportRouter);
 // This first slice is central-HR configuration. Departmental HR access will be
 // enabled only once row scopes are enforced across the existing HR endpoints.
 const centralHr = requirePermission(PERMISSIONS.HR_ADMIN);

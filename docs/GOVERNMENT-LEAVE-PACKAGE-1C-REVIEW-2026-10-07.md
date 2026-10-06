@@ -58,3 +58,7 @@ The graph service was unavailable during final review of the new worktree files;
 Package 1E follows with controlled bulk onboarding, activation/offboarding and the individual-email/Payroll-ID alias or SSO decision. The ordinary recreation three-month choice and separate temporary twelve-month rule remain Package 2 calculation work. Government employee submission and legacy final grant remain gated until Package 3 implements the staged decision engine. Configuration readiness alone does not enable government rollout.
 
 See the [Package 1 structure and 2,000-employee rollout plan](GOVERNMENT-LEAVE-PACKAGE-1-STRUCTURE-2026-10-06.md) and [build backlog](GOVERNMENT-LEAVE-BUILD-BACKLOG-2026-10-06.md).
+
+## Subsequent progress
+
+The owner requested the next item after local review. Package 1D is now implemented locally and supersedes the central-only directory and non-central historical Staff behaviour described above. Scoped HR uses the paginated directory; sensitive identity and enterprise configuration remain central. See the [Package 1D review guide](GOVERNMENT-LEAVE-PACKAGE-1D-REVIEW-2026-10-07.md). Package 1E controlled onboarding is next.

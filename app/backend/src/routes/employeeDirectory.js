@@ -1,8 +1,10 @@
+import { assertEmployeeScope,canAccessEmployee,isCentralHr } from '../services/hrAccess.js';
 import express from 'express';
 import { pool } from '../db.js';
 import { body, param, query, handleValidation } from '../middleware/validation.js';
 import { requirePermission } from '../services/authService.js';
 import { PERMISSIONS } from '../config.js';
+import { ServiceError } from '../lib/serviceError.js';
 import { withTransaction } from '../lib/transaction.js';
 import payrollEmployeeImportRouter from './payrollEmployeeImport.js';
 import { createManagedEmployee, createWorkPattern, listLinkableAccounts, updateManagedEmployee } from '../services/employeeManagement.js';
@@ -13,9 +15,10 @@ import {
 
 const router = express.Router();
 router.use('/imports', payrollEmployeeImportRouter);
-// This first slice is central-HR configuration. Departmental HR access will be
-// enabled only once row scopes are enforced across the existing HR endpoints.
+// Identity, transfers, imports and enterprise configuration stay central.
+// Directory reads and details updates also allow explicitly scoped HR.
 const centralHr = requirePermission(PERMISSIONS.HR_ADMIN);
+const staffHr = requirePermission(PERMISSIONS.HR_STAFF_MANAGE,PERMISSIONS.HR_ADMIN);
 router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 const employeeId = param('id').isUUID();
 const reason = body('reason').isString().trim().isLength({ min: 10, max: 1000 });
@@ -24,7 +27,7 @@ const dateOnly = (field, required = false) => {
   return (required ? validator : validator.optional({ nullable: true })).matches(/^\d{4}-\d{2}-\d{2}$/).isISO8601({ strict: true });
 };
 
-router.get('/', centralHr, [
+router.get('/', staffHr, [
   query('page').optional().isInt({ min: 1, max: 100000 }),
   query('page_size').optional().isInt({ min: 1, max: 100 }),
   query('search').optional().isString().isLength({ max: 100 }),
@@ -34,7 +37,7 @@ router.get('/', centralHr, [
 ], async (req, res) => {
   if (!handleValidation(req, res)) return;
   res.json(await listEmployeeDirectory(pool, { page: Number(req.query.page) || 1, pageSize: Number(req.query.page_size) || 50,
-    search: req.query.search || '', departmentId: req.query.department_id || null, status: req.query.status || null, readiness: req.query.readiness || '' }));
+    search: req.query.search || '', departmentId: req.query.department_id || null, status: req.query.status || null, readiness: req.query.readiness || '',user:req.user }));
 });
 
 router.get('/accounts', centralHr, [query('page').optional().isInt({min:1,max:100000}),query('search').optional().isString().isLength({max:100})], async (req,res) => {
@@ -48,15 +51,19 @@ router.post('/', centralHr, [reason,body('display_name').isString().trim().isLen
   res.status(201).json(await createManagedEmployee(pool,{data:req.body,actor:actor(req),reason:req.body.reason}));
 });
 
-router.put('/:id/details', centralHr, [employeeId,reason,body('display_name').isString().trim().isLength({min:1,max:200}),
+router.put('/:id/details', staffHr, [employeeId,reason,body('display_name').isString().trim().isLength({min:1,max:200}),
   body('position_title').optional({nullable:true}).isString().trim().isLength({max:120}),
   body('email').optional({nullable:true}).isEmail().isLength({max:254}),body('status').isIn(['active','inactive']),
   body('manager_id').exists({values:'undefined'}),body('manager_id').optional({nullable:true}).isUUID()], async (req,res) => {
   if (!handleValidation(req,res)) return;
-  res.json(await updateManagedEmployee(pool,{employeeId:req.params.id,data:req.body,actor:actor(req),reason:req.body.reason}));
+  res.json(await updateManagedEmployee(pool,{employeeId:req.params.id,data:req.body,actor:actor(req),reason:req.body.reason,authorize:async client=>{
+    const employee=await assertEmployeeScope(client,req.user,req.params.id,'hr_staff_manage');
+    if (!isCentralHr(req.user) && req.body.status!==employee.status) throw new ServiceError(403,'Central HR controls employee activation and offboarding.');
+    if (req.body.manager_id && req.body.manager_id!==employee.manager_id) await assertEmployeeScope(client,req.user,req.body.manager_id,'hr_staff_manage');
+  }}));
 });
 
-router.get('/work-patterns', centralHr, async (_req,res) => res.json((await pool.query('SELECT * FROM hr_work_patterns ORDER BY lower(name),id')).rows));
+router.get('/work-patterns', staffHr, async (_req,res) => res.json((await pool.query('SELECT * FROM hr_work_patterns ORDER BY lower(name),id')).rows));
 router.post('/work-patterns', centralHr, [reason,body('name').isString().trim().isLength({min:1,max:120}),
   body('working_weekdays').isArray({min:1,max:7}),body('working_weekdays.*').isInt({min:1,max:7}),
   body('hours_per_day').optional({nullable:true}).isFloat({gt:0,max:24})], async (req,res) => {
@@ -64,9 +71,12 @@ router.post('/work-patterns', centralHr, [reason,body('name').isString().trim().
   res.status(201).json(await createWorkPattern(pool,{data:req.body,actor:actor(req),reason:req.body.reason}));
 });
 
-router.get('/:id/profile', centralHr, [employeeId], async (req, res) => {
+router.get('/:id/profile', staffHr, [employeeId], async (req, res) => {
   if (!handleValidation(req, res)) return;
-  res.json(await employeeProfile(pool, req.params.id));
+  if (!(await canAccessEmployee(pool,req.user,req.params.id,'hr_staff_manage'))) throw new ServiceError(404,'Employee not found.');
+  const profile=await employeeProfile(pool,req.params.id);
+  if (profile.employee.manager_id && !(await canAccessEmployee(pool,req.user,profile.employee.manager_id,'hr_staff_manage'))) { profile.employee.manager_name='Outside your assigned scope — contact central HR'; }
+  res.json(profile);
 });
 
 router.post('/:id/external-ids', centralHr, [employeeId, reason, body('external_id').isString().trim().isLength({ min: 1, max: 100 })], async (req, res) => {
@@ -126,7 +136,11 @@ router.get('/approval-assignments', centralHr, [query('page').optional().isInt({
   const { rows } = await pool.query(`SELECT a.*,e.display_name AS approver_name,d.name AS department_name,v.name AS division_name,
     e.status AS employee_status,r.status AS account_status,e.reviewer_id,
     (COALESCE(r.permissions->>'hr_leave_approve','') <> 'false' AND (r.permissions->>'hr_leave_approve'='true'
-      OR EXISTS(SELECT 1 FROM reviewer_capabilities c WHERE c.reviewer_id=r.id AND c.capability='hr_leave_approve'))) AS has_approval_grant
+      OR EXISTS(SELECT 1 FROM reviewer_capabilities c WHERE c.reviewer_id=r.id AND c.capability='hr_leave_approve')
+      OR EXISTS(SELECT 1 FROM hr_access_scopes s WHERE s.reviewer_id=r.id AND 'hr_leave_approve'=ANY(s.capabilities)
+        AND s.revoked_at IS NULL AND s.effective_from <= (NOW() AT TIME ZONE 'Pacific/Nauru')::date
+        AND (s.effective_to IS NULL OR s.effective_to >= (NOW() AT TIME ZONE 'Pacific/Nauru')::date)
+        AND s.department_id=a.department_id AND (s.division_id IS NULL OR s.division_id=a.division_id)))) AS has_approval_grant
     FROM hr_approval_assignments a JOIN hr_employees e ON e.id=a.approver_employee_id
     LEFT JOIN reviewers r ON r.id=e.reviewer_id LEFT JOIN hr_departments d ON d.id=a.department_id LEFT JOIN hr_divisions v ON v.id=a.division_id
     ORDER BY a.level,a.effective_from,a.id LIMIT 50 OFFSET $1`, [(page - 1) * 50]);
@@ -139,8 +153,9 @@ router.post('/approval-assignments/:id/close', centralHr, [employeeId, reason, d
   res.json(await closeApprovalAssignment(pool, { assignmentId: req.params.id, endDate: req.body.end_date, actor: actor(req), reason: req.body.reason }));
 });
 
-router.get('/:id/approval-chain', centralHr, [employeeId, query('on_date').matches(/^\d{4}-\d{2}-\d{2}$/).isISO8601({ strict: true })], async (req, res) => {
+router.get('/:id/approval-chain', staffHr, [employeeId, query('on_date').matches(/^\d{4}-\d{2}-\d{2}$/).isISO8601({ strict: true })], async (req, res) => {
   if (!handleValidation(req, res)) return;
+  if (!(await canAccessEmployee(pool,req.user,req.params.id,'hr_staff_manage'))) throw new ServiceError(404,'Employee not found.');
   res.json(await previewApprovalChain(pool, req.params.id, req.query.on_date));
 });
 

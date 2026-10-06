@@ -1,6 +1,6 @@
 # Government Leave — Package 1 structure and 2,000-employee rollout
 
-**Date:** 6 October 2026; updated 7 October. **Status:** Packages 1A, 1B and 1C implemented locally; government rollout is not enabled. The owner has checked Package 1B and confirmed it works. Package 1C awaits local review.
+**Date:** 6 October 2026; updated 7 October. **Status:** Packages 1A–1D implemented locally; government rollout is not enabled. The owner has checked the earlier screens and requested progression. Package 1D is ready for local review; 1E onboarding remains.
 
 This implements the first structural slice of [the build backlog](GOVERNMENT-LEAVE-BUILD-BACKLOG-2026-10-06.md). TechnologyOne Leave is deferred for 6–12 months. TechnologyOne Payroll supplies employee references; the portal will own leave records during the gap. Ordinary recreation uses the owner's three-month choice; temporary recreation retains its separate twelve-month rule. This slice stores appointment facts without changing entitlement calculations.
 
@@ -24,7 +24,7 @@ flowchart LR
   CS --> SU[Salary Unit processing and acknowledgement]
 ```
 
-Existing staff accounts retain their current access. New employee accounts have `account_type='employee'`, role `user`, and explicitly granted `hr_access` and `hr_leave_apply`. They receive no finance defaults, and server authentication rejects access to other modules through older any-login/role gates. Heads can receive an explicit leave-approval grant without becoming portal administrators. Officeholder assignment and capability grant are separate: both must be valid.
+Existing staff identities and finance access are retained. Departmental HR data now requires a verified Package 1D scope; central HR retains government-wide HR access. New employee accounts have `account_type='employee'`, role `user`, and explicitly granted `hr_access` and `hr_leave_apply`. They receive no finance defaults, and server authentication rejects access to other modules through older any-login/role gates. Heads can receive an explicit leave-approval grant without becoming portal administrators. Officeholder assignment and capability grant are separate: both must be valid.
 
 The current authentication contract uses a unique email address. The new provisioning API also requires one and generates a unique temporary password, forces replacement, and returns it only once to authorised HR/portal administration. It sends no email. This is an initial controlled provisioning mechanism; the bulk invitation/activation interface is still to build. Confirm individual email coverage. For staff without an accessible individual email, add a separate Payroll-ID login alias with a personal password or an approved identity-provider route; avoid fabricated/shared email addresses. Payroll ID identifies an account and is never proof of ownership or a password.
 
@@ -38,7 +38,7 @@ The current authentication contract uses a unique email address. The new provisi
 | Work patterns | HR can create verified weekly patterns with weekdays and optional daily hours. Create a new pattern when schedules change to preserve historical references. No unapproved schedule/hours are seeded; roster calculations follow in Package 2. |
 | Account linking | `hr_employee_account_links` retains verifier, reason, previous/current account and time. Central HR confirms links, conflicts block, both affected accounts' sessions are revoked. Reading My Leave cannot create or claim a staff record by name. Existing links remain available for reconciliation. |
 | Account provisioning | Requires verified Payroll ID, active staff record, central HR access **and** portal administration access. Inserts an employee-only account with two Leave grants, verifies its link, and commits identity/audit changes together. |
-| Directory and management UI | Central HR's default Staff screen uses server pages of 50 employees, with department/status and missing-fact filters, name or exact Payroll ID search. It provides verified identity/account links, details, service periods and placement forms. Account/manager/officeholder selectors also use pages of 50. Profile responses omit remuneration. Historical tools, non-central legacy Staff and portal account administration retain their full-list APIs; those are not capacity acceptance for government rollout. |
+| Directory and management UI | Central HR's default Staff screen uses server pages of 50 employees, with department/status and missing-fact filters, name or exact Payroll ID search. It provides verified identity/account links, details, service periods and placement forms. Account/manager/officeholder selectors also use pages of 50. Profile responses omit remuneration. Scoped staff use the same paginated directory. Balance matrices, report aggregates, central historical tools and portal account administration retain full response lists; those are not capacity acceptance for government rollout. |
 | Enterprise authority | `hr_approval_assignments` binds division, department or government-wide Chief Secretary scope to an employee officeholder and effective dates. Overlapping primary appointments are blocked. Closing/replacing assignments retains the history. |
 | Routing preview | Returns the three stages for a verified employee placement and chosen date. Missing/multiple assignments, revoked approval grants, inactive identities and self-approval block readiness. This endpoint does not decide an application. |
 | Network capacity | HR's existing permission middleware now enforces a budget per authenticated account, replacing the general shared-IP budget for HR routes. Existing sign-in abuse protections remain. Session owner/expiry indexes are added. |
@@ -46,7 +46,7 @@ The current authentication contract uses a unique email address. The new provisi
 
 Service periods and authority appointments have inclusive end dates: close on 31 March and start the replacement on 1 April. Empty end dates mean an open period. Unknown or disputed credit remains `NULL`, for HR determination in Package 2.
 
-The new configuration API is mounted under `/api/hr/directory`. List/profile/external-ID/organisation/service-period/account-link and approval-assignment routes require central HR. Account creation additionally requires portal administration. This does **not** complete departmental access control: current broad `hr_staff_manage` access must be converted before assigning departmental HR users.
+The configuration API is mounted under `/api/hr/directory`; access grants are under `/api/hr/access-scopes`. Directory/profile/detail access is now scoped. Identity, placement, service, import and officeholder mutations remain central HR. Account creation additionally requires portal administration. Package 1D separates staff, balance, report/PDF, evidence and approval rights and rechecks them on old and new HR routes. Legacy text placements and broad staff permission alone do not create access.
 
 ## Enterprise approval contract
 
@@ -88,14 +88,14 @@ Start with one pilot department, then add departments in controlled cohorts unti
 | --- | --- | --- |
 | 1A — this slice | Schema, secure linking/provisioning services, paginated API, organisation references, officeholder configuration and preview | Local real-PostgreSQL tests pass; inspect diff and rollout plan before deployment |
 | 1B — implemented locally | Payroll export contract, dry-run CSV importer, reconciliation, import batch/hash/provenance, confirmed application | Local 2,000-person batch and desktop/mobile workflow pass; native export mapping still awaits the actual file. See the [import contract/review guide](GOVERNMENT-LEAVE-PAYROLL-IMPORT-2026-10-07.md). |
-| 1C — implemented locally | Employee directory UI, paginated account selector, service/placement review, organisation and officeholder management screens | Desktop/mobile browser checks pass, including all three configured authorities. See the [Package 1C review guide](GOVERNMENT-LEAVE-PACKAGE-1C-REVIEW-2026-10-07.md). Production capacity and user review remain outstanding. |
-| 1D | Department/division access assignments and central-admin distinctions across **every** old/new HR endpoint | Cross-department employees, applications, balances, attachments, PDFs, reports and exports cannot be read or changed |
+| 1C — implemented locally | Employee directory UI, paginated account selector, service/placement review, organisation and officeholder management screens | Desktop/mobile browser checks pass, including all three configured authorities. See the [Package 1C review guide](GOVERNMENT-LEAVE-PACKAGE-1C-REVIEW-2026-10-07.md). Production capacity remains outstanding. |
+| 1D — implemented locally | Dated department/division access assignments with separate staff, balance, report/PDF, evidence and approval rights; old/new HR API enforcement | Cross-scope HTTP reads/writes, transfer race, revocation, evidence and exports pass. See the [Package 1D review guide](GOVERNMENT-LEAVE-PACKAGE-1D-REVIEW-2026-10-07.md). Local owner review remains. |
 | 1E | Bulk onboarding, identity verification and activation, login-alias/SSO decision, account reconciliation and offboarding | No public signup auto-claims an employee; account reset/termination/relocation revokes access; no shared initial password |
 | 2 | Versioned policy/service engine, ledger/reservations, calendars and certified openings | Ordinary recreation uses three months; temporary recreation uses twelve; intern terms are reviewed; balances reconcile |
 | 3 | Division → HOD → Chief Secretary workflow, exceptions/delegation, queues/timelines and final PDFs | No skipped stages or self-approval; final grant happens once; special policy consents reconciled |
 | 4–6 | Less common case leave, Salary Unit exchange, handover exports, pilot/capacity/recovery testing | Policy sign-off, reconciled exchanges and operational evidence before government rollout |
 
-No production configuration, real employee accounts, live emails, payroll exchanges or deployments were performed. Package 1B has been checked locally by the owner. Full Package 1 remains open until management UI review, scopes and onboarding (1C–1E) are accepted. The next implementation item is Package 1D access scopes.
+No production configuration, real employee accounts, live emails, payroll exchanges or deployments were performed. Package 1B has been checked locally by the owner. Full Package 1 remains open until scoped access review and onboarding (1D–1E) are accepted. The next implementation item is Package 1E controlled onboarding.
 
 ## Payroll export and organisation preparation
 
@@ -116,7 +116,7 @@ Separately provide the verified Chief Secretary officeholder, acting/delegation 
 
 Before deploying even the foundation, reconcile existing unlinked accounts: they will see an actionable HR-link message instead of receiving an automatically created staff record. Historical links are preserved without invented verification evidence. Check organisation mappings and app access, rehearse schema upgrade twice against a scrubbed copy, and restore a backup in an isolated environment. Check retention and removal rules: new identity/service/authority history prevents deleting referenced employees; use inactive status for real staff.
 
-The first release can give central HR preparation tools. Do not grant department staff the legacy global HR capability, enable broad employee submission, or claim government-wide readiness before the row scopes, staged engine and rollout gates above are complete.
+The first release can give central HR preparation tools. Prepare verified department/division assignments before activating departmental accounts. Do not enable broad employee submission or claim government-wide readiness before onboarding, the staged engine and rollout gates above are complete.
 
 ## Local verification
 
@@ -127,3 +127,5 @@ Client lint and production build passed; **103 frontend tests passed**, with one
 On 7 October, Package 1B adds the Payroll import screen and audited batch workflow. The backend suite passes **241 tests**, including 17 CSV/import tests; client lint/build and the existing frontend suite pass. A desktop/mobile browser run covers preview, reconciliation, skipped invalid rows and reviewed apply. The [Package 1B guide](GOVERNMENT-LEAVE-PAYROLL-IMPORT-2026-10-07.md) gives the exact contract, local preview instructions and remaining native-export/capacity checks.
 
 Package 1C adds the management UI and bounded account search. The real-PostgreSQL backend suite passes **249 tests**, including eight management tests and a 2,000-account selector fixture. Client lint/build pass; **103 frontend tests pass**, with one existing skip. Browser checks cover readable primary-button hover contrast, employee creation/editing, temporary-intern service, closing/replacing a period, verified account linking, placement, work patterns, division/HOD/Chief Secretary appointments and the complete route preview on desktop/mobile. See the [review guide](GOVERNMENT-LEAVE-PACKAGE-1C-REVIEW-2026-10-07.md) for local navigation and limitations.
+
+Package 1D adds server-enforced department/division access and central assignment UI. **262 backend tests** and **104 frontend tests** pass, with one existing frontend skip; lint/build and desktop/mobile scoped browser checks pass. Local access-transition preparation and remaining capacity limits are in the [Package 1D guide](GOVERNMENT-LEAVE-PACKAGE-1D-REVIEW-2026-10-07.md). Package 1E controlled onboarding is next.

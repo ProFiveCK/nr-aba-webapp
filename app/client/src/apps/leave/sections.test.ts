@@ -25,6 +25,12 @@ describe('visibleLeaveSections', () => {
         expect(idsFor({ hr_admin: true })).toContain('approvals');
     });
 
+    it('staff management does not grant reports or balance tools', () => {
+        expect(idsFor({hr_staff_manage:true})).toEqual(['staff']);
+        expect(idsFor({hr_report_read:true})).toEqual(['report']);
+        expect(idsFor({hr_balance_manage:true})).toEqual(['staff']);
+    });
+
     it('withholds policies from everyone but an administrator', () => {
         expect(idsFor({ hr_staff_manage: true, hr_leave_approve: true })).not.toContain('policies');
     });

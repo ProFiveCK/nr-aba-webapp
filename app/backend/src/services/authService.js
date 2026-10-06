@@ -16,6 +16,7 @@ import {
   ALL_CAPABILITIES,
 } from '../config.js';
 import { lowerEmail } from '../utils/helpers.js';
+import { activeScopeSql } from './hrAccess.js';
 import { employeeApiLimiter } from '../middleware/employeeApiLimit.js';
 
 export function setAuthCookie(res, token, expiresAt) {
@@ -165,7 +166,9 @@ export function hasPermission(permissions, permission) {
 
 export async function loadCapabilities(reviewerId) {
   const { rows } = await pool.query(
-    'SELECT capability FROM reviewer_capabilities WHERE reviewer_id = $1',
+    `SELECT capability FROM reviewer_capabilities WHERE reviewer_id = $1
+     UNION SELECT unnest(s.capabilities) FROM hr_access_scopes s WHERE s.reviewer_id=$1 AND ${activeScopeSql()}
+     UNION SELECT 'hr_access' FROM hr_access_scopes s WHERE s.reviewer_id=$1 AND ${activeScopeSql()}`,
     [reviewerId]
   );
   return rows.map((r) => r.capability);

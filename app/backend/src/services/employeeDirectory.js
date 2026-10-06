@@ -1,3 +1,4 @@
+import { employeeScopeSql } from './hrAccess.js';
 import { withTransaction } from '../lib/transaction.js';
 import { badRequest, forbidden, notFound, ServiceError } from '../lib/serviceError.js';
 import { recordAudit } from './auditService.js';
@@ -27,9 +28,11 @@ export async function linkedEmployee(pool, accountId) {
   return employee;
 }
 
-export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, search = '', departmentId = null, status = null, readiness = '' } = {}) {
+export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, search = '', departmentId = null, status = null, readiness = '', user = null } = {}) {
   const values = [status, departmentId, search.trim(), readiness];
-  const where = `($1::text IS NULL OR e.status = $1) AND ($2::uuid IS NULL OR e.department_id = $2)
+  const scopeCondition = user ? employeeScopeSql(user,'hr_staff_manage','$5') : '($5::uuid IS NULL)';
+  values.push(user?.id || null);
+  const where = `${scopeCondition} AND ($1::text IS NULL OR e.status = $1) AND ($2::uuid IS NULL OR e.department_id = $2)
     AND ($3 = '' OR position(lower($3) in lower(e.display_name)) > 0
       OR EXISTS (SELECT 1 FROM hr_employee_external_ids x WHERE x.employee_id = e.id AND x.external_id = $3))
     AND ($4 = '' OR ($4 = 'unlinked' AND e.reviewer_id IS NULL)
@@ -53,7 +56,7 @@ export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, sea
        WHERE p.employee_id=e.id AND p.start_date <= (NOW() AT TIME ZONE 'Pacific/Nauru')::date
          AND (p.end_date IS NULL OR p.end_date >= (NOW() AT TIME ZONE 'Pacific/Nauru')::date)
        ORDER BY p.start_date DESC,p.id LIMIT 1) p ON TRUE
-     WHERE ${where} ORDER BY lower(e.display_name), e.id LIMIT $5 OFFSET $6`,
+     WHERE ${where} ORDER BY lower(e.display_name), e.id LIMIT $6 OFFSET $7`,
     [...values, pageSize, (page - 1) * pageSize]
   );
   const { rows: [count] } = await pool.query(`SELECT count(*)::int AS total FROM hr_employees e WHERE ${where}`, values);
@@ -264,7 +267,10 @@ export async function previewApprovalChain(pool, employeeId, onDate) {
   if (!employee) throw notFound('Employee not found.');
   const { rows } = await pool.query(
     `SELECT a.*, e.reviewer_id, e.display_name AS approver_name, e.status AS employee_status, r.status AS account_status,
-       EXISTS (SELECT 1 FROM reviewer_capabilities c WHERE c.reviewer_id = e.reviewer_id AND c.capability = 'hr_leave_approve') AS has_approval_grant,
+       (EXISTS (SELECT 1 FROM reviewer_capabilities c WHERE c.reviewer_id = e.reviewer_id AND c.capability = 'hr_leave_approve')
+         OR EXISTS (SELECT 1 FROM hr_access_scopes s WHERE s.reviewer_id=e.reviewer_id AND 'hr_leave_approve'=ANY(s.capabilities)
+           AND s.revoked_at IS NULL AND s.effective_from <= $1 AND (s.effective_to IS NULL OR s.effective_to >= $1)
+           AND s.department_id=$3 AND (s.division_id IS NULL OR s.division_id=$2))) AS has_approval_grant,
        r.permissions->>'hr_leave_approve' AS approval_override
      FROM hr_approval_assignments a JOIN hr_employees e ON e.id = a.approver_employee_id
      LEFT JOIN reviewers r ON r.id = e.reviewer_id

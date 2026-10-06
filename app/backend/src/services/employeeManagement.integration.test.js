@@ -81,7 +81,8 @@ describe('central HR management screens and bounded APIs', { skip: skipWithoutDa
   });
   test('central-HR gates protect every new operation and request responses are no-store',async()=>{
     const staff=await account({hr_staff_manage:true});const employee=await create();
-    for(const [path,body,method] of [['/accounts',undefined,'GET'],['/work-patterns',undefined,'GET'],['',{display_name:'Unauthorised',external_id:'000002',department_id:department.id,reason},'POST'],[`/${employee.id}/details`,{display_name:'Unauthorised',status:'active',manager_id:null,reason},'PUT']])assert.equal((await call(path,body,method,staff)).status,403);
+    for(const [path,body,method] of [['/accounts',undefined,'GET'],['',{display_name:'Unauthorised',external_id:'000002',department_id:department.id,reason},'POST'],[`/${employee.id}/details`,{display_name:'Unauthorised',status:'active',manager_id:null,reason},'PUT']])assert.equal((await call(path,body,method,staff)).status,path.endsWith('/details')?404:403);
+    assert.equal((await call('/work-patterns',undefined,'GET',staff)).status,200);
     assert.equal((await call('/accounts')).cache,'no-store');
     assert.equal((await call(`/${employee.id}/profile`)).body.employee.daily_rate,undefined);
     assert.equal((await call(`/${employee.id}/details`,{display_name:'Bad',status:'active',reason},'PUT')).status,422);

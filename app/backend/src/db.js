@@ -844,6 +844,26 @@ export async function initSchema() {
     `);
     await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_divisions_name ON hr_divisions (department_id, lower(name))');
     await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_divisions_id_department ON hr_divisions(id, department_id)');
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_access_scopes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        reviewer_id UUID NOT NULL REFERENCES reviewers(id) ON DELETE RESTRICT,
+        department_id UUID NOT NULL REFERENCES hr_departments(id) ON DELETE RESTRICT,
+        division_id UUID,
+        capabilities TEXT[] NOT NULL CHECK (cardinality(capabilities) BETWEEN 1 AND 5
+          AND capabilities <@ ARRAY['hr_staff_manage','hr_leave_approve','hr_balance_manage','hr_report_read','hr_evidence_read']::text[]),
+        effective_from DATE NOT NULL,
+        effective_to DATE CHECK (effective_to >= effective_from),
+        granted_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        reason TEXT NOT NULL,
+        revoked_at TIMESTAMPTZ,
+        revoked_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        revoke_reason TEXT,
+        FOREIGN KEY (division_id,department_id) REFERENCES hr_divisions(id,department_id) ON DELETE RESTRICT
+      );
+      CREATE INDEX IF NOT EXISTS idx_hr_access_scopes_account ON hr_access_scopes(reviewer_id,department_id,division_id) WHERE revoked_at IS NULL;
+    `);
     await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS department_id UUID REFERENCES hr_departments(id) ON DELETE RESTRICT');
     await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS division_id UUID');
     await client.query(`DO $$ BEGIN

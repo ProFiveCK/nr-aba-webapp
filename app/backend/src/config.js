@@ -121,6 +121,9 @@ export const PERMISSIONS = {
   HR_LEAVE_APPROVE: 'hr_leave_approve',
   HR_STAFF_MANAGE: 'hr_staff_manage',
   HR_ADMIN: 'hr_admin',
+  HR_BALANCE_MANAGE: 'hr_balance_manage',
+  HR_REPORT_READ: 'hr_report_read',
+  HR_EVIDENCE_READ: 'hr_evidence_read',
   ABA_ACCESS: 'aba_access',
   BANKING_ACCESS: 'banking_access',
   PAYROLL_ACCESS: 'payroll_access',
@@ -178,11 +181,12 @@ export const CAPABILITY_CATALOGUE = [
     capabilities: [
       { key: PERMISSIONS.HR_ACCESS, label: 'Open the Leave app' },
       { key: PERMISSIONS.HR_LEAVE_APPLY, label: 'Apply for leave' },
-      // Scoped by hr_employees.manager_id: this grants the ability to approve,
-      // the reporting line decides whose leave.
-      { key: PERMISSIONS.HR_LEAVE_APPROVE, label: 'Approve leave for direct reports' },
-      { key: PERMISSIONS.HR_STAFF_MANAGE, label: 'Manage staff records and balances' },
-      { key: PERMISSIONS.HR_ADMIN, label: 'Manage leave policies and override decisions' },
+      { key: PERMISSIONS.HR_LEAVE_APPROVE, label: 'Approve leave within assigned scope or verified reporting line' },
+      { key: PERMISSIONS.HR_STAFF_MANAGE, label: 'Manage staff within assigned HR scope' },
+      { key: PERMISSIONS.HR_BALANCE_MANAGE, label: 'Manage balances within assigned HR scope' },
+      { key: PERMISSIONS.HR_REPORT_READ, label: 'Read reports within assigned HR scope' },
+      { key: PERMISSIONS.HR_EVIDENCE_READ, label: 'Read supporting evidence within assigned HR scope' },
+      { key: PERMISSIONS.HR_ADMIN, label: 'Central HR administration across government' },
     ],
   },
   {

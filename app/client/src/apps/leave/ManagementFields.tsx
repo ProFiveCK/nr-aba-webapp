@@ -30,8 +30,8 @@ export function PlacementFields({ departments, initialDepartment = '', initialDi
 
 type Choice = { id: string; display_name: string; status: string; account_type?: string; reviewer_id?: string | null; department_code?: string | null; external_ids?: { external_id: string }[]; email?: string; employee_id?: string | null; employee_name?: string | null };
 /** Explicit selection from bounded server pages, never matching by a name automatically. */
-export function DirectoryPicker({ kind = 'employees', name, label, initialId = '', initialLabel = '', employeeId, requireLinked = false, allowClear = false }: {
-    kind?: 'employees' | 'accounts'; name: string; label: string; initialId?: string; initialLabel?: string; employeeId?: string; requireLinked?: boolean; allowClear?: boolean;
+export function DirectoryPicker({ kind = 'employees', name, label, initialId = '', initialLabel = '', employeeId, requireLinked = false, allowClear = false, allowLinkedAccounts = false }: {
+    kind?: 'employees' | 'accounts'; name: string; label: string; initialId?: string; initialLabel?: string; employeeId?: string; requireLinked?: boolean; allowClear?: boolean; allowLinkedAccounts?: boolean;
 }) {
     const [selected, setSelected] = useState(initialId), [selectedLabel, setSelectedLabel] = useState(initialLabel);
     const [search, setSearch] = useState(''), [appliedSearch, setAppliedSearch] = useState('');
@@ -54,12 +54,12 @@ export function DirectoryPicker({ kind = 'employees', name, label, initialId = '
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         <div aria-busy={busy} className="max-h-52 space-y-1 overflow-y-auto rounded-lg border border-gray-200 p-2">
             {busy ? <p className="p-2 text-sm text-gray-500">Loading choices…</p> : !data.rows.length ? <p className="p-2 text-sm text-gray-500">No matching records.</p> : data.rows.map((row) => {
-                const blocked = row.status !== 'active' || (kind === 'accounts' && !!row.employee_id && row.employee_id !== employeeId) || (kind === 'employees' && (row.id === employeeId || (requireLinked && !row.reviewer_id)));
+                const blocked = row.status !== 'active' || (kind === 'accounts' && !allowLinkedAccounts && !!row.employee_id && row.employee_id !== employeeId) || (kind === 'employees' && (row.id === employeeId || (requireLinked && !row.reviewer_id)));
                 return <label key={row.id} className={`flex items-start gap-2 rounded-lg p-2 text-sm ${blocked ? 'bg-gray-50 text-gray-500' : 'cursor-pointer text-gray-800 hover:bg-blue-50'}`}>
                     <input className="mt-1" type="radio" name={`${name}_choice`} checked={selected === row.id} disabled={busy || blocked} onChange={() => { setSelected(row.id); setSelectedLabel(row.display_name); }} />
                     <span className="min-w-0 break-words">{row.display_name} · {row.email || row.department_code || 'Department unverified'}{row.external_ids?.length ? ` · ${row.external_ids.map((entry) => entry.external_id).join(', ')}` : ''}
                         {kind === 'accounts' ? row.account_type === 'employee' ? ' · Employee-only login' : ' · Existing staff login' : ''}
-                        {row.status !== 'active' ? ' · Inactive' : row.employee_id && row.employee_id !== employeeId ? ` · Linked to ${row.employee_name}` : requireLinked && !row.reviewer_id ? ' · Needs verified login' : ''}</span>
+                        {row.status !== 'active' ? ' · Inactive' : !allowLinkedAccounts && row.employee_id && row.employee_id !== employeeId ? ` · Linked to ${row.employee_name}` : requireLinked && !row.reviewer_id ? ' · Needs verified login' : ''}</span>
                 </label>;
             })}
         </div>

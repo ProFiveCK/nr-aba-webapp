@@ -35,11 +35,12 @@ export async function createManagedEmployee(pool, { data, actor, reason }) {
   });
 }
 
-export async function updateManagedEmployee(pool, { employeeId, data, actor, reason }) {
+export async function updateManagedEmployee(pool, { employeeId, data, actor, reason, authorize }) {
   const verifiedReason = managementReason(reason);
   return withTransaction(pool, async (client) => {
     // Match the import's stable lock order while checking reporting cycles.
     const { rows } = await client.query('SELECT id,display_name,position_title,email,status,reviewer_id,manager_id FROM hr_employees ORDER BY id FOR UPDATE');
+    if (authorize) await authorize(client);
     const before = rows.find((row) => row.id===employeeId);
     if (!before) throw notFound('Employee not found.');
     const managerId = data.manager_id || null;

@@ -12,6 +12,7 @@ import { toDateInputValue, todayIsoDate } from '../../../lib/date';
 import { csvCell, parseCsv } from '../../../lib/csv';
 import { BalancesReport } from '../BalancesReport';
 import { PayrollEmployeeImport } from '../PayrollEmployeeImport';
+import { ScopedBalances } from '../ScopedBalances';
 import { EmployeeManagement } from '../EmployeeManagement';
 import type {
     ImportResult,
@@ -72,7 +73,7 @@ function draftFor(employee: Employee): EmployeeDraft {
 
 export function Staff() {
     const { user } = useAuth();
-    return user?.permissions?.hr_admin === true ? <EmployeeManagement legacyTools={<LegacyStaff />} /> : <LegacyStaff />;
+    return user?.permissions?.hr_admin || user?.permissions?.hr_staff_manage ? <EmployeeManagement legacyTools={<LegacyStaff />} /> : <ScopedBalances />;
 }
 
 function LegacyStaff() {

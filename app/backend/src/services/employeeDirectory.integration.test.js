@@ -223,11 +223,11 @@ describe('employee directory and enterprise approval foundation', { skip: skipWi
     assert.match((await directory.previewApprovalChain(pool, applicant.id, '2026-10-06')).stages[1].issue, /Self-approval/);
   });
 
-  test('directory/identity management is central HR only and does not trust self-supplied account IDs', async () => {
+  test('unscoped directory is empty and identity management is central HR only and does not trust self-supplied account IDs', async () => {
     const employee = await createEmployee(pool, { name: 'Employee' });
     const staff = await account({ permissions: { hr_staff_manage: true, hr_access: true } });
     const token = await tokenFor(staff);
-    assert.equal((await call(token, '/api/hr/directory')).status, 403);
+    const empty=await call(token, '/api/hr/directory');assert.equal(empty.status,200);assert.equal(empty.body.total,0);
     assert.equal((await call(token, `/api/hr/employees/${employee.id}`, { reviewer_id: staff.id }, 'PUT')).status, 403);
     const hr = await account({ permissions: { hr_admin: true } });
     const hrToken = await tokenFor(hr);

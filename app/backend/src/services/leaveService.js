@@ -14,6 +14,8 @@
  * both places and never in neither.
  */
 
+import { canAccessEmployee } from './hrAccess.js';
+import { loadCapabilities, reviewerSummary } from './authService.js';
 import { ensureBalance } from './leaveAccrual.js';
 import { calculateWorkingDays, parseDateOnly } from '../lib/leaveDates.js';
 import { withTransaction } from '../lib/transaction.js';
@@ -196,13 +198,13 @@ export async function decideLeave(pool, { applicationId, decision, note, actorId
     // Nobody decides their own leave, HR administrators included; to withdraw
     // it, the applicant cancels it.
     const { rows: applicant } = await client.query(
-      'SELECT reviewer_id FROM hr_employees WHERE id = $1',
+      'SELECT reviewer_id FROM hr_employees WHERE id = $1 FOR UPDATE',
       [application.employee_id]
     );
     if (actorId && applicant[0]?.reviewer_id === actorId) {
       throw forbidden('You cannot approve or reject your own leave. Another approver must decide it.');
     }
-    if (!(await canAct(application.employee_id))) {
+    if (!(await canAct(application.employee_id,client))) {
       throw forbidden('This person does not report to you.');
     }
     if (decision === 'approved' && !String(application.reason || '').trim()) {
@@ -308,7 +310,7 @@ export async function decideLeave(pool, { applicationId, decision, note, actorId
  * Every adjustment is kept, so a balance can always be explained. A zero
  * adjustment is refused: it would be an audit row asserting nothing.
  */
-export async function adjustBalance(pool, { employeeId, leaveTypeId, amount, reason, actorId, year }) {
+export async function adjustBalance(pool, { employeeId, leaveTypeId, amount, reason, actorId, year, authorize }) {
   const delta = Number(amount);
   if (!Number.isFinite(delta) || delta === 0) {
     throw badRequest('Adjustment amount cannot be zero.');
@@ -317,6 +319,7 @@ export async function adjustBalance(pool, { employeeId, leaveTypeId, amount, rea
   const why = String(reason || '').trim();
 
   return withTransaction(pool, async (client) => {
+    if (authorize) await authorize(client);
     const balance = await applyAdjustment(client, {
       employeeId, leaveTypeId, delta, reason: why, actorId, year: effectiveYear,
     });
@@ -358,29 +361,17 @@ export async function setOpeningBalance(client, { employeeId, leaveTypeId, targe
   return delta;
 }
 
-/**
- * Who should be told that this person has applied for leave.
- *
- * Their manager, when the staff record names one. When it does not — and ten
- * of the active records currently do not — the request still lands in the
- * administrators' queue, because HR_ADMIN sees everyone; it was only the
- * email that went nowhere, so the application sat unannounced until somebody
- * happened to look. The administrators are the de facto approver in that
- * case, so they are who gets told.
- */
+/** Notify only an active authorised manager; otherwise notify central HR. */
 export async function leaveApprovers(pool, employee) {
-  if (employee.manager_id) {
-    const { rows } = await pool.query(
-      'SELECT display_name, email FROM hr_employees WHERE id = $1 AND email IS NOT NULL',
-      [employee.manager_id]
-    );
-    if (rows.length) return rows;
+  const {rows:managers}=await pool.query(`SELECT r.* FROM hr_employees e JOIN hr_employees m ON m.id=e.manager_id
+    JOIN reviewers r ON r.id=m.reviewer_id WHERE e.id=$1 AND m.status='active' AND r.status='active'`,[employee.id]);
+  for (const manager of managers) {
+    const user=reviewerSummary(manager,undefined,await loadCapabilities(manager.id));
+    if (await canAccessEmployee(pool,user,employee.id,'hr_leave_approve',{manager:true})) return [{display_name:user.display_name,email:user.email}];
   }
-  const { rows: admins } = await pool.query(
-    `SELECT display_name, email FROM reviewers
-      WHERE status = 'active' AND email IS NOT NULL
-        AND (permissions->>$1)::boolean IS TRUE`,
-    [PERMISSIONS.HR_ADMIN]
-  );
+  const { rows: admins } = await pool.query(`SELECT r.display_name,r.email FROM reviewers r WHERE r.status='active'
+    AND COALESCE(r.permissions->>'hr_admin','') <> 'false'
+    AND (r.permissions->>'hr_admin'='true' OR (r.role='admin' AND r.account_type<>'employee')
+      OR EXISTS(SELECT 1 FROM reviewer_capabilities c WHERE c.reviewer_id=r.id AND c.capability='hr_admin'))`);
   return admins;
 }

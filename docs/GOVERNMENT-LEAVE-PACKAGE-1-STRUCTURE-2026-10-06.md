@@ -1,6 +1,6 @@
 # Government Leave — Package 1 structure and 2,000-employee rollout
 
-**Date:** 6 October 2026; updated 7 October. **Status:** Packages 1A–1E implemented locally; government rollout is not enabled. The owner requested 1E after the scoped-access delivery. Package 1E is ready for local review; operational acceptance and the later policy/workflow packages remain.
+**Date:** 6 October 2026; updated 7 October. **Status:** Packages 1A–1E and Package 2 implemented locally; government rollout is not enabled. The owner requested 1E after the scoped-access delivery. Package 1E is ready for local review; operational acceptance and the later policy/workflow packages remain.
 
 This implements the first structural slice of [the build backlog](GOVERNMENT-LEAVE-BUILD-BACKLOG-2026-10-06.md). TechnologyOne Leave is deferred for 6–12 months. TechnologyOne Payroll supplies employee references; the portal will own leave records during the gap. Ordinary recreation uses the owner's three-month choice; temporary recreation retains its separate twelve-month rule. This slice stores appointment facts without changing entitlement calculations.
 
@@ -96,7 +96,7 @@ Start with one pilot department, then add departments in controlled cohorts unti
 | 3 | Division → HOD → Chief Secretary workflow, exceptions/delegation, queues/timelines and final PDFs | No skipped stages or self-approval; final grant happens once; special policy consents reconciled |
 | 4–6 | Less common case leave, Salary Unit exchange, handover exports, pilot/capacity/recovery testing | Policy sign-off, reconciled exchanges and operational evidence before government rollout |
 
-No production configuration, real employee accounts, live emails, payroll exchanges or deployments were performed. Package 1B has been checked locally by the owner. Package 1A–1E is implemented locally. Owner acceptance and production migration/capacity/recovery evidence remain open. The next implementation item is Package 2 policy and balance foundations.
+No production configuration, real employee accounts, live emails, payroll exchanges or deployments were performed. Package 1B has been checked locally by the owner. Package 1A–1E is implemented locally. Owner acceptance and production migration/capacity/recovery evidence remain open. Package 2 foundations are implemented locally; the next item is Package 3 common leave and statutory approvals.
 
 ## Payroll export and organisation preparation
 
@@ -132,3 +132,5 @@ Package 1C adds the management UI and bounded account search. The real-PostgreSQ
 Package 1D adds server-enforced department/division access and central assignment UI. **262 backend tests** and **104 frontend tests** pass, with one existing frontend skip; lint/build and desktop/mobile scoped browser checks pass. Local access-transition preparation and remaining capacity limits are in the [Package 1D guide](GOVERNMENT-LEAVE-PACKAGE-1D-REVIEW-2026-10-07.md). Package 1E controlled onboarding is next.
 
 Package 1E adds staged cohort onboarding and individual account lifecycle controls. **278 backend tests** and **104 frontend tests** pass, with one existing frontend skip; lint/build and desktop/mobile checks cover activation, exact Payroll ID login, recovery, offboarding and separate reactivation. New personal views do not inherit default government allowances. See the [Package 1E review guide](GOVERNMENT-LEAVE-PACKAGE-1E-REVIEW-2026-10-07.md). Package 2 policy evaluation, ledger/reservations and certified openings is next; government submission remains gated.
+
+Package 2 adds typed policy versions, service/calendar/roster evaluation, exact immutable ledger/reservations, independent opening certification and an isolated Docker application with live source updates. **295 backend tests** and **104 frontend tests** pass; lint/build and desktop/mobile browser workflows pass. See the [Package 2 review guide](GOVERNMENT-LEAVE-PACKAGE-2-REVIEW-2026-10-07.md). Government submission remains gated pending Package 3.

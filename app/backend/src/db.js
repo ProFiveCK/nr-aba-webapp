@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { initGovernmentLeaveSchema } from './services/governmentLeaveSchema.js';
 import dotenv from 'dotenv';
 import { ALL_CAPABILITIES, ROLE_CAPABILITIES } from './config.js';
 
@@ -1245,6 +1246,7 @@ export async function initSchema() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_email_attempted ON login_attempts(email, attempted_at)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_attempted_at ON login_attempts(attempted_at)');
 
+    await initGovernmentLeaveSchema(client);
     await backfillCapabilities(client);
 
     await client.query('COMMIT');

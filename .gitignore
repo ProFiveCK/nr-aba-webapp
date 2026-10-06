@@ -109,3 +109,6 @@ cloudflare/secret/
 .cache/
 __pycache__/
 *.py[cod]
+
+# Isolated local Leave review runtime (generated secrets and state)
+.leave-review/

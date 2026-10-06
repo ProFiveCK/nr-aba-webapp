@@ -2,7 +2,7 @@
 
 Date: 6 October 2026
 
-Status: Packages 1A–1E implemented locally; Package 1E is ready for owner review. Operational acceptance, policy/balance foundations and later packages remain open.
+Status: Packages 1A–1E and Package 2 implemented locally; the isolated Docker application is ready for owner review. Operational acceptance and Packages 3–6 remain open.
 
 Build the interim portal in six reviewable packages, beginning with employee identity, access control, and calculation foundations. Automate common leave and provide an authorised case process for less common or disputed calculations. The portal will own leave for the expected six-to-twelve-month gap; live TechnologyOne Leave integration is deferred.
 
@@ -17,7 +17,7 @@ The [policy summary and implementation plan](GOVERNMENT-LEAVE-POLICY-IMPLEMENTAT
 - Medical leave is one ten-day allowance with an uncertified-absence counter inside it. Special leave is three days under the supplied policy. Existing local balances and historical types need an approved transition, not an automatic reduction.
 - The owner specified division approver → Head of Department → Chief Secretary final approval on 6 October. Configure this enterprise chain alongside any additional Secretary/Minister consent required by the supplied policy. Salary Unit acknowledgement is a subsequent payroll action. HOD delegation of Chief Secretary grants is not assumed.
 
-Package 1's backend foundation, Payroll import/reconciliation and management UI are implemented locally. The [Package 1 structure and 2,000-employee rollout plan](GOVERNMENT-LEAVE-PACKAGE-1-STRUCTURE-2026-10-06.md), [Package 1B contract and review guide](GOVERNMENT-LEAVE-PAYROLL-IMPORT-2026-10-07.md) and [Package 1C review guide](GOVERNMENT-LEAVE-PACKAGE-1C-REVIEW-2026-10-07.md) record what exists and what remains. [Package 1D scoped-access review](GOVERNMENT-LEAVE-PACKAGE-1D-REVIEW-2026-10-07.md) covers the implemented departmental boundaries. [Package 1E onboarding review](GOVERNMENT-LEAVE-PACKAGE-1E-REVIEW-2026-10-07.md) covers the completed cohort/account lifecycle work. **Next is Package 2 policy and balance foundations.** Government submissions remain gated until the staged workflow is built.
+Package 1's backend foundation, Payroll import/reconciliation and management UI are implemented locally. The [Package 1 structure and 2,000-employee rollout plan](GOVERNMENT-LEAVE-PACKAGE-1-STRUCTURE-2026-10-06.md), [Package 1B contract and review guide](GOVERNMENT-LEAVE-PAYROLL-IMPORT-2026-10-07.md) and [Package 1C review guide](GOVERNMENT-LEAVE-PACKAGE-1C-REVIEW-2026-10-07.md) record what exists and what remains. [Package 1D scoped-access review](GOVERNMENT-LEAVE-PACKAGE-1D-REVIEW-2026-10-07.md) covers the implemented departmental boundaries. [Package 1E onboarding review](GOVERNMENT-LEAVE-PACKAGE-1E-REVIEW-2026-10-07.md) covers the completed cohort/account lifecycle work. [Package 2 review guide](GOVERNMENT-LEAVE-PACKAGE-2-REVIEW-2026-10-07.md) covers policy versions, verified service/calendar segments, certified openings and ledger/reservation controls. **Next is Package 3 common leave and statutory approvals.** Government submissions remain gated until the staged workflow is built.
 
 ## Work that can start now
 

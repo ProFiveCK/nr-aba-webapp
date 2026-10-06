@@ -5,6 +5,7 @@ import { useAuth } from '../../../contexts/useAuth';
 import { useToast } from '../../../contexts/useToast';
 import { useConfirm } from '../../../contexts/useConfirm';
 import { EmptyState, LoadingState } from '../../../components/Ui';
+import { GovernmentPersonalBalances } from '../GovernmentFoundation';
 import { printApprovedLeaveForm } from '../payrollForm';
 import {
     calculateWorkingDays,
@@ -214,6 +215,7 @@ export function MyLeave() {
             )}
 
             {governmentPending && <p role="status" className="app-panel border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Your employee login is ready. Government leave requests will open after the division, Head of Department and Chief Secretary approval workflow and certified opening balances are enabled. Any recorded historical balances shown here are awaiting that transition.</p>}
+            {governmentPending && summary && <GovernmentPersonalBalances employeeId={summary.employee.id}/>}
             {/* Balances */}
             <div className="app-panel p-5 sm:p-6">
                 <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
@@ -244,7 +246,7 @@ export function MyLeave() {
                     </div>
                 ) : (
                     <p className="text-sm text-gray-500">
-                        {governmentPending ? 'Opening balances await HR certification. No government entitlement has been calculated.' : 'No balances yet — they are created the first time you apply for each leave type.'}
+                        {governmentPending ? 'No historical balance rows. Certified government entitlements are shown separately above.' : 'No balances yet — they are created the first time you apply for each leave type.'}
                     </p>
                 )}
             </div>

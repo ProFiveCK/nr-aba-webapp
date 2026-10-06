@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { body, param, query, handleValidation } from '../middleware/validation.js';
 import { pool } from '../db.js';
 import { requireAuth } from '../services/authService.js';
+import { actorFrom, recordAudit } from '../services/auditService.js';
 import {
   notifyPublicHealthReviewers,
   notifySubmitterOfApproval,
@@ -393,6 +394,21 @@ router.post(
       ]
     );
 
+    await recordAudit({
+      actor: actorFrom(req),
+      action: 'batch.submit',
+      entityType: 'batch',
+      entityId: insertedRow.code,
+      after: {
+        pd_number: pdNumber,
+        department_code: deptCode,
+        workflow_type: workflowType,
+        checksum,
+        credit_lines: abaFile.credits.length,
+        total_cents: abaFile.trailer.credits,
+      },
+    });
+
     const savedBatch = { ...insertedRow, metadata };
     // Only public health pay runs notify reviewers on submission. Departmental
     // ABA batches stay 'submitted' without a reviewer email; reviewers reject
@@ -488,6 +504,16 @@ router.patch(
         targetStage
       ]
     );
+
+    await recordAudit({
+      actor: actorFrom(req),
+      action: `batch.${targetStage === 'approved' ? 'approve' : 'reject'}`,
+      entityType: 'batch',
+      entityId: updated.code,
+      before: { stage: currentStage },
+      after: { stage: targetStage },
+      metadata: { comments: commentsRaw || null, override_by_admin: isOverride === true },
+    });
 
     if (targetStage === 'rejected' && notifySubmitter) {
       notifySubmitterOfRejection(updated, metadata, commentsRaw, actor).catch((err) => {
@@ -622,6 +648,15 @@ router.patch(
         ]
       );
 
+      await recordAudit({
+        actor: actorFrom(req),
+        action: 'batch.value_date',
+        entityType: 'batch',
+        entityId: updated.code,
+        before: { proc: parseAbaFile(record.file_data).header.proc, checksum: record.checksum },
+        after: { proc, desc: desc ?? null, remitter: remitter ?? null, checksum: updated.checksum },
+      });
+
       const response = { ...updated };
       if (updated.stage === 'approved' || updated.stage === 'submitted') {
         response.file_available = true;
@@ -701,11 +736,24 @@ router.delete(
   [requireAuth(['admin']), param('code').isString().isLength({ min: 1, max: 64 })],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
-    const { rowCount } = await pool.query('DELETE FROM batch_archives WHERE code = $1', [req.params.code]);
-    if (!rowCount) {
+    // The batch's own review history goes with it, so the audit log keeps
+    // what was deleted.
+    const { rows: deleted } = await pool.query(
+      `DELETE FROM batch_archives WHERE code = $1
+       RETURNING code, batch_id, pd_number, department_code, workflow_type, stage, checksum, submitted_email, created_at`,
+      [req.params.code]
+    );
+    if (!deleted.length) {
       res.status(404).json({ message: 'Batch not found.' });
       return;
     }
+    await recordAudit({
+      actor: actorFrom(req),
+      action: 'batch.delete',
+      entityType: 'batch',
+      entityId: deleted[0].code,
+      before: deleted[0],
+    });
     res.status(204).send();
   }
 );

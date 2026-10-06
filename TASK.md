@@ -206,3 +206,14 @@ Before deploying, run `npm run ci:local` (no GitHub CI; it must pass on your mac
 
 - Password reset links sent before the deploy stop working, because tokens are now stored hashed. They expire within an hour anyway.
 - New passwords need 12+ characters. Existing passwords still work.
+
+---
+
+# Deploying `feat/audit-trail-and-checks` (2026-10-06)
+
+- **No manual steps.** On its first start, the API drops the `audit_log.actor_id` foreign key and adds the append-only triggers.
+- **After deploy:** `audit_log` refuses `UPDATE`, `DELETE` and `TRUNCATE`, so any script or habit that clears old audit rows will now fail. That is intended. If rows ever must be removed, a database superuser has to drop the two `audit_log_no_*` triggers on purpose first.
+- **Check it works:** sign in once and run:
+  `SELECT action, actor_email, created_at FROM audit_log ORDER BY id DESC LIMIT 5;`
+  You should see a `login.success` row.
+- **Turn on the pre-push hook** in every clone you push from: `git config core.hooksPath .githooks`. Pushes then run `npm run ci:local` first, which needs Docker running.

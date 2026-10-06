@@ -23,6 +23,7 @@ import {
 import { clearLoginAttempts, isAccountLocked, recordLoginAttempt } from '../services/loginAttempts.js';
 import { notifyAdminsOfSignupRequest, sendMail } from '../services/mailService.js';
 import { lowerEmail } from '../utils/helpers.js';
+import { actorFrom, recordAudit } from '../services/auditService.js';
 import {
   FRONTEND_BASE_URL,
   GOOGLE_CLIENT_ID,
@@ -36,6 +37,18 @@ import {
 } from '../config.js';
 
 const router = express.Router();
+
+// Every sign-in outcome goes to the audit log. A failure has no signed-in
+// actor, so the address that was tried is recorded as the actor's email.
+function auditSignIn(req, action, { reviewer = null, email = null, method = 'password', reason = null } = {}) {
+  return recordAudit({
+    actor: { id: reviewer?.id ?? null, email: reviewer?.email ?? email, ip: req.ip },
+    action,
+    entityType: 'reviewer',
+    entityId: reviewer?.id ?? null,
+    metadata: { method, ...(reason ? { reason } : {}) },
+  });
+}
 
 // ===== Authentication =====
 
@@ -150,6 +163,7 @@ router.post(
     // email rather than IP, so shared gateways do not lock out other staff.
     if (await isAccountLocked(email)) {
       console.warn(`[login] account locked due to failed attempts: ${email} from ${clientIp}`);
+      await auditSignIn(req, 'login.failure', { email, reason: 'locked' });
       res.status(429).json({ message: 'Too many failed login attempts for this account. Please try again later.' });
       return;
     }
@@ -170,11 +184,13 @@ router.post(
     if (!reviewer || !valid) {
       await recordLoginAttempt(email, clientIp, false);
       console.warn(`[login] ${reviewer ? 'wrong password' : 'unknown email'}: ${email} from ${clientIp}`);
+      await auditSignIn(req, 'login.failure', { email, reason: reviewer ? 'wrong_password' : 'unknown_account' });
       res.status(401).json({ message: 'Invalid credentials.' });
       return;
     }
     if (reviewer.status !== 'active') {
       console.warn(`[login] inactive account: ${email} from ${clientIp}`);
+      await auditSignIn(req, 'login.failure', { email, reason: 'inactive' });
       res.status(403).json({ message: 'Account inactive.' });
       return;
     }
@@ -184,6 +200,7 @@ router.post(
     await pool.query('UPDATE reviewers SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [reviewer.id]);
     const token = buildTokenPayload(reviewer, tokenId, expiresAt);
     console.info(`[login] success: ${email} (${reviewer.role}) from ${clientIp}, session expires ${expiresAt.toISOString()}`);
+    await auditSignIn(req, 'login.success', { reviewer });
     const expiresIso = expiresAt.toISOString();
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
     const payload = { ...reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), session_expires_at: expiresIso };
@@ -211,6 +228,9 @@ router.post(
         [GoogleSignInResult.INACTIVE]: [403, 'Account inactive.'],
       };
       const [status, message] = responses[result] ?? [401, 'Sign-in failed.'];
+      if (result !== GoogleSignInResult.DISABLED) {
+        await auditSignIn(req, 'login.failure', { reviewer, method: 'google', reason: String(result) });
+      }
       res.status(status).json({ message });
       return;
     }
@@ -227,6 +247,7 @@ router.post(
     await pool.query('UPDATE reviewers SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [reviewer.id]);
     const token = buildTokenPayload(reviewer, tokenId, expiresAt);
     console.info(`[login] google success: ${reviewer.email} (${reviewer.role}) from ${clientIp}`);
+    await auditSignIn(req, 'login.success', { reviewer, method: 'google' });
     const expiresIso = expiresAt.toISOString();
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
     const payload = { ...reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), session_expires_at: expiresIso };
@@ -237,6 +258,7 @@ router.post(
 
 router.post('/logout', requireAuth(), async (req, res) => {
   await invalidateSession(req.user?.tokenId);
+  await recordAudit({ actor: actorFrom(req), action: 'logout', entityType: 'reviewer', entityId: req.user?.id });
   clearAuthCookie(res);
   res.status(204).send();
 });
@@ -345,6 +367,13 @@ router.post(
       'UPDATE reviewers SET password_hash = $1, must_change_password = FALSE, updated_at = NOW() WHERE id = $2',
       [newHash, reviewerId]
     );
+    await recordAudit({
+      actor: actorFrom(req),
+      action: 'password.change',
+      entityType: 'reviewer',
+      entityId: reviewerId,
+      metadata: { was_temporary: req.user.must_change_password === true },
+    });
     const { rows: reviewerRows } = await pool.query(
       `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
               department_code, division_code, notify_on_submission,
@@ -396,6 +425,12 @@ router.post(
       // Stored hashed: a copy of the table cannot be used to reset anyone.
       [user.id, sha256Hex(resetToken), expiresAt]
     );
+    await recordAudit({
+      actor: { id: null, email, ip: req.ip },
+      action: 'password.reset_requested',
+      entityType: 'reviewer',
+      entityId: user.id,
+    });
     
     // Send reset email
     try {
@@ -467,6 +502,12 @@ router.post(
     // Clean up reset token and sessions
     await pool.query('DELETE FROM password_reset_tokens WHERE reviewer_id = $1', [reviewer_id]);
     await pool.query('DELETE FROM reviewer_sessions WHERE reviewer_id = $1', [reviewer_id]);
+    await recordAudit({
+      actor: { id: null, email, ip: req.ip },
+      action: 'password.reset',
+      entityType: 'reviewer',
+      entityId: reviewer_id,
+    });
     
     res.json({ message: 'Password reset successful. You can now sign in with your new password.' });
   }

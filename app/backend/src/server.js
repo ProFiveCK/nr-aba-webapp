@@ -127,7 +127,7 @@ const authLimiter = rateLimit({
   message: { message: 'Too many authentication attempts for this account. Please try again later.' },
   skipSuccessfulRequests: true, // successful logins reset the in-memory attempt budget
   keyGenerator: (req) => {
-    const email = String(req.body?.email || '').toLowerCase().trim();
+    const email = req.body?.login_alias ? `payroll:${String(req.body.login_alias).trim()}` : String(req.body?.email || '').toLowerCase().trim();
     return email ? `email:${email}` : `ip:${ipKeyGenerator(req.ip)}`;
   },
 });
@@ -139,7 +139,7 @@ const authIpLimiter = rateLimit({
   message: { message: 'Too many sign-in attempts from your network. Please try again later.' },
   skipSuccessfulRequests: true,
 });
-for (const route of ['login', 'google', 'signup', 'forgot-password', 'reset-password']) {
+for (const route of ['login', 'google', 'signup', 'forgot-password', 'reset-password', 'activate-leave']) {
   app.use(`/api/auth/${route}`, authIpLimiter, authLimiter);
 }
 

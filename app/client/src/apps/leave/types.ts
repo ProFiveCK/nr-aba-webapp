@@ -59,6 +59,7 @@ export const INELIGIBLE_REASON_LABELS: Record<IneligibleReason, string> = {
 };
 
 export interface Employee {
+    leave_policy_regime?: 'legacy' | 'government';
     id: string;
     reviewer_id: string | null;
     department_id?: string | null;

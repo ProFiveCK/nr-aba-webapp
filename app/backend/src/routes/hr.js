@@ -24,6 +24,7 @@ import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js'
 import { leaveAttachmentUpload, sha256 } from '../middleware/upload.js';
 
 import hrAccessRouter from './hrAccess.js';
+import employeeOnboardingRouter from './employeeOnboarding.js';
 import { assertEmployeeScope,canAccessEmployee,employeeReadSql,employeeScopeSql,isCentralHr,managerScopeSql,activeScopeSql } from '../services/hrAccess.js';
 import employeeDirectoryRouter from './employeeDirectory.js';
 import { linkedEmployee, setEmployeeAccount } from '../services/employeeDirectory.js';
@@ -31,6 +32,7 @@ import { linkedEmployee, setEmployeeAccount } from '../services/employeeDirector
 const router = express.Router();
 router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
 router.use('/access-scopes',hrAccessRouter);
+router.use('/onboarding',employeeOnboardingRouter);
 router.use('/directory', employeeDirectoryRouter);
 
 // Staff records are imported/created by HR and linked explicitly. Reading
@@ -100,9 +102,9 @@ router.get('/me', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res) => 
        FROM hr_leave_types t
        LEFT JOIN hr_leave_balances b
          ON b.leave_type_id = t.id AND b.employee_id = $1 AND b.year = $2
-      WHERE t.is_active = TRUE
+      WHERE t.is_active = TRUE AND ($3::boolean=FALSE OR b.id IS NOT NULL)
       ORDER BY t.name`,
-    [employee.id, year]
+    [employee.id, year,employee.leave_policy_regime==='government' || req.user.account_type==='employee']
   );
   const { rows: manager } = await pool.query(
     'SELECT id, display_name, email FROM hr_employees WHERE id = $1',
@@ -288,7 +290,7 @@ router.post(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const employee = await currentEmployee(req);
-    if (req.user.account_type === 'employee') {
+    if (req.user.account_type === 'employee' || employee.leave_policy_regime==='government') {
       throw new ServiceError(409, 'Government leave submission will open after the division, department and Chief Secretary approval workflow is enabled.');
     }
     const { application, leaveType } = await applyForLeave(pool, {
@@ -392,9 +394,9 @@ router.post(
     const {rows:[decisionTarget]} = await pool.query('SELECT employee_id FROM hr_leave_applications WHERE id=$1',[req.params.id]);
     if (!decisionTarget || !(await canActOnEmployee(req,decisionTarget.employee_id))) throw new ServiceError(404,'Leave application not found.');
 
-    const { rows: [owner] } = await pool.query(`SELECT r.account_type FROM hr_leave_applications a
+    const { rows: [owner] } = await pool.query(`SELECT r.account_type,e.leave_policy_regime FROM hr_leave_applications a
       JOIN hr_employees e ON e.id = a.employee_id LEFT JOIN reviewers r ON r.id = e.reviewer_id WHERE a.id = $1`, [req.params.id]);
-    if (owner?.account_type === 'employee') {
+    if (owner?.account_type === 'employee' || owner?.leave_policy_regime==='government') {
       throw new ServiceError(409, 'Government employee leave requires the staged approval workflow. The legacy decision endpoint cannot grant it.');
     }
 
@@ -406,7 +408,11 @@ router.post(
       // Capability is checked above; whose leave this approver may touch is a
       // question about the reporting line, which lives here rather than in the
       // service.
-      canAct: (employeeId,client) => canActOnEmployee(req, employeeId,client),
+      canAct: async (employeeId,client) => {
+        const {rows:[current]}=await client.query(`SELECT e.leave_policy_regime,r.account_type FROM hr_employees e LEFT JOIN reviewers r ON r.id=e.reviewer_id WHERE e.id=$1`,[employeeId]);
+        if(current?.leave_policy_regime==='government' || current?.account_type==='employee') throw new ServiceError(409,'Government employee leave requires the staged approval workflow.');
+        return canActOnEmployee(req,employeeId,client);
+      },
     });
 
     await recordAudit({

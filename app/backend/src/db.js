@@ -259,6 +259,18 @@ export async function initSchema() {
           CHECK (account_type <> 'employee' OR role = 'user');
       END IF;
     END $$`);
+    // Email is optional only for explicitly provisioned Payroll-alias employee identities.
+    await client.query('ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS login_alias TEXT');
+    await client.query("ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS onboarding_state TEXT NOT NULL DEFAULT 'ready' CHECK (onboarding_state IN ('ready','pending','offboarded'))");
+    await client.query('ALTER TABLE reviewers ALTER COLUMN email DROP NOT NULL');
+    await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_reviewers_login_alias ON reviewers(login_alias) WHERE login_alias IS NOT NULL');
+    await client.query(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'reviewers_login_identity_check') THEN
+        ALTER TABLE reviewers ADD CONSTRAINT reviewers_login_identity_check CHECK
+          ((email IS NOT NULL OR (account_type='employee' AND login_alias IS NOT NULL))
+           AND (login_alias IS NULL OR (account_type='employee' AND length(login_alias) BETWEEN 1 AND 100)));
+      END IF;
+    END $$`);
     await client.query('ALTER TABLE reviewers DROP CONSTRAINT IF EXISTS reviewers_role_check');
     await client.query(`
       ALTER TABLE reviewers
@@ -864,6 +876,7 @@ export async function initSchema() {
       );
       CREATE INDEX IF NOT EXISTS idx_hr_access_scopes_account ON hr_access_scopes(reviewer_id,department_id,division_id) WHERE revoked_at IS NULL;
     `);
+    await client.query("ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS leave_policy_regime TEXT NOT NULL DEFAULT 'legacy' CHECK (leave_policy_regime IN ('legacy','government'))");
     await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS department_id UUID REFERENCES hr_departments(id) ON DELETE RESTRICT');
     await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS division_id UUID');
     await client.query(`DO $$ BEGIN
@@ -888,6 +901,46 @@ export async function initSchema() {
         UNIQUE (source, external_id)
       );
       CREATE INDEX IF NOT EXISTS idx_hr_employee_external_ids_employee ON hr_employee_external_ids(employee_id);
+      CREATE TABLE IF NOT EXISTS hr_onboarding_batches (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        login_mode TEXT NOT NULL CHECK (login_mode IN ('email','payroll')),
+        status TEXT NOT NULL DEFAULT 'preview' CHECK (status IN ('preview','applied')),
+        prepared_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        prepared_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        applied_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        applied_at TIMESTAMPTZ,
+        reason TEXT NOT NULL,
+        apply_reason TEXT
+      );
+      CREATE TABLE IF NOT EXISTS hr_onboarding_rows (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        batch_id UUID NOT NULL REFERENCES hr_onboarding_batches(id) ON DELETE CASCADE,
+        employee_id UUID NOT NULL REFERENCES hr_employees(id) ON DELETE RESTRICT,
+        snapshot JSONB NOT NULL,
+        decision TEXT NOT NULL CHECK (decision IN ('create','blocked','retain','link','skip')),
+        issue TEXT,
+        reviewer_id UUID REFERENCES reviewers(id) ON DELETE RESTRICT,
+        decision_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        decision_reason TEXT,
+        UNIQUE(batch_id,employee_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_hr_onboarding_rows_batch ON hr_onboarding_rows(batch_id,employee_id);
+      CREATE TABLE IF NOT EXISTS hr_account_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        reviewer_id UUID NOT NULL REFERENCES reviewers(id) ON DELETE CASCADE,
+        employee_id UUID NOT NULL REFERENCES hr_employees(id) ON DELETE RESTRICT,
+        payroll_id TEXT NOT NULL,
+        purpose TEXT NOT NULL CHECK (purpose IN ('activation','recovery')),
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        issued_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        handover TEXT NOT NULL CHECK (handover IN ('verified_email','in_person')),
+        reason TEXT NOT NULL,
+        consumed_at TIMESTAMPTZ,
+        revoked_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS idx_hr_account_tokens_account ON hr_account_tokens(reviewer_id);
       CREATE TABLE IF NOT EXISTS hr_work_patterns (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name TEXT NOT NULL UNIQUE,

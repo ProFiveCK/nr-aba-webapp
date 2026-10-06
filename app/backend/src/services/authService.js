@@ -101,7 +101,7 @@ export async function lookupSession(tokenId) {
   const { rows } = await pool.query(
     `SELECT r.id, r.email, r.display_name, r.role, r.status, r.must_change_password, r.last_login_at,
             r.created_at, r.updated_at, r.department_code, r.division_code, r.notify_on_submission,
-            r.permissions, r.account_type, s.expires_at, e.id AS employee_id, e.status AS employee_status
+            r.permissions, r.account_type, r.onboarding_state, r.login_alias, s.expires_at, e.id AS employee_id, e.status AS employee_status
        FROM reviewer_sessions s
        JOIN reviewers r ON r.id = s.reviewer_id
        LEFT JOIN hr_employees e ON e.reviewer_id = r.id
@@ -240,7 +240,8 @@ export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS, 
   }
   return {
     id: row.id,
-    email: row.email,
+    email: row.email || '',
+    login_alias: row.login_alias || null,
     display_name: row.display_name,
     role: row.role,
     account_type: row.account_type || 'staff',
@@ -297,7 +298,7 @@ export function requireAuth(roles = []) {
         res.status(403).json({ message: 'Account inactive.' });
         return;
       }
-      if (session.account_type === 'employee' && session.employee_status !== 'active') {
+      if (session.account_type === 'employee' && (session.employee_status !== 'active' || session.onboarding_state !== 'ready')) {
         res.status(403).json({ message: 'An active, verified employee link is required. Contact HR.' });
         return;
       }
@@ -332,7 +333,8 @@ export function requireAuth(roles = []) {
       const permissions = reviewerSummary(session, allowedPresets, capabilities).permissions;
       req.user = {
         id: session.id,
-        email: session.email,
+        email: session.email || '',
+        login_alias: session.login_alias || null,
         display_name: session.display_name,
         role: session.role,
         account_type: session.account_type,

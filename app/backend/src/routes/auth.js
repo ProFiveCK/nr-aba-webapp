@@ -35,7 +35,13 @@ import {
   WORKFLOW_GUIDE_TEXT,
 } from '../config.js';
 
+import { activateEmployee } from '../services/employeeOnboarding.js';
 const router = express.Router();
+router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
+router.post('/activate-leave',[body('token').isString().matches(/^[a-f0-9]{64}$/),body('new_password').isString().isLength({min:PASSWORD_MIN_LENGTH,max:72})],async(req,res)=>{
+  if(!handleValidation(req,res))return;
+  res.json(await activateEmployee(pool,{token:req.body.token,password:req.body.new_password,actor:{ip:req.ip}}));
+});
 
 // ===== Authentication =====
 
@@ -137,49 +143,50 @@ const DUMMY_PASSWORD_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex
 router.post(
   '/login',
   [
-    body('email').isEmail(),
+    body('email').optional().isEmail(),
+    body('login_alias').optional().isString().trim().isLength({min:1,max:100}).not().matches(/[\u0000-\u001f\u007f]/),
+    body().custom(data=>Boolean(data.email)!==Boolean(data.login_alias)).withMessage('Choose email or Payroll ID login.'),
     body('password').isString().isLength({ min: 1, max: 128 })
   ],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
-    const email = lowerEmail(req.body.email);
+    const alias=req.body.login_alias?.trim() || null;
+    const email = alias ? null : lowerEmail(req.body.email);
     const password = req.body.password;
     const clientIp = req.ip;
-
-    // Per-account database lockout: survives container restarts and keys by
-    // email rather than IP, so shared gateways do not lock out other staff.
-    if (await isAccountLocked(email)) {
-      console.warn(`[login] account locked due to failed attempts: ${email} from ${clientIp}`);
-      res.status(429).json({ message: 'Too many failed login attempts for this account. Please try again later.' });
-      return;
-    }
 
     console.info(`[login] attempt for ${email} from ${clientIp}`);
 
     const { rows } = await pool.query(
       `SELECT id, email, display_name, role, status, password_hash, must_change_password,
               last_login_at, created_at, updated_at, department_code, division_code, notify_on_submission,
-              permissions, account_type
-         FROM reviewers WHERE email = $1`,
-      [email]
+              permissions, account_type, onboarding_state, login_alias
+         FROM reviewers WHERE ($1::text IS NOT NULL AND lower(email)=$1)
+           OR ($2::text IS NOT NULL AND login_alias=$2 AND account_type='employee'
+             AND EXISTS(SELECT 1 FROM hr_employees e JOIN hr_employee_external_ids x ON x.employee_id=e.id
+               WHERE e.reviewer_id=reviewers.id AND e.status='active' AND x.source='techone_payroll' AND x.external_id=$2 AND x.verified_by IS NOT NULL))`,
+      [email,alias]
     );
     // Unknown, inactive and wrong-password all cost one bcrypt comparison and
     // get the same answer, so a caller cannot tell which accounts exist.
     const reviewer = rows[0];
-    const valid = await bcrypt.compare(password, reviewer?.password_hash || DUMMY_PASSWORD_HASH);
+    const loginKey=reviewer ? `account:${reviewer.id}` : `unknown:${sha256Hex(alias ? `payroll:${alias}` : email)}`;
+    if(await isAccountLocked(loginKey)) return res.status(429).json({message:'Too many failed login attempts for this account. Please try again later.'});
+    const valid = await bcrypt.compare(password, reviewer?.status==='active' && reviewer.password_hash?.startsWith('$2') ? reviewer.password_hash : DUMMY_PASSWORD_HASH);
     if (!reviewer || !valid) {
-      await recordLoginAttempt(email, clientIp, false);
+      await recordLoginAttempt(loginKey, clientIp, false);
       console.warn(`[login] ${reviewer ? 'wrong password' : 'unknown email'}: ${email} from ${clientIp}`);
       res.status(401).json({ message: 'Invalid credentials.' });
       return;
     }
+    if (reviewer.account_type==='employee' && (reviewer.onboarding_state!=='ready' || !(await pool.query("SELECT 1 FROM hr_employees WHERE reviewer_id=$1 AND status='active'",[reviewer.id])).rowCount)) return res.status(401).json({message:'Invalid credentials.'});
     if (reviewer.status !== 'active') {
       console.warn(`[login] inactive account: ${email} from ${clientIp}`);
       res.status(403).json({ message: 'Account inactive.' });
       return;
     }
 
-    await clearLoginAttempts(email);
+    await clearLoginAttempts(loginKey);
     const { tokenId, expiresAt } = await createSession(reviewer.id);
     await pool.query('UPDATE reviewers SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [reviewer.id]);
     const token = buildTokenPayload(reviewer, tokenId, expiresAt);
@@ -215,6 +222,7 @@ router.post(
       return;
     }
 
+    await clearLoginAttempts(`account:${reviewer.id}`);
     await clearLoginAttempts(reviewer.email);
     // Proving who you are through Google settles a pending temporary
     // password: the flag it set is cleared and the password itself retired,
@@ -289,7 +297,7 @@ router.post('/refresh', requireAuth(), async (req, res) => {
   const { rows } = await pool.query(
     `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
             department_code, division_code, notify_on_submission,
-            permissions, account_type
+            permissions, account_type, login_alias, onboarding_state
        FROM reviewers WHERE id = $1`,
     [reviewerId]
   );
@@ -339,6 +347,7 @@ router.post(
       return;
     }
     const newHash = await bcrypt.hash(new_password, PASS_HASH_ROUNDS);
+    await pool.query('UPDATE hr_account_tokens SET revoked_at=NOW() WHERE reviewer_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL',[reviewerId]);
     await invalidateSession(req.user.tokenId);
     await pool.query('DELETE FROM reviewer_sessions WHERE reviewer_id = $1', [reviewerId]);
     await pool.query(
@@ -348,7 +357,7 @@ router.post(
     const { rows: reviewerRows } = await pool.query(
       `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
               department_code, division_code, notify_on_submission,
-              permissions, account_type
+              permissions, account_type, login_alias, onboarding_state
          FROM reviewers WHERE id = $1`,
       [reviewerId]
     );
@@ -464,6 +473,7 @@ router.post(
       [newHash, reviewer_id]
     );
     
+    await pool.query('UPDATE hr_account_tokens SET revoked_at=NOW() WHERE reviewer_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL',[reviewer_id]);
     // Clean up reset token and sessions
     await pool.query('DELETE FROM password_reset_tokens WHERE reviewer_id = $1', [reviewer_id]);
     await pool.query('DELETE FROM reviewer_sessions WHERE reviewer_id = $1', [reviewer_id]);

@@ -14,6 +14,7 @@
  * both places and never in neither.
  */
 
+import { ServiceError } from '../lib/serviceError.js';
 import { canAccessEmployee } from './hrAccess.js';
 import { loadCapabilities, reviewerSummary } from './authService.js';
 import { ensureBalance } from './leaveAccrual.js';
@@ -77,6 +78,11 @@ export async function applyForLeave(
     throw forbidden('You are not entitled to leave.');
   }
   return withTransaction(pool, async (client) => {
+    const {rows:[current]}=await client.query(`SELECT e.*,r.account_type FROM hr_employees e LEFT JOIN reviewers r ON r.id=e.reviewer_id WHERE e.id=$1 FOR UPDATE OF e`,[employee.id]);
+    if(!current || current.status!=='active') throw forbidden('Your employee record is inactive. Contact HR.');
+    if(current.leave_policy_regime==='government' || current.account_type==='employee') throw new ServiceError(409,'Government leave submission requires the staged approval workflow.');
+    if(actorId && employee.reviewer_id && current.reviewer_id!==actorId) throw forbidden('Your verified employee link changed. Sign in again.');
+    if(current.leave_entitled===false) throw forbidden('You are not entitled to leave.');
     // Public holidays are not leave: a day the office is closed does not come
     // off anyone's entitlement.
     const days = calculateWorkingDays(startDate, endDate, await loadHolidays(client));

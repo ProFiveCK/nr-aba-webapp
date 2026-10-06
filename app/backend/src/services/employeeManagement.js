@@ -8,8 +8,8 @@ export function managementReason(value) {
 }
 
 export async function listLinkableAccounts(pool, { search = '', page = 1 } = {}) {
-  const where = `($1='' OR position(lower($1) in lower(r.display_name))>0 OR position(lower($1) in lower(r.email))>0)`;
-  const { rows } = await pool.query(`SELECT r.id,r.display_name,r.email,r.account_type,r.status,e.id AS employee_id,e.display_name AS employee_name
+  const where = `($1='' OR position(lower($1) in lower(r.display_name))>0 OR position(lower($1) in lower(r.email))>0 OR r.login_alias=$1)`;
+  const { rows } = await pool.query(`SELECT r.id,r.display_name,r.email,r.login_alias,r.account_type,r.status,e.id AS employee_id,e.display_name AS employee_name
     FROM reviewers r LEFT JOIN hr_employees e ON e.reviewer_id=r.id WHERE ${where} ORDER BY lower(r.display_name),r.id LIMIT 50 OFFSET $2`, [search.trim(),(page-1)*50]);
   const { rows: [count] } = await pool.query(`SELECT count(*)::int AS total FROM reviewers r WHERE ${where}`, [search.trim()]);
   return { accounts: rows,total: count.total,page,page_size: 50 };

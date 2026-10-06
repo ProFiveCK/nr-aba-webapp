@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { apiClient } from '../../../lib/api';
+import { useAuth } from '../../../contexts/useAuth';
 import { useToast } from '../../../contexts/useToast';
 import { useConfirm } from '../../../contexts/useConfirm';
 import { EmptyState, LoadingState } from '../../../components/Ui';
@@ -21,6 +22,7 @@ import type { LeaveApplication, LeaveType, MyLeaveResponse, PublicHoliday } from
 
 export function MyLeave() {
     const { addToast } = useToast();
+    const { user } = useAuth();
     const { confirm } = useConfirm();
     const [summary, setSummary] = useState<MyLeaveResponse | null>(null);
     const [types, setTypes] = useState<LeaveType[]>([]);
@@ -79,6 +81,7 @@ export function MyLeave() {
         load();
     }, [load]);
 
+    const governmentPending = user?.account_type==='employee' || summary?.employee.leave_policy_regime==='government';
     const notEntitled = summary?.employee.leave_entitled === false;
     // The preview is exact only when the public holiday calendar loaded.
     const holidayDates = useMemo(() => new Set(holidays.map((h) => h.holiday_date)), [holidays]);
@@ -210,11 +213,12 @@ export function MyLeave() {
                 </div>
             )}
 
+            {governmentPending && <p role="status" className="app-panel border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Your employee login is ready. Government leave requests will open after the division, Head of Department and Chief Secretary approval workflow and certified opening balances are enabled. Any recorded historical balances shown here are awaiting that transition.</p>}
             {/* Balances */}
             <div className="app-panel p-5 sm:p-6">
                 <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
                     <h3 className="text-lg font-semibold text-gray-950">
-                        Leave balances {summary ? `— ${summary.year}` : ''}
+                        {governmentPending ? 'Recorded historical balances' : 'Leave balances'} {summary ? `— ${summary.year}` : ''}
                     </h3>
                     {summary?.manager && (
                         <p className="text-xs text-gray-500">Approver: {summary.manager.display_name}</p>
@@ -231,7 +235,7 @@ export function MyLeave() {
                                     </p>
                                     <p className="mt-2 text-3xl font-bold tabular-nums text-brand">{available}</p>
                                     <p className="text-xs text-gray-500">
-                                        days available
+                                        {governmentPending ? 'historical days · certification pending' : 'days available'}
                                         {Number(balance.pending) > 0 && ` · ${balance.pending} pending`}
                                     </p>
                                 </div>
@@ -240,13 +244,13 @@ export function MyLeave() {
                     </div>
                 ) : (
                     <p className="text-sm text-gray-500">
-                        No balances yet — they are created the first time you apply for each leave type.
+                        {governmentPending ? 'Opening balances await HR certification. No government entitlement has been calculated.' : 'No balances yet — they are created the first time you apply for each leave type.'}
                     </p>
                 )}
             </div>
 
             {/* Apply */}
-            {!notEntitled && (
+            {!notEntitled && !governmentPending && (
             <form onSubmit={submit} className="app-panel space-y-5 p-5 sm:p-6">
                 <div>
                     <h3 className="text-lg font-semibold text-gray-950">Apply for leave</h3>

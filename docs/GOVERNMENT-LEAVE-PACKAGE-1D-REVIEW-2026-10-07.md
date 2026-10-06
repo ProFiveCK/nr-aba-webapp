@@ -63,3 +63,7 @@ The code graph service was unavailable during this work; owning source files wer
 **Package 1E: controlled bulk onboarding, activation and offboarding.** Stage verified identities/accounts, provide safe individual activation and recovery, reconcile duplicates and existing users, and revoke access on termination or relinking. Select individual email, Payroll-ID login alias or SSO based on real employee coverage; preserve Payroll IDs as exact text and never use them as shared passwords. Keep government submission gated while onboarding is prepared.
 
 See the [Package 1 structure and rollout plan](GOVERNMENT-LEAVE-PACKAGE-1-STRUCTURE-2026-10-06.md) and [build backlog](GOVERNMENT-LEAVE-BUILD-BACKLOG-2026-10-06.md).
+
+## Subsequent progress
+
+Package 1E is now implemented locally: staged cohort onboarding, email and exact Payroll aliases, private activation/recovery, account reconciliation and offboarding. See the [Package 1E review guide](GOVERNMENT-LEAVE-PACKAGE-1E-REVIEW-2026-10-07.md). Package 2 policy and balance foundations is next; government submissions remain gated.

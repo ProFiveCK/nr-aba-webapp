@@ -187,6 +187,8 @@ export async function setEmployeeAccount(client, { employeeId, reviewerId, actor
   // Both owners must sign in again after a mapping changes. Existing capability
   // grants remain; access to this employee is determined by the new link.
   await client.query('DELETE FROM reviewer_sessions WHERE reviewer_id = ANY($1::uuid[])', [ids]);
+  await client.query('UPDATE hr_account_tokens SET revoked_at=NOW() WHERE reviewer_id=ANY($1::uuid[]) AND consumed_at IS NULL AND revoked_at IS NULL',[ids]);
+  await client.query('DELETE FROM password_reset_tokens WHERE reviewer_id=ANY($1::uuid[])',[ids]);
   await recordAudit({ client, actor, action: 'hr.employee.account.verified', entityType: 'hr_employee', entityId: employeeId,
     before: { reviewer_id: employee.reviewer_id }, after: { reviewer_id: reviewerId, reason: verifiedReason } });
   return updated;
@@ -209,6 +211,7 @@ export async function provisionEmployeeAccount(pool, { employeeId, email, actor,
     await client.query(`INSERT INTO reviewer_capabilities (reviewer_id, capability, granted_by)
       VALUES ($1,'hr_access',$2), ($1,'hr_leave_apply',$2)`, [account.id, actor.id]);
     await setEmployeeAccount(client, { employeeId, reviewerId: account.id, actor, reason });
+    await client.query("UPDATE hr_employees SET leave_policy_regime='government' WHERE id=$1",[employeeId]);
     return account;
   });
   return { account: result, temporary_password: temporaryPassword };

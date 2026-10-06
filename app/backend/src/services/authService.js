@@ -12,8 +12,8 @@ import {
   BANK_PRESET_KEYS,
   TEMP_PASSWORD_LENGTH,
   DEFAULT_BANK_PRESETS,
-  ROLE_CAPABILITIES,
   ALL_CAPABILITIES,
+  ROLE_CAPABILITIES,
 } from '../config.js';
 import { lowerEmail } from '../utils/helpers.js';
 
@@ -222,11 +222,22 @@ export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS, 
   if (row.role === 'admin') {
     permissions.admin ??= true;
   }
-  // Role floor: retained during the migration to capabilities so an account can
-  // never end up with less access than its legacy role implied. Capabilities are
-  // additive on top of this; remove once every account is granted explicitly.
-  for (const capability of ROLE_CAPABILITIES[row.role] ?? []) {
-    permissions[capability] ??= true;
+  // Which apps an ordinary account can open is decided only by the
+  // capabilities granted to it, so somebody can be given Leave and nothing
+  // else. There used to be a floor here re-granting every role's apps on each
+  // request, which is why ABA could not be taken off a `user`: the checkbox
+  // was disabled and revoking it in the database changed nothing. What that
+  // floor used to give is now written down per account — see
+  // materialiseRoleFloor in db.js, which runs once before this matters.
+  //
+  // Administrators keep theirs implicitly. An administrator is the account
+  // that repairs the others, so it must not be possible to arrive at a
+  // database where every one of them has been narrowed out of the page that
+  // would grant the capability back.
+  if (row.role === 'admin') {
+    for (const capability of ROLE_CAPABILITIES.admin) {
+      permissions[capability] ??= true;
+    }
   }
   return {
     id: row.id,

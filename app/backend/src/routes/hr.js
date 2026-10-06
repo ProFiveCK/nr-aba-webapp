@@ -18,6 +18,7 @@ import { ServiceError } from '../lib/serviceError.js';
 import { PERMISSIONS } from '../config.js';
 import { buildUpdateAssignments, changedFields, collectUpdates } from '../lib/sqlUpdate.js';
 import { normalizeNameKey } from '../lib/names.js';
+import { lowerEmail } from '../utils/helpers.js';
 import { INELIGIBLE_REASONS, resolveEligibility } from '../lib/eligibility.js';
 import { calculateWorkingDays, monthsBetween, parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js';
@@ -47,27 +48,48 @@ async function currentEmployee(req) {
   if (rows.length) return rows[0];
 
   const name = req.user.display_name || req.user.email;
+
+  const claim = async (employeeId, matchedBy) => {
+    const { rows: linked } = await pool.query(
+      `UPDATE hr_employees SET reviewer_id = $1, email = COALESCE(email, $2), updated_at = NOW()
+        WHERE id = $3 RETURNING *`,
+      [req.user.id, req.user.email, employeeId]
+    );
+    await recordAudit({
+      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+      action: 'hr.employee.linked',
+      entityType: 'hr_employee',
+      entityId: employeeId,
+      after: { reviewer_id: req.user.id, matched_by: matchedBy },
+    });
+    return linked[0];
+  };
+
+  // Address first. HR creates the staff record before the person has a login,
+  // and types the address they will sign in with; names are what differ —
+  // Google supplies whatever the account is called, a middle name appears or
+  // does not, a married name changes. Matching on the name alone is what
+  // produced a second record for people who were already on file, which then
+  // could not be merged back because the login was taken.
+  const email = lowerEmail(req.user.email || '');
+  if (email) {
+    const { rows: byEmail } = await pool.query(
+      `SELECT id FROM hr_employees
+        WHERE reviewer_id IS NULL AND status = 'active' AND lower(btrim(email)) = $1`,
+      [email]
+    );
+    if (byEmail.length === 1) return claim(byEmail[0].id, 'email address on first login');
+  }
+
+  // Then the name, ignoring punctuation and spacing, and only when exactly one
+  // record answers to it — anything less certain is left for HR to resolve.
   const key = normalizeNameKey(name);
   if (key) {
     const { rows: unlinked } = await pool.query(
       "SELECT id, display_name FROM hr_employees WHERE reviewer_id IS NULL AND status = 'active'"
     );
     const matches = unlinked.filter((candidate) => normalizeNameKey(candidate.display_name) === key);
-    if (matches.length === 1) {
-      const { rows: linked } = await pool.query(
-        `UPDATE hr_employees SET reviewer_id = $1, email = COALESCE(email, $2), updated_at = NOW()
-          WHERE id = $3 RETURNING *`,
-        [req.user.id, req.user.email, matches[0].id]
-      );
-      await recordAudit({
-        actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-        action: 'hr.employee.linked',
-        entityType: 'hr_employee',
-        entityId: matches[0].id,
-        after: { reviewer_id: req.user.id, matched_by: 'name on first login' },
-      });
-      return linked[0];
-    }
+    if (matches.length === 1) return claim(matches[0].id, 'name on first login');
   }
 
   const { rows: created } = await pool.query(
@@ -854,6 +876,28 @@ router.post(
  * COALESCE a manager could be set but never removed, and a wrong join date
  * never blanked.
  */
+/**
+ * Whether a staff record carries anything worth keeping.
+ *
+ * The record the portal creates for somebody on their first sign-in holds a
+ * name, an address and nothing else. One HR made in advance holds the opening
+ * balances, the join date, the department and the reporting line. Telling them
+ * apart is what lets the login be moved off the empty one without asking
+ * anybody to decide which history to lose.
+ */
+async function employeeHistory(employeeId) {
+  const { rows } = await pool.query(
+    `SELECT (SELECT COUNT(*) FROM hr_leave_applications WHERE employee_id = $1)::int AS applications,
+            (SELECT COUNT(*) FROM hr_leave_adjustments  WHERE employee_id = $1)::int AS adjustments,
+            (SELECT COUNT(*) FROM hr_leave_balances
+              WHERE employee_id = $1 AND (balance <> 0 OR pending <> 0))::int AS balances,
+            (SELECT COUNT(*) FROM hr_employees WHERE manager_id = $1)::int AS reports`,
+    [employeeId]
+  );
+  const counts = rows[0];
+  return { ...counts, isEmpty: Object.values(counts).every((n) => n === 0) };
+}
+
 const EMPLOYEE_UPDATABLE = {
   display_name: { nullable: false },
   manager_id: { nullable: true },
@@ -988,10 +1032,53 @@ router.put(
       updated = rows[0];
     } catch (err) {
       if (err.code === '23505') {
-        res.status(409).json({ message: 'That login is already linked to a different staff record.' });
-        return;
+        // The login is on another record. Almost always that record is the
+        // shell the portal created when they first signed in, before anyone
+        // linked them — in which case the shell is discarded and the login
+        // moves here, which is the whole point of the attempt. A record with
+        // real history is never silently destroyed; it is named so somebody
+        // can decide what to do with it.
+        const { rows: holder } = await pool.query(
+          'SELECT id, display_name FROM hr_employees WHERE reviewer_id = $1',
+          [updates.reviewer_id]
+        );
+        const other = holder[0];
+        if (other && other.id !== req.params.id) {
+          const history = await employeeHistory(other.id);
+          if (history.isEmpty) {
+            await withTransaction(pool, async (client) => {
+              await client.query('DELETE FROM hr_employees WHERE id = $1', [other.id]);
+              const { rows } = await client.query(
+                `UPDATE hr_employees SET ${clause}, updated_at = NOW() WHERE id = $1 RETURNING *`,
+                [req.params.id, ...values]
+              );
+              updated = rows[0];
+            });
+            await recordAudit({
+              actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+              action: 'hr.employee.login_reclaimed',
+              entityType: 'hr_employee',
+              entityId: req.params.id,
+              before: { discarded_record: other.id, discarded_name: other.display_name },
+              after: { reviewer_id: updates.reviewer_id },
+            });
+          } else {
+            res.status(409).json({
+              message: `That login belongs to the staff record for "${other.display_name}", which has leave history `
+                + `(${history.applications} application(s), ${history.adjustments} adjustment(s), `
+                + `${history.balances} balance(s), ${history.reports} direct report(s)). `
+                + 'Move or remove that history first, or unlink the login from that record.',
+              details: { other_employee_id: other.id, ...history },
+            });
+            return;
+          }
+        } else {
+          res.status(409).json({ message: 'That login is already linked to a different staff record.' });
+          return;
+        }
+      } else {
+        throw err;
       }
-      throw err;
     }
 
     // Record what actually changed, so a balance or a reporting line can always

@@ -12,6 +12,55 @@ dotenv.config();
  * Runs once, guarded by reviewer_settings.capabilities_backfilled_at — without
  * that guard it would re-grant capabilities an administrator had revoked.
  */
+/**
+ * Writes down the access that `reviewerSummary`'s role floor used to grant
+ * implicitly, so the floor can be deleted.
+ *
+ * Every account used to receive its role's capabilities whether or not anyone
+ * had granted them — which meant a `user` always held `aba_access`, and an
+ * administrator could not take it away: the checkbox was disabled, and
+ * revoking it in the database changed nothing because the floor put it back
+ * on the next request. Somebody who only needs Leave still got ABA.
+ *
+ * Removing the floor on its own would quietly *reduce* access for any account
+ * leaning on it. So this runs first and makes the implicit grants real, one
+ * row each, leaving effective permissions identical on the day it runs and
+ * editable from then on.
+ *
+ * Runs once, guarded by reviewer_settings.role_floor_materialised_at.
+ */
+async function materialiseRoleFloor(client) {
+  const { rows: flag } = await client.query(
+    'SELECT role_floor_materialised_at FROM reviewer_settings WHERE id = TRUE'
+  );
+  if (flag.length && flag[0].role_floor_materialised_at) return;
+
+  const { rows: reviewers } = await client.query('SELECT id, role, permissions FROM reviewers');
+  let granted = 0;
+  for (const reviewer of reviewers) {
+    let overrides = reviewer.permissions;
+    if (typeof overrides === 'string') {
+      try { overrides = JSON.parse(overrides); } catch { overrides = {}; }
+    }
+    for (const capability of ROLE_CAPABILITIES[reviewer.role] ?? []) {
+      // An explicit `false` was already winning over the floor; honour it.
+      if (overrides?.[capability] === false) continue;
+      const { rowCount } = await client.query(
+        `INSERT INTO reviewer_capabilities (reviewer_id, capability)
+         VALUES ($1, $2) ON CONFLICT (reviewer_id, capability) DO NOTHING`,
+        [reviewer.id, capability]
+      );
+      granted += rowCount;
+    }
+  }
+
+  await client.query(
+    `INSERT INTO reviewer_settings (id, role_floor_materialised_at) VALUES (TRUE, NOW())
+     ON CONFLICT (id) DO UPDATE SET role_floor_materialised_at = NOW()`
+  );
+  console.info(`[schema] materialised ${granted} role-floor capability grants across ${reviewers.length} accounts`);
+}
+
 async function backfillCapabilities(client) {
   const { rows: flag } = await client.query(
     'SELECT capabilities_backfilled_at FROM reviewer_settings WHERE id = TRUE'
@@ -311,6 +360,10 @@ export async function initSchema() {
     await client.query(`
       ALTER TABLE reviewer_settings
         ADD COLUMN IF NOT EXISTS capabilities_backfilled_at TIMESTAMPTZ
+    `);
+    await client.query(`
+      ALTER TABLE reviewer_settings
+        ADD COLUMN IF NOT EXISTS role_floor_materialised_at TIMESTAMPTZ
     `);
     await client.query(`
       ALTER TABLE reviewer_settings
@@ -1050,6 +1103,7 @@ export async function initSchema() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_attempted_at ON login_attempts(attempted_at)');
 
     await backfillCapabilities(client);
+    await materialiseRoleFloor(client);
 
     await client.query('COMMIT');
   } catch (error) {

@@ -1,7 +1,7 @@
 import express from 'express';
 import { body, param, query, handleValidation } from '../middleware/validation.js';
 import { pool } from '../db.js';
-import { requireAuth, requirePermission } from '../services/authService.js';
+import { requirePermission } from '../services/authService.js';
 import { recordAudit } from '../services/auditService.js';
 import { notifyLeaveDecision, notifyLeaveSubmitted } from '../services/notificationService.js';
 import { runLeaveAccrual } from '../services/leaveAccrual.js';
@@ -23,62 +23,15 @@ import { calculateWorkingDays, monthsBetween, parseDateOnly, toIsoDate } from '.
 import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js';
 import { leaveAttachmentUpload, sha256 } from '../middleware/upload.js';
 
+import employeeDirectoryRouter from './employeeDirectory.js';
+import { linkedEmployee, setEmployeeAccount } from '../services/employeeDirectory.js';
+
 const router = express.Router();
+router.use('/directory', employeeDirectoryRouter);
 
-/**
- * The signed-in user's employee record, created on first use.
- *
- * Before creating one, this looks for an unlinked staff record (no
- * reviewer_id yet) whose name matches theirs once punctuation/spacing is
- * ignored, and links that instead of inserting a new row. Without this, HR
- * pre-creating a staff record ahead of someone's account (see POST
- * /employees below) and then typing their name even slightly differently
- * when the account was set up — "Val-cade" vs "Valcade" — produced two
- * permanent records for the same person: the pre-created one and a second
- * one auto-provisioned here from the login's own name. Only an unambiguous
- * single match is linked automatically; anything less certain falls back to
- * the old behaviour so HR can resolve it by hand in Leave -> Staff.
- */
-async function currentEmployee(req) {
-  const { rows } = await pool.query(
-    'SELECT * FROM hr_employees WHERE reviewer_id = $1',
-    [req.user.id]
-  );
-  if (rows.length) return rows[0];
-
-  const name = req.user.display_name || req.user.email;
-  const key = normalizeNameKey(name);
-  if (key) {
-    const { rows: unlinked } = await pool.query(
-      "SELECT id, display_name FROM hr_employees WHERE reviewer_id IS NULL AND status = 'active'"
-    );
-    const matches = unlinked.filter((candidate) => normalizeNameKey(candidate.display_name) === key);
-    if (matches.length === 1) {
-      const { rows: linked } = await pool.query(
-        `UPDATE hr_employees SET reviewer_id = $1, email = COALESCE(email, $2), updated_at = NOW()
-          WHERE id = $3 RETURNING *`,
-        [req.user.id, req.user.email, matches[0].id]
-      );
-      await recordAudit({
-        actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-        action: 'hr.employee.linked',
-        entityType: 'hr_employee',
-        entityId: matches[0].id,
-        after: { reviewer_id: req.user.id, matched_by: 'name on first login' },
-      });
-      return linked[0];
-    }
-  }
-
-  const { rows: created } = await pool.query(
-    `INSERT INTO hr_employees (reviewer_id, display_name, email, department_code)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (reviewer_id) DO UPDATE SET updated_at = NOW()
-     RETURNING *`,
-    [req.user.id, name, req.user.email, req.user.department_code]
-  );
-  return created[0];
-}
+// Staff records are imported/created by HR and linked explicitly. Reading
+// Leave must never claim another person's record or create a duplicate.
+const currentEmployee = (req) => linkedEmployee(pool, req.user.id);
 
 /**
  * Whether `req.user` may act on `employeeId`.
@@ -362,6 +315,9 @@ router.post(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const employee = await currentEmployee(req);
+    if (req.user.account_type === 'employee') {
+      throw new ServiceError(409, 'Government leave submission will open after the division, department and Chief Secretary approval workflow is enabled.');
+    }
     const { application, leaveType } = await applyForLeave(pool, {
       employee,
       leaveTypeId: req.body.leave_type_id,
@@ -428,8 +384,8 @@ router.post(
 // ===== Manager: team and approvals =====
 
 router.get('/team', requirePermission(PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN), async (req, res) => {
-  const me = await currentEmployee(req);
   const seesEveryone = req.user.permissions?.[PERMISSIONS.HR_ADMIN] || req.user.permissions?.[PERMISSIONS.HR_STAFF_MANAGE];
+  const me = seesEveryone ? null : await currentEmployee(req);
   const { rows } = await pool.query(
     seesEveryone
       ? `SELECT e.*, m.display_name AS manager_name FROM hr_employees e
@@ -446,8 +402,8 @@ router.get('/team', requirePermission(PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.
 router.get('/approvals', requirePermission(PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_ADMIN),
   [query('status').optional().isIn(['pending', 'approved'])], async (req, res) => {
   if (!handleValidation(req, res)) return;
-  const me = await currentEmployee(req);
   const seesEveryone = Boolean(req.user.permissions?.[PERMISSIONS.HR_ADMIN]);
+  const me = seesEveryone ? null : await currentEmployee(req);
   const status = req.query.status === 'approved' ? 'approved' : 'pending';
   const { rows } = await pool.query(
     `SELECT a.id, a.employee_id, a.leave_type_id, a.start_date, a.end_date,
@@ -477,6 +433,12 @@ router.post(
     if (!handleValidation(req, res)) return;
     const decision = req.body.decision;
     const note = String(req.body.reviewer_note || '').trim();
+
+    const { rows: [owner] } = await pool.query(`SELECT r.account_type FROM hr_leave_applications a
+      JOIN hr_employees e ON e.id = a.employee_id LEFT JOIN reviewers r ON r.id = e.reviewer_id WHERE a.id = $1`, [req.params.id]);
+    if (owner?.account_type === 'employee') {
+      throw new ServiceError(409, 'Government employee leave requires the staged approval workflow. The legacy decision endpoint cannot grant it.');
+    }
 
     const { application, applicant, leaveTypeName } = await decideLeave(pool, {
       applicationId: req.params.id,
@@ -520,7 +482,7 @@ async function resolveOrgUnit(departmentInput, divisionInput) {
   const department = String(departmentInput ?? '').trim();
   const division = String(divisionInput ?? '').trim();
   if (!department) {
-    return division ? { error: 'Choose a department before a division.' } : { department: null, division: null };
+    return division ? { error: 'Choose a department before a division.' } : { department: null, division: null, department_id: null, division_id: null };
   }
   const { rows: departments } = await pool.query(
     'SELECT id, name FROM hr_departments WHERE lower(name) = lower($1)', [department]
@@ -528,15 +490,15 @@ async function resolveOrgUnit(departmentInput, divisionInput) {
   if (!departments.length) {
     return { error: `Department "${department}" is not in the list. A leave administrator can add it in Policies.` };
   }
-  if (!division) return { department: departments[0].name, division: null };
+  if (!division) return { department: departments[0].name, division: null, department_id: departments[0].id, division_id: null };
   const { rows: divisions } = await pool.query(
-    'SELECT name FROM hr_divisions WHERE department_id = $1 AND lower(name) = lower($2)',
+    'SELECT id, name FROM hr_divisions WHERE department_id = $1 AND lower(name) = lower($2)',
     [departments[0].id, division]
   );
   if (!divisions.length) {
     return { error: `Division "${division}" is not listed under ${departments[0].name}. A leave administrator can add it in Policies.` };
   }
-  return { department: departments[0].name, division: divisions[0].name };
+  return { department: departments[0].name, division: divisions[0].name, department_id: departments[0].id, division_id: divisions[0].id };
 }
 
 router.get('/org-units', requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN), async (_req, res) => {
@@ -750,10 +712,8 @@ router.get(
 
 // Creates a leave/HR record ahead of a portal login existing — e.g. HR wants
 // to set up someone's department, manager and opening balance before their
-// account is provisioned. `reviewer_id` starts NULL; see PUT below to link a
-// login once one exists. This coexists with the lazy auto-provisioning in
-// currentEmployee(): once linked, a person's own first visit to the Leave
-// app finds this row by reviewer_id instead of creating a duplicate.
+// account is provisioned. `reviewer_id` starts NULL; central HR verifies
+// the link once a login exists. First use never claims a record by name.
 router.post(
   '/employees',
   requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
@@ -804,11 +764,8 @@ router.post(
       }
 
       // Catches the other direction: someone already has a portal login (set
-      // up through User Management) but no staff record yet, and this form is
-      // about to create one blind instead of linking the login that is
-      // sitting right there. Creating it here means it can never carry that
-      // login's own name variant forward — the two records stay permanently
-      // split the moment the person signs in (see currentEmployee() above).
+      // up through User Management) but no staff record yet. This is a warning
+      // for HR review, never authority to link the account by name.
       const { rows: unlinkedLogins } = await pool.query(
         `SELECT r.id, r.display_name, r.email FROM reviewers r
           LEFT JOIN hr_employees e ON e.reviewer_id = r.id
@@ -817,7 +774,7 @@ router.post(
       const loginMatch = unlinkedLogins.find((row) => normalizeNameKey(row.display_name || row.email) === key);
       if (loginMatch) {
         res.status(409).json({
-          message: `"${loginMatch.display_name || loginMatch.email}" already has a portal login without a staff record. Link it from User Management (the "Leave staff record" field) instead of creating a new one here — otherwise they'll end up with two records the moment they sign in.`,
+          message: `"${loginMatch.display_name || loginMatch.email}" already has a portal login without a staff record. Link it from User Management (the "Leave staff record" field) instead of creating a new one here — HR must verify whether this is the same employee.`,
           existing_reviewer_id: loginMatch.id,
         });
         return;
@@ -826,12 +783,12 @@ router.post(
 
     const { rows } = await pool.query(
       `INSERT INTO hr_employees (display_name, position_title, department_code, division_code, manager_id, join_date, leave_entitled,
-                                 ineligible_reason, study_leave_start, study_leave_end, eligibility_note)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+                                 ineligible_reason, study_leave_start, study_leave_end, eligibility_note, department_id, division_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
       [req.body.display_name, req.body.position_title || null, orgUnit.department,
        orgUnit.division, req.body.manager_id || null, req.body.join_date || null, req.body.leave_entitled ?? true,
        eligibility.values.ineligible_reason, eligibility.values.study_leave_start,
-       eligibility.values.study_leave_end, eligibility.values.eligibility_note]
+       eligibility.values.study_leave_end, eligibility.values.eligibility_note, orgUnit.department_id, orgUnit.division_id]
     );
     await recordAudit({
       actor: { id: req.user.id, email: req.user.email, ip: req.ip },
@@ -945,6 +902,8 @@ router.put(
       }
       updates.department_code = orgUnit.department;
       updates.division_code = orgUnit.division;
+      updates.department_id = orgUnit.department_id;
+      updates.division_id = orgUnit.division_id;
     }
 
     // The reason and study-leave dates only mean something together with the
@@ -963,6 +922,10 @@ router.put(
     // account's address, unlinking drops it so notifications cannot keep going
     // to a login that is no longer this person's.
     if (Object.hasOwn(updates, 'reviewer_id')) {
+      if (req.user.permissions?.[PERMISSIONS.HR_ADMIN] !== true) {
+        res.status(403).json({ message: 'Only central HR can verify an employee login link.' });
+        return;
+      }
       if (updates.reviewer_id === null) {
         updates.email = null;
       } else {
@@ -980,12 +943,18 @@ router.put(
 
     let updated;
     try {
-      const { rows } = await pool.query(
-        `UPDATE hr_employees SET ${clause}, updated_at = NOW()
-          WHERE id = $1 RETURNING *`,
-        [req.params.id, ...values]
-      );
-      updated = rows[0];
+      updated = await withTransaction(pool, async (client) => {
+        if (Object.hasOwn(updates, 'reviewer_id')) {
+          await setEmployeeAccount(client, { employeeId: req.params.id, reviewerId: updates.reviewer_id,
+            actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+            reason: 'Central HR confirmed the account link in Leave Staff.' });
+        }
+        const { rows } = await client.query(
+          `UPDATE hr_employees SET ${clause}, updated_at = NOW() WHERE id = $1 RETURNING *`,
+          [req.params.id, ...values]
+        );
+        return rows[0];
+      });
     } catch (err) {
       if (err.code === '23505') {
         res.status(409).json({ message: 'That login is already linked to a different staff record.' });
@@ -1966,10 +1935,10 @@ router.get(
   [query('from').isISO8601(), query('to').isISO8601()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
-    const me = await currentEmployee(req);
     const seesEveryone = Boolean(
       req.user.permissions?.[PERMISSIONS.HR_ADMIN] || req.user.permissions?.[PERMISSIONS.HR_STAFF_MANAGE]
     );
+    const me = seesEveryone ? null : await currentEmployee(req);
     const { rows: applications } = await pool.query(
       `SELECT a.id, a.start_date, a.end_date, a.days, a.status,
               t.name AS leave_type_name, e.display_name AS employee_name, e.department_code,

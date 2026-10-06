@@ -713,6 +713,11 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
         // must not be given the admin role as well.
         [email, JSON.stringify(permissions), permissions.hr_admin ? 'admin' : 'user']);
       const { rows: [account] } = await pool.query('SELECT * FROM reviewers WHERE email = $1', [email]);
+      if (path.startsWith('/calendar') && !permissions.hr_admin && !permissions.hr_staff_manage) {
+        // Employee links are now verified by HR; a read must never invent one.
+        const outsider = await createEmployee(pool, { name: 'Verified outsider' });
+        await pool.query('UPDATE hr_employees SET reviewer_id = $1 WHERE id = $2', [account.id, outsider.id]);
+      }
       const { tokenId, expiresAt } = await auth.createSession(account.id);
       const token = auth.buildTokenPayload(account, tokenId, expiresAt);
 

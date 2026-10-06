@@ -159,7 +159,7 @@ router.post(
     const { rows } = await pool.query(
       `SELECT id, email, display_name, role, status, password_hash, must_change_password,
               last_login_at, created_at, updated_at, department_code, division_code, notify_on_submission,
-              permissions
+              permissions, account_type
          FROM reviewers WHERE email = $1`,
       [email]
     );
@@ -275,7 +275,7 @@ router.patch(
     const { rows } = await pool.query(
       `UPDATE reviewers SET ${fields.join(', ')} WHERE id = $${values.length}
        RETURNING id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-                 department_code, division_code, notify_on_submission`,
+                 department_code, division_code, notify_on_submission, permissions, account_type`,
       values
     );
     const allowedPresets = await reviewerAllowedPresets(rows[0].id);
@@ -289,7 +289,7 @@ router.post('/refresh', requireAuth(), async (req, res) => {
   const { rows } = await pool.query(
     `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
             department_code, division_code, notify_on_submission,
-            permissions
+            permissions, account_type
        FROM reviewers WHERE id = $1`,
     [reviewerId]
   );
@@ -348,7 +348,7 @@ router.post(
     const { rows: reviewerRows } = await pool.query(
       `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
               department_code, division_code, notify_on_submission,
-              permissions
+              permissions, account_type
          FROM reviewers WHERE id = $1`,
       [reviewerId]
     );

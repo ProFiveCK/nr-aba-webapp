@@ -3,6 +3,7 @@ export interface User {
     email: string;
     display_name: string;
     role: 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll' | 'public_health';
+    account_type?: 'staff' | 'employee';
     department_code?: string;
     division_code?: string;
     notify_on_submission?: boolean;

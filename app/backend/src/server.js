@@ -109,7 +109,8 @@ const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Too many requests. Please try again later.' },
-  skip: (req) => req.path.startsWith('/auth/'),
+  // HR endpoints enforce an authenticated account budget in requirePermission.
+  skip: (req) => req.path.startsWith('/auth/') || req.path === '/hr' || req.path.startsWith('/hr/'),
 });
 app.use('/api', generalLimiter);
 

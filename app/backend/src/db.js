@@ -19,15 +19,15 @@ async function backfillCapabilities(client) {
   if (flag.length && flag[0].capabilities_backfilled_at) return;
 
   const { rows: reviewers } = await client.query(
-    'SELECT id, role, status, permissions FROM reviewers'
+    'SELECT id, role, status, permissions, account_type FROM reviewers'
   );
 
   let granted = 0;
   for (const reviewer of reviewers) {
-    const capabilities = new Set(ROLE_CAPABILITIES[reviewer.role] ?? []);
+    const capabilities = new Set(reviewer.account_type === 'employee' ? [] : ROLE_CAPABILITIES[reviewer.role] ?? []);
 
     // Active accounts could always submit, regardless of role.
-    if (reviewer.status === 'active') {
+    if (reviewer.account_type !== 'employee' && reviewer.status === 'active') {
       capabilities.add('submit_aba');
       capabilities.add('submit_forex_tt');
     }
@@ -249,6 +249,16 @@ export async function initSchema() {
     await client.query('ALTER TABLE reviewers ALTER COLUMN notify_on_submission SET DEFAULT TRUE');
     await client.query('UPDATE reviewers SET notify_on_submission = TRUE WHERE notify_on_submission IS NULL');
     await client.query('ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT \'{}\'');
+    // Employee self-service identities share the secure session machinery,
+    // but receive explicit grants rather than legacy finance-role defaults.
+    await client.query(`ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS account_type TEXT NOT NULL DEFAULT 'staff'
+      CHECK (account_type IN ('staff','employee'))`);
+    await client.query(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'reviewers_employee_role_check') THEN
+        ALTER TABLE reviewers ADD CONSTRAINT reviewers_employee_role_check
+          CHECK (account_type <> 'employee' OR role = 'user');
+      END IF;
+    END $$`);
     await client.query('ALTER TABLE reviewers DROP CONSTRAINT IF EXISTS reviewers_role_check');
     await client.query(`
       ALTER TABLE reviewers
@@ -264,6 +274,8 @@ export async function initSchema() {
         expires_at TIMESTAMPTZ NOT NULL
       );
     `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_reviewer_sessions_account ON reviewer_sessions(reviewer_id)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_reviewer_sessions_expiry ON reviewer_sessions(expires_at)');
 
     // Capability grants. Replaces authorizing on the single `reviewers.role`
     // column, which could not express a user who holds several roles at once.
@@ -831,6 +843,82 @@ export async function initSchema() {
       )
     `);
     await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_divisions_name ON hr_divisions (department_id, lower(name))');
+    await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_divisions_id_department ON hr_divisions(id, department_id)');
+    await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS department_id UUID REFERENCES hr_departments(id) ON DELETE RESTRICT');
+    await client.query('ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS division_id UUID');
+    await client.query(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'hr_employees_division_department_fk') THEN
+        ALTER TABLE hr_employees ADD CONSTRAINT hr_employees_division_department_fk
+          FOREIGN KEY (division_id, department_id) REFERENCES hr_divisions(id, department_id) ON DELETE RESTRICT;
+        ALTER TABLE hr_employees ADD CONSTRAINT hr_employees_division_requires_department
+          CHECK (division_id IS NULL OR department_id IS NOT NULL);
+      END IF;
+    END $$`);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_employees_directory ON hr_employees(status, lower(display_name), id)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_hr_employees_department ON hr_employees(department_id, division_id)');
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_employee_external_ids (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        employee_id UUID NOT NULL REFERENCES hr_employees(id) ON DELETE RESTRICT,
+        source TEXT NOT NULL CHECK (source = 'techone_payroll'),
+        external_id TEXT NOT NULL CHECK (length(external_id) BETWEEN 1 AND 100 AND external_id = btrim(external_id)),
+        verified_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        verified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        reason TEXT NOT NULL,
+        UNIQUE (source, external_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_hr_employee_external_ids_employee ON hr_employee_external_ids(employee_id);
+      CREATE TABLE IF NOT EXISTS hr_work_patterns (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL UNIQUE,
+        working_weekdays SMALLINT[] NOT NULL CHECK (cardinality(working_weekdays) BETWEEN 1 AND 7
+          AND working_weekdays <@ ARRAY[1,2,3,4,5,6,7]::smallint[]),
+        hours_per_day NUMERIC(5,2) CHECK (hours_per_day > 0 AND hours_per_day <= 24)
+      );
+      CREATE TABLE IF NOT EXISTS hr_employee_service_periods (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        employee_id UUID NOT NULL REFERENCES hr_employees(id) ON DELETE RESTRICT,
+        start_date DATE NOT NULL,
+        end_date DATE CHECK (end_date >= start_date),
+        employment_category TEXT NOT NULL CHECK (employment_category IN ('permanent','probationary','temporary','contract','casual','unknown')),
+        is_teacher BOOLEAN NOT NULL DEFAULT FALSE,
+        is_intern BOOLEAN NOT NULL DEFAULT FALSE,
+        counts_for_service BOOLEAN,
+        work_pattern_id UUID REFERENCES hr_work_patterns(id) ON DELETE RESTRICT,
+        appointment_reference TEXT,
+        recorded_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        reason TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_hr_service_periods_employee_dates ON hr_employee_service_periods(employee_id, start_date, end_date);
+      CREATE TABLE IF NOT EXISTS hr_employee_account_links (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        employee_id UUID NOT NULL REFERENCES hr_employees(id) ON DELETE RESTRICT,
+        previous_reviewer_id UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        reviewer_id UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        verified_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        reason TEXT NOT NULL,
+        recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_hr_account_links_employee ON hr_employee_account_links(employee_id, recorded_at);
+      CREATE TABLE IF NOT EXISTS hr_approval_assignments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        level TEXT NOT NULL CHECK (level IN ('division','department','chief_secretary')),
+        department_id UUID REFERENCES hr_departments(id) ON DELETE RESTRICT,
+        division_id UUID,
+        approver_employee_id UUID NOT NULL REFERENCES hr_employees(id) ON DELETE RESTRICT,
+        effective_from DATE NOT NULL,
+        effective_to DATE CHECK (effective_to >= effective_from),
+        recorded_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+        recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        reason TEXT NOT NULL,
+        FOREIGN KEY (division_id, department_id) REFERENCES hr_divisions(id, department_id) ON DELETE RESTRICT,
+        CHECK ((level = 'division' AND department_id IS NOT NULL AND division_id IS NOT NULL)
+          OR (level = 'department' AND department_id IS NOT NULL AND division_id IS NULL)
+          OR (level = 'chief_secretary' AND department_id IS NULL AND division_id IS NULL))
+      );
+      CREATE INDEX IF NOT EXISTS idx_hr_approval_assignments_scope ON hr_approval_assignments(level, department_id, division_id, effective_from, effective_to);
+    `);
     await client.query(`
       INSERT INTO hr_departments (name)
       SELECT DISTINCT ON (lower(btrim(department_code))) btrim(department_code)

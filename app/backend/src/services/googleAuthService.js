@@ -13,7 +13,7 @@ const client = googleSignInEnabled ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
 const REVIEWER_COLUMNS = `r.id, r.email, r.display_name, r.role, r.status, r.must_change_password,
        r.last_login_at, r.created_at, r.updated_at, r.department_code, r.division_code,
-       r.notify_on_submission, r.permissions`;
+       r.notify_on_submission, r.permissions, r.account_type`;
 
 /**
  * Outcomes are deliberately coarse for the caller to map onto HTTP codes.

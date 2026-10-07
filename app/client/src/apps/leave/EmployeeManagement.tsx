@@ -26,11 +26,13 @@ import type { OrgDepartment } from './types';
 export function EmployeeManagement({ legacyTools,workspace='employees' }: { legacyTools: ReactNode;workspace?:'employees'|'settings' }) {
     const { user } = useAuth();
     const central = user?.permissions?.hr_admin === true;
+    const [setupAdopted,setSetupAdopted]=useState<boolean|null>(null);
+    useEffect(()=>{if(workspace!=='settings'||!central)return;let live=true;void apiClient.get<{initial_setup:{adopted:boolean}}>('/hr/directory/leave-policy-usage').then(data=>{if(live)setSetupAdopted(data.initial_setup.adopted);}).catch(()=>{if(live)setSetupAdopted(null);});return()=>{live=false;};},[workspace,central]);
     const [scopeSummary,setScopeSummary] = useState('Checking assigned access…');
     useEffect(() => { void apiClient.get<{central:boolean;scopes:{department_name:string;division_name:string|null}[]}>('/hr/access-scopes/context').then(context=>setScopeSummary(context.central ? 'Central HR · Government-wide records' : context.scopes.length ? `Assigned access: ${context.scopes.map(scope=>`${scope.department_name} / ${scope.division_name || 'All divisions'}`).join('; ')}` : 'No active department or division assignment. Contact central HR.')).catch(()=>setScopeSummary('Unable to confirm assigned access.')); }, []);
-    const choices = workspace==='settings' ? [['initial-setup','Initial setup'],['policies','Policies'],['organisation','Organisation & approvers'],['access','HR access'],['setup','Employee setup'],['rollout','Readiness']] : [['directory','Employees'],...(central ? [['operations','Leave operations']] : user?.permissions?.hr_balance_manage ? [['balances','Scoped balances']] : [])];
     const [params,setParams]=useSearchParams();
     const requested=params.get('view');
+    const choices = workspace==='settings' ? [...(setupAdopted===false?[['initial-setup','Initial setup']]:[]),['policies','Policies'],['organisation','Organisation & approvers'],['access','HR access'],['setup','Employee setup'],['rollout','Readiness'],...(requested==='initial-setup'&&setupAdopted!==false?[['initial-setup',setupAdopted?'Setup record':'Initial setup']]:[])] : [['directory','Employees'],...(central ? [['operations','Leave operations']] : user?.permissions?.hr_balance_manage ? [['balances','Scoped balances']] : [])];
     const alias=requested==='import'||requested==='onboarding'?'setup':['government-workflow','payroll','legacy'].includes(requested||'')?'operations':requested==='foundations'?'directory':requested;
     const tab=choices.some(([id])=>id===alias)?alias!:choices[0][0];
     const employeeId=workspace==='employees'?params.get('employee')||'':'';
@@ -88,8 +90,8 @@ export function EmployeeManagement({ legacyTools,workspace='employees' }: { lega
                 <div className="px-3"><Pager page={page} pageCount={Math.ceil(list.total / list.page_size)} total={list.total} pageSize={list.page_size} setPage={setPage} /></div>
             </div>}
         </>}
-        {tab === 'initial-setup' && central && <GovernmentInitialSetup onAdopted={async()=>{await loadReferences();setVersion(v=>v+1);}} />}
-        {tab === 'policies' && central && <Policies />}
+        {tab === 'initial-setup' && central && <GovernmentInitialSetup onAdopted={async()=>{setSetupAdopted(true);await loadReferences();setVersion(v=>v+1);}} />}
+        {tab === 'policies' && central && <Policies initialSetupAdopted={setupAdopted} />}
         {tab === 'organisation' && <OrganisationManagement departments={departments} patterns={patterns} onChanged={loadReferences} />}
         {tab === 'access' && central && <HrAccessManagement departments={departments} />}
         {tab === 'operations' && central && <><nav aria-label="Leave operations" className="flex flex-wrap gap-2">{[['workflow','Applications & follow-ups'],['activation','Activation & accrual'],['payroll','Payroll & handover'],['legacy','Retained Finance administration']].map(([key,label])=><Button key={key} variant={operation===key?'primary':'secondary'} onClick={()=>{const next=new URLSearchParams(params);next.set('operation',key);setParams(next);}}>{label}</Button>)}</nav><p className="text-sm text-gray-600">Cross-employee administration. For preparation or balances, <Button variant="ghost" onClick={()=>changeView('directory')}>select an employee</Button> first.</p>{operation==='workflow'&&<GovernmentWorkflowManagement view="applications"/>}{operation==='activation'&&<GovernmentWorkflowManagement view="activation"/>}{operation==='payroll'&&<GovernmentPayroll/>}{operation==='legacy'&&<><p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Retained Finance maintenance tools. Employee identity, placement and Government preparation are managed in the employee workspace. These tools keep historical imports, reports and existing record maintenance available.</p>{legacyTools}</>}</>}

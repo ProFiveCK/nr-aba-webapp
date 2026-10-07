@@ -1,3 +1,4 @@
+import { policyVersionLabel } from './policyVersionLabel';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiClient } from '../../lib/api';
@@ -70,7 +71,7 @@ export function GovernmentInitialSetup({ onAdopted }: { onAdopted: () => Promise
     });
     return <div className="min-w-0 space-y-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-            <div><h2 className="text-xl font-semibold text-gray-900">Initial setup</h2><p className="mt-1 text-sm text-gray-600">Bring the existing employees and leave settings into one reviewed setup. You can complete this step yourself.</p></div>
+            <div><h2 className="text-xl font-semibold text-gray-900">{adopted?'Setup record':'Initial setup'}</h2><p className="mt-1 text-sm text-gray-600">{adopted?'Database adoption is recorded. This record preserves the policy mapping and organisation decisions.':'Bring the existing employees and leave settings into one reviewed setup. You can complete this step yourself.'}</p></div>
             <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-medium text-blue-900">{adopted ? 'Database adopted · existing leave operating' : draft ? `Saved draft · revision ${draft.revision}` : 'Ready to configure'}</span>
         </div>
         {error && <p role="alert" className="break-words rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
@@ -80,7 +81,7 @@ export function GovernmentInitialSetup({ onAdopted }: { onAdopted: () => Promise
         <form className="space-y-5" onSubmit={e => { e.preventDefault(); void run(async () => { const fresh = await apiClient.get<State>(`${root}?${new URLSearchParams({ start_date: plan.start_date })}`); const current = { ...plan, mappings: fresh.leave_types.map(t => ({ leave_type_id: t.id, code: plan.mappings.find(m => m.leave_type_id === t.id)?.code || null })) }; setState(fresh); setPlan(current); setGroupPage(0); setPreview(await apiClient.post<Preview>(`${root}/preview`, current)); setMessage('Current database reviewed. Check the mappings and selected organisation matches below.'); }); }}>
             <div className="app-panel space-y-3 p-4">
                 <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_14rem]">
-                    <Field label="Target Government policy"><select aria-label="Target Government policy" className={inputClass} disabled={adopted || busy} value={plan.policy_id || ''} onChange={e => change({ ...plan, policy_id: e.target.value || null })}><option value="">Choose a published policy</option>{state.policies.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select></Field>
+                    <Field label="Target Government policy"><select aria-label="Target Government policy" className={inputClass} disabled={adopted || busy} value={plan.policy_id || ''} onChange={e => change({ ...plan, policy_id: e.target.value || null })}><option value="">Choose a published policy</option>{state.policies.map(p => <option key={p.id} value={p.id}>{policyVersionLabel(p.label,'published')}</option>)}</select></Field>
                     <Field label="Intended start date"><AustralianDateInput aria-label="Intended start date" name="start_date" className={inputClass} value={plan.start_date} required disabled={adopted || busy} onChange={e => change({ ...plan, start_date: e.target.value })} /></Field>
                 </div>
                 {policy && <p className="break-words text-xs text-gray-600">Policy covers {formatDate(policy.effective_from)} to {formatDate(policy.effective_to)}. Source: {policy.source_reference}</p>}

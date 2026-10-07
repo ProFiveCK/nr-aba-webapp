@@ -1,3 +1,4 @@
+import { governmentLeaveMedicalSummary } from './governmentLeaveMedicalSummary.js';
 import { ServiceError } from '../lib/serviceError.js';
 import { COMMON_CODES, serviceFacts } from '../lib/governmentLeaveRules.js';
 import { CASE_CODES, caseLevels } from '../lib/governmentLeaveCaseRules.js';
@@ -111,6 +112,7 @@ export async function employeeLeaveArrangements(client, { user, employeeId }) {
     policy: policy ? { id: policy.id, label: policy.label, effective_from: policy.effective_from, effective_to: policy.effective_to, rules: policy.rules } : null,
     entitlements: context.entitlements.map(({ id, code, period_start, period_end, as_of, balance, held, available }) => ({ id, code, period_start, period_end, as_of, balance, held, available })),
     openings, opening_readiness: openingReadiness, application_counts: governmentCounts,
+    medical_tracking: await governmentLeaveMedicalSummary(client, { employeeId, context, config, asOf }),
     activation: { status: activationStatus, enabled_codes: enabled, configuration_id: config?.id || null, approved_at: config?.approved_at || null },
     applicability: COMMON_CODES.map(code => ({ code, enrolled, enabled: enrolled && enabled.includes(code),
       opening_certified: currentEntitlements.some(e => e.code === code), eligibility_status: eligibilityReview ? 'needs_review' : 'request_evaluation',
@@ -158,11 +160,12 @@ export async function employeeLeavePolicyUsage(client, { user }) {
     count(*) FILTER (WHERE e.status='active' AND e.leave_policy_regime='government' AND cardinality(c.enabled_codes)=0)::int AS government_paused
     FROM hr_employees e LEFT JOIN reviewers r ON r.id=e.reviewer_id
     LEFT JOIN LATERAL (SELECT id,enabled_codes FROM hr_gov_workflow_configs WHERE employee_id=e.id AND status='published' ORDER BY approved_at DESC,id DESC LIMIT 1) c ON TRUE`);
+  const { rows: [initialSetup] } = await client.query("SELECT count(*)>0 AS adopted,max(adopted_at) AS adopted_at FROM hr_gov_initial_setups WHERE status='adopted'");
   const { rows: policies } = await client.query(resolvedPublishedPoliciesSql);
   const summary = p => p ? { id: p.id, label: p.label, effective_from: p.effective_from, effective_to: p.effective_to,
     published_at: p.published_at, rules: p.rules, timing: p.effective_from > asOf ? 'future' : p.effective_to < asOf ? 'past' : 'current' } : null;
   const latest = [...policies].sort((a, b) => new Date(b.published_at || 0) - new Date(a.published_at || 0) || b.id.localeCompare(a.id))[0];
-  return { as_of: asOf, population: 'active_employees', counts,
+  return { as_of: asOf, population: 'active_employees', counts, initial_setup: initialSetup,
     current_policy: summary(policies.find(p => p.effective_from <= asOf && p.effective_to >= asOf)),
     latest_published_policy: summary(latest), next_policy: summary(policies.find(p => p.effective_from > asOf)),
     activation_note: 'Active counts describe the latest published employee configuration, not request eligibility. Publishing a policy does not enrol or activate employees.' };

@@ -50,3 +50,20 @@ Initial setup adoption therefore establishes the consolidated configuration and 
 - Desktop and 390-pixel phone layouts were inspected. Employee comparison is paged at 50; organisation matching is searchable and paged at 10.
 - The 37-table backup projection audit still matches employee, balance and application data. Its differences remain the previously added department and local audit entries; the new setup tables hold the draft and its revision history.
 - Saved setup mappings appear in the opening/cutover comparison and can suggest the type for a retained application transfer. They never provide an opening amount or substitute for a fresh leave approval.
+
+
+## After adoption: Settings and Medical tracking
+
+The owner adopted revision 2 locally on 08/10/2026 at 08:00 Nauru time. The 29 Finance/Treasury records now have the selected managed organisation references. This supersedes the earlier draft-only verification above. Balances and the six retained applications remain unchanged; all 29 employee arrangements still use the existing workflow, with zero Government calculation activations.
+
+Settings now opens Policies after adoption. **View setup record** opens the read-only adoption receipt and original mappings; Initial setup is no longer a normal menu choice. Published policy headings omit an old `(Review Draft)` suffix based on actual published status, while the stored record name and authority/source text remain intact. Publication in this local database does not itself establish signed policy authority: the corrected source still records publication authority pending.
+
+Open **Employees → Manage → Leave arrangements → Medical leave** to review the employee’s Medical position. The existing Finance balances retain separate Sick (with MC) and Sick (without MC) records until cutover. The corrected Government configuration instead has one ten-day annual Medical pool and up to three qualifying uncertified occasions. Those occasions are not a separate three-day allocation: one approved roster shift may charge two policy days while using one occasion.
+
+For a Government Medical service year, the view shows the shared balance, holds and available days; approved and pending days with/without a certificate; separately reviewed usage before the opening date; and approved, pending, baseline and remaining uncertified occasions. The dated usage history distinguishes evidence route and status. Cancelled/rejected absences do not consume the counter, and approved early-return/cancellation effects are reflected. Unknown opening/history displays “Not determined”, rather than assuming three unused occasions. Baseline history must match the certified service year and cutover date.
+
+New Government Medical approval PDFs mark the certificate route, shared entitlement, usage split and uncertified occasions committed at final grant, including other pending applications. Final-grant usage snapshots count the application just approved once and retain the employee’s post-grant shared balance. Printed dates use DD/MM/YYYY and audit times identify Nauru. Older granted PDFs remain their original stored bytes. The retained Finance approval form continues to show its existing certified/uncertified split; a new Government record must not imply that the corrected ten-day pool is still divided into seven and three days.
+
+Synthetic certificate and uncertified PDFs were rendered and visually checked. The actual restored employee screen and adopted Settings were checked on desktop and a 390-pixel viewport without changing any employee record.
+
+Verification for these corrections: the full backend suite passes 452 tests; six additional Medical tracking tests pass separately in a disposable PostgreSQL database. The frontend passes 120 tests with one existing skip; build and lint pass. Restored data still contains 29 employees, 109 balance rows and six retained applications, with one adopted setup and no published employee activation configurations.

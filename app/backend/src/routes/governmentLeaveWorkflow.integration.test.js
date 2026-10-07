@@ -73,12 +73,14 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   const doc={file_name:'synthetic.pdf',content_type:'application/pdf',byte_size:12,sha256:'synthetic-only',file_data:Buffer.from('%PDF-1.7\ntest')};const r=await submit(data,[doc]);assert.equal((await w.getRequest(pool,r.id)).charge,'10.000000');
   await decide(r.id);await decide(r.id);await assert.rejects(decide(r.id,{covers_end:'2026-11-03'}),/complete absence/);await decide(r.id);await decide(r.id);await decide(r.id);
   assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='medical').balance,'0.000000');
+  const saved=(await w.getRequest(pool,r.id)).grant_snapshot;assert.equal(saved.medical_mode,'certificate');assert.equal(saved.medical_uncertified.committed_including_this_request,0);assert.equal(saved.medical_tracking.certified.approved_days,'10.000000');assert.equal(saved.medical_tracking.certified.pending_days,'0.000000');assert.equal(saved.medical_tracking.shared.balance,'0.000000');
  });
  test('pending uncertified occasions reserve the counter, cancellation frees it, and roster adjacency rejects split absences',async()=>{
   const a=await submit(application('medical','2026-11-02')),b=await submit(application('medical','2026-11-04')),c=await submit(application('medical','2026-11-06'));
   await assert.rejects(submit(application('medical','2026-11-10')),/already committed/);
   await assert.rejects(submit({...application('medical','2026-11-09'),medical_mode:'certificate'},[{file_name:'synthetic.pdf',content_type:'application/pdf',byte_size:5,sha256:'example',file_data:Buffer.from('%PDF-')}]),/Adjacent/);
   await w.cancelRequest(pool,{user:user(owner),actor:owner,id:b.id,reason});const next=await submit(application('medical','2026-11-12'));assert.ok(next.id);await grant(a.id);await grant(c.id);
+  const saved=(await w.getRequest(pool,a.id)).grant_snapshot;assert.equal(saved.medical_mode,'exemption');assert.equal(saved.medical_uncertified.committed_including_this_request,3);assert.equal(saved.medical_tracking.uncertified.approved_occasions,1);assert.equal(saved.medical_tracking.uncertified.pending_occasions,2);assert.equal(saved.medical_tracking.uncertified.remaining_occasions,0);
  });
  test('concurrent applications cannot overspend Special and overlap cannot be submitted across types',async()=>{
   const first=application('special','2026-11-02','2026-11-03'),second=application('special','2026-11-05','2026-11-06');const result=await Promise.allSettled([submit(first),submit(second)]);assert.equal(result.filter(r=>r.status==='fulfilled').length,1);

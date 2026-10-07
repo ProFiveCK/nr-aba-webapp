@@ -498,10 +498,10 @@ function HistoricalPolicySettings() {
     );
 }
 
-export function Policies() {
+export function Policies({initialSetupAdopted=false}:{initialSetupAdopted?:boolean|null}) {
     const [historical, setHistorical] = useState(false);
     return <div className="space-y-5">
-        <p className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">Configuring the existing database for the first time? <Link className="font-semibold underline" to="/leave/settings?view=initial-setup">Open initial setup</Link> to bring current employees, organisation and leave types into one review.</p>
+        <p className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">{initialSetupAdopted===null?<>View the <Link className="font-semibold underline" to="/leave/settings?view=initial-setup">setup record</Link> to check initial database adoption.</>:initialSetupAdopted?<>Database setup adopted. <Link className="font-semibold underline" to="/leave/settings?view=initial-setup">View setup record</Link>. Employee calculation activation is shown below.</>:<>Configuring the existing database for the first time? <Link className="font-semibold underline" to="/leave/settings?view=initial-setup">Open initial setup</Link> to bring current employees, organisation and leave types into one review.</>}</p>
         <p className="text-sm text-gray-600">Manage Government rules, Gazette holidays and work schedules here. Review each employee’s arrangement and balances under Employees; manage departments and approval offices under Organisation.</p>
         <GovernmentFoundation view="policies" />
         <details className="border-t border-gray-200 pt-4" onToggle={event => setHistorical(event.currentTarget.open)}>

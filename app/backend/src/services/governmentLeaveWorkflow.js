@@ -283,6 +283,7 @@ async function verifyRetainedRequest(client,request,employee) {
   const issues=evaluation.issues.filter(i=>!i.includes('exceeds a certified entitlement'));
   if(issues.length)fail(issues.join(' '));
   if(fingerprint(evaluation.segments)!==fingerprint(request.application_snapshot.evaluation.segments))fail('The calculation changed. Cancel and resubmit for a new calculation and approvals.');
+  return evaluation;
 }
 export async function decideRequest(pool,{user,actor,id,data}) {
   const note=reasonText(data.note),payloadHash=fingerprint({...data,note});
@@ -297,7 +298,8 @@ export async function decideRequest(pool,{user,actor,id,data}) {
     if(!stage||stage.id!==data.stage_id||stage.binding?.id!==data.binding_id)fail('The current approval stage changed. Reload the request.');
     if(stage.binding.reviewer_id!==user.id)fail('Only the assigned officer can decide this stage.',403);
     const issue=await bindingIssue(client,request,stage);if(issue)fail(issue,403);
-    if(data.decision==='approved'){const correctionIssue=await serviceCorrectionIssue(client,request.employee_id,request.submitted_at);if(correctionIssue)fail(correctionIssue);if(isCase(request.code))await cases.verifyCase(client,request,employee,{hrActor:stage.level==='hr_verifier'?user.id:null,final:stage.level==='chief_secretary',discretionConfirmed:data.discretion_confirmed===true});else await verifyRetainedRequest(client,request,employee);}
+    let currentEvaluation=null;
+    if(data.decision==='approved'){const correctionIssue=await serviceCorrectionIssue(client,request.employee_id,request.submitted_at);if(correctionIssue)fail(correctionIssue);if(isCase(request.code))await cases.verifyCase(client,request,employee,{hrActor:stage.level==='hr_verifier'?user.id:null,final:stage.level==='chief_secretary',discretionConfirmed:data.discretion_confirmed===true});else currentEvaluation=await verifyRetainedRequest(client,request,employee);}
     if(stage.level==='relevant_secretary'&&request.code==='recreation'&&data.decision==='rejected'&&(!data.operational_refusal||!data.alternative_date||!data.consultation_reference))fail('Secretary refusal requires operational reasons, employee consultation and an alternative date.',400);
     let verification=null;
     if(stage.level==='hr_verifier'&&data.decision==='approved') {
@@ -326,6 +328,15 @@ export async function decideRequest(pool,{user,actor,id,data}) {
       const after=(await ledger.loadContext(client,request.employee_id)).entitlements;
       const allocations=caseRow&&['recreation_encashment','recreation_separation'].includes(request.code)?[{entitlement_id:caseRow.determination.facts.entitlement_id,amount:caseRow.determination.benefit.requested}]:request.application_snapshot.evaluation.allocations;
       const grant={...request.application_snapshot,...(caseRow?{case_determination:caseRow.determination,case_determination_id:caseRow.id,evaluation:caseRow.determination.evaluation,effect}:{}),id,code:request.code,start_date:request.start_date,end_date:request.end_date,reason:request.reason,charge:request.charge,submitted_at:request.submitted_at,granted_at:new Date().toISOString(),stages:completed,balances:allocations.map(a=>({entitlement_id:a.entitlement_id,before:before.find(e=>e.id===a.entitlement_id)?.balance,used:a.amount,after:after.find(e=>e.id===a.entitlement_id)?.balance}))};
+      if(request.code==='medical') {
+        grant.medical_mode=request.medical_mode;
+        const config=(await client.query("SELECT *,to_char(medical_period_start,'YYYY-MM-DD') AS medical_period_start,to_char(medical_as_of,'YYYY-MM-DD') AS medical_as_of FROM hr_gov_workflow_configs WHERE id=$1",[request.config_id])).rows[0];
+        const {governmentLeaveMedicalSummary}=await import('./governmentLeaveMedicalSummary.js');
+        grant.medical_tracking=await governmentLeaveMedicalSummary(client,{employeeId:request.employee_id,context:await ledger.loadContext(client,request.employee_id),config,asOf:request.start_date,approveRequestId:id});
+        const medicalPolicy=currentEvaluation.policy_versions.find(p=>p.id===currentEvaluation.segments[0]?.policy_version_id);
+        grant.medical_uncertified={limit:medicalPolicy.rules.medical_uncertified_occasions,other_committed:currentEvaluation.medical_exemptions_used,
+          committed_including_this_request:currentEvaluation.medical_exemptions_used+(request.medical_mode==='exemption'?1:0)};
+      }
       const bytes=await generateGovernmentLeavePdf(grant);
       await client.query("UPDATE hr_gov_requests SET status='approved',completed_at=NOW(),grant_snapshot=$2,final_pdf=$3 WHERE id=$1",[id,grant,Buffer.from(bytes)]);
     }else await client.query('UPDATE hr_gov_requests SET stage_index=stage_index+1 WHERE id=$1',[id]);

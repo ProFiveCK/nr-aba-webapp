@@ -1,3 +1,4 @@
+import employeeServiceCorrectionsRouter from './employeeServiceCorrections.js';
 import { assertEmployeeScope,canAccessEmployee,isCentralHr } from '../services/hrAccess.js';
 import express from 'express';
 import { pool } from '../db.js';
@@ -14,6 +15,7 @@ import {
 } from '../services/employeeDirectory.js';
 
 const router = express.Router();
+router.use('/service-corrections',employeeServiceCorrectionsRouter);
 router.use('/imports', payrollEmployeeImportRouter);
 // Identity, transfers, imports and enterprise configuration stay central.
 // Directory reads and details updates also allow explicitly scoped HR.

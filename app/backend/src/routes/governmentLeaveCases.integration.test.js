@@ -62,6 +62,11 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   const saved=await w.getRequest(pool,r.id);assert.equal(saved.charge,'0.000000');assert.equal(saved.reservation_id,null);assert.deepEqual((await l.loadContext(pool,employee.id)).entitlements.map(e=>e.balance),before);assert.equal(saved.grant_snapshot.case_determination.pay_segments[0].salary_percent,'100.000000');assert.ok(saved.final_pdf.subarray(0,5).toString()==='%PDF-');
   await writeFile('/tmp/government-leave-package-4-approved.pdf',saved.final_pdf);await assert.rejects(pool.query('UPDATE hr_gov_case_determinations SET reason=$2 WHERE request_id=$1',[r.id,'attempt rewrite']),/immutable/);await assert.rejects(c.prepareDetermination(pool,{user:user(hr),actor:hr,id:r.id,data:{}}),/pending/);
  });
+ test('an unrelated future published policy leaves a reviewed current assisted case approvable',async()=>{
+  const r=await caseSubmit();await determine(r.id,official);
+  const future=await l.createPolicy(pool,{user:user(hr),actor:hr,data:{label:'Synthetic unrelated future policy',effective_from:'2028-01-01',effective_to:'2028-12-31',rules:DEFAULT_RULES,source_reference:reason,reason}});await l.publishPolicy(pool,{user:user(hr),actor:hr,id:future.id,reason});
+  await grant(r.id);assert.equal((await w.getRequest(pool,r.id)).status,'approved');
+ });
  test('parental leave uses calendar weeks and Chief Secretary late notice discretion, preserves salary segments and return task',async()=>{
   const r=await caseSubmit(event('maternity','2026-11-01','2027-01-23'));
   await assert.rejects(determine(r.id,{...parental,late_notice_authority_reference:null}),/late notice/);await determine(r.id,parental);
@@ -111,7 +116,11 @@ describe('government event cases, financial commitments and amendments',{skip:sk
  test('controlled common amendment refunds only released dated units, retains original PDF and removes amended absence dates',async()=>{
   const r=await submit(application('recreation','2026-11-02','2026-11-04'));await grant(r.id);const original=await w.getRequest(pool,r.id),bytes=Buffer.from(original.final_pdf);
   const amendment=await caseSubmit({...event('amendment',original.start_date,'2026-11-02'),related_request_id:r.id,assisted_reference:'Synthetic signed early-return request'},hr,[]);const facts={...generic,original_request_id:r.id,action:'shorten_grant',salary_correction_reference:'Synthetic Salary Unit correction instruction'};await determine(amendment.id,facts);assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'17.000000');await grant(amendment.id);assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'19.000000');assert.deepEqual((await w.getRequest(pool,r.id)).final_pdf,bytes);assert.equal((await w.getRequest(pool,r.id)).status,'approved');
-  const calendar=await call('/calendar?from=2026-11-01&to=2026-11-10',null,owner);assert.equal(calendar.body.entries.find(e=>e.id===r.id).end_date,'2026-11-02');assert.ok(await submit(application('recreation','2026-11-03')));await assert.rejects(caseSubmit({...event('amendment',original.start_date,original.end_date),related_request_id:r.id,assisted_reference:'Synthetic duplicate amendment'},hr,[]),/amendment is already/);
+  const calendar=await call('/calendar?from=2026-11-01&to=2026-11-10',null,owner);assert.equal(calendar.body.entries.find(e=>e.id===r.id).end_date,'2026-11-02');assert.ok(await submit(application('recreation','2026-11-03')));
+  const cancel=await caseSubmit({...event('amendment',original.start_date,'2026-11-02'),related_request_id:r.id,assisted_reference:'Synthetic repeat approved cancellation'},hr,[]);await determine(cancel.id,{...facts,action:'cancel_grant'});await grant(cancel.id);
+  assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'20.000000');
+  assert.deepEqual((await w.getRequest(pool,r.id)).final_pdf,bytes);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_case_effects WHERE original_request_id=$1',[r.id])).rows[0].n,2);
+  const duplicate=await caseSubmit({...event('amendment',original.start_date,'2026-11-02'),related_request_id:r.id,assisted_reference:'Synthetic already cancelled'},hr,[]);await assert.rejects(determine(duplicate.id,{...facts,action:'cancel_grant'}),/already cancelled/);
  });
  test('official non-completion creates five-working-day recovery, financial follow-up requires actual receipt and idempotent events',async()=>{
   const r=await caseSubmit();await determine(r.id,official);await grant(r.id);const view=await w.requestView(pool,user(hr),r.id),task=view.tasks[0],data={event_key:randomUUID(),action:'noncompletion',reference:'Synthetic actual trip cancellation',reason,facts:{paid_amount:'250.00',payment_reference:'Synthetic actual allowance payment reference',trigger_date:'2026-10-07',recovery_amount:'125.50',recovery_determination_reference:'Synthetic signed pro-rata allowance recovery'}};
@@ -139,10 +148,38 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   const r=await caseSubmit(event('lwop','2026-11-02','2026-11-06'),owner,[]);await determine(r.id,{...generic,genuine_purpose:true,no_other_leave_accessible:true},'0');await grant(r.id);
   const amendment=await caseSubmit({...event('amendment','2026-11-02','2026-11-06'),related_request_id:r.id,assisted_reference:'Synthetic employee LWOP cancellation'},hr,[]);await determine(amendment.id,{...generic,original_request_id:r.id,action:'cancel_grant',salary_correction_reference:'Synthetic Salary Unit reversal instruction'});await grant(amendment.id);assert.equal((await l.loadContext(pool,employee.id)).exclusions.length,0);const entries=(await call('/calendar?from=2026-11-01&to=2026-11-10',null,owner)).body.entries;assert.equal(entries.some(e=>e.id===r.id),false);
  });
+ test('successive LWOP shortening then cancellation withdraw only the current service pause',async()=>{
+  const r=await caseSubmit(event('lwop','2026-11-02','2026-11-06'),owner,[]);await determine(r.id,{...generic,genuine_purpose:true,no_other_leave_accessible:true},'0');await grant(r.id);
+  const first=await caseSubmit({...event('amendment','2026-11-02','2026-11-04'),related_request_id:r.id,assisted_reference:reason},hr,[]);await determine(first.id,{...generic,original_request_id:r.id,action:'shorten_grant',salary_correction_reference:reason});await grant(first.id);
+  assert.equal((await l.loadContext(pool,employee.id)).exclusions[0].end_date,'2026-11-04');
+  const second=await caseSubmit({...event('amendment','2026-11-02','2026-11-04'),related_request_id:r.id,assisted_reference:reason},hr,[]);await determine(second.id,{...generic,original_request_id:r.id,action:'cancel_grant',salary_correction_reference:reason});await grant(second.id);assert.equal((await l.loadContext(pool,employee.id)).exclusions.length,0);
+ });
  test('benefit cancellation frees committed units through a new approved amendment while preserving the original valuation',async()=>{
   await oldService();const r=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:'Synthetic financial request'},hr);await determine(r.id,financial('100'));await grant(r.id);const bytes=Buffer.from((await w.getRequest(pool,r.id)).final_pdf);
   const a=await caseSubmit({...event('amendment','2026-10-07'),related_request_id:r.id,assisted_reference:'Synthetic cancel financial commitment'},hr,[]);await determine(a.id,{...generic,original_request_id:r.id,action:'cancel_grant',salary_correction_reference:'Synthetic actual Salary Unit commitment cancellation'});await grant(a.id);assert.deepEqual((await w.getRequest(pool,r.id)).final_pdf,bytes);
   const next=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:'Synthetic replacement benefit request'},hr);await determine(next.id,financial('100'));await grant(next.id);
+ });
+ test('benefit baseline changes require independent sourced reconciliation and preserve previous commitments',async()=>{
+  await oldService();const r=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:'Synthetic first financial request'},hr);await determine(r.id,financial('104'));await grant(r.id);
+  const next=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:'Synthetic corrected financial request'},hr),corrected={...financial('5'),prior_consumed:'5',prior_history_reference:'Synthetic corrected historic payout register'};
+  await assert.rejects(determine(next.id,corrected),/historical benefit baseline changed/);
+  const module=await import('../services/governmentLeaveBenefitReconciliation.js'),row=await module.prepareBenefitReconciliation(pool,{user:user(hr),actor:hr,data:{reconciliation_id:randomUUID(),employee_id:employee.id,prior_units:'5',history_reference:corrected.prior_history_reference,transition_reference:corrected.transition_resolution_reference,source_reference:reason,reason}});
+  const drafts=await import('../services/governmentLeaveDrafts.js');await drafts.changeDraftState(pool,{user:user(hr),actor:hr,kind:'benefit_reconciliation',id:row.id,data:{action:'discard',expected_revision:0,reason}});
+  await assert.rejects(module.approveBenefitReconciliation(pool,{user:user(certifier),actor:certifier,id:row.id,data:{snapshot_hash:row.snapshot_hash,reason}}),/discarded/);
+  await drafts.changeDraftState(pool,{user:user(hr),actor:hr,kind:'benefit_reconciliation',id:row.id,data:{action:'restore',expected_revision:1,reason}});
+  await assert.rejects(module.approveBenefitReconciliation(pool,{user:user(hr),actor:hr,id:row.id,data:{snapshot_hash:row.snapshot_hash,reason}}),/different central/);
+  await module.approveBenefitReconciliation(pool,{user:user(certifier),actor:certifier,id:row.id,data:{snapshot_hash:row.snapshot_hash,reason}});await determine(next.id,corrected);await grant(next.id);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_benefit_bases WHERE employee_id=$1',[employee.id])).rows[0].n,1);
+  assert.equal((await pool.query('SELECT sum(units)::text AS n FROM hr_gov_benefit_commitments WHERE employee_id=$1',[employee.id])).rows[0].n,'109.000000');
+  const tooMuch=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:'Synthetic remaining exhausted'},hr);await assert.rejects(determine(tooMuch.id,{...corrected,requested_units:'1'}),/exceed/);
+ });
+ test('reviewed benefit service correction keeps the original register and all previously committed units',async()=>{
+  await oldService();const first=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:reason},hr);await determine(first.id,financial('100'));await grant(first.id);
+  const originalBasis=(await pool.query('SELECT id FROM hr_gov_benefit_bases WHERE employee_id=$1',[employee.id])).rows[0].id;
+  await l.addFoundationRecord(pool,{user:user(hr),actor:hr,employeeId:employee.id,kind:'basis',data:{effective_from:'2026-10-07',continuity_start:'2010-01-01',anniversary_method:'calendar',leap_day_method:'feb28',schedule_mode:'weekly',source_reference:reason,reason}});
+  const next=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:reason},hr),facts=financial('14');await assert.rejects(determine(next.id,facts),/service basis changed/);
+  const module=await import('../services/governmentLeaveBenefitReconciliation.js'),row=await module.prepareBenefitReconciliation(pool,{user:user(hr),actor:hr,data:{reconciliation_id:randomUUID(),employee_id:employee.id,prior_units:'0',history_reference:facts.prior_history_reference,transition_reference:facts.transition_resolution_reference,source_reference:reason,reason}});await module.approveBenefitReconciliation(pool,{user:user(certifier),actor:certifier,id:row.id,data:{snapshot_hash:row.snapshot_hash,reason}});await determine(next.id,facts);await grant(next.id);
+  const register=(await pool.query('SELECT count(*)::int AS n,sum(units)::text AS used FROM hr_gov_benefit_commitments WHERE employee_id=$1 AND basis_id=$2',[employee.id,originalBasis])).rows[0];assert.equal(register.n,2);assert.equal(register.used,'114.000000');
  });
  test('actual HTTP case routes enforce applicant ownership and central determinations without trusting injected pay or charges',async()=>{
   const session=await auth.createSession(owner.id),token=auth.buildTokenPayload(owner,session.tokenId,session.expiresAt),f=new FormData(),data=event();for(const [key,val] of Object.entries(data))f.set(key,val);f.set('employee_id',officers.division.employee.id);f.set('charge','999');f.set('salary_percent','999');f.append('documents',new Blob([doc.file_data],{type:'application/pdf'}),'synthetic-case.pdf');

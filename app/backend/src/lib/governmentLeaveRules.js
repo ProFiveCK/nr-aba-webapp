@@ -98,7 +98,8 @@ export function calculateEvaluation(context,input){
  }
  if(common&&charge===0n)issues.push('The selected dates contain no chargeable absence.');
  if(input.code==='medical')requirements.push('Medical history and the three non-consecutive single-absence counter must be verified at submission.');
- if(input.code==='medical'&&(charge>1000000n||end>start)&&!input.certificate_available)issues.push('A medical certificate is required for this multi-day absence.');
+ const verifiedSingleShift=input.verified_single_shift_exemption===true&&end===start&&charge>0n&&charge<=2000000n&&segments.length===1&&!!segments[0].roster_id&&Number(segments[0].scheduled_hours)>0;
+ if(input.code==='medical'&&(charge>1000000n||end>start)&&!input.certificate_available&&!verifiedSingleShift)issues.push('A medical certificate is required for this multi-day absence.');
  if(input.code==='special'&&!input.justification_available)issues.push('Special leave requires sufficient-cause justification.');
  if(!common)issues.push('This entitlement requires the assisted case module and an authorised determination.');
  const allocated=[...allocations.values()].map(a=>({...a,amount:decimal(a.amount)}));

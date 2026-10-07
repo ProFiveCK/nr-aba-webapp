@@ -27,6 +27,13 @@ export function separatedMedicalDates(context,left,right) {
   return b-a>370?null:false;
 }
 
+export function singleMedicalShiftCharge(context,date,charge){
+ const basis=context.bases.filter(b=>b.effective_from<=date).at(-1);
+ if(basis?.schedule_mode!=='roster')return units(charge)===1000000n;
+ const roster=context.rosters.find(r=>r.day===date);
+ return !!roster&&Number(roster.paid_hours)>0&&units(roster.policy_days)>0n&&units(roster.policy_days)<=2000000n&&units(charge)===units(roster.policy_days);
+}
+
 export function medicalAssessment(context,config,input,result,history=[]) {
   if(input.code!=='medical')return {issues:[],exemptions_used:0};
   const issues=[];
@@ -37,7 +44,9 @@ export function medicalAssessment(context,config,input,result,history=[]) {
   const exemption=input.medical_mode==='exemption';
   const used=records.filter(r=>r.uncertified&&r.period_start===account?.period_start).length;
   const policy=context.policies.find(p=>p.id===result.segments[0]?.policy_version_id);
-  if(exemption&&(input.start_date!==input.end_date||result.charge!=='1.000000'||result.allocations.length!==1))issues.push('The approved exemption covers one calendar date and exactly one policy day only. Attach a certificate or use an assisted case.');
+  const shiftRule=config.medical_rule==='single_verified_shift_nonadjacent_scheduled_days';
+  const validCharge=shiftRule?singleMedicalShiftCharge(context,input.start_date,result.charge):units(result.charge)===1000000n;
+  if(exemption&&(input.start_date!==input.end_date||!validCharge||result.allocations.length!==1))issues.push(shiftRule?'The approved exemption covers one calendar date and its verified roster shift charge only. Attach a certificate or use an assisted case.':'The approved exemption covers one calendar date and exactly one policy day only. Attach a certificate or use an assisted case.');
   if(exemption&&used>=(policy?.rules.medical_uncertified_occasions??0))issues.push('The uncertified single-day allowance is already committed. A certificate is required.');
   for(const record of records) {
     if(!(exemption||record.uncertified))continue;

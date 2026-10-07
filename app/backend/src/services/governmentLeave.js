@@ -1,3 +1,5 @@
+import {assertDraftUsable} from './governmentLeaveDrafts.js';
+import {resolvedPublishedPoliciesSql,validateReplacementFields,approvePolicyReplacement} from './governmentLeavePolicyTransitions.js';
 import {randomUUID} from 'node:crypto';
 import {ServiceError} from '../lib/serviceError.js';
 import {withTransaction} from '../lib/transaction.js';
@@ -16,7 +18,7 @@ const dates=(prefix='')=>`${prefix}*,to_char(${prefix}effective_from,'YYYY-MM-DD
 export async function loadContext(client,employeeId){
  const {rows:[employee]}=await client.query('SELECT id,display_name,status,leave_policy_regime FROM hr_employees WHERE id=$1',[employeeId]);if(!employee)fail('Employee not found.',404);
  const results=[];const queries=[
- ()=>client.query(`SELECT ${dates()} FROM hr_gov_policy_versions WHERE status='published' ORDER BY hr_gov_policy_versions.effective_from,hr_gov_policy_versions.id`),
+ ()=>client.query(resolvedPublishedPoliciesSql),
  ()=>client.query(`SELECT ${dates()} FROM hr_gov_calendars c WHERE NOT EXISTS(SELECT 1 FROM hr_gov_calendars successor WHERE successor.supersedes_id=c.id) ORDER BY c.effective_from,c.id`),
  ()=>client.query(`SELECT *,to_char(start_date,'YYYY-MM-DD') AS start_date,to_char(end_date,'YYYY-MM-DD') AS end_date FROM hr_employee_service_periods WHERE employee_id=$1 ORDER BY hr_employee_service_periods.start_date,hr_employee_service_periods.id`,[employeeId]),
  ()=>client.query(`SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(continuity_start,'YYYY-MM-DD') AS continuity_start FROM hr_gov_service_bases WHERE employee_id=$1 ORDER BY hr_gov_service_bases.effective_from,hr_gov_service_bases.id`,[employeeId]),
@@ -37,13 +39,14 @@ export async function evaluate(client,employeeId,input){
  return {...result,service_bases:result.service_bases.map(({id,continuity_start,effective_from,anniversary_method,leap_day_method,schedule_mode})=>({id,continuity_start,effective_from,anniversary_method,leap_day_method,schedule_mode}))};
 }
 function validatePolicy(data){
+ validateReplacementFields(data);
  try{validateRules(data.rules||DEFAULT_RULES);if(dayNumber(data.effective_to)<dayNumber(data.effective_from))fail('The policy end date must be on or after its start date.',400);}catch(err){fail(err.message,400);}
  if(typeof data.label!=='string'||data.label.trim().length<3||data.label.trim().length>120)fail('Use a policy name of 3–120 characters.',400);
  if(typeof data.source_reference!=='string'||data.source_reference.trim().length<5||data.source_reference.trim().length>500)fail('Record a source reference of 5–500 characters.',400);
 }
 export async function createPolicy(pool,{user,actor,data}){
  central(user);const reason=managementReason(data.reason);validatePolicy(data);
- return withTransaction(pool,async client=>{const {rows:[row]}=await client.query('INSERT INTO hr_gov_policy_versions(label,effective_from,effective_to,rules,source_reference,prepared_by,reason) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',[data.label,data.effective_from,data.effective_to,data.rules||DEFAULT_RULES,data.source_reference,actor.id,reason]);await audit(client,actor,'hr.gov.policy.prepared',row.id,row);return row;});
+ return withTransaction(pool,async client=>{const {rows:[row]}=await client.query('INSERT INTO hr_gov_policy_versions(label,effective_from,effective_to,rules,source_reference,prepared_by,reason,supersedes_policy_id,authority_reference,last_prepared_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$6) RETURNING *',[data.label,data.effective_from,data.effective_to,data.rules||DEFAULT_RULES,data.source_reference,actor.id,reason,data.supersedes_policy_id||null,data.authority_reference?.trim()||null]);await audit(client,actor,'hr.gov.policy.prepared',row.id,row);return row;});
 }
 export async function updatePolicy(pool,{user,actor,id,data}){
  central(user);const reason=managementReason(data.reason);validatePolicy(data);
@@ -53,7 +56,7 @@ export async function updatePolicy(pool,{user,actor,id,data}){
   if(before.status!=='draft')fail('Published policies cannot be edited. Prepare a successor version.');
   if(before.deleted_at)fail('This draft was deleted. Restore it before editing.');
   if(before.revision!==data.expected_revision)fail('This draft changed since you opened it. Cancel, refresh the page and review the latest draft before saving.');
-  const {rows:[after]}=await client.query('UPDATE hr_gov_policy_versions SET label=$2,effective_from=$3,effective_to=$4,rules=$5,source_reference=$6,reason=$7,revision=revision+1 WHERE id=$1 RETURNING *',[id,data.label.trim(),data.effective_from,data.effective_to,data.rules,data.source_reference.trim(),reason]);
+  const {rows:[after]}=await client.query('UPDATE hr_gov_policy_versions SET label=$2,effective_from=$3,effective_to=$4,rules=$5,source_reference=$6,reason=$7,supersedes_policy_id=$8,authority_reference=$9,last_prepared_by=$10,revision=revision+1 WHERE id=$1 RETURNING *',[id,data.label.trim(),data.effective_from,data.effective_to,data.rules,data.source_reference.trim(),reason,data.supersedes_policy_id||null,data.authority_reference?.trim()||null,actor.id]);
   await recordAudit({client,actor,action:'hr.gov.policy.updated',entityType:'hr_government_leave',entityId:id,before,after});return after;
  });
 }
@@ -76,7 +79,7 @@ export async function publishPolicy(pool,{user,actor,id,reason,expected_revision
   if(expected_revision!==undefined&&row.revision!==expected_revision)fail('This draft changed since you reviewed it. Cancel, refresh the page and review the latest draft before publishing.');
   if(row.deleted_at)fail('This draft was deleted. Restore and review it before publishing.');
   if(row.status==='published')return row;
-  if((await client.query("SELECT 1 FROM hr_gov_policy_versions WHERE status='published' AND daterange(effective_from,effective_to,'[]') && daterange($1,$2,'[]')",[row.effective_from,row.effective_to])).rowCount)fail('Published policy dates overlap. Prepare a non-overlapping successor.');
+  await approvePolicyReplacement(client,{row,actor,reason,expected_revision});
   const {rows:[after]}=await client.query("UPDATE hr_gov_policy_versions SET status='published',published_by=$2,published_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id]);await audit(client,actor,'hr.gov.policy.published',id,{...after,publication_reason:reason});return after;
  });
 }
@@ -133,7 +136,7 @@ export async function prepareOpening(pool,{client:existingClient=null,user,actor
 }
 export async function certifyOpening(pool,{client:existingClient=null,user,actor,id,reason}){
  central(user);reason=managementReason(reason);
- const work=async client=>{const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_openings WHERE id=$1',[id]);if(!ref)fail('Opening not found.',404);await lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT *,to_char(as_of,\'YYYY-MM-DD\') AS as_of FROM hr_gov_openings WHERE id=$1 FOR UPDATE',[id]);if(row.status==='certified')return row;
+ const work=async client=>{const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_openings WHERE id=$1',[id]);if(!ref)fail('Opening not found.',404);await lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT *,to_char(as_of,\'YYYY-MM-DD\') AS as_of FROM hr_gov_openings WHERE id=$1 FOR UPDATE',[id]);await assertDraftUsable(client,'opening',id);if(row.status==='certified')return row;
   if(row.prepared_by===actor.id)fail('A different central HR officer must certify the reviewed opening.',403);
   if((await openingSnapshot(client,row.employee_id)).hash!==row.snapshot_hash)fail('Employee, policy, calendar or balances changed after preview. Prepare a new opening.');
   if((await client.query("SELECT 1 FROM hr_gov_entitlements WHERE employee_id=$1 AND code=$2 AND daterange(period_start,period_end,'[]') && daterange($3,$4,'[]')",[row.employee_id,row.code,row.period_start,row.period_end])).rowCount)fail('This entitlement period is already certified. Use an audited correction.');
@@ -153,7 +156,7 @@ export async function postMovement(client,{entitlementId,kind,amount,effectiveDa
   (COALESCE((SELECT sum(h.amount) FROM hr_gov_reservations h JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE h.entitlement_id=$1 AND r.status='held'),0)+COALESCE((SELECT sum(h.amount) FROM hr_gov_case_credit_holds h JOIN hr_gov_requests cr ON cr.id=h.request_id WHERE h.entitlement_id=$1 AND cr.status='pending' AND ($2::uuid IS NULL OR cr.id<>$2) AND h.determination_id=(SELECT id FROM hr_gov_case_determinations cd WHERE cd.request_id=cr.id ORDER BY version DESC LIMIT 1)),0))::text AS held`,[entitlementId,excludeCaseRequestId]);
  if(units(totals.balance)+value<units(totals.held))fail('The movement would spend entitlement already held or make the balance negative.');
  if(kind==='accrual'&&account.code==='recreation'){
-  const {rows:[policy]}=await client.query('SELECT rules FROM hr_gov_policy_versions WHERE id=$1',[account.policy_version_id]);if(units(totals.balance)+value>units(policy.rules.recreation_cap_days))fail('Recreation accrual must stop at the governing cap.');
+  const {rows:policies}=await client.query(resolvedPublishedPoliciesSql);const policy=policies.find(p=>p.effective_from<=effectiveDate&&p.effective_to>=effectiveDate);if(!policy)fail('Publish a governing policy for this accrual date.');if(units(totals.balance)+value>units(policy.rules.recreation_cap_days))fail('Recreation accrual must stop at the governing cap.');
  }
  const {rows:[posted]}=await client.query(`INSERT INTO hr_gov_ledger(entitlement_id,kind,amount,effective_date,event_key,reverses_id,source_reference,actor_id,reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[entitlementId,kind,decimal(value),effectiveDate,eventKey,reversesId,sourceReference,actor?.id??null,managementReason(reason)]);
  await audit(client,actor,'hr.gov.ledger.posted',posted.id,posted);return posted;

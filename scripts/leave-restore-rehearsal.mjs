@@ -1,5 +1,6 @@
-// A snapshot-consistent logical backup of ONLY ron-leave-review, restored to
-// a disposable container. The source database is never restored or truncated.
+// --local-review: snapshot-consistent backup of ONLY ron-leave-review.
+// --disposable-fixture: full API/files/keys recovery of an isolated synthetic source.
+// Neither mode restores, truncates or targets a production database.
 import {spawn,execFileSync} from 'node:child_process';
 import {randomBytes,createHash} from 'node:crypto';
 import {mkdirSync,writeFileSync,readFileSync,openSync,closeSync,chmodSync} from 'node:fs';
@@ -7,7 +8,12 @@ import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createInterface} from 'node:readline';
 import assert from 'node:assert/strict';
-if(process.argv[2]!=='--local-review')throw new Error('Use --local-review; this tool cannot target production.');
+if(process.argv[2]==='--disposable-fixture') {
+ if(process.argv.length!==3)throw new Error('Disposable recovery accepts no source or target arguments.');
+ await (await import('./leave-recovery-rehearsal.mjs')).runDisposableRecovery();
+ process.exit(0);
+}
+if(process.argv[2]!=='--local-review')throw new Error('Use --local-review or --disposable-fixture; this tool cannot target production.');
 const root=resolve(fileURLToPath(new URL('..',import.meta.url))),name=`ron-leave-restore-${randomBytes(5).toString('hex')}`;
 const output=resolve(root,'.leave-review',`restore-${Date.now()}`),dump=resolve(output,'database.dump');
 mkdirSync(output,{recursive:true,mode:0o700});chmodSync(output,0o700);

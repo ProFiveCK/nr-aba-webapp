@@ -1,5 +1,8 @@
 # Government Leave — Package 6 local review and pilot operations
 
+> Follow-up completed 7 October: the [current functional completion and walkthrough](GOVERNMENT-LEAVE-WALKTHROUGH-AND-COMPLETION-AUDIT-2026-10-07.md) supersedes the narrower capacity/recovery results and cohort restrictions below. Expanded local mixed-session capacity, full disposable application recovery and reviewed teacher/roster coverage are implemented; real pilot and production acceptance remain open.
+
+
 7 October 2026. Implemented locally on `codex/employee-account-foundation`; no production release, real staff import, notification send or automatic cohort activation.
 
 ## Walkthrough

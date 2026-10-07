@@ -36,7 +36,18 @@ export function caseFoundation(context,input){
   segments.push({date,charge,scheduled_hours:hours,policy_version_id:policy.id,calendar_id:calendar?.id||null,service_basis_id:service.basis.id,service_period_id:period.id,employment_category:period.employment_category,is_teacher:period.is_teacher===true,roster_id:rosterId,work_pattern_id:patternId,holiday:calendar?.holidays.some(h=>h.date===date)||false});
  }
  const facts=serviceFacts(context,input.start_date);
- return {engine_version:'gov-assisted-1',segments,scheduled_hours:segments.reduce((n,s)=>n+s.scheduled_hours,0),charge:'0.000000',allocations:[],policy_versions:context.policies.filter(p=>segments.some(s=>s.policy_version_id===p.id)),service_basis_id:facts.basis.id,snapshot_hash:fingerprint({segments,periods:context.periods,bases:context.bases,exclusions:context.exclusions,patterns:context.patterns,pattern_approvals:context.pattern_approvals,rosters:context.rosters,policies:context.policies,calendars:context.calendars})};
+ // Retain the records consumed by the dated decision. Unrelated later policy,
+ // roster and service additions must not force already reviewed cases to restart.
+ const used=(rows,key,segmentKey)=>rows.filter(row=>segments.some(segment=>segment[segmentKey]===row[key]));
+ const bases=used(context.bases,'id','service_basis_id'),historyStart=bases.reduce((date,basis)=>basis.continuity_start<date?basis.continuity_start:date,input.start_date);
+ const dependency={segments,
+  periods:context.periods.filter(p=>p.start_date<=input.end_date&&(!p.end_date||p.end_date>=historyStart)).map(p=>({...p,end_date:p.end_date&&p.end_date<input.end_date?p.end_date:input.end_date})),
+  bases,exclusions:context.exclusions.filter(x=>x.start_date<=input.end_date&&x.end_date>=historyStart).map(x=>({...x,end_date:x.end_date<input.end_date?x.end_date:input.end_date})),
+  patterns:used(context.patterns,'id','work_pattern_id'),pattern_approvals:used(context.pattern_approvals,'work_pattern_id','work_pattern_id'),rosters:used(context.rosters,'id','roster_id'),
+  policies:used(context.policies,'id','policy_version_id').map(({effective_from:_from,effective_to:_to,...policy})=>policy),
+  calendars:used(context.calendars,'id','calendar_id').map(({effective_from:_from,effective_to:_to,...calendar})=>({...calendar,holidays:calendar.holidays.filter(h=>h.date>=input.start_date&&h.date<=input.end_date)})),
+ };
+ return {engine_version:'gov-assisted-1',snapshot_projection_version:2,segments,scheduled_hours:segments.reduce((n,s)=>n+s.scheduled_hours,0),charge:'0.000000',allocations:[],policy_versions:dependency.policies,service_basis_id:facts.basis.id,snapshot_hash:fingerprint(dependency)};
 }
 export function validatePaySegments(input,segments){
  requireFact(Array.isArray(segments)&&segments.length>=1&&segments.length<=24,'Record one to 24 complete dated pay segments.');let cursor=input.start_date;
@@ -47,7 +58,7 @@ export function validatePaySegments(input,segments){
  }).map((s,i,array)=>{if(i===array.length-1)requireFact(cursor===isoDay(dayNumber(input.end_date)+1),'Pay segments must cover the final date.');return s;});
 }
 export function determineCase(context,input,data){
- const evaluation=caseFoundation(context,input),facts=data.facts||{};requireFact(facts&&typeof facts==='object'&&!Array.isArray(facts)&&JSON.stringify(facts).length<=12000,'Use a bounded factual determination.');
+ const evaluation=caseFoundation(context,input),facts=structuredClone(data.facts||{});requireFact(facts&&typeof facts==='object'&&!Array.isArray(facts)&&JSON.stringify(facts).length<=12000,'Use a bounded factual determination.');
  reference(data,'source_reference');reference(data,'evidence_reference');confirmed(facts,'eligibility_confirmed');
  const pay=validatePaySegments(input,data.pay_segments),count=dayNumber(input.end_date)-dayNumber(input.start_date)+1,service=serviceFacts(context,input.start_date),six=service.milestone(6);
  const allRate=rate=>requireFact(pay.every(s=>units(s.salary_percent)===units(rate)),`This case requires ${rate}% salary throughout.`);

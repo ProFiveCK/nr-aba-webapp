@@ -26,7 +26,7 @@ async function identities(client, employeeIds, selection={}) {
 export async function currentPayrollSnapshot(client,data,{preview=false}={}) {
   const requests=(await client.query(`SELECT r.id,r.employee_id,r.code,${requestDates},r.grant_snapshot,
     a.effect AS amendment,a.request_id AS amendment_request_id
-    FROM hr_gov_requests r LEFT JOIN hr_gov_case_effects a ON a.original_request_id=r.id
+    FROM hr_gov_requests r LEFT JOIN LATERAL (SELECT * FROM hr_gov_case_effects WHERE original_request_id=r.id ORDER BY version DESC LIMIT 1) a ON TRUE
     WHERE r.status='approved' AND r.start_date<=$2 AND r.end_date>=$1 ORDER BY r.id`,[data.period_start,data.period_end])).rows;
   const ids=[...new Set(requests.map(r=>r.employee_id))],people=await identities(client,ids,data.payroll_ids || {});
   const {lines,issues}=payrollLines(requests,people,data.period_start,data.period_end);

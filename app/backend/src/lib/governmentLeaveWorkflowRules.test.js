@@ -18,3 +18,14 @@ test('uncertified counter counts baseline and pending holds; adjacent certified 
  assert.match(medicalAssessment(c,config,{...input,start_date:'2026-11-09',end_date:'2026-11-09',medical_mode:'certificate'},result,[{start_date:'2026-11-06',end_date:'2026-11-06',uncertified:true,period_start:'2026-01-01'}]).issues.join(),/Adjacent/);
  assert.match(medicalAssessment(c,config,{...input,end_date:'2026-11-09'},result).issues.join(),/one calendar date/);
 });
+
+test('verified single-shift exception charges roster days while old approvals keep exactly one day',()=>{
+ const c=context();c.bases[0].schedule_mode='roster';c.rosters=[{day:'2026-11-06',paid_hours:'12',policy_days:'1.5'}];
+ const config={medical_rule:'single_verified_shift_nonadjacent_scheduled_days',medical_period_start:'2026-01-01',medical_history:[]},input={code:'medical',start_date:'2026-11-06',end_date:'2026-11-06',medical_mode:'exemption'},result={charge:'1.500000',allocations:[{entitlement_id:'medical'}],segments:[{policy_version_id:'policy'}]};
+ assert.deepEqual(medicalAssessment(c,config,input,result).issues,[]);
+ assert.match(medicalAssessment(c,{...config,medical_rule:'single_calendar_date_nonadjacent_scheduled_days'},input,result).issues.join(),/exactly one policy day/);
+ assert.match(medicalAssessment(c,config,input,{...result,charge:'1.000000'}).issues.join(),/verified roster shift/);
+ c.rosters=[];assert.match(medicalAssessment(c,config,input,result).issues.join(),/verified roster shift/);
+ c.rosters=[{day:'2026-11-06',paid_hours:'12',policy_days:'2.5'}];assert.match(medicalAssessment(c,config,input,{...result,charge:'2.500000'}).issues.join(),/verified roster shift/);
+ c.rosters=[{day:'2026-11-06',paid_hours:'12',policy_days:'1.5'}];const history=[1,2,3].map(n=>({start_date:`2026-0${n}-05`,end_date:`2026-0${n}-05`,uncertified:true,period_start:'2026-01-01'}));assert.match(medicalAssessment(c,config,input,result,history).issues.join(),/already committed/);
+});

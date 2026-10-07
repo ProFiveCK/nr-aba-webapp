@@ -2,7 +2,7 @@
 
 Date: 6 October 2026
 
-Status: Packages 1A–1E and Packages 2–6 have local feature implementations. Workflow acceptance and the full planned capacity/recovery gates are incomplete; production and real pilot acceptance remain open. The [current walkthrough and completion audit](GOVERNMENT-LEAVE-WALKTHROUGH-AND-COMPLETION-AUDIT-2026-10-07.md) records the remaining work and today's menu names. Do not interpret package implementation as complete rollout acceptance.
+Status updated 7 October: Packages 1A–1E and Packages 2–6 include the functional follow-up for policy replacement, draft recovery, personnel and benefit corrections, teacher/roster coverage, Government reporting and expanded local capacity/recovery rehearsals. Production and real pilot acceptance remain open; visual cleanup is deferred for the owner's walkthrough. The [current walkthrough and completion audit](GOVERNMENT-LEAVE-WALKTHROUGH-AND-COMPLETION-AUDIT-2026-10-07.md) records the current workflows, verification evidence, external acceptance items and today's menu names. Do not interpret package implementation as complete rollout acceptance.
 
 Build the interim portal in six reviewable packages, beginning with employee identity, access control, and calculation foundations. Automate common leave and provide an authorised case process for less common or disputed calculations. The portal will own leave for the expected six-to-twelve-month gap; live TechnologyOne Leave integration is deferred.
 

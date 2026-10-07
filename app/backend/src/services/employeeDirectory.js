@@ -1,3 +1,4 @@
+import {fingerprint} from '../lib/governmentLeaveRules.js';
 import { employeeScopeSql } from './hrAccess.js';
 import { withTransaction } from '../lib/transaction.js';
 import { badRequest, forbidden, notFound, ServiceError } from '../lib/serviceError.js';
@@ -75,7 +76,7 @@ export async function employeeProfile(pool, employeeId) {
     pool.query('SELECT * FROM hr_employee_service_periods WHERE employee_id = $1 ORDER BY start_date, id', [employeeId]),
     pool.query('SELECT * FROM hr_employee_account_links WHERE employee_id = $1 ORDER BY recorded_at DESC, id', [employeeId]),
   ]);
-  return { employee, external_ids: externalIds, service_periods: servicePeriods, account_links: accountLinks };
+  return { employee, external_ids: externalIds, service_periods: servicePeriods.map(p=>({...p,correction_hash:fingerprint(p)})), account_links: accountLinks };
 }
 
 export async function addEmployeeExternalId(pool, { employeeId, externalId, actor, reason }) {

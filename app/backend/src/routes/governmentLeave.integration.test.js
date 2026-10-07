@@ -36,6 +36,19 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
   await assert.rejects(pool.query("UPDATE hr_gov_policy_versions SET rules='{}' WHERE id=$1",[policy.id]),/immutable/);
   await assert.rejects(s.createPolicy(pool,{user:user(central),actor:central,data:{rules:{...DEFAULT_RULES,formula:'eval'},reason}}),e=>e.status===400);
  });
+ test('within-period replacement needs a signed independent revision and retains immutable original policy facts',async()=>{
+  const replacement=await s.createPolicy(pool,{user:user(central),actor:central,data:{label:'Signed policy replacement',effective_from:'2026-10-08',effective_to:'2027-12-31',rules:{...DEFAULT_RULES,recreation_annual_days:'26'},source_reference:'Corrected typed authority schedule',supersedes_policy_id:policy.id,authority_reference:'Signed Cabinet decision reference 2026/42',reason}});
+  await assert.rejects(s.publishPolicy(pool,{user:user(central),actor:central,id:replacement.id,reason,expected_revision:1}),/different central/);
+  await assert.rejects(s.publishPolicy(pool,{user:user(certifier),actor:certifier,id:replacement.id,reason,expected_revision:2}),/changed/);
+  await assert.rejects(s.publishPolicy(pool,{user:user(certifier),actor:certifier,id:replacement.id,reason}),/revision/);
+  await s.publishPolicy(pool,{user:user(certifier),actor:certifier,id:replacement.id,reason,expected_revision:1});
+  const context=await ctx();assert.equal(context.policies.find(p=>p.id===policy.id).effective_to,'2026-10-07');assert.equal(context.policies.find(p=>p.id===policy.id).original_effective_to,'2027-12-31');
+  assert.equal(context.policies.find(p=>p.id===replacement.id).effective_from,'2026-10-08');
+  const original=(await pool.query("SELECT to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_policy_versions WHERE id=$1",[policy.id])).rows[0];assert.equal(original.effective_to,'2027-12-31');
+  await assert.rejects(pool.query("UPDATE hr_gov_policy_transitions SET reason='changed' WHERE successor_id=$1",[replacement.id]),/immutable/);
+  const stale=await s.createPolicy(pool,{user:user(central),actor:central,data:{label:'Stale replacement',effective_from:'2026-11-01',effective_to:'2027-12-31',rules:DEFAULT_RULES,source_reference:'Signed stale policy review',supersedes_policy_id:policy.id,authority_reference:'Signed stale decision reference 2026/43',reason}});
+  await assert.rejects(s.publishPolicy(pool,{user:user(certifier),actor:certifier,id:stale.id,reason,expected_revision:1}),/already been replaced/);
+ });
  const draftData=()=>({label:'Government review draft',effective_from:'2028-01-01',effective_to:'2028-12-31',rules:DEFAULT_RULES,source_reference:'HR corrected policy reference',reason});
  test('central HR can edit draft dates and rules with a before/after audit; protected publication and ownership fields are ignored',async()=>{
   const created=await call('/api/hr/government/policies',draftData());assert.equal(created.status,201);assert.equal(created.body.revision,1);

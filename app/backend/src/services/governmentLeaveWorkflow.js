@@ -1,3 +1,5 @@
+import {assertDraftUsable} from './governmentLeaveDrafts.js';
+import {serviceCorrectionIssue} from './employeeServiceCorrections.js';
 import {assertCutoverResolved,legacyTransferFor} from './governmentLeaveCutover.js';
 import {randomUUID} from 'node:crypto';
 import {withTransaction} from '../lib/transaction.js';
@@ -7,7 +9,7 @@ import {reviewerSummary} from './authService.js';
 import {isCentralHr,canAccessEmployee,activeScopeSql} from './hrAccess.js';
 import * as ledger from './governmentLeave.js';
 import {COMMON_CODES,calculateEvaluation,fingerprint,dayNumber,serviceFacts,units,ENGINE_VERSION} from '../lib/governmentLeaveRules.js';
-import {medicalAssessment} from '../lib/governmentLeaveWorkflowRules.js';
+import {medicalAssessment,singleMedicalShiftCharge} from '../lib/governmentLeaveWorkflowRules.js';
 import * as cases from './governmentLeaveCases.js';
 import {isCase} from '../lib/governmentLeaveCaseRules.js';
 import {generateGovernmentLeavePdf} from './governmentLeavePdf.js';
@@ -34,7 +36,7 @@ export async function configurationFor(client,employeeId) {
   const {rows:[config]}=await client.query("SELECT *,to_char(medical_period_start,'YYYY-MM-DD') AS medical_period_start,to_char(medical_as_of,'YYYY-MM-DD') AS medical_as_of FROM hr_gov_workflow_configs WHERE employee_id=$1 AND status='published' ORDER BY approved_at DESC,id DESC LIMIT 1",[employeeId]);
   return config||null;
 }
-function cleanHistory(history,context) {
+function cleanHistory(history,context,medicalRule) {
   const medical=context.entitlements.find(e=>e.code==='medical'&&e.period_start<=today()&&e.period_end>=today());
   if(!Array.isArray(history)||history.length>50)fail('Review at most 50 historical medical absences.',400);
   return history.map(item=>{
@@ -43,10 +45,10 @@ function cleanHistory(history,context) {
     if(item.uncertified&&item.start_date!==item.end_date)fail('Historical exemptions must be single calendar dates.',400);
     // Read-only historical day calculation. The cutover opening deliberately
     // cannot be spent before its as-of date; ignore only that allocation issue.
-    const result=calculateEvaluation(context,{code:'medical',start_date:item.start_date,end_date:item.end_date,notice_date:today(),certificate_available:!item.uncertified});
+    const result=calculateEvaluation(context,{code:'medical',start_date:item.start_date,end_date:item.end_date,notice_date:today(),certificate_available:!item.uncertified,verified_single_shift_exemption:medicalRule==='single_verified_shift_nonadjacent_scheduled_days'&&item.uncertified});
     const issues=result.issues.filter(issue=>issue!=='Certified opening entitlement is missing for a charged date; forecast accrual is not spendable.');
     if(issues.length)fail(`Medical baseline needs verified historical calculation: ${issues.join(' ')}`);
-    if(item.uncertified&&result.charge!=='1.000000')fail('Historical exemptions must charge exactly one policy day.',400);
+    if(item.uncertified&&!(medicalRule==='single_verified_shift_nonadjacent_scheduled_days'?singleMedicalShiftCharge(context,item.start_date,result.charge):units(result.charge)===1000000n))fail('Historical exemptions must match the independently approved one-day or verified-shift charge.',400);
     return {start_date:item.start_date,end_date:item.end_date,uncertified:item.uncertified,period_start:medical.period_start,charge:result.charge,calculation:{engine_version:result.engine_version,snapshot_hash:result.snapshot_hash,charge:result.charge,segments:result.segments,policy_versions:result.policy_versions,service_bases:result.service_bases}};
   });
 }
@@ -73,14 +75,14 @@ export async function prepareConfiguration(pool,{user,actor,employeeId,data}) {
     const context=await ledger.loadContext(client,employeeId);
     if(!Array.isArray(data.enabled_codes)||new Set(data.enabled_codes).size!==data.enabled_codes.length||data.enabled_codes.some(c=>!COMMON_CODES.includes(c)))fail('Select distinct common leave codes.',400);
     if(data.enabled_codes.length){await assertCutoverResolved(client,employeeId,{activation:true});readyConfiguration(context,data.enabled_codes);}
-    const history=cleanHistory(data.medical_history||[],context),medical=context.entitlements.find(e=>e.code==='medical'&&e.period_start<=today()&&e.period_end>=today());
+    const history=cleanHistory(data.medical_history||[],context,data.medical_rule),medical=context.entitlements.find(e=>e.code==='medical'&&e.period_start<=today()&&e.period_end>=today());
     for(const code of data.enabled_codes.filter(code=>['medical','special'].includes(code))) {
       const account=context.entitlements.find(e=>e.code===code&&e.period_start<=today()&&e.period_end>=today());
       const policy=context.policies.find(p=>p.effective_from<=today()&&p.effective_to>=today()),issue=await annualPoolIssue(client,account,code==='medical'?history:[],policy);
       if(issue)fail(issue);
     }
     if(history.filter(h=>h.uncertified).length>3)fail('Resolve medical history exceeding three uncertified exemptions.',400);
-    if(data.medical_rule!=='single_calendar_date_nonadjacent_scheduled_days')fail('Explicitly approve the supported medical day and adjacency definition.',400);
+    if(!['single_calendar_date_nonadjacent_scheduled_days','single_verified_shift_nonadjacent_scheduled_days'].includes(data.medical_rule))fail('Explicitly approve the supported medical day and adjacency definition.',400);
     for(let i=0;i<history.length;i++)for(let j=i+1;j<history.length;j++)if(history[i].start_date<=history[j].end_date&&history[i].end_date>=history[j].start_date)fail('Resolve overlapping historical medical records.',400);
     const {rows:[row]}=await client.query(`INSERT INTO hr_gov_workflow_configs(employee_id,enabled_codes,medical_rule,medical_history,medical_period_start,medical_as_of,source_reference,legacy_resolution_reference,snapshot_hash,prepared_by,reason)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[employeeId,data.enabled_codes,data.medical_rule,JSON.stringify(history),medical?.period_start||null,medical?.as_of||null,data.source_reference,data.legacy_resolution_reference,fingerprint(context),actor.id,reasonText(data.reason)]);
@@ -92,7 +94,7 @@ export async function publishConfiguration(pool,{user,actor,id,reason}) {
   return withTransaction(pool,async client=>{
     await assertCentral(client,user);const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_workflow_configs WHERE id=$1',[id]);if(!ref)fail('Configuration not found.',404);
     await ledger.lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT * FROM hr_gov_workflow_configs WHERE id=$1 FOR UPDATE',[id]);
-    if(row.status==='published')return row;if(row.prepared_by===actor.id)fail('A different central HR officer must approve activation.',403);
+    if(row.status==='published')return row;await assertDraftUsable(client,'configuration',row.id);if(row.prepared_by===actor.id)fail('A different central HR officer must approve activation.',403);
     const context=await ledger.loadContext(client,row.employee_id);if(fingerprint(context)!==row.snapshot_hash)fail('The employee foundations changed. Prepare a fresh configuration.');
     if(row.enabled_codes.length){await assertCutoverResolved(client,row.employee_id,{activation:true});readyConfiguration(context,row.enabled_codes);}
     const {rows:[after]}=await client.query("UPDATE hr_gov_workflow_configs SET status='published',approved_by=$2,approved_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id]);
@@ -158,8 +160,9 @@ async function medicalHistory(client,employeeId,exclude=null) {
 }
 async function assess(client,employeeId,input,exclude=null,retainedConfig=null,transferRequestId=null) {
   const config=retainedConfig||await configurationFor(client,employeeId);
-  const evaluation=await ledger.evaluate(client,employeeId,{...input,notice_date:input.notice_date||today(),certificate_available:input.medical_mode==='certificate',justification_available:!!input.reason});
+  const evaluation=await ledger.evaluate(client,employeeId,{...input,notice_date:input.notice_date||today(),certificate_available:input.medical_mode==='certificate',verified_single_shift_exemption:config?.medical_rule==='single_verified_shift_nonadjacent_scheduled_days'&&input.medical_mode==='exemption',justification_available:!!input.reason});
   const context=await ledger.loadContext(client,employeeId);
+  const correctionIssue=await serviceCorrectionIssue(client,employeeId,config?.recorded_at);if(correctionIssue)evaluation.issues.push(correctionIssue);
   if(!config||!config.enabled_codes.includes(input.code))evaluation.issues.push('This leave type is not activated for the employee. HR must approve the reviewed configuration.');
   if(config&&input.code==='medical') {
     const medical=medicalAssessment(context,config,input,evaluation,await medicalHistory(client,employeeId,exclude));
@@ -235,15 +238,17 @@ export async function requestView(client,user,id) {
   const decisions=(await client.query('SELECT * FROM hr_gov_decisions WHERE request_id=$1 ORDER BY decided_at',[id])).rows;
   const employee=(await client.query('SELECT reviewer_id,department_id,division_id,status FROM hr_employees WHERE id=$1',[request.employee_id])).rows[0];
   const placementChanged=employee.department_id!==request.department_id||employee.division_id!==request.division_id;
+  const correctionIssue=await serviceCorrectionIssue(client,request.employee_id,request.submitted_at);
   for(const stage of stages) {
     stage.issue=await bindingIssue(client,request,stage);
+    if(request.status==='pending'&&correctionIssue)stage.issue=correctionIssue;
     if(placementChanged)stage.issue='Employee placement changed. HR must reconcile or cancel/resubmit; the submitted route is retained.';
     stage.can_decide=request.status==='pending'&&stage.ordinal===request.stage_index&&!stage.issue&&stage.binding?.reviewer_id===user.id&&(employee.status==='active'||request.application_snapshot.separation_case===true);
     if(stage.decision&&privateAccess)stage.decision=decisions.find(d=>d.stage_id===stage.id);
   }
   const documents=privateAccess?(await client.query('SELECT id,file_name,content_type,byte_size,sha256 FROM hr_gov_request_documents WHERE request_id=$1',[id])).rows:[];
   const ack=(await client.query('SELECT reference,recorded_at FROM hr_gov_salary_acknowledgements WHERE request_id=$1',[id])).rows[0]||null;
-  const caseDetails=await cases.caseView(client,user,request,privateAccess),amendment=(await client.query('SELECT request_id,effect FROM hr_gov_case_effects WHERE original_request_id=$1',[id])).rows[0]||null;
+  const caseDetails=await cases.caseView(client,user,request,privateAccess),amendment=(await client.query('SELECT request_id,effect FROM hr_gov_case_effects WHERE original_request_id=$1 ORDER BY version DESC LIMIT 1',[id])).rows[0]||null;
   return {...caseDetails,amendment:amendment?{request_id:amendment.request_id,action:amendment.effect.action,effective_end:amendment.effect.effective_end}:null,assisted_entry:!!request.application_snapshot.assisted_by,can_continue:request.status==='pending'&&isCentralHr(user),id:request.id,employee_id:request.employee_id,employee_name:request.application_snapshot.employee.name,code:request.code,start_date:request.start_date,end_date:request.end_date,charge:request.charge,status:request.status,submitted_at:request.submitted_at,completed_at:request.completed_at,stage_index:request.stage_index,stages,reason:privateAccess?request.reason:null,documents,medical_mode:request.medical_mode,private_access:privateAccess,can_cancel:request.status==='pending'&&(employee.reviewer_id===user.id||isCentralHr(user)),can_pdf:request.status==='approved'&&privateAccess,salary_acknowledgement:ack,can_ack:request.status==='approved'&&isCentralHr(user)&&!ack};
 }
 async function lockedRequest(client,id) {
@@ -282,6 +287,7 @@ async function verifyRetainedRequest(client,request,employee) {
 export async function decideRequest(pool,{user,actor,id,data}) {
   const note=reasonText(data.note),payloadHash=fingerprint({...data,note});
   return withTransaction(pool,async client=>{
+    await client.query("SELECT pg_advisory_xact_lock_shared(hashtext('hr-gov-policies'))");
     await client.query("SELECT pg_advisory_xact_lock_shared(hashtext('hr-approval-assignments'))");const {request,employee}=await lockedRequest(client,id);
     const state=await accountState(client,user.id,request);if(!state)fail('Officer account is inactive.',403);
     const {rows:[old]}=await client.query('SELECT * FROM hr_gov_decisions WHERE event_key=$1',[data.event_key]);
@@ -291,7 +297,7 @@ export async function decideRequest(pool,{user,actor,id,data}) {
     if(!stage||stage.id!==data.stage_id||stage.binding?.id!==data.binding_id)fail('The current approval stage changed. Reload the request.');
     if(stage.binding.reviewer_id!==user.id)fail('Only the assigned officer can decide this stage.',403);
     const issue=await bindingIssue(client,request,stage);if(issue)fail(issue,403);
-    if(data.decision==='approved'){if(isCase(request.code))await cases.verifyCase(client,request,employee,{hrActor:stage.level==='hr_verifier'?user.id:null,final:stage.level==='chief_secretary',discretionConfirmed:data.discretion_confirmed===true});else await verifyRetainedRequest(client,request,employee);}
+    if(data.decision==='approved'){const correctionIssue=await serviceCorrectionIssue(client,request.employee_id,request.submitted_at);if(correctionIssue)fail(correctionIssue);if(isCase(request.code))await cases.verifyCase(client,request,employee,{hrActor:stage.level==='hr_verifier'?user.id:null,final:stage.level==='chief_secretary',discretionConfirmed:data.discretion_confirmed===true});else await verifyRetainedRequest(client,request,employee);}
     if(stage.level==='relevant_secretary'&&request.code==='recreation'&&data.decision==='rejected'&&(!data.operational_refusal||!data.alternative_date||!data.consultation_reference))fail('Secretary refusal requires operational reasons, employee consultation and an alternative date.',400);
     let verification=null;
     if(stage.level==='hr_verifier'&&data.decision==='approved') {

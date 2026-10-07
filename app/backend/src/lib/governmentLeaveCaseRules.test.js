@@ -30,3 +30,17 @@ test('assisted foundation stops uncovered calendar, unknown category and service
  const i=input('official');const c=context();c.calendars=[];assert.throws(()=>caseFoundation(c,i),/holiday coverage/);const unknown=context();unknown.periods[0].employment_category='unknown';assert.throws(()=>caseFoundation(unknown,i),/legal employment category/);
  const c1=context(),before=caseFoundation(c1,i);c1.exclusions.push({kind:'other_excluded',start_date:'2026-01-01',end_date:'2026-01-03'});assert.notEqual(caseFoundation(c1,i).snapshot_hash,before.snapshot_hash);
 });
+
+test('dated case dependencies ignore unrelated future publications but retain consumed policy, schedule and service',()=>{
+ const c=context(),i=input('official','2026-11-02',3),before=caseFoundation(c,i);
+ c.policies.push({...c.policies[0],id:'future',effective_from:'2028-01-01',effective_to:'2029-12-31'});
+ c.calendars.push({...c.calendars[0],id:'future-calendar',effective_from:'2028-01-01',effective_to:'2029-12-31'});
+ c.rosters.push({id:'future-roster',day:'2028-01-01',paid_hours:8,policy_days:'1'});
+ c.patterns.push({id:'unused',working_weekdays:[1],hours_per_day:8});
+ c.periods.push({...c.periods[0],id:'future-period',start_date:'2028-01-01'});
+ assert.equal(caseFoundation(c,i).snapshot_hash,before.snapshot_hash);
+ c.policies[0]={...c.policies[0],rules:{...DEFAULT_RULES,special_annual_days:'4'}};
+ assert.notEqual(caseFoundation(c,i).snapshot_hash,before.snapshot_hash);
+ c.policies[0].rules=DEFAULT_RULES;c.patterns[0].hours_per_day=8;
+ assert.notEqual(caseFoundation(c,i).snapshot_hash,before.snapshot_hash);
+});

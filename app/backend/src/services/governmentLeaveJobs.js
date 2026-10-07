@@ -1,3 +1,6 @@
+import {serviceCorrectionIssue} from './employeeServiceCorrections.js';
+import {assertDraftUsable} from './governmentLeaveDrafts.js';
+import {transitionFortnightAmount} from '../lib/governmentLeaveAccrual.js';
 import {assertCutoverResolved} from './governmentLeaveCutover.js';
 import {LOCK_KEYS,withAdvisoryLock} from '../lib/advisoryLock.js';
 import {withTransaction} from '../lib/transaction.js';
@@ -6,7 +9,6 @@ import {recordAudit} from './auditService.js';
 import * as ledger from './governmentLeave.js';
 import {assertCentral,configurationFor,today} from './governmentLeaveWorkflow.js';
 import {fingerprint,dayNumber,isoDay,serviceFacts,units,decimal,ENGINE_VERSION} from '../lib/governmentLeaveRules.js';
-import {fortnightAmount} from '../lib/governmentLeaveWorkflowRules.js';
 const fail=message=>{throw new ServiceError(409,message);};
 const audit=(client,actor,id,after)=>recordAudit({client,actor,action:'hr.gov.jobs.posted',entityType:'hr_gov_job_plan',entityId:id,after});
 export async function prepareJobPlan(pool,{user,actor,employeeId,data}) {
@@ -33,7 +35,7 @@ export async function approveJobPlan(pool,{user,actor,id,reason}) {
   return withTransaction(pool,async client=>{
     await assertCentral(client,user);const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_job_plans WHERE id=$1',[id]);if(!ref)fail('Job plan not found.');
     await ledger.lockEmployee(client,ref.employee_id);const {rows:[plan]}=await client.query('SELECT * FROM hr_gov_job_plans WHERE id=$1 FOR UPDATE',[id]);
-    if(plan.status==='published')return plan;if(plan.prepared_by===actor.id)fail('A different central HR officer must approve the job plan.');
+    if(plan.status==='published')return plan;await assertDraftUsable(client,'job',plan.id);if(plan.prepared_by===actor.id)fail('A different central HR officer must approve the job plan.');
     if(fingerprint(await ledger.loadContext(client,plan.employee_id))!==plan.snapshot_hash)fail('Foundations changed after preparation. Prepare a fresh job plan.');
     const {rows:[after]}=await client.query("UPDATE hr_gov_job_plans SET status='published',approved_by=$2,approved_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id]);
     await recordAudit({client,actor,action:'hr.gov.jobs.approved',entityType:'hr_gov_job_plan',entityId:id,after:{...after,approval_reason:reason}});return after;
@@ -75,6 +77,7 @@ export async function runEmployeeJobs(pool,{user,actor,employeeId,asOf=today(),c
 async function executeEmployeeJobs(pool,{user,actor,employeeId,asOf,clockDate,origin}) {
   if(asOf>clockDate)fail('Jobs cannot post future entitlement.');
   return withTransaction(pool,async client=>{
+    await client.query("SELECT pg_advisory_xact_lock_shared(hashtext('hr-gov-policies'))");
     if(origin==='manual')await assertCentral(client,user);
     await ledger.lockEmployee(client,employeeId);
     await assertCutoverResolved(client,employeeId);
@@ -83,6 +86,7 @@ async function executeEmployeeJobs(pool,{user,actor,employeeId,asOf,clockDate,or
     const {rows:plans}=await client.query("SELECT DISTINCT ON(code) *,to_char(first_post_end,'YYYY-MM-DD') AS first_post_end FROM hr_gov_job_plans WHERE employee_id=$1 AND status='published' ORDER BY code,approved_at DESC,id DESC",[employeeId]);
     const results=[];
     for(const plan of plans) {
+      const correctionIssue=await serviceCorrectionIssue(client,employeeId,plan.recorded_at);if(correctionIssue)fail(correctionIssue);
       if(!config?.enabled_codes.includes(plan.code)){results.push({code:plan.code,paused:true});continue;}
       const facts=serviceFacts(context,asOf);if(facts.issues.length||facts.basis.id!==plan.service_basis_id)fail('The certified service basis changed. Review the job plan.');
       // Accruals in an old period must post before its carry-forward. Process payroll dates chronologically.
@@ -93,29 +97,28 @@ async function executeEmployeeJobs(pool,{user,actor,employeeId,asOf,clockDate,or
           const endDate=isoDay(end);
           if((await client.query("SELECT 1 FROM hr_gov_job_posts WHERE employee_id=$1 AND code='recreation' AND event_date=$2 AND event_kind='accrual'",[employeeId,endDate])).rowCount)continue;
           if(posts.length>=52){limited=true;break;}
-          let credited=0,quantum=null,policyId=null,targetId=null;
+          let credited=0,targetId=null;const policySegments=new Map();
           for(let n=end-13;n<=end;n++) {
             const date=isoDay(n),dateFacts=serviceFacts(context,date),period=context.periods.find(p=>p.start_date<=date&&(!p.end_date||p.end_date>=date));
             const firstAccount=context.entitlements.filter(e=>e.code==='recreation').at(0);
             if(date<firstAccount.as_of)continue;
             const policy=governingPolicy(context,date);
-            if(policyId&&policyId!==policy.id)fail('A payroll fortnight crosses policy versions. Approve a reviewed transition plan.');
-            policyId=policy.id;quantum=policy.rules.recreation_annual_days;
+            if(!policySegments.has(policy.id))policySegments.set(policy.id,{policy_version_id:policy.id,annual_days:policy.rules.recreation_annual_days,credited_calendar_days:0});
             if(dateFacts.issues.length||dateFacts.basis.id!==plan.service_basis_id||!period||period.counts_for_service==null)fail('Payroll service/credit history is unresolved.');
             if(!['permanent','contract','temporary'].includes(period.employment_category)||period.is_teacher)fail('Appointment terms need assisted accrual handling.');
             if(period.counts_for_service===false||context.exclusions.some(x=>x.start_date<=date&&x.end_date>=date))continue;
             if(period.employment_category==='temporary'&&plan.temporary_start==='qualification'&&date<(dateFacts.milestone(policy.rules.temporary_recreation_months)||'9999-12-31'))continue;
-            credited++;
+            credited++;policySegments.get(policy.id).credited_calendar_days++;
           }
-          if(!quantum)fail('The first payroll period does not reach the cutover.');
+          if(!policySegments.size)fail('The first payroll period does not reach the cutover.');
           const renewed=await renewTo(client,context,plan,endDate,actor);context=renewed.context;
           const account=context.entitlements.find(e=>e.code==='recreation'&&e.period_start<=endDate&&e.period_end>=endDate);targetId=account?.id;
           if(!targetId)fail('Payroll period has no governing entitlement.');
-          const cap=units(governingPolicy(context,endDate).rules.recreation_cap_days),requested=units(fortnightAmount(quantum,index,credited)),room=cap-units(account.balance);
+          const cap=units(governingPolicy(context,endDate).rules.recreation_cap_days),requested=units(transitionFortnightAmount([...policySegments.values()],index)),room=cap-units(account.balance);
           const amount=decimal(room<=0n?0n:requested>room?room:requested),capped=room<=requested;
           if(units(amount)>0n)await ledger.postMovement(client,{entitlementId:targetId,kind:'accrual',amount,effectiveDate:endDate,eventKey:`payroll:${employeeId}:${endDate}`,sourceReference:`approved-plan:${plan.id}`,actor,reason:'Approved payroll-cycle recreation accrual with calendar-day proration'});
           await client.query("INSERT INTO hr_gov_job_posts(employee_id,code,event_date,event_kind,plan_id,amount,capped) VALUES($1,'recreation',$2,'accrual',$3,$4,$5)",[employeeId,endDate,plan.id,amount,capped]);
-          posts.push({date:endDate,amount,credited_calendar_days:credited,capped,renewals:renewed.renewals});context=await ledger.loadContext(client,employeeId);
+          posts.push({date:endDate,amount,credited_calendar_days:credited,policy_segments:[...policySegments.values()],capped,renewals:renewed.renewals});context=await ledger.loadContext(client,employeeId);
         }
       }
       // With no further payroll catch-up pending, renew an anniversary that falls between payroll dates.

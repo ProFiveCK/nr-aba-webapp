@@ -1,0 +1,16 @@
+import express from 'express';
+import {pool} from '../db.js';
+import {body,param,handleValidation} from '../middleware/validation.js';
+import {requirePermission} from '../services/authService.js';
+import {PERMISSIONS} from '../config.js';
+import {EMPLOYMENT_CATEGORIES} from '../services/employeeDirectory.js';
+import {dayNumber} from '../lib/governmentLeaveRules.js';
+import * as service from '../services/employeeServiceCorrections.js';
+const router=express.Router();router.use(requirePermission(PERMISSIONS.HR_ADMIN));
+const reason=body('reason').isString().trim().isLength({min:10,max:1000}),id=param('id').isUUID();
+const actor=req=>({id:req.user.id,email:req.user.email,ip:req.ip});
+router.get('/employees/:id', [id],async(req,res)=>{if(!handleValidation(req,res))return;res.json((await pool.query('SELECT * FROM hr_employee_service_corrections WHERE employee_id=$1 ORDER BY recorded_at DESC,id DESC LIMIT 100',[req.params.id])).rows);});
+router.post('/employees/:id/periods/:periodId',[id,param('periodId').isUUID(),reason,body('expected_hash').isString().isLength({min:64,max:64}),body('source_reference').isString().trim().isLength({min:5,max:500}),body('start_date').custom(v=>{dayNumber(v);return true;}),body('end_date').optional({nullable:true,checkFalsy:true}).custom(v=>{dayNumber(v);return true;}),body('employment_category').isIn(EMPLOYMENT_CATEGORIES),body('is_teacher').isBoolean(),body('is_intern').isBoolean(),body('counts_for_service').exists({values:'undefined'}),body('counts_for_service').optional({nullable:true}).isBoolean(),body('work_pattern_id').optional({nullable:true}).isUUID(),body('appointment_reference').optional({nullable:true}).isString().isLength({max:200})],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await service.prepareServiceCorrection(pool,{user:req.user,actor:actor(req),employeeId:req.params.id,periodId:req.params.periodId,data:req.body}));});
+router.post('/:id/approve',[id,reason],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await service.approveServiceCorrection(pool,{user:req.user,actor:actor(req),id:req.params.id,reason:req.body.reason}));});
+router.post('/:id/lifecycle',[id,reason,body('action').isIn(['discard','restore'])],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await service.discardServiceCorrection(pool,{user:req.user,actor:actor(req),id:req.params.id,reason:req.body.reason,action:req.body.action}));});
+export default router;

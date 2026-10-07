@@ -1,3 +1,5 @@
+import {initGovernmentLeaveDraftSchema} from './governmentLeaveDrafts.js';
+import {initEmployeeServiceCorrectionSchema} from './employeeServiceCorrections.js';
 import {initGovernmentLeaveRolloutSchema} from './governmentLeaveRollout.js';
 import {initGovernmentLeavePayrollSchema} from './governmentLeavePayrollSchema.js';
 import {initGovernmentLeaveWorkflowSchema} from './governmentLeaveWorkflowSchema.js';
@@ -16,6 +18,16 @@ export async function initGovernmentLeaveSchema(client) {
     ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
     ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS deleted_by UUID REFERENCES reviewers(id);
     ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS deletion_reason TEXT;
+    ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS supersedes_policy_id UUID REFERENCES hr_gov_policy_versions(id);
+    ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS authority_reference TEXT;
+    ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS last_prepared_by UUID REFERENCES reviewers(id);
+    CREATE TABLE IF NOT EXISTS hr_gov_policy_transitions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(), predecessor_id UUID NOT NULL UNIQUE REFERENCES hr_gov_policy_versions(id),
+      successor_id UUID NOT NULL UNIQUE REFERENCES hr_gov_policy_versions(id), effective_from DATE NOT NULL,
+      authority_reference TEXT NOT NULL, prepared_by UUID NOT NULL REFERENCES reviewers(id),
+      approved_by UUID NOT NULL REFERENCES reviewers(id), reason TEXT NOT NULL, recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK(predecessor_id<>successor_id), CHECK(prepared_by<>approved_by)
+    );
     CREATE INDEX IF NOT EXISTS idx_hr_gov_policy_dates ON hr_gov_policy_versions(effective_from,effective_to) WHERE status='published';
     CREATE TABLE IF NOT EXISTS hr_gov_calendars (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), label TEXT NOT NULL, effective_from DATE NOT NULL,
@@ -133,6 +145,8 @@ export async function initGovernmentLeaveSchema(client) {
     $$;
     DROP TRIGGER IF EXISTS hr_gov_request_immutable ON hr_gov_reservation_requests;
     CREATE TRIGGER hr_gov_request_immutable BEFORE UPDATE OR DELETE ON hr_gov_reservation_requests FOR EACH ROW EXECUTE FUNCTION hr_gov_request_immutable();
+    DROP TRIGGER IF EXISTS hr_gov_policy_transition_immutable ON hr_gov_policy_transitions;
+    CREATE TRIGGER hr_gov_policy_transition_immutable BEFORE UPDATE OR DELETE ON hr_gov_policy_transitions FOR EACH ROW EXECUTE FUNCTION hr_gov_immutable();
     DROP TRIGGER IF EXISTS hr_gov_policy_immutable ON hr_gov_policy_versions;
     CREATE TRIGGER hr_gov_policy_immutable BEFORE UPDATE OR DELETE ON hr_gov_policy_versions FOR EACH ROW EXECUTE FUNCTION hr_gov_published_policy_immutable();
     DROP TRIGGER IF EXISTS hr_gov_ledger_immutable ON hr_gov_ledger;
@@ -141,6 +155,8 @@ export async function initGovernmentLeaveSchema(client) {
     CREATE TRIGGER hr_gov_calendar_immutable BEFORE UPDATE OR DELETE ON hr_gov_calendars FOR EACH ROW EXECUTE FUNCTION hr_gov_immutable();
   `);
   await initGovernmentLeaveWorkflowSchema(client);
+  await initGovernmentLeaveDraftSchema(client);
+  await initEmployeeServiceCorrectionSchema(client);
   await initGovernmentLeavePayrollSchema(client);
   await initGovernmentLeaveRolloutSchema(client);
   for(const table of ['hr_gov_service_bases','hr_gov_service_exclusions','hr_gov_exclusion_withdrawals','hr_gov_roster_days','hr_gov_pattern_approvals','hr_gov_entitlements','hr_gov_reservations','hr_gov_reservation_events']) {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiClient } from '../../lib/api';
 import { todayIsoDate } from '../../lib/date';
 import { Button, Pager } from '../../components/Ui';
+import { StatutoryOffices } from './StatutoryOffices';
 import { OrgUnits } from './OrgUnits';
 import { ActionDialog, DirectoryPicker, Field, inputClass } from './ManagementFields';
 import { value } from './managementForm';
@@ -20,7 +21,7 @@ export function OrganisationManagement({ departments, patterns, onChanged }: { d
         <OrgUnits onChanged={reloadReferences} />
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         <section className="app-panel space-y-4 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-semibold">Enterprise leave approvers</h3><p className="mt-1 text-sm text-gray-600">Divisional approver → Head of Department → Chief Secretary. Assign offices with effective dates and retain past appointments.</p></div><Button onClick={() => setAdding(true)}>Assign officeholder</Button></div>
-            <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">An office assignment needs an active employee, verified login and an explicit leave approval grant. Assigning an office does not grant account permissions. The employee route preview checks these three offices. Additional HR, Secretary and Minister offices are configured under Employees → Government applications & jobs. Government submissions require independent activation for each employee.</p>
+            <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">An office assignment needs an active employee, verified login and an explicit leave approval grant. Assigning an office does not grant account permissions. The employee route preview checks these three offices. Additional HR, Secretary and Minister offices are configured below. Government submissions require independent activation for each employee.</p>
             {!list.assignments.length && <p className="text-sm text-gray-500">No officeholders assigned yet.</p>}
             <div className="space-y-2">{list.assignments.map((assignment) => {
                 const ready = assignment.employee_status === 'active' && assignment.account_status === 'active' && assignment.has_approval_grant;
@@ -29,6 +30,7 @@ export function OrganisationManagement({ departments, patterns, onChanged }: { d
             })}</div>
             <Pager page={page} pageCount={Math.ceil(list.total/list.page_size)} total={list.total} pageSize={list.page_size} setPage={setPage} />
         </section>
+        <StatutoryOffices departments={departments}/>
         <section className="app-panel space-y-3 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-lg font-semibold">Approved work patterns</h3><Button onClick={() => setAddingPattern(true)}>Add work pattern</Button></div><p className="text-sm text-gray-600">Record verified weekly patterns for service review. Shift and leave charging still need configuration. Create a new pattern when hours change to preserve historical references.</p>
             {!patterns.length && <p className="text-sm text-gray-500">No patterns recorded.</p>}
             {patterns.map((pattern) => <div key={pattern.id} className="rounded-lg bg-gray-50 p-3"><p className="font-medium">{pattern.name}</p><p className="text-sm text-gray-600">{pattern.working_weekdays.map((day) => WEEKDAYS[day - 1]).join(', ')} · {pattern.hours_per_day ? `${pattern.hours_per_day} hours/day` : 'Hours unverified'}</p></div>)}

@@ -1,3 +1,7 @@
+import {decorateDrafts} from '../services/governmentLeaveDrafts.js';
+import governmentLeaveReportingRouter from './governmentLeaveReporting.js';
+import governmentLeaveDraftsRouter from './governmentLeaveDrafts.js';
+import {resolvedPublishedPoliciesSql} from '../services/governmentLeavePolicyTransitions.js';
 import governmentLeaveRolloutRouter from './governmentLeaveRollout.js';
 import governmentLeavePayrollRouter from './governmentLeavePayroll.js';
 import governmentLeaveWorkflowRouter from './governmentLeaveWorkflow.js';
@@ -11,6 +15,8 @@ import {CODES,COMMON_CODES,DEFAULT_RULES,SOURCE,dayNumber,serviceFacts} from '..
 import * as service from '../services/governmentLeave.js';
 const router=express.Router(),central=requirePermission(PERMISSIONS.HR_ADMIN),access=requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_STAFF_MANAGE,PERMISSIONS.HR_BALANCE_MANAGE,PERMISSIONS.HR_LEAVE_APPROVE);
 router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
+router.use('/report',governmentLeaveReportingRouter);
+router.use('/drafts',governmentLeaveDraftsRouter);
 router.use('/workflow',governmentLeaveWorkflowRouter);
 router.use('/payroll',governmentLeavePayrollRouter);
 router.use('/rollout',governmentLeaveRolloutRouter);
@@ -20,11 +26,12 @@ const actor=req=>({id:req.user.id,email:req.user.email,ip:req.ip});
 const data=req=>({user:req.user,actor:actor(req),data:req.body,employeeId:req.params.id});
 router.get('/configuration',central,async(_req,res)=>{
  const [policies,calendars,patterns,deletedPolicies]=await Promise.all([pool.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_policy_versions WHERE deleted_at IS NULL ORDER BY recorded_at DESC LIMIT 100"),pool.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_calendars ORDER BY recorded_at DESC LIMIT 100"),pool.query('SELECT p.*,a.id AS approval_id,a.source_reference FROM hr_work_patterns p LEFT JOIN hr_gov_pattern_approvals a ON a.work_pattern_id=p.id ORDER BY p.name LIMIT 100'),pool.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_policy_versions WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 100")]);
- res.json({codes:CODES,defaults:DEFAULT_RULES,source_reference:SOURCE,policies:policies.rows,deleted_policies:deletedPolicies.rows,calendars:calendars.rows,patterns:patterns.rows,legacy_submission_enabled:false,submission_activation:'independent_per_employee'});
+ const resolved=(await pool.query(resolvedPublishedPoliciesSql)).rows;
+ res.json({codes:CODES,defaults:DEFAULT_RULES,source_reference:SOURCE,policies:policies.rows.map(p=>resolved.find(r=>r.id===p.id)||p),deleted_policies:deletedPolicies.rows,calendars:calendars.rows,patterns:patterns.rows,legacy_submission_enabled:false,submission_activation:'independent_per_employee'});
 });
-router.post('/policies',central,[reason,reference,body('label').isString().trim().isLength({min:3,max:120}),date('effective_from'),date('effective_to'),body('rules').optional().isObject()],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await service.createPolicy(pool,data(req)));});
+router.post('/policies',central,[reason,reference,body('label').isString().trim().isLength({min:3,max:120}),date('effective_from'),date('effective_to'),body('rules').optional().isObject(),body('supersedes_policy_id').optional({nullable:true}).isUUID(),body('authority_reference').optional({nullable:true}).isString().trim().isLength({min:10,max:500})],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await service.createPolicy(pool,data(req)));});
 const policyRevision=body('expected_revision').isInt({min:1,max:2147483646}).toInt();
-router.put('/policies/:id',central,[id,reason,reference,body('label').isString().trim().isLength({min:3,max:120}),date('effective_from'),date('effective_to'),body('rules').isObject(),policyRevision],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await service.updatePolicy(pool,{...data(req),id:req.params.id}));});
+router.put('/policies/:id',central,[id,reason,reference,body('label').isString().trim().isLength({min:3,max:120}),date('effective_from'),date('effective_to'),body('rules').isObject(),policyRevision,body('supersedes_policy_id').optional({nullable:true}).isUUID(),body('authority_reference').optional({nullable:true}).isString().trim().isLength({min:10,max:500})],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await service.updatePolicy(pool,{...data(req),id:req.params.id}));});
 router.delete('/policies/:id',central,[id,reason,policyRevision],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await service.setPolicyDraftDeleted(pool,{...data(req),id:req.params.id,reason:req.body.reason,expected_revision:req.body.expected_revision,deleted:true}));});
 router.post('/policies/:id/restore',central,[id,reason,policyRevision],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await service.setPolicyDraftDeleted(pool,{...data(req),id:req.params.id,reason:req.body.reason,expected_revision:req.body.expected_revision,deleted:false}));});
 router.post('/policies/:id/publish',central,[id,reason,policyRevision],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await service.publishPolicy(pool,{...data(req),id:req.params.id,reason:req.body.reason,expected_revision:req.body.expected_revision}));});
@@ -43,7 +50,7 @@ router.post('/employees/:id/evaluate',access,[id,date('start_date'),date('end_da
 router.post('/employees/:id/openings',central,[id,reason,reference,body('payroll_reference').isString().trim().isLength({min:5,max:500}),body('policy_version_id').isUUID(),body('code').isIn(COMMON_CODES),date('period_start'),date('period_end'),date('as_of'),body('amount').isDecimal({decimal_digits:'0,6'})],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await service.prepareOpening(pool,data(req)));});
 router.get('/openings',central,[query('page').optional().isInt({min:1,max:100000}),query('employee_id').optional().isUUID()],async(req,res)=>{
  if(!handleValidation(req,res))return;const page=Number(req.query.page)||1,employee=req.query.employee_id||null;
- const {rows}=await pool.query("SELECT o.*,e.display_name,to_char(o.period_start,'YYYY-MM-DD') AS period_start,to_char(o.period_end,'YYYY-MM-DD') AS period_end,to_char(o.as_of,'YYYY-MM-DD') AS as_of FROM hr_gov_openings o JOIN hr_employees e ON e.id=o.employee_id WHERE ($1::uuid IS NULL OR o.employee_id=$1) ORDER BY o.recorded_at DESC,o.id LIMIT 50 OFFSET $2",[employee,(page-1)*50]);const {rows:[count]}=await pool.query('SELECT count(*)::int AS total FROM hr_gov_openings WHERE ($1::uuid IS NULL OR employee_id=$1)',[employee]);res.json({openings:rows,total:count.total,page,page_size:50});
+ const {rows}=await pool.query("SELECT o.*,e.display_name,to_char(o.period_start,'YYYY-MM-DD') AS period_start,to_char(o.period_end,'YYYY-MM-DD') AS period_end,to_char(o.as_of,'YYYY-MM-DD') AS as_of FROM hr_gov_openings o JOIN hr_employees e ON e.id=o.employee_id WHERE ($1::uuid IS NULL OR o.employee_id=$1) ORDER BY o.recorded_at DESC,o.id LIMIT 50 OFFSET $2",[employee,(page-1)*50]);const {rows:[count]}=await pool.query('SELECT count(*)::int AS total FROM hr_gov_openings WHERE ($1::uuid IS NULL OR employee_id=$1)',[employee]);res.json({openings:await decorateDrafts(pool,'opening',rows),total:count.total,page,page_size:50});
 });
 router.post('/openings/:id/certify',central,[id,reason],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await service.certifyOpening(pool,{...data(req),id:req.params.id,reason:req.body.reason}));});
 router.get('/employees/:id/ledger',access,[id,query('page').optional().isInt({min:1,max:100000})],async(req,res)=>{

@@ -136,6 +136,21 @@ assert.equal((await call(`/requests/${r.id}/pdf`,null,officers.chief_secretary.a
   assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'21.538461');
   const account=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation');await l.correctLedger(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{entitlement_id:account.id,amount:'38.461539',effective_date:'2026-10-28',event_key:randomUUID(),source_reference:'Synthetic cap reconciliation',reason}});await jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id,asOf:'2026-11-11',clockDate:'2026-11-11'});assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'60.000000');assert.equal((await pool.query('SELECT capped FROM hr_gov_job_posts ORDER BY event_date DESC LIMIT 1')).rows[0].capped,true);
  });
+ test('approved replacement splits a payroll fortnight safely and retries create one posting',async()=>{
+  await plan();
+  const replacement=await l.createPolicy(pool,{user:user(hr),actor:hr,data:{label:'Approved payroll policy transition',effective_from:'2026-10-08',effective_to:'2027-12-31',rules:{...DEFAULT_RULES,recreation_annual_days:'26',recreation_cap_days:'90'},source_reference:'Signed replacement policy schedule',supersedes_policy_id:policy.id,authority_reference:'Signed replacement decision 2026/Payroll',reason}});
+  await l.publishPolicy(pool,{user:user(certifier),actor:certifier,id:replacement.id,reason,expected_revision:1});
+  const run=()=>jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id,asOf:'2026-10-14',clockDate:'2026-10-14'});
+  const posted=await run();assert.equal(posted.results[0].posts[0].amount,'0.884615');assert.equal(posted.results[0].posts[0].policy_segments.length,2);
+  await run();assert.equal((await pool.query("SELECT count(*)::int AS n FROM hr_gov_job_posts WHERE code='recreation' AND event_kind='accrual'")).rows[0].n,1);
+  assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'20.884615');
+  const account=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation');
+  await l.correctLedger(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{entitlement_id:account.id,amount:'39.115385',effective_date:'2026-10-14',event_key:randomUUID(),source_reference:'Signed transition cap reconciliation',reason}});
+  await jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id,asOf:'2026-10-28',clockDate:'2026-10-28'});
+  assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'61.000000');
+  const backdated=await l.createPolicy(pool,{user:user(hr),actor:hr,data:{label:'Backdated further replacement',effective_from:'2026-10-10',effective_to:'2027-12-31',rules:DEFAULT_RULES,source_reference:'Backdated signed replacement schedule',supersedes_policy_id:replacement.id,authority_reference:'Signed backdated replacement decision',reason}});
+  await assert.rejects(l.publishPolicy(pool,{user:user(certifier),actor:certifier,id:backdated.id,reason,expected_revision:1}),/Posted jobs/);
+ });
  test('annual Medical/Special reset expires unused balances, grants once, resets exemption baseline and retains holds until resolved',async()=>{
   await plan('medical');await plan('special');const pending=await submit(application('medical','2026-11-02'));
   await assert.rejects(jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id,asOf:'2027-01-01',clockDate:'2027-01-01'}),/Pending leave still holds/);

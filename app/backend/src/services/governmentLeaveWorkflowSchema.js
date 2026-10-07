@@ -4,12 +4,14 @@ export async function initGovernmentLeaveWorkflowSchema(client) {
     CREATE TABLE IF NOT EXISTS hr_gov_workflow_configs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), employee_id UUID NOT NULL REFERENCES hr_employees(id),
       enabled_codes TEXT[] NOT NULL CHECK(enabled_codes <@ ARRAY['recreation','medical','special']::text[]),
-      medical_rule TEXT NOT NULL CHECK(medical_rule='single_calendar_date_nonadjacent_scheduled_days'),
+      medical_rule TEXT NOT NULL CHECK(medical_rule IN ('single_calendar_date_nonadjacent_scheduled_days','single_verified_shift_nonadjacent_scheduled_days')),
       medical_history JSONB NOT NULL, medical_period_start DATE, medical_as_of DATE,
       source_reference TEXT NOT NULL, legacy_resolution_reference TEXT NOT NULL, snapshot_hash TEXT NOT NULL,
       prepared_by UUID NOT NULL REFERENCES reviewers(id), reason TEXT NOT NULL, recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','published')), approved_by UUID REFERENCES reviewers(id), approved_at TIMESTAMPTZ
     );
+    ALTER TABLE hr_gov_workflow_configs DROP CONSTRAINT IF EXISTS hr_gov_workflow_configs_medical_rule_check;
+    ALTER TABLE hr_gov_workflow_configs ADD CONSTRAINT hr_gov_workflow_configs_medical_rule_check CHECK(medical_rule IN ('single_calendar_date_nonadjacent_scheduled_days','single_verified_shift_nonadjacent_scheduled_days'));
     CREATE INDEX IF NOT EXISTS idx_hr_gov_workflow_employee ON hr_gov_workflow_configs(employee_id,approved_at DESC) WHERE status='published';
     CREATE TABLE IF NOT EXISTS hr_gov_consent_offices (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), level TEXT NOT NULL CHECK(level IN ('relevant_secretary','hr_verifier')),

@@ -84,7 +84,7 @@ export function EmployeeManagement({ legacyTools,workspace='employees' }: { lega
         {tab === 'import' && <PayrollEmployeeImport onApplied={() => setVersion((current) => current + 1)} />}
         {tab === 'organisation' && <OrganisationManagement departments={departments} patterns={patterns} onChanged={loadReferences} />}
         {tab === 'access' && central && <HrAccessManagement departments={departments} />}
-        {tab === 'government-workflow' && central && <GovernmentWorkflowManagement departments={departments} />}
+        {tab === 'government-workflow' && central && <GovernmentWorkflowManagement />}
         {tab === 'foundations' && central && <GovernmentFoundation />}
         {tab === 'payroll' && central && <GovernmentPayroll />}
         {tab === 'rollout' && central && <GovernmentRollout departments={departments} />}

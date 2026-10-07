@@ -66,6 +66,34 @@ describe('government rollout readiness and release evidence',{skip:skipWithoutDa
   await assert.rejects(pool.query('UPDATE hr_gov_rollout_waves SET label=$2 WHERE id=$1',[row.id,'Rewrite cohort']),/immutable/);
   await assert.rejects(pool.query('DELETE FROM hr_gov_rollout_approvals WHERE wave_id=$1',[row.id]),/immutable/);
  });
+ test('teacher coverage independently verifies dated foundations and removes ordinary Recreation activation requirement',async()=>{
+  await pool.query('UPDATE hr_employee_service_periods SET is_teacher=TRUE WHERE employee_id=$1',[employee.id]);await readyEmployee();
+  const config=await w.prepareConfiguration(pool,{...args({enabled_codes:['medical','special'],medical_rule:'single_calendar_date_nonadjacent_scheduled_days',medical_history:[],source_reference:reason,legacy_resolution_reference:reason,reason}),employeeId:employee.id});await w.publishConfiguration(pool,{...args({},certifier),id:config.id,reason});
+  assert.equal((await rollout.previewWave(pool,user(hr),[employee.id])).ready,0);
+  const row=await rollout.prepareCoverage(pool,args({coverage_id:randomUUID(),label:'Synthetic teacher Education coverage',employee_ids:[employee.id],effective_from:'2026-10-01',effective_to:'2026-11-30',source_reference:reason,reason}));
+  await assert.rejects(rollout.approveCoverage(pool,{...args({snapshot_hash:row.snapshot_hash,reason}),id:row.id}),/different central/);
+  await rollout.approveCoverage(pool,{...args({snapshot_hash:row.snapshot_hash,reason},certifier),id:row.id});assert.equal((await rollout.previewWave(pool,user(hr),[employee.id])).ready,1);
+  await pool.query('UPDATE hr_work_patterns SET hours_per_day=8 WHERE id=(SELECT work_pattern_id FROM hr_employee_service_periods WHERE employee_id=$1)',[employee.id]);assert.equal((await rollout.previewWave(pool,user(hr),[employee.id])).ready,0);
+ });
+ test('roster coverage requires every duty and off-duty date and stale replacements lose readiness',async()=>{
+  await readyEmployee();await l.addFoundationRecord(pool,{...args({effective_from:'2026-10-01',continuity_start:'2026-01-01',anniversary_method:'calendar',leap_day_method:'feb28',schedule_mode:'roster',source_reference:reason,reason}),employeeId:employee.id,kind:'basis'});
+  const d={coverage_id:randomUUID(),label:'Synthetic roster duty coverage',employee_ids:[employee.id],effective_from:'2026-10-07',effective_to:'2026-10-08',source_reference:reason,reason};
+  await assert.rejects(rollout.prepareCoverage(pool,args(d)),/off-duty/);
+  const first=await l.addFoundationRecord(pool,{...args({day:'2026-10-07',paid_hours:'8',policy_days:'1',source_reference:reason,reason}),employeeId:employee.id,kind:'roster'});
+  await assert.rejects(rollout.prepareCoverage(pool,args(d)),/off-duty/);
+  await l.addFoundationRecord(pool,{...args({day:'2026-10-08',paid_hours:'0',policy_days:'0',source_reference:reason,reason}),employeeId:employee.id,kind:'roster'});
+  const row=await rollout.prepareCoverage(pool,args(d));await rollout.approveCoverage(pool,{...args({snapshot_hash:row.snapshot_hash,reason},certifier),id:row.id});assert.equal((await rollout.previewWave(pool,user(hr),[employee.id])).ready,1);
+  await l.addFoundationRecord(pool,{...args({day:'2026-10-07',paid_hours:'7',policy_days:'1',source_reference:reason,reason,supersedes_id:first.id}),employeeId:employee.id,kind:'roster'});assert.equal((await rollout.previewWave(pool,user(hr),[employee.id])).ready,0);
+ });
+ test('discarded coverage cannot be approved and restoring stale foundations still requires fresh review',async()=>{
+  await pool.query('UPDATE hr_employee_service_periods SET is_teacher=TRUE WHERE employee_id=$1',[employee.id]);
+  const d={coverage_id:randomUUID(),label:'Synthetic unwanted dated teacher coverage',employee_ids:[employee.id],effective_from:'2026-10-01',effective_to:'2026-11-30',source_reference:reason,reason},row=await rollout.prepareCoverage(pool,args(d));
+  const drafts=await import('../services/governmentLeaveDrafts.js');await drafts.changeDraftState(pool,{...args({action:'discard',expected_revision:0,reason}),kind:'coverage',id:row.id});
+  await assert.rejects(rollout.approveCoverage(pool,{...args({snapshot_hash:row.snapshot_hash,reason},certifier),id:row.id}),/discarded/);
+  await pool.query('UPDATE hr_work_patterns SET hours_per_day=8 WHERE id=(SELECT work_pattern_id FROM hr_employee_service_periods WHERE employee_id=$1)',[employee.id]);
+  await drafts.changeDraftState(pool,{...args({action:'restore',expected_revision:1,reason}),kind:'coverage',id:row.id});
+  await assert.rejects(rollout.approveCoverage(pool,{...args({snapshot_hash:row.snapshot_hash,reason},certifier),id:row.id}),/coverage changed/);
+ });
  test('a revoked Leave entry capability or unfinished password change blocks cohort readiness',async()=>{
   await readyEmployee();await pool.query("UPDATE reviewers SET permissions='{\"hr_access\":false,\"hr_leave_apply\":true}' WHERE id=$1",[owner.id]);
   assert.ok((await rollout.previewWave(pool,user(hr),[employee.id])).employees[0].issues.some(i=>i.includes('Leave access')));

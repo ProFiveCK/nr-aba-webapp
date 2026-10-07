@@ -34,3 +34,12 @@ test('policy publication boundaries retain versions and no forecast or discretio
  const mismatch=context();mismatch.entitlements[0].period_start='2025-12-31';assert.match(calculateEvaluation(mismatch,input()).issues.join(),/opening entitlement/);c.entitlements=[];assert.match(calculateEvaluation(c,input()).issues.join(),/forecast accrual/);assert.match(calculateEvaluation(context(),input('official')).issues.join(),/assisted case/);const teacher=context();teacher.periods[0].is_teacher=true;assert.match(calculateEvaluation(teacher,input()).issues.join(),/Teacher/);
  assert.equal(result.engine_version,'gov-foundation-1');assert.equal(result.required_offices.at(-1),'chief_secretary');const unknown=context();unknown.policies[0].evaluator_version='future-unsupported';assert.match(calculateEvaluation(unknown,input()).issues.join(),/unsupported/i);assert.throws(()=>validateRules({...DEFAULT_RULES,arbitrary_formula:'eval'}));assert.throws(()=>validateRules({...DEFAULT_RULES,recreation_cap_days:'1'}));
 });
+
+test('trusted Medical shift exception still requires one paid roster date and bounded shift conversion',()=>{
+ const c=context();c.bases[0].schedule_mode='roster';c.rosters=[{id:'shift',day:'2026-10-27',paid_hours:'12',policy_days:'1.5'},{id:'off',day:'2026-10-28',paid_hours:'0',policy_days:'0'}];
+ const request={...input('medical'),certificate_available:false};assert.match(calculateEvaluation(c,request).issues.join(),/certificate/);
+ assert.ok(calculateEvaluation(c,{...request,verified_single_shift_exemption:true}).eligible_for_preview);
+ assert.match(calculateEvaluation(c,{...request,end_date:'2026-10-28',verified_single_shift_exemption:true}).issues.join(),/certificate/);
+ c.rosters[0].paid_hours='0';assert.match(calculateEvaluation(c,{...request,verified_single_shift_exemption:true}).issues.join(),/certificate/);
+ c.rosters[0].paid_hours='20';c.rosters[0].policy_days='2.5';assert.match(calculateEvaluation(c,{...request,verified_single_shift_exemption:true}).issues.join(),/certificate/);
+});

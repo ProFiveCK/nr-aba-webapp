@@ -1,3 +1,4 @@
+import { AustralianDateInput } from '../../../components/AustralianDateInput';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import { Search, X } from 'lucide-react';
@@ -746,7 +747,7 @@ function LegacyStaff() {
                                                 <td className="px-3 py-1.5 text-gray-900">{r.display_name}</td>
                                                 <td className="px-3 py-1.5 text-gray-600">{r.department_code || '—'}</td>
                                                 <td className="px-3 py-1.5 text-gray-600">{r.division_code || '—'}</td>
-                                                <td className="px-3 py-1.5 text-gray-600">{r.join_date || '—'}</td>
+                                                <td className="px-3 py-1.5 text-gray-600">{r.join_date ? formatDate(r.join_date) : '—'}</td>
                                                 <td className="px-3 py-1.5 text-gray-600">
                                                     {Object.keys(r.balances).length
                                                         ? Object.entries(r.balances).map(([k, v]) => `${k}: ${v}`).join(', ')
@@ -837,8 +838,7 @@ function LegacyStaff() {
                                 <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>
                             ))}
                         </select>
-                        <input
-                            type="date"
+                        <AustralianDateInput
                             value={newJoinDate}
                             onChange={(e) => setNewJoinDate(e.target.value)}
                             className="rounded-md border border-gray-300 px-3 py-2 text-sm"
@@ -1075,8 +1075,7 @@ function LegacyStaff() {
                                     </label>
                                     <label className="text-sm font-medium text-gray-700">
                                         Joining date
-                                        <input
-                                            type="date"
+                                        <AustralianDateInput
                                             value={draft.joinDate}
                                             onChange={(event) => setDraft({ ...draft, joinDate: event.target.value })}
                                             className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
@@ -1123,8 +1122,7 @@ function LegacyStaff() {
                                                 <div className="grid gap-3 sm:grid-cols-2">
                                                     <label className="text-sm font-medium text-gray-700">
                                                         Study leave starts
-                                                        <input
-                                                            type="date"
+                                                        <AustralianDateInput
                                                             value={draft.studyLeaveStart}
                                                             onChange={(event) => setDraft({ ...draft, studyLeaveStart: event.target.value })}
                                                             className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
@@ -1132,8 +1130,7 @@ function LegacyStaff() {
                                                     </label>
                                                     <label className="text-sm font-medium text-gray-700">
                                                         Expected return
-                                                        <input
-                                                            type="date"
+                                                        <AustralianDateInput
                                                             value={draft.studyLeaveEnd}
                                                             min={draft.studyLeaveStart || undefined}
                                                             onChange={(event) => setDraft({ ...draft, studyLeaveEnd: event.target.value })}

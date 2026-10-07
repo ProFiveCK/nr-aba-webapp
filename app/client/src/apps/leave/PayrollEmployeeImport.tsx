@@ -1,6 +1,7 @@
+import { AustralianDateInput } from '../../components/AustralianDateInput';
 import { useEffect, useRef, useState } from 'react';
 import { apiClient } from '../../lib/api';
-import { todayIsoDate } from '../../lib/date';
+import { todayIsoDate, formatDate } from '../../lib/date';
 import { useConfirm } from '../../contexts/useConfirm';
 import { Modal, Pager } from '../../components/Ui';
 import type { PayrollImportBatch, PayrollImportCandidate, PayrollImportDecision, PayrollImportResult, PayrollImportRow, PayrollImportView } from './payrollImportTypes';
@@ -58,7 +59,7 @@ export function PayrollEmployeeImport({ onApplied }: { onApplied: () => void }) 
                 <input className={`${control} mt-1`} type="file" accept=".csv,text/csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
             </label>
             <label className="text-sm font-medium text-gray-700">Payroll export date
-                <input className={`${control} mt-1`} type="date" value={exportDate} onChange={(e) => setExportDate(e.target.value)} />
+                <AustralianDateInput className={`${control} mt-1`} value={exportDate} onChange={(e) => setExportDate(e.target.value)} />
             </label>
             <button type="button" className={primaryButton} disabled={!file || !exportDate} onClick={() => void run(async () => {
                 if (!file) return;
@@ -72,7 +73,7 @@ export function PayrollEmployeeImport({ onApplied }: { onApplied: () => void }) 
         {view && <div className="space-y-3 border-t border-gray-200 pt-4">
             <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0"><h4 className="break-all font-semibold text-gray-900">{view.batch.file_name}</h4>
-                    <p className="text-sm text-gray-600">Exported {view.batch.export_date.slice(0, 10)} · {view.batch.row_count} employees · {applied ? 'Applied' : 'Awaiting review'}</p>
+                    <p className="text-sm text-gray-600">Exported {formatDate(view.batch.export_date.slice(0, 10))} · {view.batch.row_count} employees · {applied ? 'Applied' : 'Awaiting review'}</p>
                 </div>
                 {!applied && <button type="button" className={button} disabled={busy} onClick={() => void run(async () => {
                     const next = await apiClient.post<PayrollImportView>(`${ROOT}/${view.batch.id}/refresh`, { revision: view.batch.revision });
@@ -123,7 +124,7 @@ export function PayrollEmployeeImport({ onApplied }: { onApplied: () => void }) 
             </fieldset>}
         </div>}
         {history && history.batches.length > 0 && <details className="border-t border-gray-200 pt-3"><summary className="cursor-pointer text-sm font-semibold text-gray-700">Saved import batches ({history.total})</summary>
-            <div className="mt-2 space-y-2">{history.batches.map((batch) => <button type="button" key={batch.id} disabled={busy} className={`${button} block w-full break-all text-left`} onClick={() => void run(() => loadBatch(batch.id))}>{batch.file_name} · {batch.export_date.slice(0, 10)} · {batch.row_count} rows · {batch.status === 'applied' ? 'Applied' : 'Awaiting review'}</button>)}</div>
+            <div className="mt-2 space-y-2">{history.batches.map((batch) => <button type="button" key={batch.id} disabled={busy} className={`${button} block w-full break-all text-left`} onClick={() => void run(() => loadBatch(batch.id))}>{batch.file_name} · {formatDate(batch.export_date.slice(0, 10))} · {batch.row_count} rows · {batch.status === 'applied' ? 'Applied' : 'Awaiting review'}</button>)}</div>
             <Pager page={history.page - 1} pageCount={Math.ceil(history.total / history.page_size)} total={history.total} pageSize={history.page_size} setPage={(page) => { if (!busy) void run(() => loadHistory(page + 1)); }} />
         </details>}
         {editing && view && <RowReview row={editing} busy={busy} saveError={error} onClose={() => setEditing(null)} onSave={(decision, employeeId, reason) => void run(async () => {

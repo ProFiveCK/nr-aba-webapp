@@ -1,3 +1,4 @@
+import { AustralianDateInput } from '../../../components/AustralianDateInput';
 import {GovernmentActivity} from '../GovernmentActivity';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -582,11 +583,11 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                             {preset === 'custom' && (
                                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                                     <label className="text-xs font-medium text-gray-600">From
-                                        <input type="date" value={customFrom} max={customTo} onChange={(e) => setCustomFrom(e.target.value)}
+                                        <AustralianDateInput value={customFrom} max={customTo} onChange={(e) => setCustomFrom(e.target.value)}
                                             className="mt-1 block w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
                                     </label>
                                     <label className="text-xs font-medium text-gray-600">To
-                                        <input type="date" value={customTo} min={customFrom} onChange={(e) => setCustomTo(e.target.value)}
+                                        <AustralianDateInput value={customTo} min={customFrom} onChange={(e) => setCustomTo(e.target.value)}
                                             className="mt-1 block w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
                                     </label>
                                 </div>

@@ -1,3 +1,4 @@
+import { AustralianDateInput } from '../../../components/AustralianDateInput';
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../../lib/api';
 import { useToast } from '../../../contexts/useToast';
@@ -223,8 +224,7 @@ function HistoricalPolicySettings() {
                 <div className="flex flex-wrap items-end gap-3">
                     <label className="text-sm">
                         <span className="mb-1 block font-medium text-gray-700">First accrual date</span>
-                        <input
-                            type="date"
+                        <AustralianDateInput
                             value={anchorDate}
                             onChange={(e) => setAnchorDate(e.target.value)}
                             className="rounded-md border border-gray-300 px-3 py-2 text-sm"

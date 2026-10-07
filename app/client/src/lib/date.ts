@@ -43,3 +43,48 @@ export function toDateInputValue(value: string | Date | null | undefined): strin
     if (Number.isNaN(date.getTime())) return '';
     return toIsoDate(date);
 }
+
+/** Australian calendar-date entry. Never infer US ordering or roll invalid days forward. */
+export function parseAustralianDate(value: string): string {
+    const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value.trim());
+    if (!match) return '';
+    const [, day, month, year] = match;
+    const iso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    return isCalendarDate(iso) ? iso : '';
+}
+
+function isCalendarDate(iso: string): boolean {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+    const [year, month, day] = iso.split('-').map(Number);
+    if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    return day <= [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+}
+
+/** DATE values retain their recorded day regardless of the viewer's timezone. */
+export function formatDate(value: string | null | undefined): string {
+    const iso = toDateInputValue(value);
+    if (!isCalendarDate(iso)) return '—';
+    const [year, month, day] = iso.split('-');
+    return `${day}/${month}/${year}`;
+}
+
+/** Audit instants are shown in Nauru local time with Australian date ordering. */
+export function formatDateTime(value: string | null | undefined): string {
+    if (!value) return '—';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleString('en-AU', {
+        timeZone: 'Pacific/Nauru', day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+    });
+}
+
+export function australianDateError(text: string, min?: string, max?: string): string {
+    if (!text.trim()) return '';
+    const iso = parseAustralianDate(text);
+    if (!iso) return 'Enter a valid date as DD/MM/YYYY.';
+    if (min && iso < min) return `Enter a date on or after ${formatDate(min)}.`;
+    if (max && iso > max) return `Enter a date on or before ${formatDate(max)}.`;
+    return '';
+}

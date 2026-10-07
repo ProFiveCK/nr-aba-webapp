@@ -115,10 +115,7 @@ export const STATUS_STYLES: Record<LeaveStatus, string> = {
     cancelled: 'bg-gray-100 text-gray-600',
 };
 
-export function formatDate(value: string | null): string {
-    if (!value) return '—';
-    return new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-}
+export { formatDate } from '../../lib/date';
 
 export interface PublicHoliday {
     id: string;

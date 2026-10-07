@@ -1,3 +1,4 @@
+import { AustralianDateInput } from '../../../components/AustralianDateInput';
 import {GovernmentActivity} from '../GovernmentActivity';
 import { useState } from 'react';
 import { apiClient } from '../../../lib/api';
@@ -64,18 +65,18 @@ export function Report() {
 
     return (
         <div className="space-y-4"><p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">The historical report retains Finance leave records. The Government report below covers independently activated Government Leave. Review Government applications under Employees → Government applications & jobs. Government Payroll registers and exports are under Employees → Payroll & handover.</p>
-            <div className="flex flex-wrap items-end gap-3 app-panel p-4">
+            <form className="flex flex-wrap items-end gap-3 app-panel p-4" onSubmit={e => { e.preventDefault(); void run(); }}>
                 <label className="text-sm">
                     <span className="mb-1 block font-medium text-gray-700">Period from</span>
-                    <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+                    <AustralianDateInput aria-label="Period from" required value={from} onChange={(e) => setFrom(e.target.value)}
                         className="rounded-md border border-gray-300 px-3 py-2 text-sm" />
                 </label>
                 <label className="text-sm">
                     <span className="mb-1 block font-medium text-gray-700">to</span>
-                    <input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)}
+                    <AustralianDateInput aria-label="Period through" required value={to} min={from} onChange={(e) => setTo(e.target.value)}
                         className="rounded-md border border-gray-300 px-3 py-2 text-sm" />
                 </label>
-                <button type="button" onClick={run} disabled={loading}
+                <button type="submit" disabled={loading}
                     className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50">
                     {loading ? 'Building…' : 'Run historical report'}
                 </button>
@@ -85,7 +86,7 @@ export function Report() {
                         Download historical CSV
                     </button>
                 )}
-            </div>
+            </form>
 
             <GovernmentActivity from={from} to={to} details/>
             {rows === null ? (

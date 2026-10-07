@@ -1,3 +1,4 @@
+import { AustralianDateInput } from '../../../components/AustralianDateInput';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { apiClient } from '../../../lib/api';
@@ -275,8 +276,7 @@ export function MyLeave() {
                     </label>
                     <label className="text-sm">
                         <span className="mb-1 block font-medium text-gray-700">From</span>
-                        <input
-                            type="date"
+                        <AustralianDateInput
                             value={startDate}
                             onChange={(e) => setStartDate(e.target.value)}
                             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
@@ -285,8 +285,7 @@ export function MyLeave() {
                     </label>
                     <label className="text-sm">
                         <span className="mb-1 block font-medium text-gray-700">To</span>
-                        <input
-                            type="date"
+                        <AustralianDateInput
                             value={endDate}
                             min={startDate || undefined}
                             onChange={(e) => setEndDate(e.target.value)}

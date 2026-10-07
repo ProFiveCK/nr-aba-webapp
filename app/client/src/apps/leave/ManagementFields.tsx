@@ -3,6 +3,8 @@ import type { ReactElement, ReactNode } from 'react';
 import { Button, Modal, Pager } from '../../components/Ui';
 import { apiClient } from '../../lib/api';
 import type { OrgDepartment } from './types';
+import { ReviewRecordName } from './ReviewRecordName';
+import { reviewRecordLabel } from './reviewRecordNames';
 
 export const inputClass = 'w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand/30';
 export function Field({ label, children }: { label: string; children: ReactElement<{ id?: string }> }) {
@@ -23,8 +25,8 @@ export function ActionDialog({ title, description, onClose, onSave, children, sa
 export function PlacementFields({ departments, initialDepartment = '', initialDivision = '' }: { departments: OrgDepartment[]; initialDepartment?: string; initialDivision?: string }) {
     const [department, setDepartment] = useState(initialDepartment), [division, setDivision] = useState(initialDivision);
     return <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-        <Field label="Department"><select name="department_id" className={inputClass} required value={department} onChange={(e) => { setDepartment(e.target.value); setDivision(''); }}><option value="">Choose department</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-        <Field label="Division"><select name="division_id" className={inputClass} value={division} onChange={(e) => setDivision(e.target.value)}><option value="">No division assigned</option>{departments.find((item) => item.id === department)?.divisions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+        <Field label="Department"><select name="department_id" className={inputClass} required value={department} onChange={(e) => { setDepartment(e.target.value); setDivision(''); }}><option value="">Choose department</option>{departments.map((item) => <option key={item.id} value={item.id}>{reviewRecordLabel(item.name)}</option>)}</select></Field>
+        <Field label="Division"><select name="division_id" className={inputClass} value={division} onChange={(e) => setDivision(e.target.value)}><option value="">No division assigned</option>{departments.find((item) => item.id === department)?.divisions.map((item) => <option key={item.id} value={item.id}>{reviewRecordLabel(item.name)}</option>)}</select></Field>
     </div>;
 }
 
@@ -47,7 +49,7 @@ export function DirectoryPicker({ kind = 'employees', name, label, initialId = '
     useEffect(() => { void load(1, ''); }, [load]);
     return <div className="min-w-0 space-y-2">
         <p className="text-sm font-medium text-gray-700">{label}</p><input type="hidden" name={name} value={selected} />
-        <p className="break-words text-sm text-gray-600">Selected: {selected ? selectedLabel || 'Current verified record' : 'None'}</p>
+        <p className="break-words text-sm text-gray-600">Selected: {selected ? <ReviewRecordName name={selectedLabel || 'Current verified record'}/> : 'None'}</p>
         <div className="flex min-w-0 flex-wrap gap-2"><input aria-label={`Search ${label.toLowerCase()}`} className={`${inputClass} flex-1 basis-48`} maxLength={100} placeholder={kind === 'accounts' ? 'Account name, email or exact Payroll alias' : 'Name or exact Payroll ID'} value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (!busy) void load(1, search.trim()); } }} /><Button variant="secondary" disabled={busy} onClick={() => void load(1, search.trim())}>Search</Button>
             {allowClear && <Button variant="secondary" disabled={busy} onClick={() => { setSelected(''); setSelectedLabel(''); }}>Clear selection</Button>}
         </div>
@@ -57,7 +59,7 @@ export function DirectoryPicker({ kind = 'employees', name, label, initialId = '
                 const blocked = (row.status !== 'active' && !allowInactive) || (kind === 'accounts' && !allowLinkedAccounts && !!row.employee_id && row.employee_id !== employeeId) || (kind === 'employees' && (row.id === employeeId || (requireLinked && !row.reviewer_id)));
                 return <label key={row.id} className={`flex items-start gap-2 rounded-lg p-2 text-sm ${blocked ? 'bg-gray-50 text-gray-500' : 'cursor-pointer text-gray-800 hover:bg-blue-50'}`}>
                     <input className="mt-1" type="radio" name={`${name}_choice`} checked={selected === row.id} disabled={busy || blocked} onChange={() => { setSelected(row.id); setSelectedLabel(row.display_name); }} />
-                    <span className="min-w-0 break-words">{row.display_name} · {row.email || row.login_alias || row.department_code || (kind==='accounts' ? 'No individual email' : 'Department unverified')}{row.external_ids?.length ? ` · ${row.external_ids.map((entry) => entry.external_id).join(', ')}` : ''}
+                    <span className="min-w-0 break-words"><ReviewRecordName name={row.display_name}/> · {row.email || row.login_alias || row.department_code || (kind==='accounts' ? 'No individual email' : 'Department unverified')}{row.external_ids?.length ? ` · ${row.external_ids.map((entry) => entry.external_id).join(', ')}` : ''}
                         {kind === 'accounts' ? row.account_type === 'employee' ? ' · Employee-only login' : ' · Existing staff login' : ''}
                         {row.status !== 'active' ? ' · Inactive' : !allowLinkedAccounts && row.employee_id && row.employee_id !== employeeId ? ` · Linked to ${row.employee_name}` : requireLinked && !row.reviewer_id ? ' · Needs verified login' : ''}</span>
                 </label>;

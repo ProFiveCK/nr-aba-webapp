@@ -15,6 +15,8 @@ import { value } from './managementForm';
 import { PayrollEmployeeImport } from './PayrollEmployeeImport';
 import { EmployeeDetails } from './EmployeeDetails';
 import { OrganisationManagement } from './OrganisationManagement';
+import { ReviewRecordName } from './ReviewRecordName';
+import { reviewRecordLabel } from './reviewRecordNames';
 import type { EmployeeProfile, ManagedEmployee, WorkPattern } from './managementTypes';
 import type { OrgDepartment } from './types';
 
@@ -48,11 +50,26 @@ export function EmployeeManagement({ legacyTools }: { legacyTools: ReactNode }) 
             </label>
             <p className="text-xs text-gray-500">{scopeSummary}</p>
         </div>
+        <details className="text-sm text-gray-600">
+            <summary className="cursor-pointer font-medium">How to review Staff</summary>
+            <div className="mt-3 space-y-2">
+                <p>Use Employees to check identity and placement. Use Balances &amp; service to check that person's service history and certified leave balances. The Policies menu holds the shared government rules.</p>
+                {list.employees.some(e=>e.display_name==='Synthetic 1E Alias Employee')&&<p>For the local walkthrough, search Payroll ID <strong>DEMO-1E-00001-A</strong>. This demo employee is prepared for a leave application. Other demo records include incomplete cases to show what HR must resolve.</p>}
+                <ol className="list-decimal space-y-1 pl-5">
+                    <li>Employees: open Manage and review the employee record.</li>
+                    <li>Organisation &amp; approvers: check division, Head of Department and Chief Secretary assignments.</li>
+                    <li>Balances &amp; service: select the same employee and review their balances and a leave calculation.</li>
+                    <li>Applications &amp; jobs: review employee activation and controlled balance updates.</li>
+                    <li>Rollout readiness: check a small employee group before planning a wider release.</li>
+                </ol>
+                <p>Payroll import and Onboarding are for preparing real records after the walkthrough. Payroll &amp; handover records what Payroll received. Historical tools retain earlier records.</p>
+            </div>
+        </details>
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         {tab === 'directory' && <>
             <form className="app-panel grid items-end gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5" onSubmit={(e) => { e.preventDefault(); setSearch(query.trim()); setPage(0); }}>
                 <Field label="Search employees"><input className={inputClass} maxLength={100} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name or exact Payroll ID" /></Field>
-                <Field label="Filter department"><select className={inputClass} value={department} onChange={(e) => { setDepartment(e.target.value); setPage(0); }}><option value="">All departments</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+                <Field label="Filter department"><select className={inputClass} value={department} onChange={(e) => { setDepartment(e.target.value); setPage(0); }}><option value="">All departments</option>{departments.map((item) => <option key={item.id} value={item.id}>{reviewRecordLabel(item.name)}</option>)}</select></Field>
                 <Field label="Filter status"><select className={inputClass} value={status} onChange={(e) => { setStatus(e.target.value); setPage(0); }}><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select></Field>
                 <Field label="Preparation issues"><select className={inputClass} value={readiness} onChange={(e) => { setReadiness(e.target.value); setPage(0); }}><option value="">All employees</option><option value="unlinked">No verified login</option><option value="missing_id">Payroll ID missing</option><option value="missing_placement">Placement incomplete</option><option value="missing_service">Current category / service credit incomplete</option><option value="missing_pattern">Current work pattern missing</option></select></Field>
                 <Button type="submit">Search employees</Button>
@@ -61,7 +78,7 @@ export function EmployeeManagement({ legacyTools }: { legacyTools: ReactNode }) 
             {loading ? <LoadingState label="Loading employee page…" /> : <div className="app-panel divide-y divide-gray-100">
                 {!list.employees.length && <p className="p-5 text-sm text-gray-500">No employees match these filters. Prepare the Payroll import or add a verified employee.</p>}
                 {list.employees.map((employee) => <article key={employee.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 p-4">
-                    <div className="min-w-0"><h3 className="break-words font-semibold text-gray-900">{employee.display_name}</h3><p className="break-words text-sm text-gray-600">{employee.department_code || 'Department unverified'}{employee.division_code ? ` / ${employee.division_code}` : ''} · {employee.status}</p><p className="break-words text-xs text-gray-500">Payroll ID: {employee.external_ids?.map((id) => id.external_id).join(', ') || 'Missing'} · {employee.reviewer_id ? 'Login linked' : 'Login unlinked'}</p><p className="text-xs text-gray-500">{employee.employment_category || 'Current appointment unrecorded'}{employee.is_teacher ? ' · Teacher' : ''}{employee.is_intern ? ' · Intern' : ''}{employee.counts_for_service == null ? ' · Service credit unknown' : employee.counts_for_service ? ' · Service included' : ' · Service excluded'}</p></div>
+                    <div className="min-w-0"><h3 className="break-words font-semibold text-gray-900"><ReviewRecordName name={employee.display_name}/></h3><p className="break-words text-sm text-gray-600">{reviewRecordLabel(employee.department_code || 'Department unverified')}{employee.division_code ? ` / ${reviewRecordLabel(employee.division_code)}` : ''} · {employee.status}</p><p className="break-words text-xs text-gray-500">Payroll ID: {employee.external_ids?.map((id) => id.external_id).join(', ') || 'Missing'} · {employee.reviewer_id ? 'Login linked' : 'Login unlinked'}</p><p className="text-xs text-gray-500">{employee.employment_category || 'Current appointment unrecorded'}{employee.is_teacher ? ' · Teacher' : ''}{employee.is_intern ? ' · Intern' : ''}{employee.counts_for_service == null ? ' · Service credit unknown' : employee.counts_for_service ? ' · Service included' : ' · Service excluded'}</p></div>
                     <Button variant="secondary" className="min-w-24" aria-label={`Manage ${employee.display_name}`} disabled={opening} onClick={() => void open(employee.id)}>Manage</Button>
                 </article>)}
                 <div className="px-3"><Pager page={page} pageCount={Math.ceil(list.total / list.page_size)} total={list.total} pageSize={list.page_size} setPage={setPage} /></div>

@@ -503,6 +503,21 @@ function HistoricalPolicySettings() {
 export function Policies() {
     const [historical, setHistorical] = useState(false);
     return <div className="space-y-5">
+        <p className="text-sm text-gray-600">Shared government rules, public holidays and work schedules. Employee balances are managed under Staff.</p>
+        <details className="text-sm text-gray-600">
+            <summary className="cursor-pointer font-medium">How to review Policies</summary>
+            <div className="mt-3 space-y-2">
+                <p>Read the rules and dates below first. Existing examples are ready to inspect; preparing or publishing a new version is an HR configuration step.</p>
+                <ul className="list-disc space-y-1 pl-5">
+                    <li><strong>Leave rules:</strong> eligibility, allowances, balance limits and notice periods.</li>
+                    <li><strong>Public holidays:</strong> approved dates used when calculating a leave application.</li>
+                    <li><strong>Weekly work schedules:</strong> normal working days and paid hours, linked to employees under Staff.</li>
+                </ul>
+                <p>A Demo badge means made-up review data. “Synthetic” and package numbers in the original references are internal build labels. Demo publication or verification does not represent government sign-off.</p>
+                <p>After checking this page, open Staff → Employees, then Balances &amp; service. Approvals is where authorised officers decide submitted applications, with Chief Secretary as final approver.</p>
+                <p>For live setup: verify Payroll identities and service records, assign the actual approvers, publish signed rules and Gazette calendars, then independently certify opening balances and activate a small pilot group.</p>
+            </div>
+        </details>
         <GovernmentFoundation view="policies" />
         <details className="border-t border-gray-200 pt-4" onToggle={e => setHistorical(e.currentTarget.open)}>
             <summary className="cursor-pointer text-sm font-medium text-gray-600">Historical policy settings</summary>

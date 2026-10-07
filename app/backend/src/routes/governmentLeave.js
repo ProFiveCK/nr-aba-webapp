@@ -1,3 +1,4 @@
+import governmentLeaveRolloutRouter from './governmentLeaveRollout.js';
 import governmentLeavePayrollRouter from './governmentLeavePayroll.js';
 import governmentLeaveWorkflowRouter from './governmentLeaveWorkflow.js';
 import express from 'express';
@@ -12,6 +13,7 @@ const router=express.Router(),central=requirePermission(PERMISSIONS.HR_ADMIN),ac
 router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
 router.use('/workflow',governmentLeaveWorkflowRouter);
 router.use('/payroll',governmentLeavePayrollRouter);
+router.use('/rollout',governmentLeaveRolloutRouter);
 const reason=body('reason').isString().trim().isLength({min:10,max:1000}),reference=body('source_reference').isString().trim().isLength({min:5,max:500}),id=param('id').isUUID();
 const date=name=>body(name).isString().custom(value=>{dayNumber(value);return true;});
 const actor=req=>({id:req.user.id,email:req.user.email,ip:req.ip});

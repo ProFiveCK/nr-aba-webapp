@@ -6,6 +6,7 @@ import { Button, LoadingState, Modal, ModalActions } from '../../../components/U
 import type { LeaveType, ResetPeriod } from '../types';
 import { PublicHolidays } from '../PublicHolidays';
 import { OrgUnits } from '../OrgUnits';
+import { GovernmentFoundation } from '../GovernmentFoundation';
 
 const RESET_OPTIONS: { value: ResetPeriod; label: string }[] = [
     { value: 'none', label: 'Never reset' },
@@ -33,7 +34,7 @@ function YesNo({ value }: { value: boolean }) {
     return <span className={value ? 'text-gray-700' : 'text-gray-400'}>{value ? 'Yes' : 'No'}</span>;
 }
 
-export function Policies() {
+function HistoricalPolicySettings() {
     const { addToast } = useToast();
     const { confirm } = useConfirm();
     const [types, setTypes] = useState<LeaveType[]>([]);
@@ -497,4 +498,16 @@ export function Policies() {
             )}
         </div>
     );
+}
+
+export function Policies() {
+    const [historical, setHistorical] = useState(false);
+    return <div className="space-y-5">
+        <GovernmentFoundation view="policies" />
+        <details className="border-t border-gray-200 pt-4" onToggle={e => setHistorical(e.currentTarget.open)}>
+            <summary className="cursor-pointer text-sm font-medium text-gray-600">Historical policy settings</summary>
+            <p className="my-3 text-sm text-gray-500">These settings retain the earlier leave records. Government leave uses the effective versions above.</p>
+            {historical && <HistoricalPolicySettings />}
+        </details>
+    </div>;
 }

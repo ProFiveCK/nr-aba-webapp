@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { useAuth } from '../../contexts/useAuth';
 import { GovernmentWorkflowManagement } from './GovernmentWorkflowManagement';
 import { GovernmentFoundation } from './GovernmentFoundation';
+import { GovernmentRollout } from './GovernmentRollout';
 import { GovernmentPayroll } from './GovernmentPayroll';
 import { EmployeeOnboarding } from './EmployeeOnboarding';
 import { HrAccessManagement } from './HrAccessManagement';
@@ -39,9 +40,14 @@ export function EmployeeManagement({ legacyTools }: { legacyTools: ReactNode }) 
     }, [tab, page, search, department, status, readiness, version]);
     async function open(id: string) { setOpening(true); setError(''); try { setProfile(await apiClient.get<EmployeeProfile>(`/hr/directory/${id}/profile`)); } catch (err) { setError((err as Error).message); } finally { setOpening(false); } }
     return <div className="space-y-4">
-        <div><h2 className="text-2xl font-semibold text-gray-950">Employee management</h2><p className="mt-1 text-sm text-gray-600">Prepare verified identities, appointments and the enterprise approval structure for government leave.</p></div>
-        <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">{scopeSummary}</p>
-        <nav aria-label="Employee management" className="app-panel flex gap-2 overflow-x-auto p-3 sm:flex-wrap">{[['directory','Employees'],...(central ? [['import','Payroll import'],['organisation','Organisation & approvers'],['access','HR access'],['onboarding','Onboarding'],['foundations','Policy & balances'],['government-workflow','Government workflow'],['payroll','Payroll & handover'],['legacy','Historical balances & tools']] : user?.permissions?.hr_balance_manage ? [['balances','Balances']] : [])].map(([id,label]) => <Button key={id} className="shrink-0" variant={tab === id ? 'primary' : 'secondary'} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}</Button>)}</nav>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 pb-4">
+            <label className="flex min-w-0 flex-wrap items-center gap-3 text-sm font-medium text-gray-700">Staff workspace
+                <select aria-label="Staff workspace" className="min-w-0 max-w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900" value={tab} onChange={e=>setTab(e.target.value)}>
+                    {[['directory','Employees'],...(central ? [['import','Payroll import'],['organisation','Organisation & approvers'],['access','HR access'],['onboarding','Onboarding'],['foundations','Balances & service'],['government-workflow','Applications & jobs'],['payroll','Payroll & handover'],['rollout','Rollout readiness'],['legacy','Historical balances & tools']] : user?.permissions?.hr_balance_manage ? [['balances','Balances']] : [])].map(([id,label])=><option key={id} value={id}>{label}</option>)}
+                </select>
+            </label>
+            <p className="text-xs text-gray-500">{scopeSummary}</p>
+        </div>
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         {tab === 'directory' && <>
             <form className="app-panel grid items-end gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5" onSubmit={(e) => { e.preventDefault(); setSearch(query.trim()); setPage(0); }}>
@@ -67,6 +73,7 @@ export function EmployeeManagement({ legacyTools }: { legacyTools: ReactNode }) 
         {tab === 'government-workflow' && central && <GovernmentWorkflowManagement departments={departments} />}
         {tab === 'foundations' && central && <GovernmentFoundation />}
         {tab === 'payroll' && central && <GovernmentPayroll />}
+        {tab === 'rollout' && central && <GovernmentRollout departments={departments} />}
         {tab === 'onboarding' && central && <EmployeeOnboarding departments={departments} />}
         {tab === 'balances' && <ScopedBalances />}
         {tab === 'legacy' && central && legacyTools}

@@ -131,6 +131,7 @@ async function executeEmployeeJobs(pool,{user,actor,employeeId,asOf,clockDate,or
 // posting keys and employee locks also protect manual/scheduled races.
 export async function runDueGovernmentJobs(pool) {
   return withAdvisoryLock(pool,LOCK_KEYS.GOVERNMENT_LEAVE_JOBS,async()=>{
+    const startedAt=new Date();
     const result={as_of:today(),employees:0,changed:0,blocked:[]};
     let cursor=null;
     for(;;) {
@@ -149,6 +150,7 @@ export async function runDueGovernmentJobs(pool) {
       }
       cursor=rows.at(-1).id;
     }
+    await pool.query('INSERT INTO hr_gov_job_runs(started_at,summary) VALUES($1,$2)',[startedAt,result]);
     return result;
   });
 }

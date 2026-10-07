@@ -23,7 +23,7 @@ async function identities(client, employeeIds, selection={}) {
   for(const [id,entry] of Object.entries(result)) entry.payroll_id=selection[id]?(entry.ids.includes(selection[id])?selection[id]:null):entry.ids.length===1?entry.ids[0]:null;
   return result;
 }
-async function registerSnapshot(client,data,{preview=false}={}) {
+export async function currentPayrollSnapshot(client,data,{preview=false}={}) {
   const requests=(await client.query(`SELECT r.id,r.employee_id,r.code,${requestDates},r.grant_snapshot,
     a.effect AS amendment,a.request_id AS amendment_request_id
     FROM hr_gov_requests r LEFT JOIN hr_gov_case_effects a ON a.original_request_id=r.id
@@ -40,7 +40,7 @@ async function registerSnapshot(client,data,{preview=false}={}) {
 export async function previewPayroll(pool,user,data) {
   dayNumber(data.period_start);dayNumber(data.period_end);
   if(data.period_end<data.period_start||dayNumber(data.period_end)-dayNumber(data.period_start)>61)fail('Choose a Payroll period of up to 62 days.',400);
-  return withTransaction(pool,async client=>{await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await assertCentral(client,user);return registerSnapshot(client,data,{preview:true});});
+  return withTransaction(pool,async client=>{await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await assertCentral(client,user);return currentPayrollSnapshot(client,data,{preview:true});});
 }
 export async function preparePayroll(pool,{user,actor,data}) {
   dayNumber(data.period_start);dayNumber(data.period_end);
@@ -56,7 +56,7 @@ export async function preparePayroll(pool,{user,actor,data}) {
     if((await client.query("SELECT 1 FROM hr_gov_payroll_batches WHERE daterange(period_start,period_end,'[]') && daterange($1,$2,'[]') AND (period_start<>$1 OR period_end<>$2)",[data.period_start,data.period_end])).rowCount)fail('Payroll periods overlap. Revise the exact existing period to avoid duplicate instructions.');
     // Advisory lock serialises batches. A single SQL statement obtains the immutable grant/effect set.
     const prior=(await client.query('SELECT * FROM hr_gov_payroll_batches WHERE period_start=$1 AND period_end=$2 ORDER BY version DESC LIMIT 1',[data.period_start,data.period_end])).rows[0];
-    const snapshot=await registerSnapshot(client,normalized);
+    const snapshot=await currentPayrollSnapshot(client,normalized);
     snapshot.changes=payrollDiff(prior?.snapshot.lines || [],snapshot.lines);
     const hash=fingerprint(snapshot);
     if(prior&&fingerprint({...snapshot,changes:[]})===fingerprint({...prior.snapshot,changes:[]}))fail(`No register changes since version ${prior.version}; download that version again.`);
@@ -77,7 +77,7 @@ export async function acknowledgePayroll(pool,{user,actor,id,data}) {
     if(old){if(old.reference!==reference||old.snapshot_hash!==data.snapshot_hash||old.actor_id!==actor.id||old.reason!==why)fail('This version already has a different receipt.');return old;}
     if(batch.prepared_by===actor.id)fail('A different central HR officer must record the independent Salary Unit reconciliation.',403);
     if((await client.query('SELECT 1 FROM hr_gov_payroll_batches WHERE supersedes_id=$1',[id])).rowCount)fail('This version has been superseded; reconcile the latest version.');
-    const current=await registerSnapshot(client,{period_start:batch.snapshot.period_start,period_end:batch.snapshot.period_end,payroll_ids:Object.fromEntries(batch.snapshot.lines.map(l=>[l.employee_id,l.payroll_id]))});
+    const current=await currentPayrollSnapshot(client,{period_start:batch.snapshot.period_start,period_end:batch.snapshot.period_end,payroll_ids:Object.fromEntries(batch.snapshot.lines.map(l=>[l.employee_id,l.payroll_id]))});
     if(fingerprint({...current,changes:[]})!==fingerprint({...batch.snapshot,changes:[]}))fail('Approved instructions changed. Prepare a new period version before acknowledgement.');
     if(batch.supersedes_id&&!data.corrections_reconciled)fail('Confirm reconciliation of the superseded version and every correction.');
     const row=(await client.query('INSERT INTO hr_gov_payroll_receipts(batch_id,actor_id,snapshot_hash,reference,reason) VALUES($1,$2,$3,$4,$5) RETURNING *',[id,actor.id,data.snapshot_hash,reference,why])).rows[0];

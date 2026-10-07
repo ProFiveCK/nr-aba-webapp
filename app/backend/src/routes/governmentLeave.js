@@ -1,3 +1,4 @@
+import governmentLeaveWorkflowRouter from './governmentLeaveWorkflow.js';
 import express from 'express';
 import {pool} from '../db.js';
 import {body,param,query,handleValidation} from '../middleware/validation.js';
@@ -8,13 +9,14 @@ import {CODES,COMMON_CODES,DEFAULT_RULES,SOURCE,dayNumber,serviceFacts} from '..
 import * as service from '../services/governmentLeave.js';
 const router=express.Router(),central=requirePermission(PERMISSIONS.HR_ADMIN),access=requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_STAFF_MANAGE,PERMISSIONS.HR_BALANCE_MANAGE,PERMISSIONS.HR_LEAVE_APPROVE);
 router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
+router.use('/workflow',governmentLeaveWorkflowRouter);
 const reason=body('reason').isString().trim().isLength({min:10,max:1000}),reference=body('source_reference').isString().trim().isLength({min:5,max:500}),id=param('id').isUUID();
 const date=name=>body(name).isString().custom(value=>{dayNumber(value);return true;});
 const actor=req=>({id:req.user.id,email:req.user.email,ip:req.ip});
 const data=req=>({user:req.user,actor:actor(req),data:req.body,employeeId:req.params.id});
 router.get('/configuration',central,async(_req,res)=>{
  const [policies,calendars,patterns]=await Promise.all([pool.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_policy_versions ORDER BY recorded_at DESC LIMIT 100"),pool.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_calendars ORDER BY recorded_at DESC LIMIT 100"),pool.query('SELECT p.*,a.id AS approval_id,a.source_reference FROM hr_work_patterns p LEFT JOIN hr_gov_pattern_approvals a ON a.work_pattern_id=p.id ORDER BY p.name LIMIT 100')]);
- res.json({codes:CODES,defaults:DEFAULT_RULES,source_reference:SOURCE,policies:policies.rows,calendars:calendars.rows,patterns:patterns.rows,submission_enabled:false});
+ res.json({codes:CODES,defaults:DEFAULT_RULES,source_reference:SOURCE,policies:policies.rows,calendars:calendars.rows,patterns:patterns.rows,legacy_submission_enabled:false,submission_activation:'independent_per_employee'});
 });
 router.post('/policies',central,[reason,reference,body('label').isString().trim().isLength({min:3,max:120}),date('effective_from'),date('effective_to'),body('rules').optional().isObject()],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await service.createPolicy(pool,data(req)));});
 router.post('/policies/:id/publish',central,[id,reason],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await service.publishPolicy(pool,{...data(req),id:req.params.id,reason:req.body.reason}));});

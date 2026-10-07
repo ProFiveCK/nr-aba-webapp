@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useAuth } from '../../contexts/useAuth';
+import { GovernmentWorkflowManagement } from './GovernmentWorkflowManagement';
 import { GovernmentFoundation } from './GovernmentFoundation';
 import { EmployeeOnboarding } from './EmployeeOnboarding';
 import { HrAccessManagement } from './HrAccessManagement';
@@ -39,7 +40,7 @@ export function EmployeeManagement({ legacyTools }: { legacyTools: ReactNode }) 
     return <div className="space-y-4">
         <div><h2 className="text-2xl font-semibold text-gray-950">Employee management</h2><p className="mt-1 text-sm text-gray-600">Prepare verified identities, appointments and the enterprise approval structure for government leave.</p></div>
         <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">{scopeSummary}</p>
-        <nav aria-label="Employee management" className="app-panel flex flex-wrap gap-2 p-3">{[['directory','Employees'],...(central ? [['import','Payroll import'],['organisation','Organisation & approvers'],['access','HR access'],['onboarding','Onboarding'],['foundations','Policy & balances'],['legacy','Historical balances & tools']] : user?.permissions?.hr_balance_manage ? [['balances','Balances']] : [])].map(([id,label]) => <Button key={id} variant={tab === id ? 'primary' : 'secondary'} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}</Button>)}</nav>
+        <nav aria-label="Employee management" className="app-panel flex flex-wrap gap-2 p-3">{[['directory','Employees'],...(central ? [['import','Payroll import'],['organisation','Organisation & approvers'],['access','HR access'],['onboarding','Onboarding'],['foundations','Policy & balances'],['government-workflow','Government workflow'],['legacy','Historical balances & tools']] : user?.permissions?.hr_balance_manage ? [['balances','Balances']] : [])].map(([id,label]) => <Button key={id} variant={tab === id ? 'primary' : 'secondary'} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}</Button>)}</nav>
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         {tab === 'directory' && <>
             <form className="app-panel grid items-end gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5" onSubmit={(e) => { e.preventDefault(); setSearch(query.trim()); setPage(0); }}>
@@ -62,6 +63,7 @@ export function EmployeeManagement({ legacyTools }: { legacyTools: ReactNode }) 
         {tab === 'import' && <PayrollEmployeeImport onApplied={() => setVersion((current) => current + 1)} />}
         {tab === 'organisation' && <OrganisationManagement departments={departments} patterns={patterns} onChanged={loadReferences} />}
         {tab === 'access' && central && <HrAccessManagement departments={departments} />}
+        {tab === 'government-workflow' && central && <GovernmentWorkflowManagement departments={departments} />}
         {tab === 'foundations' && central && <GovernmentFoundation />}
         {tab === 'onboarding' && central && <EmployeeOnboarding departments={departments} />}
         {tab === 'balances' && <ScopedBalances />}

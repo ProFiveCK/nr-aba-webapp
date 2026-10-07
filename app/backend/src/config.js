@@ -8,6 +8,9 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
+// Government jobs require an explicit operational opt-in and signed per-person plans.
+export const GOVERNMENT_LEAVE_SCHEDULER_ENABLED = process.env.GOVERNMENT_LEAVE_SCHEDULER === 'on';
+
 export const SESSION_MINUTES = Number(process.env.REVIEWER_SESSION_MINUTES || 480);
 export const PASS_HASH_ROUNDS = Number(process.env.BCRYPT_ROUNDS || 12);
 export const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || 'http://localhost:8080';

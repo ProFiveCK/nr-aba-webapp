@@ -1,3 +1,4 @@
+import {initGovernmentLeaveWorkflowSchema} from './governmentLeaveWorkflowSchema.js';
 // Additive government subledger; legacy IDs, balances and applications stay intact.
 export async function initGovernmentLeaveSchema(client) {
   await client.query(`
@@ -133,6 +134,7 @@ export async function initGovernmentLeaveSchema(client) {
     DROP TRIGGER IF EXISTS hr_gov_calendar_immutable ON hr_gov_calendars;
     CREATE TRIGGER hr_gov_calendar_immutable BEFORE UPDATE OR DELETE ON hr_gov_calendars FOR EACH ROW EXECUTE FUNCTION hr_gov_immutable();
   `);
+  await initGovernmentLeaveWorkflowSchema(client);
   for(const table of ['hr_gov_service_bases','hr_gov_service_exclusions','hr_gov_exclusion_withdrawals','hr_gov_roster_days','hr_gov_pattern_approvals','hr_gov_entitlements','hr_gov_reservations','hr_gov_reservation_events']) {
     await client.query(`DROP TRIGGER IF EXISTS ${table}_immutable ON ${table}`);
     await client.query(`CREATE TRIGGER ${table}_immutable BEFORE UPDATE OR DELETE ON ${table} FOR EACH ROW EXECUTE FUNCTION hr_gov_immutable()`);

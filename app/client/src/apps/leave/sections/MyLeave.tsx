@@ -5,7 +5,7 @@ import { useAuth } from '../../../contexts/useAuth';
 import { useToast } from '../../../contexts/useToast';
 import { useConfirm } from '../../../contexts/useConfirm';
 import { EmptyState, LoadingState } from '../../../components/Ui';
-import { GovernmentPersonalBalances } from '../GovernmentFoundation';
+import { GovernmentMyLeave } from '../GovernmentRequests';
 import { printApprovedLeaveForm } from '../payrollForm';
 import {
     calculateWorkingDays,
@@ -197,6 +197,8 @@ export function MyLeave() {
         </div>
     );
 
+    if (governmentPending && summary) return <div className="space-y-5"><GovernmentMyLeave employeeId={summary.employee.id}/><details className="app-panel space-y-3 p-5"><summary className="cursor-pointer font-semibold">Historical local leave records</summary><p className="text-sm text-gray-600">These retain their original leave types, balances and decisions. Government entitlements and applications are recorded separately.</p>{summary.balances.map(b=><p key={b.leave_type_id} className="text-sm">{b.leave_type_name}: {b.balance} historical days</p>)}{applications.map(a=><article key={a.id} className="space-y-1 rounded-lg border border-gray-200 p-3"><p className="text-sm">{a.leave_type_name} · {formatDate(a.start_date)} to {formatDate(a.end_date)} · {a.status}</p>{a.status==='approved'&&<button className="toolbar-button" onClick={()=>void printApprovedLeaveForm(a.id).catch((e:Error)=>addToast(e.message,'error'))}>Download historical approved PDF</button>}</article>)}</details></div>;
+
     return (
         <div className="space-y-6">
             <div className="flex flex-wrap items-end justify-between gap-3">
@@ -215,7 +217,6 @@ export function MyLeave() {
             )}
 
             {governmentPending && <p role="status" className="app-panel border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Your employee login is ready. Government leave requests will open after the division, Head of Department and Chief Secretary approval workflow and certified opening balances are enabled. Any recorded historical balances shown here are awaiting that transition.</p>}
-            {governmentPending && summary && <GovernmentPersonalBalances employeeId={summary.employee.id}/>}
             {/* Balances */}
             <div className="app-panel p-5 sm:p-6">
                 <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">

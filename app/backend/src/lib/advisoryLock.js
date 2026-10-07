@@ -15,6 +15,7 @@
 /** Distinct constants so two different jobs never share a lock by accident. */
 export const LOCK_KEYS = {
   LEAVE_ACCRUAL: 4_814_001,
+  GOVERNMENT_LEAVE_JOBS: 4_814_002,
 };
 
 /**

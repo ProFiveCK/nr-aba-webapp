@@ -120,7 +120,7 @@ export async function postMovement(client,{entitlementId,kind,amount,effectiveDa
  if(kind==='accrual'&&account.code==='recreation'){
   const {rows:[policy]}=await client.query('SELECT rules FROM hr_gov_policy_versions WHERE id=$1',[account.policy_version_id]);if(units(totals.balance)+value>units(policy.rules.recreation_cap_days))fail('Recreation accrual must stop at the governing cap.');
  }
- const {rows:[posted]}=await client.query(`INSERT INTO hr_gov_ledger(entitlement_id,kind,amount,effective_date,event_key,reverses_id,source_reference,actor_id,reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[entitlementId,kind,decimal(value),effectiveDate,eventKey,reversesId,sourceReference,actor.id,managementReason(reason)]);
+ const {rows:[posted]}=await client.query(`INSERT INTO hr_gov_ledger(entitlement_id,kind,amount,effective_date,event_key,reverses_id,source_reference,actor_id,reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[entitlementId,kind,decimal(value),effectiveDate,eventKey,reversesId,sourceReference,actor?.id??null,managementReason(reason)]);
  await audit(client,actor,'hr.gov.ledger.posted',posted.id,posted);return posted;
 }
 export async function correctLedger(pool,{user,actor,employeeId,data}){
@@ -130,9 +130,9 @@ export async function reverseMovement(pool,{user,actor,employeeId,id,data}){
  central(user);return withTransaction(pool,async client=>{await lockEmployee(client,employeeId);const {rows:[row]}=await client.query('SELECT l.* FROM hr_gov_ledger l JOIN hr_gov_entitlements e ON e.id=l.entitlement_id WHERE l.id=$1 AND e.employee_id=$2',[id,employeeId]);if(!row)fail('Movement not found.',404);if(['opening','use','reversal'].includes(row.kind))fail('Opening/use reversals require the governed cutover or amendment workflow.');return postMovement(client,{entitlementId:row.entitlement_id,kind:'reversal',amount:decimal(-units(row.amount)),effectiveDate:data.effective_date,eventKey:`reversal:${row.id}`,reversesId:row.id,sourceReference:data.source_reference,actor,reason:data.reason});});
 }
 // Internal contract for Package 3 only: no public route can hold, release or grant leave.
-export async function reserveEvaluation(pool,{employeeId,input,requestId=randomUUID(),actor,authorize}){
+export async function reserveEvaluation(pool,{employeeId,input,requestId=randomUUID(),actor,authorize,client:existingClient}){
  if(typeof authorize!=='function')fail('The submission authority callback is required.',403);
- return withTransaction(pool,async client=>{await lockEmployee(client,employeeId);if(!await authorize(client))fail('Submission is not authorised.',403);
+ const work=async client=>{await lockEmployee(client,employeeId);if(!await authorize(client))fail('Submission is not authorised.',403);
   const payloadHash=fingerprint({employeeId,input});const {rows:[old]}=await client.query('SELECT * FROM hr_gov_reservation_requests WHERE id=$1',[requestId]);if(old){if(old.employee_id!==employeeId||old.payload_hash!==payloadHash)fail('Request key was already used for a different absence.');return old;}
   const result=await evaluate(client,employeeId,input);if(!result.eligible_for_preview)fail(result.issues.join(' '));
   const ids=result.allocations.map(a=>a.entitlement_id).sort();await client.query('SELECT id FROM hr_gov_entitlements WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE',[ids]);
@@ -141,11 +141,11 @@ export async function reserveEvaluation(pool,{employeeId,input,requestId=randomU
   const {rows:[request]}=await client.query('INSERT INTO hr_gov_reservation_requests(id,employee_id,payload_hash,evaluation_snapshot) VALUES ($1,$2,$3,$4) RETURNING *',[requestId,employeeId,payloadHash,locked]);
   for(const allocation of locked.allocations)await client.query('INSERT INTO hr_gov_reservations(request_id,entitlement_id,amount) VALUES ($1,$2,$3)',[requestId,allocation.entitlement_id,allocation.amount]);
   await client.query("INSERT INTO hr_gov_reservation_events(request_id,action,actor_id,reason) VALUES ($1,'held',$2,'Server-evaluated application reservation')",[requestId,actor.id]);await audit(client,actor,'hr.gov.reservation.held',requestId,{allocations:locked.allocations});return request;
- });
+ };return existingClient?work(existingClient):withTransaction(pool,work);
 }
-export async function finishReservation(pool,{employeeId,requestId,action,actor,reason,authorize}){
+export async function finishReservation(pool,{employeeId,requestId,action,actor,reason,authorize,client:existingClient}){
  if(!['released','consumed'].includes(action)||typeof authorize!=='function')fail('An authorised release/grant contract is required.',403);reason=managementReason(reason);
- return withTransaction(pool,async client=>{await lockEmployee(client,employeeId);if(!await authorize(client))fail('Decision is not authorised.',403);
+ const work=async client=>{await lockEmployee(client,employeeId);if(!await authorize(client))fail('Decision is not authorised.',403);
   const {rows:[request]}=await client.query('SELECT * FROM hr_gov_reservation_requests WHERE id=$1 AND employee_id=$2 FOR UPDATE',[requestId,employeeId]);if(!request)fail('Reservation not found.',404);if(request.status===action)return request;if(request.status!=='held')fail('This reservation has already completed differently.');
   const {rows:holds}=await client.query('SELECT * FROM hr_gov_reservations WHERE request_id=$1 ORDER BY entitlement_id',[requestId]);await client.query('SELECT id FROM hr_gov_entitlements WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE',[holds.map(h=>h.entitlement_id)]);
   if(action==='consumed'){
@@ -158,5 +158,5 @@ export async function finishReservation(pool,{employeeId,requestId,action,actor,
   await client.query('UPDATE hr_gov_reservation_requests SET status=$2,completed_at=NOW() WHERE id=$1',[requestId,action]);
   if(action==='consumed')for(const hold of holds)await postMovement(client,{entitlementId:hold.entitlement_id,kind:'use',amount:decimal(-units(hold.amount)),effectiveDate:request.evaluation_snapshot.segments.find(s=>s.entitlement_id===hold.entitlement_id&&units(s.charge)>0n).date,eventKey:`use:${requestId}:${hold.entitlement_id}`,sourceReference:`request:${requestId}`,actor,reason});
   await client.query('INSERT INTO hr_gov_reservation_events(request_id,action,actor_id,reason) VALUES ($1,$2,$3,$4)',[requestId,action,actor.id,reason]);await audit(client,actor,`hr.gov.reservation.${action}`,requestId,{reason});return {...request,status:action};
- });
+ };return existingClient?work(existingClient):withTransaction(pool,work);
 }

@@ -62,7 +62,7 @@ export function Report() {
     const totalDays = rows?.reduce((sum, row) => sum + Number(row.total_days), 0) ?? 0;
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-4"><p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">This export covers historical local leave. Government applications are reviewed under Staff → Government workflow; the government payroll register follows in Package 5.</p>
             <div className="flex flex-wrap items-end gap-3 app-panel p-4">
                 <label className="text-sm">
                     <span className="mb-1 block font-medium text-gray-700">Period from</span>

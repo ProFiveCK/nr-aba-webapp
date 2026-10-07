@@ -1,5 +1,7 @@
 # Package 2 — policy, calculation and balance foundations
 
+Package 3 update: common submissions and staged approvals are now available after independent employee activation. Follow the [Package 3 review guide](GOVERNMENT-LEAVE-PACKAGE-3-REVIEW-2026-10-07.md) for the current runtime and examples. The steps below record the Package 2 handoff.
+
 Date: 7 October 2026. Status: implemented and verified locally; ready for owner review. Government employee submission remains gated until Package 3. No push, pull request or production deployment.
 
 ## Open the running Docker application

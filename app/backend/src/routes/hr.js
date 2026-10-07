@@ -1924,7 +1924,7 @@ router.get(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const { rows: applications } = await pool.query(
-      `SELECT a.id, a.start_date, a.end_date, a.days, a.status,
+      `SELECT a.id, a.employee_id, a.start_date, a.end_date, a.days, a.status,
               t.name AS leave_type_name, e.display_name AS employee_name, e.department_code,
               'leave' AS kind
          FROM hr_leave_applications a
@@ -1938,7 +1938,7 @@ router.get(
     );
     // Study leave is a period away recorded on the staff record, not an application.
     const { rows: studyLeave } = await pool.query(
-      `SELECT 'study-' || e.id AS id, e.study_leave_start AS start_date, e.study_leave_end AS end_date,
+      `SELECT 'study-' || e.id AS id, e.id AS employee_id, e.study_leave_start AS start_date, e.study_leave_end AS end_date,
               NULL::numeric AS days, 'approved' AS status, 'Study leave' AS leave_type_name,
               e.display_name AS employee_name, e.department_code, 'study_leave' AS kind
          FROM hr_employees e

@@ -1,5 +1,7 @@
 # Government Leave Package 3 local review
 
+Package 4 follow-up: [other leave and assisted cases](GOVERNMENT-LEAVE-PACKAGE-4-REVIEW-2026-10-07.md). Event cases, assisted entry, financial commitments and controlled amendments are now implemented locally.
+
 Date: 7 October 2026. Recreation, Medical and Special applications, staged approvals, approved personnel-file PDFs and reviewed entitlement jobs are implemented locally. Government submission requires independent activation for each employee. Owner acceptance, the actual Payroll cutover and production rollout remain open. The next build package is Package 4, other leave and assisted cases.
 
 ## Open the running application

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 export const ENGINE_VERSION='gov-foundation-1';
-export const CODES = ['recreation','medical','special','teacher_recreation','extended_medical','maternity','paternity','adoption','official','lwop','long_service','furlough','witness_republic','witness_other'];
+export const CODES = ['recreation','medical','special','teacher_recreation','extended_medical','extended_medical_minister','maternity','paternity','adoption','official','lwop','long_service','furlough','recreation_encashment','recreation_separation','attendance','amendment','witness_republic','witness_other'];
 export const COMMON_CODES=['recreation','medical','special'];
 export const DEFAULT_RULES={ordinary_recreation_months:3,temporary_recreation_months:12,recreation_annual_days:'20',recreation_cap_days:'60',recreation_notice_days:14,medical_annual_days:'10',special_annual_days:'3',medical_uncertified_occasions:3};
 export const SOURCE='GoN HRIS Reference Updated D; DHRL 22 July / 15 September 2026; owner ordinary-recreation decision 6 October 2026';

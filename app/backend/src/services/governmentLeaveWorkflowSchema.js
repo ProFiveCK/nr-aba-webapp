@@ -1,3 +1,4 @@
+import {initGovernmentLeaveCaseSchema} from './governmentLeaveCaseSchema.js';
 export async function initGovernmentLeaveWorkflowSchema(client) {
   await client.query(`
     CREATE TABLE IF NOT EXISTS hr_gov_workflow_configs (
@@ -100,6 +101,7 @@ export async function initGovernmentLeaveWorkflowSchema(client) {
     DROP TRIGGER IF EXISTS hr_gov_request_facts_guard ON hr_gov_requests;
     CREATE TRIGGER hr_gov_request_facts_guard BEFORE UPDATE OR DELETE ON hr_gov_requests FOR EACH ROW EXECUTE FUNCTION hr_gov_request_facts_guard();
   `);
+  await initGovernmentLeaveCaseSchema(client);
   for(const table of ['hr_gov_workflow_configs','hr_gov_job_plans']) {
     await client.query(`DROP TRIGGER IF EXISTS ${table}_guard ON ${table}`);
     await client.query(`CREATE TRIGGER ${table}_guard BEFORE UPDATE OR DELETE ON ${table} FOR EACH ROW EXECUTE FUNCTION hr_gov_workflow_config_guard()`);

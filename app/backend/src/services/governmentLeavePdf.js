@@ -1,6 +1,6 @@
 import {PDFDocument,StandardFonts,rgb} from 'pdf-lib';
 const printable=value=>String(value??'').replace(/[^\x20-\x7e\n]/g,'?');
-const officeLabels={division:'Divisional approver',department:'Head of Department',hr_verifier:'HR verifier',relevant_secretary:'Relevant Secretary',chief_secretary:'Chief Secretary'};
+const officeLabels={division:'Divisional approver',department:'Head of Department',hr_verifier:'HR verifier',relevant_secretary:'Relevant Secretary',chief_secretary:'Chief Secretary',minister:'Minister statutory decision'};
 const label=value=>officeLabels[value]||printable(value).replace(/_/g,' ').replace(/^./,s=>s.toUpperCase());
 export async function generateGovernmentLeavePdf(grant) {
   const pdf=await PDFDocument.create(),font=await pdf.embedFont(StandardFonts.Helvetica),bold=await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -35,7 +35,7 @@ export async function generateGovernmentLeavePdf(grant) {
   line(`Payroll ID: ${grant.employee.payroll_id||'Not recorded'}`);
   line(`Department: ${grant.employee.department_name||''} | Division: ${grant.employee.division_name||''}`);
   line(`Leave: ${label(grant.code)} | ${grant.start_date} to ${grant.end_date}`);
-  line(`Granted charge: ${grant.charge} policy days | Scheduled hours: ${grant.evaluation.scheduled_hours}`);
+  line(grant.case_determination?`Event case | Scheduled hours: ${grant.evaluation.scheduled_hours} | No annual balance assigned`:`Granted charge: ${grant.charge} policy days | Scheduled hours: ${grant.evaluation.scheduled_hours}`);
   line(`Submitted: ${new Date(grant.submitted_at).toISOString()} | Final grant: ${grant.granted_at}`,{size:9});
   heading('Chief Secretary final grant and recorded approvals');
   for(const stage of grant.stages) {
@@ -44,13 +44,14 @@ export async function generateGovernmentLeavePdf(grant) {
   }
   line('These are recorded electronic decisions. No handwritten signature is represented.',{size:9});
   heading('Explanation supplied by the employee');line(grant.reason,{size:9});
-  heading('Balance reconciliation');
+  if(grant.case_determination){heading('Reviewed case and pay determination');line(`Authority: ${grant.case_determination.source_reference}`,{size:9});line(`Evidence: ${grant.case_determination.evidence_reference}`,{size:9});for(const segment of grant.case_determination.pay_segments)line(`${segment.start_date} to ${segment.end_date}: ${segment.salary_percent}% salary`,{size:9});if(grant.case_determination.facts.payable_amount!==undefined)line(`Reviewed valuation: ${grant.case_determination.facts.payable_amount} AUD | ${grant.case_determination.facts.salary_valuation_reference}`,{size:9});if(grant.case_determination.facts.allowance_amount!==undefined)line(`Approved official allowance: ${grant.case_determination.facts.allowance_amount} AUD | ${grant.case_determination.facts.allowance_reference}`,{size:9});if(grant.case_determination.benefit)line(`Committed benefit: ${grant.case_determination.benefit.requested} ${grant.case_determination.benefit.unit} | Action: ${label(grant.case_determination.benefit.action)} | Prior history: ${grant.case_determination.benefit.prior}`,{size:9});if(grant.effect?.action)line(`Amendment: ${label(grant.effect.action)} | Original application: ${grant.case_determination.facts.original_request_id}`,{size:9});for(const task of grant.case_determination.tasks)line(`Follow-up: ${task.description} | Due: ${task.due_date||'As soon as practicable / reviewed reference'}`,{size:9});}
+  if(grant.balances.length)heading('Balance reconciliation');
   for(const balance of grant.balances)line(`Credit before: ${balance.before} | Used: ${balance.used} | Credit after: ${balance.after} policy days`,{size:9});
   heading('Calculation and policy references');
   line(`Evaluator: ${grant.engine_version} | Regime: ${grant.regime}`,{size:9});
   line(`Calculation: ${grant.evaluation.snapshot_hash}`,{size:8});
   for(const policy of grant.evaluation.policy_versions)line(`Policy ${policy.id}: ${policy.label} | ${policy.source_reference}`,{size:8});
-  heading('Daily absence charges');
+  heading(grant.case_determination?'Dated schedule for payroll review (no annual balance debit)':'Daily absence charges');
   for(const segment of grant.evaluation.segments)line(`${segment.date} | ${segment.charge} policy days | ${segment.scheduled_hours} scheduled hours${segment.holiday_exempt?' | Public holiday exempt':''}`,{size:8});
   heading('Salary Unit');line('Acknowledgement is recorded separately after the final grant. This leave record does not initiate a payment.',{size:9});
   pdf.setTitle(`Government leave - ${printable(grant.employee.name)}`);

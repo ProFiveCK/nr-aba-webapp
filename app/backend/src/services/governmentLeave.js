@@ -25,8 +25,8 @@ export async function loadContext(client,employeeId){
  ()=>client.query(`SELECT *,to_char(day,'YYYY-MM-DD') AS day FROM hr_gov_roster_days r WHERE employee_id=$1 AND NOT EXISTS(SELECT 1 FROM hr_gov_roster_days successor WHERE successor.supersedes_id=r.id) ORDER BY r.day,r.id`,[employeeId]),
  ()=>client.query(`SELECT e.*,to_char(e.period_start,'YYYY-MM-DD') AS period_start,to_char(e.period_end,'YYYY-MM-DD') AS period_end,to_char(e.as_of,'YYYY-MM-DD') AS as_of,
    COALESCE((SELECT sum(l.amount) FROM hr_gov_ledger l WHERE l.entitlement_id=e.id),0)::text AS balance,
-   COALESCE((SELECT sum(h.amount) FROM hr_gov_reservations h JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE h.entitlement_id=e.id AND r.status='held'),0)::text AS held,
-   (COALESCE((SELECT sum(l.amount) FROM hr_gov_ledger l WHERE l.entitlement_id=e.id),0)-COALESCE((SELECT sum(h.amount) FROM hr_gov_reservations h JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE h.entitlement_id=e.id AND r.status='held'),0))::text AS available
+   (COALESCE((SELECT sum(h.amount) FROM hr_gov_reservations h JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE h.entitlement_id=e.id AND r.status='held'),0)+COALESCE((SELECT sum(h.amount) FROM hr_gov_case_credit_holds h JOIN hr_gov_requests cr ON cr.id=h.request_id WHERE h.entitlement_id=e.id AND cr.status='pending' AND h.determination_id=(SELECT id FROM hr_gov_case_determinations cd WHERE cd.request_id=cr.id ORDER BY version DESC LIMIT 1)),0))::text AS held,
+   (COALESCE((SELECT sum(l.amount) FROM hr_gov_ledger l WHERE l.entitlement_id=e.id),0)-(COALESCE((SELECT sum(h.amount) FROM hr_gov_reservations h JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE h.entitlement_id=e.id AND r.status='held'),0)+COALESCE((SELECT sum(h.amount) FROM hr_gov_case_credit_holds h JOIN hr_gov_requests cr ON cr.id=h.request_id WHERE h.entitlement_id=e.id AND cr.status='pending' AND h.determination_id=(SELECT id FROM hr_gov_case_determinations cd WHERE cd.request_id=cr.id ORDER BY version DESC LIMIT 1)),0)))::text AS available
    FROM hr_gov_entitlements e WHERE e.employee_id=$1 ORDER BY e.period_start,e.id`,[employeeId])];for(const query of queries)results.push(await query());
  const keys=['policies','calendars','periods','bases','exclusions','patterns','pattern_approvals','rosters','entitlements'];return Object.fromEntries([['employee',employee],...keys.map((key,i)=>[key,results[i].rows])]);
 }
@@ -108,14 +108,14 @@ export async function certifyOpening(pool,{user,actor,id,reason}){
   const {rows:[after]}=await client.query("UPDATE hr_gov_openings SET status='certified',certified_by=$2,certified_at=NOW(),certification_reason=$3 WHERE id=$1 RETURNING *",[id,actor.id,reason]);await audit(client,actor,'hr.gov.opening.certified',id,{...after,entitlement_id:entitlement.id});return after;
  });
 }
-export async function postMovement(client,{entitlementId,kind,amount,effectiveDate,eventKey,sourceReference,actor,reason,reversesId=null}){
+export async function postMovement(client,{entitlementId,kind,amount,effectiveDate,eventKey,sourceReference,actor,reason,reversesId=null,excludeCaseRequestId=null}){
  const value=units(amount);const {rows:[account]}=await client.query('SELECT *,to_char(as_of,\'YYYY-MM-DD\') AS as_of,to_char(period_end,\'YYYY-MM-DD\') AS period_end FROM hr_gov_entitlements WHERE id=$1 FOR UPDATE',[entitlementId]);if(!account)fail('Entitlement not found.',404);
  if(effectiveDate<account.as_of||effectiveDate>account.period_end)fail('A movement must be within the certified period and on/after its opening date.');
  const payload={entitlement_id:entitlementId,kind,amount:decimal(value),effective_date:effectiveDate,source_reference:sourceReference,reverses_id:reversesId};
  const {rows:[existing]}=await client.query('SELECT *,to_char(effective_date,\'YYYY-MM-DD\') AS effective_date FROM hr_gov_ledger WHERE event_key=$1',[eventKey]);
  if(existing){if(fingerprint(Object.fromEntries(Object.keys(payload).map(k=>[k,existing[k]])))!==fingerprint(payload))fail('The event key was already used for a different posting.');return existing;}
  const {rows:[totals]}=await client.query(`SELECT COALESCE((SELECT sum(amount) FROM hr_gov_ledger WHERE entitlement_id=$1),0)::text AS balance,
-  COALESCE((SELECT sum(h.amount) FROM hr_gov_reservations h JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE h.entitlement_id=$1 AND r.status='held'),0)::text AS held`,[entitlementId]);
+  (COALESCE((SELECT sum(h.amount) FROM hr_gov_reservations h JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE h.entitlement_id=$1 AND r.status='held'),0)+COALESCE((SELECT sum(h.amount) FROM hr_gov_case_credit_holds h JOIN hr_gov_requests cr ON cr.id=h.request_id WHERE h.entitlement_id=$1 AND cr.status='pending' AND ($2::uuid IS NULL OR cr.id<>$2) AND h.determination_id=(SELECT id FROM hr_gov_case_determinations cd WHERE cd.request_id=cr.id ORDER BY version DESC LIMIT 1)),0))::text AS held`,[entitlementId,excludeCaseRequestId]);
  if(units(totals.balance)+value<units(totals.held))fail('The movement would spend entitlement already held or make the balance negative.');
  if(kind==='accrual'&&account.code==='recreation'){
   const {rows:[policy]}=await client.query('SELECT rules FROM hr_gov_policy_versions WHERE id=$1',[account.policy_version_id]);if(units(totals.balance)+value>units(policy.rules.recreation_cap_days))fail('Recreation accrual must stop at the governing cap.');

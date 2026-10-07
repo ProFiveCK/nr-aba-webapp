@@ -1,4 +1,6 @@
 import express from 'express';
+import caseRouter from './governmentLeaveCases.js';
+import {effectiveAbsenceSql,effectiveEndSql} from '../services/governmentLeaveCases.js';
 import {pool} from '../db.js';
 import {body,param,query,handleValidation} from '../middleware/validation.js';
 import {requirePermission} from '../services/authService.js';
@@ -15,6 +17,7 @@ const router=express.Router();
 const access=requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_LEAVE_APPROVE,PERMISSIONS.HR_REPORT_READ);
 const central=requirePermission(PERMISSIONS.HR_ADMIN),apply=requirePermission(PERMISSIONS.HR_LEAVE_APPLY);
 router.use(access);
+router.use(caseRouter);
 const id=param('id').isUUID(),reason=body('reason').isString().trim().isLength({min:10,max:1000});
 const reference=body('source_reference').isString().trim().isLength({min:5,max:500});
 const date=name=>body(name).isString().custom(value=>{dayNumber(value);return true;});
@@ -37,7 +40,7 @@ router.get('/administration',central,[query('employee_id').optional().isUUID()],
 });
 router.post('/employees/:id/configurations',central,[id,reason,reference,body('legacy_resolution_reference').isString().trim().isLength({min:5,max:500}),body('enabled_codes').isArray({max:3}),body('enabled_codes.*').isIn(COMMON_CODES),body('medical_rule').equals('single_calendar_date_nonadjacent_scheduled_days'),body('history_confirmed').equals('true'),body('medical_history').isArray({max:50}),body('medical_history.*.start_date').custom(value=>{dayNumber(value);return true;}),body('medical_history.*.end_date').custom(value=>{dayNumber(value);return true;}),body('medical_history.*.uncertified').isBoolean()],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await workflow.prepareConfiguration(pool,args(req)));});
 router.post('/configurations/:id/publish',central,[id,reason],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.publishConfiguration(pool,{...args(req),reason:req.body.reason}));});
-router.post('/consent-offices',central,[reason,reference,body('level').isIn(['relevant_secretary','hr_verifier']),body('department_id').optional({nullable:true,checkFalsy:true}).isUUID(),body('approver_employee_id').isUUID(),date('effective_from'),optionalDate('effective_to')],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await workflow.assignConsentOffice(pool,args(req)));});
+router.post('/consent-offices',central,[reason,reference,body('level').isIn(['relevant_secretary','hr_verifier','minister']),body('department_id').optional({nullable:true,checkFalsy:true}).isUUID(),body('approver_employee_id').isUUID(),date('effective_from'),optionalDate('effective_to')],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await workflow.assignConsentOffice(pool,args(req)));});
 router.post('/consent-offices/:id/close',central,[id,reason,date('effective_to')],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.closeConsentOffice(pool,args(req)));});
 router.post('/employees/:id/job-plans',central,[id,reason,reference,body('code').isIn(COMMON_CODES),body('calculation_confirmed').equals('true'),optionalDate('first_post_end'),optionalDate('payroll_anchor'),body('temporary_start').optional().isIn(['appointment','qualification'])],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await jobs.prepareJobPlan(pool,args(req)));});
 router.post('/job-plans/:id/approve',central,[id,reason],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await jobs.approveJobPlan(pool,{...args(req),reason:req.body.reason}));});
@@ -57,15 +60,15 @@ router.get('/calendar',[query('from').custom(value=>{dayNumber(value);return tru
   if(req.query.to<req.query.from||dayNumber(req.query.to)-dayNumber(req.query.from)>62)throw new ServiceError(400,'Choose a calendar window of up to 63 days.');
   const page=Number(req.query.page)||1;
   const {rows}=await pool.query(`SELECT r.id,e.id AS employee_id,e.display_name AS employee_name,e.department_code,
-    'Approved government leave' AS leave_type_name,'leave' AS kind,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge AS days
-    FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id WHERE r.status='approved' AND r.start_date<=$2 AND r.end_date>=$1
+    'Approved government leave' AS leave_type_name,'leave' AS kind,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(${effectiveEndSql()},'YYYY-MM-DD') AS end_date,r.charge AS days
+    FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id WHERE r.status='approved' AND ${effectiveAbsenceSql()} AND r.code NOT IN ('amendment','attendance','long_service','recreation_encashment','recreation_separation') AND (r.code<>'furlough' OR r.grant_snapshot->'case_determination'->'facts'->>'action'='take_leave') AND r.start_date<=$2 AND ${effectiveEndSql()}>=$1
     AND ${employeeReadSql(req.user,'$3','e',true)} ORDER BY r.start_date,r.id LIMIT 201 OFFSET $4`,[req.query.from,req.query.to,req.user.id,(page-1)*200]);
   res.json({entries:rows.slice(0,200),has_more:rows.length>200,page});
 });
 router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query('mode').optional().isIn(['mine','queue','all']),query('status').optional().isIn(['pending','approved','rejected','cancelled','all'])],async(req,res)=>{
   if(!handleValidation(req,res))return;const page=Number(req.query.page)||1,mode=req.query.mode||'queue',status=req.query.status||'pending';
   if(mode==='all'&&!isCentralHr(req.user))throw new ServiceError(403,'Central HR administration is required.');
-  const scope=mode==='all'?'($1::uuid IS NOT NULL)':mode==='mine'?'e.reviewer_id=$1':`(${employeeScopeSql(req.user,'hr_report_read','$1')} OR EXISTS(SELECT 1 FROM hr_gov_request_stages s JOIN LATERAL(SELECT reviewer_id FROM hr_gov_stage_bindings b WHERE b.stage_id=s.id ORDER BY recorded_at DESC,id DESC LIMIT 1)b ON TRUE WHERE s.request_id=r.id AND b.reviewer_id=$1 AND e.status='active' AND e.department_id=r.department_id AND e.division_id=r.division_id))`;
+  const scope=mode==='all'?'($1::uuid IS NOT NULL)':mode==='mine'?'e.reviewer_id=$1':`(${employeeScopeSql(req.user,'hr_report_read','$1')} OR EXISTS(SELECT 1 FROM hr_gov_request_stages s JOIN LATERAL(SELECT reviewer_id FROM hr_gov_stage_bindings b WHERE b.stage_id=s.id ORDER BY recorded_at DESC,id DESC LIMIT 1)b ON TRUE WHERE s.request_id=r.id AND b.reviewer_id=$1 AND (e.status='active' OR r.application_snapshot->>'separation_case'='true') AND e.department_id=r.department_id AND e.division_id=r.division_id))`;
   const where=`${scope} AND ($2='all' OR r.status=$2)`;
   const {rows}=await pool.query(`SELECT r.id,r.employee_id,r.application_snapshot->'employee'->>'name' AS employee_name,r.code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge,r.status,r.submitted_at,r.stage_index,s.level AS current_level,b.approver_name AS current_approver,
     (SELECT count(*)::int FROM hr_gov_request_stages missing WHERE missing.request_id=r.id AND NOT EXISTS(SELECT 1 FROM hr_gov_stage_bindings mb WHERE mb.stage_id=missing.id)) AS unassigned_stages,
@@ -81,7 +84,7 @@ router.get('/requests/:id',[id],async(req,res)=>{if(!handleValidation(req,res))r
 router.post('/requests/:id/decisions',[
   id,body('stage_id').isUUID(),body('binding_id').isUUID(),body('event_key').isUUID(),body('decision').isIn(['approved','rejected']),body('note').isString().trim().isLength({min:10,max:4000}),
   body('source_reference').optional().isString().trim().isLength({min:5,max:500}),optionalDate('covers_start'),optionalDate('covers_end'),optionalDate('alternative_date'),body('consultation_reference').optional().isString().trim().isLength({min:5,max:500}),
-  ...['evidence_reviewed','certificate_reviewed','justification_accepted','operational_refusal'].map(name=>body(name).optional().isBoolean())
+  ...['evidence_reviewed','certificate_reviewed','justification_accepted','operational_refusal','discretion_confirmed'].map(name=>body(name).optional().isBoolean())
 ],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.decideRequest(pool,args(req)));});
 router.post('/requests/:id/cancel',[id,reason],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.cancelRequest(pool,{...args(req),reason:req.body.reason}));});
 router.post('/requests/:id/stages/:stageId/rebind',central,[id,param('stageId').isUUID(),reason,reference,body('substitute_employee_id').optional({nullable:true,checkFalsy:true}).isUUID()],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.rebindStage(pool,{...args(req),stageId:req.params.stageId}));});

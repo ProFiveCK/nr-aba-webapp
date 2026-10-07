@@ -13,6 +13,9 @@ export async function initGovernmentLeaveSchema(client) {
     );
     ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS evaluator_version TEXT NOT NULL DEFAULT 'gov-foundation-1';
     ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0);
+    ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS deleted_by UUID REFERENCES reviewers(id);
+    ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS deletion_reason TEXT;
     CREATE INDEX IF NOT EXISTS idx_hr_gov_policy_dates ON hr_gov_policy_versions(effective_from,effective_to) WHERE status='published';
     CREATE TABLE IF NOT EXISTS hr_gov_calendars (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), label TEXT NOT NULL, effective_from DATE NOT NULL,

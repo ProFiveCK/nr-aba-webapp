@@ -67,6 +67,30 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
   await assert.rejects(s.updatePolicy(pool,{user:user(central),actor:{...central,id:randomUUID()},id:created.id,data:{...draftData(),label:'Must roll back',expected_revision:1}}));
   const {rows:[saved]}=await pool.query('SELECT label,revision FROM hr_gov_policy_versions WHERE id=$1',[created.id]);assert.equal(saved.label,created.label);assert.equal(saved.revision,1);
  });
+ test('draft deletion is recoverable, hides active choices and blocks edit/publication until restored with an audit trail',async()=>{
+  const created=await call('/api/hr/government/policies',draftData()),path=`/api/hr/government/policies/${created.body.id}`;
+  const removed=await call(path,{reason,expected_revision:1},central,'DELETE');assert.equal(removed.status,200);assert.equal(removed.body.status,'draft');assert.equal(removed.body.revision,2);assert.ok(removed.body.deleted_at);assert.equal(removed.body.deleted_by,central.id);
+  let config=(await call('/api/hr/government/configuration')).body;assert.ok(!config.policies.some(p=>p.id===created.body.id));assert.equal(config.deleted_policies.find(p=>p.id===created.body.id).deletion_reason,reason);
+  assert.equal((await call(path,{...draftData(),expected_revision:2},central,'PUT')).status,409);assert.equal((await call(`${path}/publish`,{reason,expected_revision:2})).status,409);
+  const restored=await call(`${path}/restore`,{reason:'Restore after correcting the review decision.',expected_revision:2});assert.equal(restored.status,200);assert.equal(restored.body.revision,3);assert.equal(restored.body.deleted_at,null);assert.equal(restored.body.status,'draft');assert.deepEqual(restored.body.rules,created.body.rules);assert.equal(restored.body.prepared_by,created.body.prepared_by);
+  config=(await call('/api/hr/government/configuration')).body;assert.ok(config.policies.some(p=>p.id===created.body.id));assert.ok(!config.deleted_policies.some(p=>p.id===created.body.id));
+  const {rows:history}=await pool.query("SELECT action,before,after,metadata FROM audit_log WHERE entity_id=$1 AND action IN ('hr.gov.policy.draft_deleted','hr.gov.policy.draft_restored') ORDER BY id",[created.body.id]);assert.equal(history.length,2);assert.equal(history[0].before.deleted_at,null);assert.ok(history[0].after.deleted_at);assert.equal(history[1].after.deleted_at,null);assert.equal(history[1].metadata.reason,'Restore after correcting the review decision.');
+ });
+ test('draft removal and restoration enforce HR authority, revision checks and published-policy protection',async()=>{
+  const created=await call('/api/hr/government/policies',draftData()),path=`/api/hr/government/policies/${created.body.id}`,data={reason,expected_revision:1};
+  for(const [url,method] of [[path,'DELETE'],[`${path}/restore`,'POST']]){assert.equal((await call(url,data,scoped,method)).status,403);assert.equal((await call(url,{reason},central,method)).status,422);assert.equal((await call(url,{...data,reason:'short'},central,method)).status,422);}
+  assert.equal((await call(`/api/hr/government/policies/${policy.id}`,data,central,'DELETE')).status,409);assert.equal((await call(`/api/hr/government/policies/${policy.id}/restore`,data)).status,409);assert.equal((await call(`/api/hr/government/policies/${randomUUID()}`,data,central,'DELETE')).status,404);
+  assert.equal((await call(`${path}/restore`,data)).status,409);assert.equal((await call(path,{...draftData(),label:'Updated before removal',expected_revision:1},central,'PUT')).status,200);assert.equal((await call(path,data,central,'DELETE')).status,409);
+  assert.equal((await call(path,{reason,expected_revision:2},central,'DELETE')).status,200);assert.equal((await call(`${path}/restore`,{reason,expected_revision:2})).status,409);assert.equal((await call(path,{reason,expected_revision:3},central,'DELETE')).status,409);
+  await assert.rejects(pool.query('UPDATE hr_gov_policy_versions SET deleted_at=NOW() WHERE id=$1',[policy.id]),/immutable/);
+ });
+ test('draft removal and competing edit serialize, and audit failure rolls back removal and restoration',async()=>{
+  const created=await call('/api/hr/government/policies',draftData()),path=`/api/hr/government/policies/${created.body.id}`;
+  const results=await Promise.all([call(path,{reason,expected_revision:1},central,'DELETE'),call(path,{...draftData(),label:'Competing edit',expected_revision:1},central,'PUT')]);assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);
+  const another=await s.createPolicy(pool,{user:user(central),actor:central,data:draftData()}),args={user:user(central),actor:{...central,id:randomUUID()},id:another.id,reason,expected_revision:1,deleted:true};
+  await assert.rejects(s.setPolicyDraftDeleted(pool,args));let saved=(await pool.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1',[another.id])).rows[0];assert.equal(saved.deleted_at,null);assert.equal(saved.revision,1);
+  await s.setPolicyDraftDeleted(pool,{...args,actor:central});await assert.rejects(s.setPolicyDraftDeleted(pool,{...args,expected_revision:2,deleted:false}));saved=(await pool.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1',[another.id])).rows[0];assert.ok(saved.deleted_at);assert.equal(saved.revision,2);
+ });
  test('opening preview retains legacy data; independent certification, stale checks, overlap and retries are safe',async()=>{
   const type=await upsertLeaveType(pool,{name:'Synthetic Historical Special',defaultDays:5});await pool.query('INSERT INTO hr_leave_balances(employee_id,leave_type_id,year,balance,pending) VALUES ($1,$2,2026,5,1)',[employee.id,type.id]);
   const data={code:'special',amount:'5',policy_version_id:policy.id,period_start:'2026-01-01',period_end:'2026-12-31',as_of:'2026-10-01',source_reference:'Synthetic historical reconciliation',payroll_reference:'Salary Unit sign-off',reason};

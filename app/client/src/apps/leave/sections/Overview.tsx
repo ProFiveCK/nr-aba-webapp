@@ -516,7 +516,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
     ];
 
     return (
-        <div className="space-y-4"><p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">These overview measures cover historical local leave. Review government applications and certified balances under Staff → Government workflow.</p>
+        <div className="space-y-4"><p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">These overview measures cover historical local leave. Review Government applications under Employees → Government applications & jobs, and certified balances under Employees → Government balances & service.</p>
             {loading && !data ? (
                 <LoadingState label="Loading overview…" />
             ) : !data ? (

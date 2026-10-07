@@ -51,9 +51,22 @@ export async function updatePolicy(pool,{user,actor,id,data}){
  return withTransaction(pool,async client=>{
   const {rows:[before]}=await client.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1 FOR UPDATE',[id]);if(!before)fail('Policy not found.',404);
   if(before.status!=='draft')fail('Published policies cannot be edited. Prepare a successor version.');
+  if(before.deleted_at)fail('This draft was deleted. Restore it before editing.');
   if(before.revision!==data.expected_revision)fail('This draft changed since you opened it. Cancel, refresh the page and review the latest draft before saving.');
   const {rows:[after]}=await client.query('UPDATE hr_gov_policy_versions SET label=$2,effective_from=$3,effective_to=$4,rules=$5,source_reference=$6,reason=$7,revision=revision+1 WHERE id=$1 RETURNING *',[id,data.label.trim(),data.effective_from,data.effective_to,data.rules,data.source_reference.trim(),reason]);
   await recordAudit({client,actor,action:'hr.gov.policy.updated',entityType:'hr_government_leave',entityId:id,before,after});return after;
+ });
+}
+export async function setPolicyDraftDeleted(pool,{user,actor,id,reason,expected_revision,deleted}){
+ central(user);reason=managementReason(reason);
+ if(!Number.isInteger(expected_revision)||expected_revision<1||typeof deleted!=='boolean')fail('Reload the policy before changing its draft status.',400);
+ return withTransaction(pool,async client=>{
+  const {rows:[before]}=await client.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1 FOR UPDATE',[id]);if(!before)fail('Policy not found.',404);
+  if(before.status!=='draft')fail('Published policies cannot be deleted or restored. Prepare a successor version.');
+  if(before.revision!==expected_revision)fail('This draft changed since you opened it. Cancel, refresh the page and review the latest draft.');
+  if(Boolean(before.deleted_at)===deleted)fail(deleted?'This draft is already deleted.':'This draft is already active.');
+  const {rows:[after]}=await client.query('UPDATE hr_gov_policy_versions SET deleted_at=CASE WHEN $2 THEN NOW() ELSE NULL END,deleted_by=CASE WHEN $2 THEN $3::uuid ELSE NULL END,deletion_reason=CASE WHEN $2 THEN $4::text ELSE NULL END,revision=revision+1 WHERE id=$1 RETURNING *',[id,deleted,actor.id,reason]);
+  await recordAudit({client,actor,action:deleted?'hr.gov.policy.draft_deleted':'hr.gov.policy.draft_restored',entityType:'hr_government_leave',entityId:id,before,after,metadata:{reason}});return after;
  });
 }
 export async function publishPolicy(pool,{user,actor,id,reason,expected_revision}){
@@ -61,6 +74,7 @@ export async function publishPolicy(pool,{user,actor,id,reason,expected_revision
  if(expected_revision!==undefined&&(!Number.isInteger(expected_revision)||expected_revision<1))fail('Reload the policy before publishing it.',400);
  return withTransaction(pool,async client=>{await client.query("SELECT pg_advisory_xact_lock(hashtext('hr-gov-policies'))");const {rows:[row]}=await client.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1 FOR UPDATE',[id]);if(!row)fail('Policy not found.',404);
   if(expected_revision!==undefined&&row.revision!==expected_revision)fail('This draft changed since you reviewed it. Cancel, refresh the page and review the latest draft before publishing.');
+  if(row.deleted_at)fail('This draft was deleted. Restore and review it before publishing.');
   if(row.status==='published')return row;
   if((await client.query("SELECT 1 FROM hr_gov_policy_versions WHERE status='published' AND daterange(effective_from,effective_to,'[]') && daterange($1,$2,'[]')",[row.effective_from,row.effective_to])).rowCount)fail('Published policy dates overlap. Prepare a non-overlapping successor.');
   const {rows:[after]}=await client.query("UPDATE hr_gov_policy_versions SET status='published',published_by=$2,published_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id]);await audit(client,actor,'hr.gov.policy.published',id,{...after,publication_reason:reason});return after;

@@ -36,13 +36,32 @@ export async function evaluate(client,employeeId,input){
  // No employee clinical reasons or exclusion references go to routine preview callers.
  return {...result,service_bases:result.service_bases.map(({id,continuity_start,effective_from,anniversary_method,leap_day_method,schedule_mode})=>({id,continuity_start,effective_from,anniversary_method,leap_day_method,schedule_mode}))};
 }
+function validatePolicy(data){
+ try{validateRules(data.rules||DEFAULT_RULES);if(dayNumber(data.effective_to)<dayNumber(data.effective_from))fail('The policy end date must be on or after its start date.',400);}catch(err){fail(err.message,400);}
+ if(typeof data.label!=='string'||data.label.trim().length<3||data.label.trim().length>120)fail('Use a policy name of 3–120 characters.',400);
+ if(typeof data.source_reference!=='string'||data.source_reference.trim().length<5||data.source_reference.trim().length>500)fail('Record a source reference of 5–500 characters.',400);
+}
 export async function createPolicy(pool,{user,actor,data}){
- central(user);const reason=managementReason(data.reason);try{validateRules(data.rules||DEFAULT_RULES);}catch(err){fail(err.message,400);}
+ central(user);const reason=managementReason(data.reason);validatePolicy(data);
  return withTransaction(pool,async client=>{const {rows:[row]}=await client.query('INSERT INTO hr_gov_policy_versions(label,effective_from,effective_to,rules,source_reference,prepared_by,reason) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',[data.label,data.effective_from,data.effective_to,data.rules||DEFAULT_RULES,data.source_reference,actor.id,reason]);await audit(client,actor,'hr.gov.policy.prepared',row.id,row);return row;});
 }
-export async function publishPolicy(pool,{user,actor,id,reason}){
+export async function updatePolicy(pool,{user,actor,id,data}){
+ central(user);const reason=managementReason(data.reason);validatePolicy(data);
+ if(!data.rules||!Number.isInteger(data.expected_revision)||data.expected_revision<1)fail('Reload the policy before editing it.',400);
+ return withTransaction(pool,async client=>{
+  const {rows:[before]}=await client.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1 FOR UPDATE',[id]);if(!before)fail('Policy not found.',404);
+  if(before.status!=='draft')fail('Published policies cannot be edited. Prepare a successor version.');
+  if(before.revision!==data.expected_revision)fail('This draft changed since you opened it. Cancel, refresh the page and review the latest draft before saving.');
+  const {rows:[after]}=await client.query('UPDATE hr_gov_policy_versions SET label=$2,effective_from=$3,effective_to=$4,rules=$5,source_reference=$6,reason=$7,revision=revision+1 WHERE id=$1 RETURNING *',[id,data.label.trim(),data.effective_from,data.effective_to,data.rules,data.source_reference.trim(),reason]);
+  await recordAudit({client,actor,action:'hr.gov.policy.updated',entityType:'hr_government_leave',entityId:id,before,after});return after;
+ });
+}
+export async function publishPolicy(pool,{user,actor,id,reason,expected_revision}){
  central(user);reason=managementReason(reason);
- return withTransaction(pool,async client=>{await client.query("SELECT pg_advisory_xact_lock(hashtext('hr-gov-policies'))");const {rows:[row]}=await client.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1 FOR UPDATE',[id]);if(!row)fail('Policy not found.',404);if(row.status==='published')return row;
+ if(expected_revision!==undefined&&(!Number.isInteger(expected_revision)||expected_revision<1))fail('Reload the policy before publishing it.',400);
+ return withTransaction(pool,async client=>{await client.query("SELECT pg_advisory_xact_lock(hashtext('hr-gov-policies'))");const {rows:[row]}=await client.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1 FOR UPDATE',[id]);if(!row)fail('Policy not found.',404);
+  if(expected_revision!==undefined&&row.revision!==expected_revision)fail('This draft changed since you reviewed it. Cancel, refresh the page and review the latest draft before publishing.');
+  if(row.status==='published')return row;
   if((await client.query("SELECT 1 FROM hr_gov_policy_versions WHERE status='published' AND daterange(effective_from,effective_to,'[]') && daterange($1,$2,'[]')",[row.effective_from,row.effective_to])).rowCount)fail('Published policy dates overlap. Prepare a non-overlapping successor.');
   const {rows:[after]}=await client.query("UPDATE hr_gov_policy_versions SET status='published',published_by=$2,published_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id]);await audit(client,actor,'hr.gov.policy.published',id,{...after,publication_reason:reason});return after;
  });

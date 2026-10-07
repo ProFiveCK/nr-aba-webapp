@@ -36,6 +36,37 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
   await assert.rejects(pool.query("UPDATE hr_gov_policy_versions SET rules='{}' WHERE id=$1",[policy.id]),/immutable/);
   await assert.rejects(s.createPolicy(pool,{user:user(central),actor:central,data:{rules:{...DEFAULT_RULES,formula:'eval'},reason}}),e=>e.status===400);
  });
+ const draftData=()=>({label:'Government review draft',effective_from:'2028-01-01',effective_to:'2028-12-31',rules:DEFAULT_RULES,source_reference:'HR corrected policy reference',reason});
+ test('central HR can edit draft dates and rules with a before/after audit; protected publication and ownership fields are ignored',async()=>{
+  const created=await call('/api/hr/government/policies',draftData());assert.equal(created.status,201);assert.equal(created.body.revision,1);
+  const data={...draftData(),label:'Corrected draft',effective_from:'2028-02-01',effective_to:'2029-01-31',rules:{...DEFAULT_RULES,special_annual_days:'4'},source_reference:'Corrected signed reference',reason:'Corrected dates and Special after local review.',expected_revision:1,status:'published',prepared_by:owner.id,published_by:owner.id,revision:99};
+  const changed=await call(`/api/hr/government/policies/${created.body.id}`,data,central,'PUT');assert.equal(changed.status,200);assert.equal(changed.cache,'no-store');assert.equal(changed.body.id,created.body.id);assert.equal(changed.body.status,'draft');assert.equal(changed.body.revision,2);assert.equal(changed.body.label,data.label);assert.equal(changed.body.rules.special_annual_days,'4');assert.equal(changed.body.prepared_by,central.id);assert.equal(changed.body.published_by,null);
+  const listed=await call('/api/hr/government/configuration');const saved=listed.body.policies.find(p=>p.id===created.body.id);assert.equal(saved.effective_from,data.effective_from);assert.equal(saved.effective_to,data.effective_to);assert.equal(saved.revision,2);assert.equal(saved.source_reference,data.source_reference);
+  const {rows:[entry]}=await pool.query("SELECT before,after,actor_id FROM audit_log WHERE action='hr.gov.policy.updated' AND entity_id=$1",[created.body.id]);assert.equal(entry.before.label,created.body.label);assert.equal(entry.before.revision,1);assert.equal(entry.after.label,data.label);assert.equal(entry.after.revision,2);assert.equal(entry.actor_id,central.id);
+  assert.equal((await ctx()).entitlements.length,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_leave_applications')).rows[0].n,0);
+ });
+ test('draft editing validates complete rules, dates, reason, revision and HR authority',async()=>{
+  const created=await call('/api/hr/government/policies',draftData()),path=`/api/hr/government/policies/${created.body.id}`,data={...draftData(),expected_revision:1};
+  assert.equal((await call(path,data,scoped,'PUT')).status,403);assert.equal((await call(path,data,owner,'PUT')).status,403);
+  assert.equal((await fetch(base+path,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})).status,401);
+  for(const [change,status] of [[{effective_to:'2027-01-01'},400],[{effective_from:'2028-02-30'},422],[{label:'x'},422],[{source_reference:'x'},422],[{reason:'short'},422],[{expected_revision:undefined},422],[{expected_revision:0},422],[{expected_revision:1.5},422],[{rules:undefined},422],[{rules:{...DEFAULT_RULES,formula:'eval'}},400],[{rules:{...DEFAULT_RULES,recreation_cap_days:'1'}},400]])assert.equal((await call(path,{...data,...change},central,'PUT')).status,status);
+  assert.equal((await call(`/api/hr/government/policies/${randomUUID()}`,data,central,'PUT')).status,404);
+  await assert.rejects(s.updatePolicy(pool,{user:user(scoped),actor:scoped,id:created.body.id,data}),e=>e.status===403);
+  assert.equal((await pool.query('SELECT revision FROM hr_gov_policy_versions WHERE id=$1',[created.body.id])).rows[0].revision,1);
+ });
+ test('competing draft edits reject stale saves and stale publication; published versions stay immutable',async()=>{
+  const created=await call('/api/hr/government/policies',draftData()),path=`/api/hr/government/policies/${created.body.id}`,data={...draftData(),expected_revision:1};
+  const changes=await Promise.all(['First correction','Second correction'].map(label=>call(path,{...data,label},central,'PUT')));assert.deepEqual(changes.map(r=>r.status).sort(),[200,409]);
+  const publish=`${path}/publish`;assert.equal((await call(publish,{reason,expected_revision:1})).status,409);assert.equal((await call(publish,{reason})).status,422);
+  assert.equal((await call(publish,{reason,expected_revision:2})).status,200);assert.equal((await call(path,{...data,expected_revision:2},central,'PUT')).status,409);
+  await assert.rejects(pool.query('UPDATE hr_gov_policy_versions SET label=$2 WHERE id=$1',[created.body.id,'Changed published policy']),/immutable/);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM audit_log WHERE action='hr.gov.policy.updated' AND entity_id=$1",[created.body.id])).rows[0].n,1);
+ });
+ test('failed draft-edit audit rolls back changes and leaves the previous revision available',async()=>{
+  const created=await s.createPolicy(pool,{user:user(central),actor:central,data:draftData()});
+  await assert.rejects(s.updatePolicy(pool,{user:user(central),actor:{...central,id:randomUUID()},id:created.id,data:{...draftData(),label:'Must roll back',expected_revision:1}}));
+  const {rows:[saved]}=await pool.query('SELECT label,revision FROM hr_gov_policy_versions WHERE id=$1',[created.id]);assert.equal(saved.label,created.label);assert.equal(saved.revision,1);
+ });
  test('opening preview retains legacy data; independent certification, stale checks, overlap and retries are safe',async()=>{
   const type=await upsertLeaveType(pool,{name:'Synthetic Historical Special',defaultDays:5});await pool.query('INSERT INTO hr_leave_balances(employee_id,leave_type_id,year,balance,pending) VALUES ($1,$2,2026,5,1)',[employee.id,type.id]);
   const data={code:'special',amount:'5',policy_version_id:policy.id,period_start:'2026-01-01',period_end:'2026-12-31',as_of:'2026-10-01',source_reference:'Synthetic historical reconciliation',payroll_reference:'Salary Unit sign-off',reason};

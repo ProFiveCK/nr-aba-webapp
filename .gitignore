@@ -112,3 +112,5 @@ __pycache__/
 
 # Isolated local Leave review runtime (generated secrets and state)
 .leave-review/
+.leave-production-review/
+backup/*.sql.gz

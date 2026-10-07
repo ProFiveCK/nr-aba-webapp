@@ -71,9 +71,9 @@ function draftFor(employee: Employee): EmployeeDraft {
     };
 }
 
-export function Staff() {
+export function Staff({workspace='employees'}:{workspace?:'employees'|'settings'}) {
     const { user } = useAuth();
-    return user?.permissions?.hr_admin || user?.permissions?.hr_staff_manage ? <EmployeeManagement legacyTools={<LegacyStaff />} /> : <ScopedBalances />;
+    return user?.permissions?.hr_admin || user?.permissions?.hr_staff_manage ? <EmployeeManagement workspace={workspace} legacyTools={<LegacyStaff />} /> : <ScopedBalances />;
 }
 
 function LegacyStaff() {

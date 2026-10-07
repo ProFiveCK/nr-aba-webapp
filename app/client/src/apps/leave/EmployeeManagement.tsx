@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Link,useSearchParams } from 'react-router-dom';
+import { Policies } from './sections/Policies';
 import type { ReactNode } from 'react';
 import { useAuth } from '../../contexts/useAuth';
 import { GovernmentWorkflowManagement } from './GovernmentWorkflowManagement';
@@ -20,12 +22,15 @@ import { reviewRecordLabel } from './reviewRecordNames';
 import type { EmployeeProfile, ManagedEmployee, WorkPattern } from './managementTypes';
 import type { OrgDepartment } from './types';
 
-export function EmployeeManagement({ legacyTools }: { legacyTools: ReactNode }) {
+export function EmployeeManagement({ legacyTools,workspace='employees' }: { legacyTools: ReactNode;workspace?:'employees'|'settings' }) {
     const { user } = useAuth();
     const central = user?.permissions?.hr_admin === true;
     const [scopeSummary,setScopeSummary] = useState('Checking assigned access…');
     useEffect(() => { void apiClient.get<{central:boolean;scopes:{department_name:string;division_name:string|null}[]}>('/hr/access-scopes/context').then(context=>setScopeSummary(context.central ? 'Central HR · Government-wide records' : context.scopes.length ? `Assigned access: ${context.scopes.map(scope=>`${scope.department_name} / ${scope.division_name || 'All divisions'}`).join('; ')}` : 'No active department or division assignment. Contact central HR.')).catch(()=>setScopeSummary('Unable to confirm assigned access.')); }, []);
-    const [tab, setTab] = useState('directory'), [creating, setCreating] = useState(false);
+    const choices = workspace==='settings' ? [['policies','Leave policies'],['organisation','Organisation & approvers'],['access','HR access'],['import','Payroll import'],['onboarding','Onboarding'],['rollout','Rollout readiness']] : [['directory','Employee list'],...(central ? [['legacy','Existing leave records'],['foundations','Government balances & service'],['government-workflow','Government applications & jobs'],['payroll','Payroll & handover']] : user?.permissions?.hr_balance_manage ? [['balances','Balances']] : [])];
+    const [params,setParams]=useSearchParams();
+    const requested=params.get('view'),tab=choices.some(([id])=>id===requested)?requested!:choices[0][0];
+    const [creating, setCreating] = useState(false);
     const [query, setQuery] = useState(''), [search, setSearch] = useState(''), [department, setDepartment] = useState(''), [status, setStatus] = useState(''), [readiness, setReadiness] = useState(''), [page, setPage] = useState(0);
     const [list, setList] = useState<{ employees: ManagedEmployee[]; total: number; page_size: number }>({ employees: [], total: 0, page_size: 50 });
     const [departments, setDepartments] = useState<OrgDepartment[]>([]), [patterns, setPatterns] = useState<WorkPattern[]>([]);
@@ -43,28 +48,19 @@ export function EmployeeManagement({ legacyTools }: { legacyTools: ReactNode }) 
     async function open(id: string) { setOpening(true); setError(''); try { setProfile(await apiClient.get<EmployeeProfile>(`/hr/directory/${id}/profile`)); } catch (err) { setError((err as Error).message); } finally { setOpening(false); } }
     return <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 pb-4">
-            <label className="flex min-w-0 flex-wrap items-center gap-3 text-sm font-medium text-gray-700">Staff workspace
-                <select aria-label="Staff workspace" className="min-w-0 max-w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900" value={tab} onChange={e=>setTab(e.target.value)}>
-                    {[['directory','Employees'],...(central ? [['import','Payroll import'],['organisation','Organisation & approvers'],['access','HR access'],['onboarding','Onboarding'],['foundations','Balances & service'],['government-workflow','Applications & jobs'],['payroll','Payroll & handover'],['rollout','Rollout readiness'],['legacy','Historical balances & tools']] : user?.permissions?.hr_balance_manage ? [['balances','Balances']] : [])].map(([id,label])=><option key={id} value={id}>{label}</option>)}
+            <label className="flex min-w-0 flex-wrap items-center gap-3 text-sm font-medium text-gray-700">{workspace==='settings'?'Settings':'Employee view'}
+                <select aria-label={workspace==='settings'?'Leave settings':'Employee view'} className="min-w-0 max-w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900" value={tab} onChange={e=>setParams({view:e.target.value})}>
+                    {choices.map(([id,label])=><option key={id} value={id}>{label}</option>)}
                 </select>
             </label>
             <p className="text-xs text-gray-500">{scopeSummary}</p>
         </div>
-        <details className="text-sm text-gray-600">
-            <summary className="cursor-pointer font-medium">How to review Staff</summary>
+        {!(workspace==='settings'&&tab==='policies')&&<details className="text-sm text-gray-600">
+            <summary className="cursor-pointer font-medium">{workspace==='settings'?'How to use Settings':'How to review employees'}</summary>
             <div className="mt-3 space-y-2">
-                <p>Use Employees to check identity and placement. Use Balances &amp; service to check that person's service history and certified leave balances. The Policies menu holds the shared government rules.</p>
-                {list.employees.some(e=>e.display_name==='Synthetic 1E Alias Employee')&&<p>For the local walkthrough, search Payroll ID <strong>DEMO-1E-00001-A</strong>. This demo employee is prepared for a leave application. Other demo records include incomplete cases to show what HR must resolve.</p>}
-                <ol className="list-decimal space-y-1 pl-5">
-                    <li>Employees: open Manage and review the employee record.</li>
-                    <li>Organisation &amp; approvers: check division, Head of Department and Chief Secretary assignments.</li>
-                    <li>Balances &amp; service: select the same employee and review their balances and a leave calculation.</li>
-                    <li>Applications &amp; jobs: review employee activation and controlled balance updates.</li>
-                    <li>Rollout readiness: check a small employee group before planning a wider release.</li>
-                </ol>
-                <p>Payroll import and Onboarding are for preparing real records after the walkthrough. Payroll &amp; handover records what Payroll received. Historical tools retain earlier records.</p>
+                {workspace==='settings'?<><p>Leave policies holds government rules, public holidays and weekly work schedules. Organisation &amp; approvers holds departments, divisions and dated office assignments. HR access controls which records HR officers can manage.</p><p>Payroll import reconciles employee identities. Onboarding prepares individual accounts. Rollout readiness checks prepared employees before release.</p><p>Return to <Link className="font-medium text-brand underline" to="/leave/employees">Employees</Link> to inspect records, balances and leave operations.</p></>:<><p>Start with the Employee list and open Manage. Existing leave records holds the retained employee balances and leave tools. Government balances &amp; service holds independently certified balances and service calculations for the new policy.</p><p>Government applications &amp; jobs controls independent employee activation and approved balance updates. Payroll &amp; handover handles opening reconciliation, Payroll receipts and transfer records.</p><p>Shared configuration is under <Link className="font-medium text-brand underline" to="/leave/settings">Settings</Link>: policies, organisation, approvers, HR access and onboarding.</p></>}
             </div>
-        </details>
+        </details>}
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         {tab === 'directory' && <>
             <form className="app-panel grid items-end gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5" onSubmit={(e) => { e.preventDefault(); setSearch(query.trim()); setPage(0); }}>
@@ -84,6 +80,7 @@ export function EmployeeManagement({ legacyTools }: { legacyTools: ReactNode }) 
                 <div className="px-3"><Pager page={page} pageCount={Math.ceil(list.total / list.page_size)} total={list.total} pageSize={list.page_size} setPage={setPage} /></div>
             </div>}
         </>}
+        {tab === 'policies' && central && <Policies />}
         {tab === 'import' && <PayrollEmployeeImport onApplied={() => setVersion((current) => current + 1)} />}
         {tab === 'organisation' && <OrganisationManagement departments={departments} patterns={patterns} onChanged={loadReferences} />}
         {tab === 'access' && central && <HrAccessManagement departments={departments} />}

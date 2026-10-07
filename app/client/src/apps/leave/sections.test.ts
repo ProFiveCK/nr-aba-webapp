@@ -9,7 +9,7 @@ describe('visibleLeaveSections', () => {
         expect(idsFor({
             hr_access: true, hr_admin: true, hr_leave_apply: true,
             hr_leave_approve: true, hr_staff_manage: true,
-        })).toEqual(['overview', 'my-leave', 'approvals', 'calendar', 'staff', 'report', 'policies']);
+        })).toEqual(['overview', 'my-leave', 'approvals', 'calendar', 'employees', 'report', 'settings']);
     });
 
     it('gives an ordinary member of staff their own leave and the calendar', () => {
@@ -26,13 +26,13 @@ describe('visibleLeaveSections', () => {
     });
 
     it('staff management does not grant reports or balance tools', () => {
-        expect(idsFor({hr_staff_manage:true})).toEqual(['staff']);
+        expect(idsFor({hr_staff_manage:true})).toEqual(['employees']);
         expect(idsFor({hr_report_read:true})).toEqual(['report']);
-        expect(idsFor({hr_balance_manage:true})).toEqual(['staff']);
+        expect(idsFor({hr_balance_manage:true})).toEqual(['employees']);
     });
 
-    it('withholds policies from everyone but an administrator', () => {
-        expect(idsFor({ hr_staff_manage: true, hr_leave_approve: true })).not.toContain('policies');
+    it('withholds settings from everyone but an administrator', () => {
+        expect(idsFor({ hr_staff_manage: true, hr_leave_approve: true })).not.toContain('settings');
     });
 
     // hr_access can be granted on its own, which lets someone into the app

@@ -1,0 +1,116 @@
+# A restored production COPY, isolated from the demo and production stacks.
+name: ron-leave-production-review
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: leave_review
+      POSTGRES_PASSWORD: ${LEAVE_COPY_DB_PASSWORD:?Run the local restore tool first}
+      POSTGRES_DB: leave_production_review
+    volumes:
+      - production_copy_db:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -h 127.0.0.1 -U leave_review -d leave_production_review]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  api:
+    image: ron-leave-review-api:local
+    pull_policy: never
+    command: [node, --watch, src/server.js]
+    environment: &copy_environment
+      NODE_ENV: development
+      LOCAL_REVIEW_ONLY: production-copy
+      DB_HOST: postgres
+      DB_USER: leave_review
+      DB_PASSWORD: ${LEAVE_COPY_DB_PASSWORD}
+      DB_NAME: leave_production_review
+      JWT_SECRET: ${LEAVE_COPY_JWT_SECRET}
+      SMTP_ENC_KEY: ${LEAVE_COPY_SMTP_KEY}
+      DATA_ENC_KEY: ${LEAVE_COPY_DATA_KEY}
+      FRONTEND_BASE_URL: http://localhost:8081
+      CORS_ORIGIN: http://localhost:8081,http://127.0.0.1:8081
+      SMTP_HOST: ''
+      ACCRUAL_SCHEDULER: 'off'
+      GOVERNMENT_LEAVE_SCHEDULER: 'off'
+      AI_HELPER_ENABLED: 'false'
+      DEFAULT_ADMIN_EMAIL: ''
+      DEFAULT_ADMIN_PASSWORD: ''
+      TZ: Pacific/Nauru
+    volumes:
+      - ./app/backend/src:/app/src:ro
+      - copy_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  review-login:
+    image: ron-leave-review-api:local
+    pull_policy: never
+    command: [node, /app/leave-production-review-login.mjs]
+    environment:
+      <<: *copy_environment
+    volumes:
+      - ./app/backend/src:/app/src:ro
+      - ./scripts/leave-production-review-login.mjs:/app/leave-production-review-login.mjs:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:4001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  client:
+    image: ron-leave-review-api:local
+    pull_policy: never
+    working_dir: /client
+    environment:
+      NODE_ENV: development
+      VITE_LOCAL_REVIEW_KIND: production-copy
+    command: [sh, /app/leave-review-client.sh]
+    volumes:
+      - ./app/client:/client
+      - review_client_modules:/client/node_modules
+      - ./scripts/leave-review-client.sh:/app/leave-review-client.sh:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:5173/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  web:
+    image: nginx:alpine
+    networks:
+      - default
+      - frontend
+    ports:
+      - 127.0.0.1:8081:80
+    volumes:
+      - ./app/docker/nginx.leave-review.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      client:
+        condition: service_healthy
+      review-login:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, wget -q -O /dev/null http://127.0.0.1/health]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+networks:
+  default:
+    internal: true
+  frontend:
+volumes:
+  production_copy_db:
+  copy_uploads:
+  review_client_modules:
+    external: true
+    name: ron-leave-review_review_client_modules

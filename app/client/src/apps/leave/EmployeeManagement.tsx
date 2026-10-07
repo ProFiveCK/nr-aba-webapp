@@ -17,6 +17,7 @@ import { PayrollEmployeeImport } from './PayrollEmployeeImport';
 import { EmployeeLeaveWorkspace } from './EmployeeLeaveWorkspace';
 import type { EmployeeSection, PreparationStep } from './EmployeeLeaveWorkspace';
 import { OrganisationManagement } from './OrganisationManagement';
+import { GovernmentInitialSetup } from './GovernmentInitialSetup';
 import { ReviewRecordName } from './ReviewRecordName';
 import { reviewRecordLabel } from './reviewRecordNames';
 import type { EmployeeProfile, ManagedEmployee, WorkPattern } from './managementTypes';
@@ -27,7 +28,7 @@ export function EmployeeManagement({ legacyTools,workspace='employees' }: { lega
     const central = user?.permissions?.hr_admin === true;
     const [scopeSummary,setScopeSummary] = useState('Checking assigned access…');
     useEffect(() => { void apiClient.get<{central:boolean;scopes:{department_name:string;division_name:string|null}[]}>('/hr/access-scopes/context').then(context=>setScopeSummary(context.central ? 'Central HR · Government-wide records' : context.scopes.length ? `Assigned access: ${context.scopes.map(scope=>`${scope.department_name} / ${scope.division_name || 'All divisions'}`).join('; ')}` : 'No active department or division assignment. Contact central HR.')).catch(()=>setScopeSummary('Unable to confirm assigned access.')); }, []);
-    const choices = workspace==='settings' ? [['policies','Policies'],['organisation','Organisation & approvers'],['access','HR access'],['setup','Employee setup'],['rollout','Readiness']] : [['directory','Employees'],...(central ? [['operations','Leave operations']] : user?.permissions?.hr_balance_manage ? [['balances','Scoped balances']] : [])];
+    const choices = workspace==='settings' ? [['initial-setup','Initial setup'],['policies','Policies'],['organisation','Organisation & approvers'],['access','HR access'],['setup','Employee setup'],['rollout','Readiness']] : [['directory','Employees'],...(central ? [['operations','Leave operations']] : user?.permissions?.hr_balance_manage ? [['balances','Scoped balances']] : [])];
     const [params,setParams]=useSearchParams();
     const requested=params.get('view');
     const alias=requested==='import'||requested==='onboarding'?'setup':['government-workflow','payroll','legacy'].includes(requested||'')?'operations':requested==='foundations'?'directory':requested;
@@ -67,7 +68,7 @@ export function EmployeeManagement({ legacyTools,workspace='employees' }: { lega
             </label>
             <p className="text-xs text-gray-500">{scopeSummary}</p>
         </div>
-        <p className="text-sm text-gray-600">{workspace==='settings'?'Shared settings live here. Open an employee to manage their current arrangements and Government preparation.':'Open Manage to see an employee’s rules, balances and approval route together. Leave operations holds cross-employee jobs and Payroll administration.'}</p>
+        {tab!=='initial-setup'&&<p className="text-sm text-gray-600">{workspace==='settings'?'Shared settings live here. Open an employee to manage their current arrangements and Government preparation.':'Open Manage to see an employee’s rules, balances and approval route together. Leave operations holds cross-employee jobs and Payroll administration.'}</p>}
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         {tab === 'directory' && <>
             <form className="app-panel grid items-end gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5" onSubmit={(e) => { e.preventDefault(); setSearch(query.trim()); setPage(0); }}>
@@ -87,6 +88,7 @@ export function EmployeeManagement({ legacyTools,workspace='employees' }: { lega
                 <div className="px-3"><Pager page={page} pageCount={Math.ceil(list.total / list.page_size)} total={list.total} pageSize={list.page_size} setPage={setPage} /></div>
             </div>}
         </>}
+        {tab === 'initial-setup' && central && <GovernmentInitialSetup onAdopted={async()=>{await loadReferences();setVersion(v=>v+1);}} />}
         {tab === 'policies' && central && <Policies />}
         {tab === 'organisation' && <OrganisationManagement departments={departments} patterns={patterns} onChanged={loadReferences} />}
         {tab === 'access' && central && <HrAccessManagement departments={departments} />}

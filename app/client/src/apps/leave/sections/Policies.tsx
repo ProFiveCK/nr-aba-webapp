@@ -7,6 +7,7 @@ import { Button, LoadingState, Modal, ModalActions } from '../../../components/U
 import type { LeaveType, ResetPeriod } from '../types';
 import { PublicHolidays } from '../PublicHolidays';
 import { GovernmentFoundation } from '../GovernmentFoundation';
+import { Link } from 'react-router-dom';
 
 const RESET_OPTIONS: { value: ResetPeriod; label: string }[] = [
     { value: 'none', label: 'Never reset' },
@@ -500,6 +501,7 @@ function HistoricalPolicySettings() {
 export function Policies() {
     const [historical, setHistorical] = useState(false);
     return <div className="space-y-5">
+        <p className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">Configuring the existing database for the first time? <Link className="font-semibold underline" to="/leave/settings?view=initial-setup">Open initial setup</Link> to bring current employees, organisation and leave types into one review.</p>
         <p className="text-sm text-gray-600">Manage Government rules, Gazette holidays and work schedules here. Review each employee’s arrangement and balances under Employees; manage departments and approval offices under Organisation.</p>
         <GovernmentFoundation view="policies" />
         <details className="border-t border-gray-200 pt-4" onToggle={event => setHistorical(event.currentTarget.open)}>

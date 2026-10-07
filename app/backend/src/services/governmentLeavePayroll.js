@@ -1,4 +1,5 @@
 import {submitCase} from './governmentLeaveCases.js';
+import {initialSetupReference} from './governmentLeaveInitialSetupReference.js';
 import {isCase} from '../lib/governmentLeaveCaseRules.js';
 import {createHash} from 'node:crypto';
 import {ServiceError} from '../lib/serviceError.js';
@@ -95,7 +96,8 @@ export async function migrationState(client,employeeId,cutover) {
   const effects=(await client.query('SELECT f.* FROM hr_gov_case_effects f JOIN hr_gov_requests r ON r.id=f.request_id WHERE r.employee_id=$1 ORDER BY f.request_id',[employeeId])).rows;
   const movements=(await client.query('SELECT l.* FROM hr_gov_ledger l JOIN hr_gov_entitlements e ON e.id=l.entitlement_id WHERE e.employee_id=$1 ORDER BY l.id',[employeeId])).rows;
   const configs=(await client.query('SELECT * FROM hr_gov_workflow_configs WHERE employee_id=$1 ORDER BY id',[employeeId])).rows;
-  const state={context,identity:people[employeeId],historical_balances:balances,retained_legacy_leave:retained,government_requests:requests,benefit_bases:benefits,benefit_commitments:commitments,effects,movements,configs};
+  const initialSetup=await initialSetupReference(client);
+  const state={context,identity:people[employeeId],historical_balances:balances,retained_legacy_leave:retained,government_requests:requests,benefit_bases:benefits,benefit_commitments:commitments,effects,movements,configs,initial_setup:initialSetup};
   return {state,hash:fingerprint(state)};
 }
 function migrationPlan(state,data) {

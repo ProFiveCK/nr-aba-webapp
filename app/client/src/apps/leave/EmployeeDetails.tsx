@@ -15,8 +15,12 @@ import { reviewRecordLabel } from './reviewRecordNames';
 
 const ROOT = '/hr/directory';
 type Action = 'details' | 'placement' | 'service' | 'correct_service' | 'close_service' | 'identifier' | 'link' | 'unlink';
-export function EmployeeDetails({ profile, departments, patterns, central, onClose, onChanged }: { central: boolean; profile: EmployeeProfile; departments: OrgDepartment[]; patterns: WorkPattern[]; onClose: () => void; onChanged: () => Promise<void> }) {
+export function EmployeeDetails({ profile, departments, patterns, central, onClose, onChanged, embedded=false }: { embedded?:boolean; central: boolean; profile: EmployeeProfile; departments: OrgDepartment[]; patterns: WorkPattern[]; onClose: () => void; onChanged: () => Promise<void> }) {
     const employee = profile.employee;
+    const matchingDepartments=departments.filter(d=>d.name.toLowerCase()===(employee.department_code||'').toLowerCase());
+    const placementDepartment=employee.department_id|| (matchingDepartments.length===1?matchingDepartments[0].id:'');
+    const matchingDivisions=departments.find(d=>d.id===placementDepartment)?.divisions.filter(d=>d.name.toLowerCase()===(employee.division_code||'').toLowerCase())||[];
+    const placementDivision=employee.division_id||(matchingDivisions.length===1?matchingDivisions[0].id:'');
     const [action, setAction] = useState<Action | null>(null), [period, setPeriod] = useState<ServicePeriod | null>(null);
     const [onDate, setOnDate] = useState(todayIsoDate), [previewDate, setPreviewDate] = useState('');
     const [chain, setChain] = useState<ApprovalChain | null>(null), [error, setError] = useState(''), [previewBusy, setPreviewBusy] = useState(false);
@@ -25,7 +29,7 @@ export function EmployeeDetails({ profile, departments, patterns, central, onClo
         try { setChain(await apiClient.get<ApprovalChain>(`${ROOT}/${employee.id}/approval-chain?on_date=${date}`)); setPreviewDate(date); }
         catch (err) { setError((err as Error).message); } finally { setPreviewBusy(false); }
     }, [employee.id]);
-    useEffect(() => { void preview(todayIsoDate()); }, [preview, employee.department_id, employee.division_id, employee.status]);
+    useEffect(() => { if(!embedded)void preview(todayIsoDate()); }, [embedded,preview, employee.department_id, employee.division_id, employee.status]);
     async function saved() { await onChanged(); setAction(null); }
     if (action) {
         const titles: Record<Action, string> = { details: 'Edit employee details', placement: 'Verify organisation placement', service: 'Add service period', correct_service: 'Prepare appointment correction', close_service: 'Close service period', identifier: 'Verify Payroll ID', link: 'Link a verified login', unlink: 'Unlink login' };
@@ -52,7 +56,7 @@ export function EmployeeDetails({ profile, departments, patterns, central, onClo
                 <p className="text-xs text-gray-500">Changing status revokes linked sessions. Government employee access also checks active status on every request.</p>
                 <DirectoryPicker name="manager_id" label="Reporting manager" initialId={employee.manager_id || ''} initialLabel={employee.manager_name || ''} employeeId={employee.id} allowClear />
             </>}
-            {action === 'placement' && <><PlacementFields departments={departments} initialDepartment={employee.department_id || ''} initialDivision={employee.division_id || ''} /><p className="text-xs text-gray-500">This verifies the current placement. Reporting managers and leave officeholders are maintained separately.</p></>}
+            {action === 'placement' && <><PlacementFields departments={departments} initialDepartment={placementDepartment} initialDivision={placementDivision} /><p className="text-xs text-gray-500">Retained placement: {employee.department_code || 'not recorded'} / {employee.division_code || 'not recorded'}. Matching existing names are preselected for your review; saving explicitly verifies the managed placement. Reporting managers and leave officeholders are maintained separately.</p></>}
             {action === 'identifier' && <><Field label="Payroll ID"><input className={inputClass} name="external_id" required maxLength={100} /></Field><p className="text-xs text-gray-500">Keep leading zeros and letters. An existing ID cannot move from another employee.</p></>}
             {(action === 'service'||action==='correct_service') && <>
                 <div className="grid gap-3 sm:grid-cols-2"><Field label="Appointment start"><AustralianDateInput className={inputClass} name="start_date"  defaultValue={action==='correct_service'?period?.start_date:''} required /></Field><Field label="Appointment end (inclusive)"><AustralianDateInput className={inputClass} name="end_date"  defaultValue={action==='correct_service'?period?.end_date||'':''} /></Field></div>
@@ -69,8 +73,7 @@ export function EmployeeDetails({ profile, departments, patterns, central, onClo
             {action === 'unlink' && <p className="text-sm text-gray-600">Unlink {employee.account_name || employee.account_email}. This retains employee history and revokes the affected login's sessions.</p>}
         </ActionDialog>;
     }
-    return <Modal title={reviewRecordLabel(employee.display_name)} description={`${reviewRecordLabel(employee.department_code || 'Department unverified')}${employee.division_code ? ` / ${reviewRecordLabel(employee.division_code)}` : ''} · ${employee.status}`} onClose={onClose} placement="right" size="3xl">
-        <div className="space-y-5"><ReviewRecordReference name={employee.display_name}/>{!central && <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">You may update details within your assigned scope. Central HR verifies identities, placement, service appointments and activation.</p>}
+    const content = <div className="space-y-5"><ReviewRecordReference name={employee.display_name}/>{!central && <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">You may update details within your assigned scope. Central HR verifies identities, placement, service appointments and activation.</p>}
             <section className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">Employee details</h3><Button variant="secondary" onClick={() => setAction('details')}>Edit details</Button></div>
                 <dl className="grid gap-3 text-sm sm:grid-cols-2"><div><dt className="text-gray-500">Position</dt><dd>{employee.position_title || 'Not recorded'}</dd></div><div><dt className="text-gray-500">Contact</dt><dd className="break-words">{employee.email || 'Not recorded'}</dd></div><div><dt className="text-gray-500">Reporting manager</dt><dd>{employee.manager_name || 'Not recorded'}</dd></div><div><dt className="text-gray-500">Historical join date</dt><dd>{employee.join_date ? formatDate(employee.join_date) : 'Not recorded'}</dd></div></dl>
                 {central && <Button variant="secondary" onClick={() => setAction('placement')}>Verify placement</Button>}
@@ -89,10 +92,13 @@ export function EmployeeDetails({ profile, departments, patterns, central, onClo
                 {profile.service_periods.map((item) => <article key={item.id} className="space-y-2 rounded-lg border border-gray-200 p-3"><p className="text-sm font-medium">{formatDate(item.start_date)} → {item.end_date ? formatDate(item.end_date) : 'Open'} · {item.employment_category}{item.is_teacher ? ' · Teacher' : ''}{item.is_intern ? ' · Intern' : ''}</p><p className="text-xs text-gray-600">Service credit: {item.counts_for_service === null ? 'Unknown' : item.counts_for_service ? 'Included' : 'Excluded'} · {reviewRecordLabel(patterns.find((pattern) => pattern.id === item.work_pattern_id)?.name || 'Work pattern unverified')}</p><p className="break-words text-xs text-gray-500">{item.appointment_reference || 'No appointment reference'} · {item.reason}</p><>{central && <Button variant="secondary" onClick={()=>{setPeriod(item);setAction('correct_service');}}>Prepare correction</Button>}{central && <Button variant="secondary" onClick={() => { setPeriod(item); setAction('close_service'); }}>Close period from {formatDate(item.start_date)}</Button>}</></article>)}
             </section>
             {central&&<ServiceCorrectionHistory employeeId={employee.id} onChanged={onChanged}/>}
-            <section className="space-y-3 border-t border-gray-200 pt-4"><h3 className="font-semibold">Approval route preview</h3><p className="text-xs text-gray-500">This checks division, department and Chief Secretary appointments. The application timeline also checks required HR, Secretary or Minister stages and employee activation.</p><div className="flex flex-wrap items-end gap-2"><Field label="Route date"><AustralianDateInput className={inputClass} value={onDate} onChange={(e) => setOnDate(e.target.value)} /></Field><Button variant="secondary" disabled={!onDate} loading={previewBusy} onClick={() => void preview(onDate)}>Preview route</Button></div>
+            {!embedded&&<section className="space-y-3 border-t border-gray-200 pt-4"><h3 className="font-semibold">Approval route preview</h3><p className="text-xs text-gray-500">This checks division, department and Chief Secretary appointments. The application timeline also checks required HR, Secretary or Minister stages and employee activation.</p><div className="flex flex-wrap items-end gap-2"><Field label="Route date"><AustralianDateInput className={inputClass} value={onDate} onChange={(e) => setOnDate(e.target.value)} /></Field><Button variant="secondary" disabled={!onDate} loading={previewBusy} onClick={() => void preview(onDate)}>Preview route</Button></div>
                 {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
                 {chain && <><p className={`text-sm ${chain.ready ? 'text-green-800' : 'text-amber-800'}`}>{formatDate(previewDate)}: {chain.ready ? 'Division, department and Chief Secretary appointments are ready' : 'Route needs configuration'}</p><ol className="space-y-2">{chain.stages.map((stage) => <li key={stage.level} className="rounded-lg bg-gray-50 p-3 text-sm"><p className="font-medium">{APPROVER_LABELS[stage.level]} · {reviewRecordLabel(stage.approver_name || 'Unassigned')}</p>{stage.issue && <p className="mt-1 text-xs text-amber-800">{stage.issue}</p>}</li>)}</ol></>}
-            </section>
-        </div>
+            </section>}
+        </div>;
+    if(embedded)return content;
+    return <Modal title={reviewRecordLabel(employee.display_name)} description={`${reviewRecordLabel(employee.department_code || 'Department unverified')}${employee.division_code ? ` / ${reviewRecordLabel(employee.division_code)}` : ''} · ${employee.status}`} onClose={onClose} placement="right" size="3xl">
+        {content}
     </Modal>;
 }

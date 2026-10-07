@@ -14,11 +14,11 @@ import {governmentLabel as label} from './governmentWorkflowTypes';
 import type {GovernmentRequest,GovernmentRequestSummary,GovernmentStage} from './governmentWorkflowTypes';
 const root='/hr/government/workflow';
 async function download(path:string,name:string){const blob=await apiClient.getBlob(path),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-export function GovernmentRequestList({mode,refreshVersion=0,onChanged,selectedRequestId}:{selectedRequestId?:string;mode:'mine'|'queue'|'all';refreshVersion?:number;onChanged?:()=>void}) {
+export function GovernmentRequestList({mode,refreshVersion=0,onChanged,selectedRequestId,employeeId}:{employeeId?:string;selectedRequestId?:string;mode:'mine'|'queue'|'all';refreshVersion?:number;onChanged?:()=>void}) {
  const {user}=useAuth(),central=user?.permissions?.hr_admin===true;
  const [page,setPage]=useState(0),[status,setStatus]=useState(mode==='mine'?'all':'pending'),[data,setData]=useState<{requests:GovernmentRequestSummary[];total:number}>({requests:[],total:0}),[detail,setDetail]=useState<GovernmentRequest|null>(null),[version,setVersion]=useState(0),[loading,setLoading]=useState(true),[error,setError]=useState('');
  const [dialog,setDialog]=useState<{kind:'approve'|'reject'|'cancel'|'rebind'|'ack'|'continue';stage?:GovernmentStage;eventKey:string}|null>(null);
- useEffect(()=>{let live=true;void apiClient.get<typeof data>(`${root}/requests?mode=${mode}&status=${status}&page=${page+1}`).then(r=>{if(live){setData(r);setError('');setLoading(false);}}).catch((e:Error)=>{if(live){setError(e.message);setLoading(false);}});return()=>{live=false;};},[mode,status,page,version,refreshVersion]);
+ useEffect(()=>{let live=true;void apiClient.get<typeof data>(`${root}/requests?mode=${mode}&status=${status}&page=${page+1}${employeeId?`&employee_id=${employeeId}`:''}`).then(r=>{if(live){setData(r);setError('');setLoading(false);}}).catch((e:Error)=>{if(live){setError(e.message);setLoading(false);}});return()=>{live=false;};},[mode,status,page,version,refreshVersion,employeeId]);
  useEffect(()=>{if(!selectedRequestId)return;let live=true;void apiClient.get<GovernmentRequest>(`${root}/requests/${selectedRequestId}`).then(r=>{if(live)setDetail(r);}).catch((e:Error)=>{if(live)setError(e.message);});return()=>{live=false;};},[selectedRequestId]);
  async function open(id:string){setError('');try{setDetail(await apiClient.get<GovernmentRequest>(`${root}/requests/${id}`));}catch(e){setError((e as Error).message);}}
  function show(kind:'approve'|'reject'|'cancel'|'rebind'|'ack'|'continue',stage?:GovernmentStage){setDialog({kind,stage,eventKey:crypto.randomUUID()});}

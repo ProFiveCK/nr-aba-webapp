@@ -6,7 +6,6 @@ import { useConfirm } from '../../../contexts/useConfirm';
 import { Button, LoadingState, Modal, ModalActions } from '../../../components/Ui';
 import type { LeaveType, ResetPeriod } from '../types';
 import { PublicHolidays } from '../PublicHolidays';
-import { OrgUnits } from '../OrgUnits';
 import { GovernmentFoundation } from '../GovernmentFoundation';
 
 const RESET_OPTIONS: { value: ResetPeriod; label: string }[] = [
@@ -200,8 +199,6 @@ function HistoricalPolicySettings() {
     return (
         <div className="space-y-4">
             <PublicHolidays />
-
-            <OrgUnits />
 
             <div className="space-y-3 app-panel p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -503,25 +500,11 @@ function HistoricalPolicySettings() {
 export function Policies() {
     const [historical, setHistorical] = useState(false);
     return <div className="space-y-5">
-        <p className="text-sm text-gray-600">Shared government rules, public holidays and work schedules. Employee balances are managed under Employees.</p>
-        <details className="text-sm text-gray-600">
-            <summary className="cursor-pointer font-medium">How to review Policies</summary>
-            <div className="mt-3 space-y-2">
-                <p>Read the configured rules and dates below first. Preparing or publishing a new government version is an HR configuration step.</p>
-                <ul className="list-disc space-y-1 pl-5">
-                    <li><strong>Leave rules:</strong> eligibility, allowances, balance limits and notice periods.</li>
-                    <li><strong>Public holidays:</strong> approved dates used when calculating a leave application.</li>
-                    <li><strong>Weekly work schedules:</strong> normal working days and paid hours, linked to employees under Employees.</li>
-                </ul>
-                <p>A Demo badge means made-up review data. “Synthetic” and package numbers in the original references are internal build labels. Demo publication or verification does not represent government sign-off.</p>
-                <p>After checking this page, open Employees → Employee list, then Existing leave records or Government balances &amp; service. Approvals is where authorised officers decide submitted applications, with Chief Secretary as final approver.</p>
-                <p>For live setup: verify Payroll identities and service records, assign the actual approvers, publish signed rules and Gazette calendars, then independently certify opening balances and activate a small pilot group.</p>
-            </div>
-        </details>
+        <p className="text-sm text-gray-600">Manage Government rules, Gazette holidays and work schedules here. Review each employee’s arrangement and balances under Employees; manage departments and approval offices under Organisation.</p>
         <GovernmentFoundation view="policies" />
-        <details className="border-t border-gray-200 pt-4" onToggle={e => setHistorical(e.currentTarget.open)}>
-            <summary className="cursor-pointer text-sm font-medium text-gray-600">Existing leave policy settings</summary>
-            <p className="my-3 text-sm text-gray-500">These settings support the existing leave records. Government leave uses the approved effective versions above once configured.</p>
+        <details className="border-t border-gray-200 pt-4" onToggle={event => setHistorical(event.currentTarget.open)}>
+            <summary className="cursor-pointer text-sm font-medium text-gray-700">Existing Finance rules — still in use for the existing workflow</summary>
+            <p className="my-3 text-sm text-gray-600">These leave types, holidays and accrual settings continue to govern employees using the existing workflow. Publishing a Government policy does not replace these settings or change their balances.</p>
             {historical && <HistoricalPolicySettings />}
         </details>
     </div>;

@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Link,useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { Policies } from './sections/Policies';
 import type { ReactNode } from 'react';
 import { useAuth } from '../../contexts/useAuth';
 import { GovernmentWorkflowManagement } from './GovernmentWorkflowManagement';
-import { GovernmentFoundation } from './GovernmentFoundation';
 import { GovernmentRollout } from './GovernmentRollout';
 import { GovernmentPayroll } from './GovernmentPayroll';
 import { EmployeeOnboarding } from './EmployeeOnboarding';
@@ -15,7 +14,8 @@ import { Button, LoadingState, Pager } from '../../components/Ui';
 import { ActionDialog, Field, PlacementFields, inputClass } from './ManagementFields';
 import { value } from './managementForm';
 import { PayrollEmployeeImport } from './PayrollEmployeeImport';
-import { EmployeeDetails } from './EmployeeDetails';
+import { EmployeeLeaveWorkspace } from './EmployeeLeaveWorkspace';
+import type { EmployeeSection, PreparationStep } from './EmployeeLeaveWorkspace';
 import { OrganisationManagement } from './OrganisationManagement';
 import { ReviewRecordName } from './ReviewRecordName';
 import { reviewRecordLabel } from './reviewRecordNames';
@@ -27,40 +27,47 @@ export function EmployeeManagement({ legacyTools,workspace='employees' }: { lega
     const central = user?.permissions?.hr_admin === true;
     const [scopeSummary,setScopeSummary] = useState('Checking assigned access…');
     useEffect(() => { void apiClient.get<{central:boolean;scopes:{department_name:string;division_name:string|null}[]}>('/hr/access-scopes/context').then(context=>setScopeSummary(context.central ? 'Central HR · Government-wide records' : context.scopes.length ? `Assigned access: ${context.scopes.map(scope=>`${scope.department_name} / ${scope.division_name || 'All divisions'}`).join('; ')}` : 'No active department or division assignment. Contact central HR.')).catch(()=>setScopeSummary('Unable to confirm assigned access.')); }, []);
-    const choices = workspace==='settings' ? [['policies','Leave policies'],['organisation','Organisation & approvers'],['access','HR access'],['import','Payroll import'],['onboarding','Onboarding'],['rollout','Rollout readiness']] : [['directory','Employee list'],...(central ? [['legacy','Existing leave records'],['foundations','Government balances & service'],['government-workflow','Government applications & jobs'],['payroll','Payroll & handover']] : user?.permissions?.hr_balance_manage ? [['balances','Balances']] : [])];
+    const choices = workspace==='settings' ? [['policies','Policies'],['organisation','Organisation & approvers'],['access','HR access'],['setup','Employee setup'],['rollout','Readiness']] : [['directory','Employees'],...(central ? [['operations','Leave operations']] : user?.permissions?.hr_balance_manage ? [['balances','Scoped balances']] : [])];
     const [params,setParams]=useSearchParams();
-    const requested=params.get('view'),tab=choices.some(([id])=>id===requested)?requested!:choices[0][0];
+    const requested=params.get('view');
+    const alias=requested==='import'||requested==='onboarding'?'setup':['government-workflow','payroll','legacy'].includes(requested||'')?'operations':requested==='foundations'?'directory':requested;
+    const tab=choices.some(([id])=>id===alias)?alias!:choices[0][0];
+    const employeeId=workspace==='employees'?params.get('employee')||'':'';
+    const section=(['arrangements','details','applications','prepare'].includes(params.get('section')||'')?params.get('section'):'arrangements') as EmployeeSection;
+    const step=(['identity','login','balances','reconciliation','activation'].includes(params.get('step')||'')?params.get('step'):'identity') as PreparationStep;
+    const requestedOperation=params.get('operation')||(['payroll','legacy'].includes(requested||'')?requested:'workflow');
+    const operation=['workflow','activation','payroll','legacy'].includes(requestedOperation||'')?requestedOperation:'workflow';
+    const setupView=params.get('setup')||(requested==='import'?'import':'onboarding');
+    function changeView(view:string){const next=new URLSearchParams(params);next.set('view',view);next.delete('employee');next.delete('section');next.delete('step');setParams(next);}
     const [creating, setCreating] = useState(false);
     const [query, setQuery] = useState(''), [search, setSearch] = useState(''), [department, setDepartment] = useState(''), [status, setStatus] = useState(''), [readiness, setReadiness] = useState(''), [page, setPage] = useState(0);
     const [list, setList] = useState<{ employees: ManagedEmployee[]; total: number; page_size: number }>({ employees: [], total: 0, page_size: 50 });
     const [departments, setDepartments] = useState<OrgDepartment[]>([]), [patterns, setPatterns] = useState<WorkPattern[]>([]);
     const [profile, setProfile] = useState<EmployeeProfile | null>(null), [loading, setLoading] = useState(true), [error, setError] = useState(''), [opening, setOpening] = useState(false), [version, setVersion] = useState(0);
     async function loadReferences() { const [org, work] = await Promise.all([apiClient.get<OrgDepartment[]>('/hr/org-units'), apiClient.get<WorkPattern[]>('/hr/directory/work-patterns')]); setDepartments(org); setPatterns(work); }
-    useEffect(() => { void loadReferences().catch((err: Error) => setError(err.message)); }, []);
+    useEffect(() => { let live=true;void Promise.all([apiClient.get<OrgDepartment[]>('/hr/org-units'),apiClient.get<WorkPattern[]>('/hr/directory/work-patterns')]).then(([org,work])=>{if(live){setDepartments(org);setPatterns(work);}}).catch((err:Error)=>{if(live)setError(err.message);});return()=>{live=false;}; }, []);
     useEffect(() => {
         if (tab !== 'directory') return;
-        let live = true; setLoading(true); setError('');
+        let live = true;
         const params = new URLSearchParams({ page: String(page + 1), search });
         if (department) params.set('department_id', department); if (status) params.set('status', status); if (readiness) params.set('readiness', readiness);
         void apiClient.get<typeof list>(`/hr/directory?${params}`).then((data) => { if (live) { setList(data); if (page > 0 && page * 50 >= data.total) setPage(Math.max(0, Math.ceil(data.total / 50) - 1)); } }).catch((err: Error) => { if (live) setError(err.message); }).finally(() => { if (live) setLoading(false); });
         return () => { live = false; };
     }, [tab, page, search, department, status, readiness, version]);
-    async function open(id: string) { setOpening(true); setError(''); try { setProfile(await apiClient.get<EmployeeProfile>(`/hr/directory/${id}/profile`)); } catch (err) { setError((err as Error).message); } finally { setOpening(false); } }
+    async function open(id: string) { setProfile(null);setError('');const next=new URLSearchParams(params);next.set('view','directory');next.set('employee',id);next.set('section','arrangements');next.delete('step');setParams(next); }
+    useEffect(()=>{if(!employeeId)return;let live=true;void apiClient.get<EmployeeProfile>(`/hr/directory/${employeeId}/profile`).then(data=>{if(live){setProfile(data);setError('');}}).catch((err:Error)=>{if(live)setError(err.message);}).finally(()=>{if(live)setOpening(false);});return()=>{live=false;};},[employeeId]);
+    function closeEmployee(){const next=new URLSearchParams(params);next.delete('employee');next.delete('section');next.delete('step');setParams(next);}
+    if(employeeId) return <div className="space-y-4">{error&&<><p role="alert" className="text-sm text-red-700">{error}</p><Button variant="secondary" onClick={closeEmployee}>Back to employees</Button></>}{(!profile||profile.employee.id!==employeeId)&&!error&&<LoadingState label="Opening employee…"/>}{profile?.employee.id===employeeId&&<EmployeeLeaveWorkspace key={profile.employee.id} central={central} profile={profile} departments={departments} patterns={patterns} section={section} step={step} onClose={closeEmployee} onNavigate={(section,step)=>{const next=new URLSearchParams(params);next.set('section',section);if(step)next.set('step',step);setParams(next);}} onChanged={async()=>{setProfile(await apiClient.get<EmployeeProfile>(`/hr/directory/${employeeId}/profile`));setVersion(v=>v+1);}}/>}</div>;
     return <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 pb-4">
             <label className="flex min-w-0 flex-wrap items-center gap-3 text-sm font-medium text-gray-700">{workspace==='settings'?'Settings':'Employee view'}
-                <select aria-label={workspace==='settings'?'Leave settings':'Employee view'} className="min-w-0 max-w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900" value={tab} onChange={e=>setParams({view:e.target.value})}>
+                <select aria-label={workspace==='settings'?'Leave settings':'Employee view'} className="min-w-0 max-w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900" value={tab} onChange={e=>changeView(e.target.value)}>
                     {choices.map(([id,label])=><option key={id} value={id}>{label}</option>)}
                 </select>
             </label>
             <p className="text-xs text-gray-500">{scopeSummary}</p>
         </div>
-        {!(workspace==='settings'&&tab==='policies')&&<details className="text-sm text-gray-600">
-            <summary className="cursor-pointer font-medium">{workspace==='settings'?'How to use Settings':'How to review employees'}</summary>
-            <div className="mt-3 space-y-2">
-                {workspace==='settings'?<><p>Leave policies holds government rules, public holidays and weekly work schedules. Organisation &amp; approvers holds departments, divisions and dated office assignments. HR access controls which records HR officers can manage.</p><p>Payroll import reconciles employee identities. Onboarding prepares individual accounts. Rollout readiness checks prepared employees before release.</p><p>Return to <Link className="font-medium text-brand underline" to="/leave/employees">Employees</Link> to inspect records, balances and leave operations.</p></>:<><p>Start with the Employee list and open Manage. Existing leave records holds the retained employee balances and leave tools. Government balances &amp; service holds independently certified balances and service calculations for the new policy.</p><p>Government applications &amp; jobs controls independent employee activation and approved balance updates. Payroll &amp; handover handles opening reconciliation, Payroll receipts and transfer records.</p><p>Shared configuration is under <Link className="font-medium text-brand underline" to="/leave/settings">Settings</Link>: policies, organisation, approvers, HR access and onboarding.</p></>}
-            </div>
-        </details>}
+        <p className="text-sm text-gray-600">{workspace==='settings'?'Shared settings live here. Open an employee to manage their current arrangements and Government preparation.':'Open Manage to see an employee’s rules, balances and approval route together. Leave operations holds cross-employee jobs and Payroll administration.'}</p>
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         {tab === 'directory' && <>
             <form className="app-panel grid items-end gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5" onSubmit={(e) => { e.preventDefault(); setSearch(query.trim()); setPage(0); }}>
@@ -81,20 +88,16 @@ export function EmployeeManagement({ legacyTools,workspace='employees' }: { lega
             </div>}
         </>}
         {tab === 'policies' && central && <Policies />}
-        {tab === 'import' && <PayrollEmployeeImport onApplied={() => setVersion((current) => current + 1)} />}
         {tab === 'organisation' && <OrganisationManagement departments={departments} patterns={patterns} onChanged={loadReferences} />}
         {tab === 'access' && central && <HrAccessManagement departments={departments} />}
-        {tab === 'government-workflow' && central && <GovernmentWorkflowManagement />}
-        {tab === 'foundations' && central && <GovernmentFoundation />}
-        {tab === 'payroll' && central && <GovernmentPayroll />}
+        {tab === 'operations' && central && <><nav aria-label="Leave operations" className="flex flex-wrap gap-2">{[['workflow','Applications & follow-ups'],['activation','Activation & accrual'],['payroll','Payroll & handover'],['legacy','Retained Finance administration']].map(([key,label])=><Button key={key} variant={operation===key?'primary':'secondary'} onClick={()=>{const next=new URLSearchParams(params);next.set('operation',key);setParams(next);}}>{label}</Button>)}</nav><p className="text-sm text-gray-600">Cross-employee administration. For preparation or balances, <Button variant="ghost" onClick={()=>changeView('directory')}>select an employee</Button> first.</p>{operation==='workflow'&&<GovernmentWorkflowManagement view="applications"/>}{operation==='activation'&&<GovernmentWorkflowManagement view="activation"/>}{operation==='payroll'&&<GovernmentPayroll/>}{operation==='legacy'&&<><p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Retained Finance maintenance tools. Employee identity, placement and Government preparation are managed in the employee workspace. These tools keep historical imports, reports and existing record maintenance available.</p>{legacyTools}</>}</>}
+        {tab === 'setup' && central && <><nav aria-label="Employee setup" className="flex flex-wrap gap-2">{[['import','Payroll identities'],['onboarding','Login preparation']].map(([key,label])=><Button key={key} variant={setupView===key?'primary':'secondary'} onClick={()=>{const next=new URLSearchParams(params);next.set('setup',key);setParams(next);}}>{label}</Button>)}</nav><p className="text-sm text-gray-600">Prepare or reconcile a verified employee cohort here. For one employee, use Employees → Manage → Prepare Government Leave.</p>{setupView==='import'?<PayrollEmployeeImport onApplied={()=>setVersion(v=>v+1)}/>:<EmployeeOnboarding departments={departments}/>}</>}
         {tab === 'rollout' && central && <GovernmentRollout departments={departments} />}
-        {tab === 'onboarding' && central && <EmployeeOnboarding departments={departments} />}
         {tab === 'balances' && <ScopedBalances />}
-        {tab === 'legacy' && central && legacyTools}
         {creating && <ActionDialog title="Add verified employee" onClose={() => setCreating(false)} saveLabel="Create employee record" onSave={async (data) => {
             const created = await apiClient.post<{ id: string }>('/hr/directory', { display_name: value(data,'display_name'), external_id: value(data,'external_id'), department_id: value(data,'department_id'), division_id: value(data,'division_id') || null, reason: value(data,'reason') });
             setCreating(false); setVersion((current) => current + 1); await open(created.id);
         }}><p className="text-sm text-gray-600">Check the Payroll and personnel record before creating a distinct employee. For possible duplicates, use Payroll import reconciliation. Login and service records are prepared separately.</p><Field label="Employee name"><input className={inputClass} name="display_name" maxLength={200} required /></Field><Field label="Payroll ID"><input className={inputClass} name="external_id" maxLength={100} required /></Field><PlacementFields departments={departments} /></ActionDialog>}
-        {profile && <EmployeeDetails central={central} profile={profile} departments={departments} patterns={patterns} onClose={() => setProfile(null)} onChanged={async () => { setProfile(await apiClient.get<EmployeeProfile>(`/hr/directory/${profile.employee.id}/profile`)); setVersion((current) => current + 1); }} />}
+
     </div>;
 }

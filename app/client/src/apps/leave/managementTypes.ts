@@ -1,4 +1,5 @@
 export type ManagedEmployee = {
+    leave_policy_regime?:'legacy'|'government';
     id: string; display_name: string; status: 'active' | 'inactive'; reviewer_id: string | null;
     department_id: string | null; division_id: string | null; department_code: string | null; division_code: string | null;
     external_ids?: { external_id: string }[]; employment_category?: string | null; is_intern?: boolean; is_teacher?: boolean; counts_for_service?: boolean | null;

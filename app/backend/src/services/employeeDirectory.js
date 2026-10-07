@@ -33,7 +33,11 @@ export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, sea
   const values = [status, departmentId, search.trim(), readiness];
   const scopeCondition = user ? employeeScopeSql(user,'hr_staff_manage','$5') : '($5::uuid IS NULL)';
   values.push(user?.id || null);
-  const where = `${scopeCondition} AND ($1::text IS NULL OR e.status = $1) AND ($2::uuid IS NULL OR e.department_id = $2)
+  // Retained names support central discovery only; scope authority still uses
+  // verified department_id through scopeCondition, and reads never assign it.
+  const where = `${scopeCondition} AND ($1::text IS NULL OR e.status = $1) AND ($2::uuid IS NULL OR e.department_id = $2
+    OR (e.department_id IS NULL AND EXISTS (SELECT 1 FROM hr_departments selected WHERE selected.id=$2
+      AND lower(selected.name)=lower(e.department_code))))
     AND ($3 = '' OR position(lower($3) in lower(e.display_name)) > 0
       OR EXISTS (SELECT 1 FROM hr_employee_external_ids x WHERE x.employee_id = e.id AND x.external_id = $3))
     AND ($4 = '' OR ($4 = 'unlinked' AND e.reviewer_id IS NULL)
@@ -47,7 +51,7 @@ export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, sea
         AND (p.end_date IS NULL OR p.end_date >= (NOW() AT TIME ZONE 'Pacific/Nauru')::date)
         AND p.employment_category <> 'unknown' AND p.counts_for_service IS NOT NULL)))`;
   const { rows } = await pool.query(
-    `SELECT e.id, e.display_name, e.status, e.reviewer_id, e.department_id, e.division_id,
+    `SELECT e.id, e.display_name, e.status, e.reviewer_id, e.department_id, e.division_id, e.leave_policy_regime,
        e.department_code, e.division_code, d.name AS department_name, v.name AS division_name,
        p.employment_category, p.is_teacher, p.is_intern, p.counts_for_service,
        COALESCE((SELECT json_agg(json_build_object('source', x.source, 'external_id', x.external_id) ORDER BY x.external_id)
@@ -66,7 +70,7 @@ export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, sea
 
 export async function employeeProfile(pool, employeeId) {
   const { rows: [employee] } = await pool.query(
-    `SELECT e.id,e.display_name,e.position_title,e.email,e.status,e.reviewer_id,e.department_id,e.division_id,e.department_code,e.division_code,
+    `SELECT e.id,e.display_name,e.position_title,e.email,e.status,e.reviewer_id,e.department_id,e.division_id,e.department_code,e.division_code,e.leave_policy_regime,
        e.manager_id,m.display_name AS manager_name,e.join_date,r.display_name AS account_name,r.email AS account_email,r.account_type,r.status AS account_status
        FROM hr_employees e LEFT JOIN hr_employees m ON m.id=e.manager_id LEFT JOIN reviewers r ON r.id=e.reviewer_id WHERE e.id = $1`, [employeeId]
   );

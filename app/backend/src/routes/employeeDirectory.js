@@ -1,3 +1,4 @@
+import employeeLeaveArrangementsRouter from './employeeLeaveArrangements.js';
 import employeeServiceCorrectionsRouter from './employeeServiceCorrections.js';
 import { assertEmployeeScope,canAccessEmployee,isCentralHr } from '../services/hrAccess.js';
 import express from 'express';
@@ -17,6 +18,7 @@ import {
 const router = express.Router();
 router.use('/service-corrections',employeeServiceCorrectionsRouter);
 router.use('/imports', payrollEmployeeImportRouter);
+router.use('/', employeeLeaveArrangementsRouter);
 // Identity, transfers, imports and enterprise configuration stay central.
 // Directory reads and details updates also allow explicitly scoped HR.
 const centralHr = requirePermission(PERMISSIONS.HR_ADMIN);
@@ -132,9 +134,11 @@ router.post('/approval-assignments', centralHr, [reason, body('level').isIn(APPR
   res.status(201).json(await assignLeaveApprover(pool, { assignment: req.body, actor: actor(req), reason: req.body.reason }));
 });
 
-router.get('/approval-assignments', centralHr, [query('page').optional().isInt({ min: 1, max: 100000 })], async (req, res) => {
+router.get('/approval-assignments', centralHr, [query('page').optional().isInt({ min: 1, max: 100000 }),query('page_size').optional().isInt({min:1,max:50}),query('search').optional().isString().isLength({max:100}),query('department_id').optional().isUUID(),query('level').optional().isIn(APPROVAL_LEVELS),query('timing').optional().isIn(['current','upcoming','ended'])], async (req, res) => {
   if (!handleValidation(req, res)) return;
-  const page = Number(req.query.page) || 1;
+  const page = Number(req.query.page) || 1, pageSize=Number(req.query.page_size)||50;
+  const filters=[req.query.search?.trim()||'',req.query.department_id||null,req.query.level||null,req.query.timing||null];
+  const where="($1='' OR position(lower($1) in lower(concat_ws(' ',e.display_name,d.name,v.name)))>0) AND ($2::uuid IS NULL OR a.department_id=$2) AND ($3::text IS NULL OR a.level=$3) AND ($4::text IS NULL OR ($4='current' AND a.effective_from<=(NOW() AT TIME ZONE 'Pacific/Nauru')::date AND (a.effective_to IS NULL OR a.effective_to>=(NOW() AT TIME ZONE 'Pacific/Nauru')::date)) OR ($4='upcoming' AND a.effective_from>(NOW() AT TIME ZONE 'Pacific/Nauru')::date) OR ($4='ended' AND a.effective_to<(NOW() AT TIME ZONE 'Pacific/Nauru')::date))";
   const { rows } = await pool.query(`SELECT a.*,e.display_name AS approver_name,d.name AS department_name,v.name AS division_name,
     e.status AS employee_status,r.status AS account_status,e.reviewer_id,
     (COALESCE(r.permissions->>'hr_leave_approve','') <> 'false' AND (r.permissions->>'hr_leave_approve'='true'
@@ -145,9 +149,9 @@ router.get('/approval-assignments', centralHr, [query('page').optional().isInt({
         AND s.department_id=a.department_id AND (s.division_id IS NULL OR s.division_id=a.division_id)))) AS has_approval_grant
     FROM hr_approval_assignments a JOIN hr_employees e ON e.id=a.approver_employee_id
     LEFT JOIN reviewers r ON r.id=e.reviewer_id LEFT JOIN hr_departments d ON d.id=a.department_id LEFT JOIN hr_divisions v ON v.id=a.division_id
-    ORDER BY a.level,a.effective_from,a.id LIMIT 50 OFFSET $1`, [(page - 1) * 50]);
-  const { rows: [count] } = await pool.query('SELECT count(*)::int AS total FROM hr_approval_assignments');
-  res.json({ assignments: rows, total: count.total, page, page_size: 50 });
+    WHERE ${where} ORDER BY a.level,a.effective_from,a.id LIMIT $5 OFFSET $6`, [...filters,pageSize,(page-1)*pageSize]);
+  const { rows: [count] } = await pool.query(`SELECT count(*)::int AS total FROM hr_approval_assignments a JOIN hr_employees e ON e.id=a.approver_employee_id LEFT JOIN hr_departments d ON d.id=a.department_id LEFT JOIN hr_divisions v ON v.id=a.division_id WHERE ${where}`,filters);
+  res.json({ assignments: rows, total: count.total, page, page_size: pageSize });
 });
 
 router.post('/approval-assignments/:id/close', centralHr, [employeeId, reason, dateOnly('end_date', true)], async (req, res) => {

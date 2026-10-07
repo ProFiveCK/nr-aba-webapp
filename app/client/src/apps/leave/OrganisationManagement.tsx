@@ -1,53 +1,74 @@
-import { formatDate } from '../../lib/date';
-import { AustralianDateInput } from '../../components/AustralianDateInput';
 import { useEffect, useState } from 'react';
+import { formatDate, todayIsoDate } from '../../lib/date';
+import { AustralianDateInput } from '../../components/AustralianDateInput';
 import { apiClient } from '../../lib/api';
-import { todayIsoDate } from '../../lib/date';
-import { Button, Pager } from '../../components/Ui';
+import { Button, LoadingState, Pager } from '../../components/Ui';
 import { StatutoryOffices } from './StatutoryOffices';
 import { OrgUnits } from './OrgUnits';
 import { ActionDialog, DirectoryPicker, Field, inputClass } from './ManagementFields';
 import { value } from './managementForm';
 import { APPROVER_LABELS } from './managementTypes';
+import { appointmentTiming, organisationQuery } from './organisationBrowse';
 import type { ApprovalAssignment, WorkPattern } from './managementTypes';
 import type { OrgDepartment } from './types';
 
-const WEEKDAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-export function OrganisationManagement({ departments, patterns, onChanged }: { departments: OrgDepartment[]; patterns: WorkPattern[]; onChanged: () => Promise<void> }) {
-    const [list, setList] = useState<{ assignments: ApprovalAssignment[]; total: number; page_size: number }>({ assignments: [], total: 0, page_size: 50 });
-    const [page, setPage] = useState(0), [version, setVersion] = useState(0), [error, setError] = useState('');
-    const [adding, setAdding] = useState(false), [closing, setClosing] = useState<ApprovalAssignment | null>(null), [addingPattern, setAddingPattern] = useState(false);
-    useEffect(() => { let live = true; void apiClient.get<typeof list>(`/hr/directory/approval-assignments?page=${page + 1}`).then((data) => { if (live) setList(data); }).catch((err: Error) => { if (live) setError(err.message); }); return () => { live = false; }; }, [page,version]);
-    const reloadReferences = () => { void onChanged().catch((err: Error) => setError(err.message)); };
+type Section = 'departments' | 'approvers' | 'statutory';
+const sections: { id: Section; label: string }[] = [
+    { id: 'departments', label: 'Departments & divisions' },
+    { id: 'approvers', label: 'Leave approvers' },
+    { id: 'statutory', label: 'Statutory & HR offices' },
+];
+// Patterns remain accepted for the caller during consolidation; Policies owns their editing.
+export function OrganisationManagement({ departments, onChanged }: { departments: OrgDepartment[]; patterns?: WorkPattern[]; onChanged: () => Promise<void> }) {
+    const [section, setSection] = useState<Section>('departments'), [department, setDepartment] = useState(''), [error, setError] = useState('');
     return <div className="space-y-4">
-        <OrgUnits onChanged={reloadReferences} />
-        {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-        <section className="app-panel space-y-4 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-semibold">Enterprise leave approvers</h3><p className="mt-1 text-sm text-gray-600">Divisional approver → Head of Department → Chief Secretary. Assign offices with effective dates and retain past appointments.</p></div><Button onClick={() => setAdding(true)}>Assign officeholder</Button></div>
-            <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">An office assignment needs an active employee, verified login and an explicit leave approval grant. Assigning an office does not grant account permissions. The employee route preview checks these three offices. Additional HR, Secretary and Minister offices are configured below. Government submissions require independent activation for each employee.</p>
-            {!list.assignments.length && <p className="text-sm text-gray-500">No officeholders assigned yet.</p>}
-            <div className="space-y-2">{list.assignments.map((assignment) => {
-                const ready = assignment.employee_status === 'active' && assignment.account_status === 'active' && assignment.has_approval_grant;
-                const today = todayIsoDate(), timing = assignment.effective_from > today ? 'Upcoming' : assignment.effective_to && assignment.effective_to < today ? 'Ended' : 'Effective now';
-                return <article key={assignment.id} className="space-y-2 rounded-lg border border-gray-200 p-3"><div className="flex flex-wrap items-start justify-between gap-2"><div><h4 className="font-semibold">{APPROVER_LABELS[assignment.level]} · {assignment.approver_name}</h4><p className="text-sm text-gray-600">{assignment.department_name || 'Government-wide'}{assignment.division_name ? ` / ${assignment.division_name}` : ''}</p><p className="text-xs text-gray-500">{formatDate(assignment.effective_from)} → {assignment.effective_to ? formatDate(assignment.effective_to) : 'Open'} · {timing}</p></div><Button variant="secondary" onClick={() => setClosing(assignment)}>Close appointment</Button></div><p className={`text-xs ${ready ? 'text-green-800' : 'text-amber-800'}`}>{ready ? 'Employee, login and approval grant ready' : !assignment.reviewer_id ? 'Needs verified login' : assignment.employee_status !== 'active' || assignment.account_status !== 'active' ? 'Employee or account inactive' : 'Needs explicit leave approval permission'}</p><p className="break-words text-xs text-gray-500">Authority recorded: {assignment.reason}</p></article>;
-            })}</div>
-            <Pager page={page} pageCount={Math.ceil(list.total/list.page_size)} total={list.total} pageSize={list.page_size} setPage={setPage} />
-        </section>
-        <StatutoryOffices departments={departments}/>
-        <section className="app-panel space-y-3 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-lg font-semibold">Approved work patterns</h3><Button onClick={() => setAddingPattern(true)}>Add work pattern</Button></div><p className="text-sm text-gray-600">Record verified weekly patterns for service review. Shift and leave charging still need configuration. Create a new pattern when hours change to preserve historical references.</p>
-            {!patterns.length && <p className="text-sm text-gray-500">No patterns recorded.</p>}
-            {patterns.map((pattern) => <div key={pattern.id} className="rounded-lg bg-gray-50 p-3"><p className="font-medium">{pattern.name}</p><p className="text-sm text-gray-600">{pattern.working_weekdays.map((day) => WEEKDAYS[day - 1]).join(', ')} · {pattern.hours_per_day ? `${pattern.hours_per_day} hours/day` : 'Hours unverified'}</p></div>)}
-        </section>
-        {adding && <OfficeholderDialog departments={departments} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); setPage(0); setVersion((current) => current + 1); }} />}
-        {closing && <ActionDialog title="Close officeholder appointment" description={`${APPROVER_LABELS[closing.level]} · ${closing.approver_name}`} onClose={() => setClosing(null)} onSave={async (data) => { await apiClient.post(`/hr/directory/approval-assignments/${closing.id}/close`, { end_date: value(data,'end_date'), reason: value(data,'reason') }); setClosing(null); setVersion((current) => current + 1); }}><p className="text-sm text-gray-600">Preserve the appointment record. A replacement can start on the following day; overlapping primary officeholders are blocked.</p><Field label="Final officeholder day"><AustralianDateInput name="end_date" className={inputClass}  min={closing.effective_from} max={closing.effective_to || undefined} defaultValue={closing.effective_to || ''} required /></Field></ActionDialog>}
-        {addingPattern && <ActionDialog title="Add approved work pattern" onClose={() => setAddingPattern(false)} onSave={async (data) => {
-            const weekdays = data.getAll('working_weekdays').map(Number); if (!weekdays.length) throw new Error('Select at least one working weekday.');
-            await apiClient.post('/hr/directory/work-patterns',{ name: value(data,'name'), working_weekdays: weekdays, hours_per_day: value(data,'hours_per_day') ? Number(value(data,'hours_per_day')) : null, reason: value(data,'reason') }); await onChanged(); setAddingPattern(false);
-        }}><Field label="Pattern name"><input className={inputClass} name="name" required maxLength={120} /></Field><fieldset className="space-y-2"><legend className="text-sm font-medium text-gray-700">Working weekdays</legend><div className="grid grid-cols-2 gap-2 text-sm">{WEEKDAYS.map((day,index) => <label key={day}><input name="working_weekdays" type="checkbox" value={index + 1} /> {day}</label>)}</div></fieldset><Field label="Hours per working day (optional)"><input className={inputClass} name="hours_per_day" type="number" min="0.01" max="24" step="0.01" /></Field></ActionDialog>}
+        <p className="text-sm text-gray-600">Current staff and their nominated managers are retained. Dated office appointments route new Government applications after independent activation.</p>
+        <nav aria-label="Organisation sections" className="flex flex-wrap gap-2">{sections.map((item) => <button key={item.id} type="button" aria-current={section === item.id ? 'page' : undefined} onClick={() => setSection(item.id)} className={`rounded-lg px-3 py-2 text-sm font-medium ${section === item.id ? 'bg-brand text-white' : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}>{item.label}</button>)}</nav>
+        {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+        {section === 'departments' && <OrgUnits onChanged={() => { void onChanged().catch((err: Error) => setError(err.message)); }} onManageOffices={(id) => { setDepartment(id); setSection('approvers'); }} />}
+        {section === 'approvers' && <LeaveApprovers departments={departments} initialDepartment={department} />}
+        {section === 'statutory' && <StatutoryOffices departments={departments} />}
     </div>;
 }
 
-function OfficeholderDialog({ departments, onClose, onSaved }: { departments: OrgDepartment[]; onClose: () => void; onSaved: () => void }) {
-    const [level,setLevel] = useState('division'), [department,setDepartment] = useState('');
+function LeaveApprovers({ departments, initialDepartment }: { departments: OrgDepartment[]; initialDepartment: string }) {
+    const [list, setList] = useState<{ assignments: ApprovalAssignment[]; total: number; page_size: number }>({ assignments: [], total: 0, page_size: 10 });
+    const [page, setPage] = useState(0), [version, setVersion] = useState(0), [error, setError] = useState(''), [loading, setLoading] = useState(true);
+    const [search, setSearch] = useState(''), [appliedSearch, setAppliedSearch] = useState('');
+    const [department, setDepartment] = useState(initialDepartment), [level, setLevel] = useState(''), [timing, setTiming] = useState('');
+    const [adding, setAdding] = useState(false), [closing, setClosing] = useState<ApprovalAssignment | null>(null);
+    useEffect(() => {
+        let live = true;
+        const query = organisationQuery(page, { search: appliedSearch, department_id: department, level, timing });
+        void apiClient.get<typeof list>(`/hr/directory/approval-assignments?${query}`).then((data) => { if (live) { setList(data); setError(''); } }).catch((err: Error) => { if (live) setError(err.message); }).finally(() => { if (live) setLoading(false); });
+        return () => { live = false; };
+    }, [page, version, appliedSearch, department, level, timing]);
+    function filter(set: (value: string) => void, selected: string) { set(selected); setPage(0); setLoading(true); setVersion((current) => current + 1); }
+    function reload() { setLoading(true); setVersion((current) => current + 1); }
+    const today = todayIsoDate();
+    return <section className="app-panel space-y-4 p-4 sm:p-5" aria-label="Leave approvers">
+        <div className="flex flex-wrap items-center justify-between gap-3"><p className="max-w-2xl text-sm text-gray-600">Divisional approver → Head of Department → Chief Secretary. Review appointments by department, office or date.</p><Button onClick={() => setAdding(true)}>Assign officeholder</Button></div>
+        <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); filter(setAppliedSearch, search.trim()); }}><div className="min-w-0 flex-1 basis-56"><Field label="Search appointments"><input className={inputClass} type="search" maxLength={100} placeholder="Officeholder or department" value={search} onChange={(event) => setSearch(event.target.value)} /></Field></div><Button type="submit" variant="secondary">Search</Button></form>
+        <div className="grid gap-3 sm:grid-cols-3"><Field label="Department"><select className={inputClass} value={department} onChange={(event) => filter(setDepartment, event.target.value)}><option value="">All departments and government-wide</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="Approval office"><select className={inputClass} value={level} onChange={(event) => filter(setLevel, event.target.value)}><option value="">All offices</option>{Object.entries(APPROVER_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></Field><Field label="Appointment dates"><select className={inputClass} value={timing} onChange={(event) => filter(setTiming, event.target.value)}><option value="">All dates</option><option value="current">Effective now</option><option value="upcoming">Upcoming</option><option value="ended">Ended</option></select></Field></div>
+        <p className="text-xs text-gray-500">An appointment requires active staff, a verified login and a separate approval grant. Assigning an office does not grant account permissions.</p>
+        {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        <div aria-busy={loading}>{loading ? <LoadingState label="Loading appointments…" /> : error ? null : <>
+            <p className="mb-2 text-sm text-gray-500" role="status">{list.total} matching appointments</p>
+            {!list.assignments.length && <p className="py-6 text-sm text-gray-500">No appointments match these filters.</p>}
+            <ul className="divide-y divide-gray-200">{list.assignments.map((assignment) => {
+                const ready = assignment.employee_status === 'active' && assignment.account_status === 'active' && assignment.has_approval_grant;
+                const appointmentState = appointmentTiming(assignment.effective_from, assignment.effective_to, today);
+                return <li key={assignment.id} className="py-3"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1 basis-64"><p className="break-words text-sm font-semibold">{APPROVER_LABELS[assignment.level]} · {assignment.approver_name}</p><p className="mt-1 text-sm text-gray-600">{assignment.department_name || 'Government-wide'}{assignment.division_name ? ` / ${assignment.division_name}` : ''}</p><p className="mt-1 text-xs text-gray-500">{formatDate(assignment.effective_from)} → {assignment.effective_to ? formatDate(assignment.effective_to) : 'Open'} · {appointmentState === 'current' ? 'Effective now' : appointmentState === 'upcoming' ? 'Upcoming' : 'Ended'}</p><p className={`mt-1 text-xs ${ready ? 'text-green-800' : 'text-amber-800'}`}>{ready ? 'Employee, login and approval grant ready' : !assignment.reviewer_id ? 'Needs verified login' : assignment.employee_status !== 'active' || assignment.account_status !== 'active' ? 'Employee or account inactive' : 'Needs explicit leave approval permission'}</p><details className="mt-2 text-xs text-gray-500"><summary className="cursor-pointer">Appointment authority</summary><p className="mt-1 break-words">{assignment.reason}</p></details></div>{appointmentState !== 'ended' && <Button variant="secondary" onClick={() => setClosing(assignment)}>Close appointment</Button>}</div></li>;
+            })}</ul>
+            <Pager page={page} pageCount={Math.ceil(list.total / list.page_size)} total={list.total} pageSize={list.page_size} setPage={(next) => { setLoading(true); setPage(next); }} />
+        </>}</div>
+        {adding && <OfficeholderDialog departments={departments} initialDepartment={department} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); setPage(0); reload(); }} />}
+        {closing && <ActionDialog title="Close officeholder appointment" description={`${APPROVER_LABELS[closing.level]} · ${closing.approver_name}`} onClose={() => setClosing(null)} onSave={async (data) => { await apiClient.post(`/hr/directory/approval-assignments/${closing.id}/close`, { end_date: value(data, 'end_date'), reason: value(data, 'reason') }); setClosing(null); reload(); }}><p className="text-sm text-gray-600">Preserve the appointment record. A replacement can start on the following day; overlapping primary officeholders are blocked.</p><Field label="Final officeholder day"><AustralianDateInput name="end_date" className={inputClass} min={closing.effective_from} max={closing.effective_to || undefined} defaultValue={closing.effective_to || ''} required /></Field></ActionDialog>}
+    </section>;
+}
+
+function OfficeholderDialog({ departments, initialDepartment, onClose, onSaved }: { departments: OrgDepartment[]; initialDepartment: string; onClose: () => void; onSaved: () => void }) {
+    const [level,setLevel] = useState('division'), [department,setDepartment] = useState(initialDepartment);
     return <ActionDialog title="Assign leave officeholder" onClose={onClose} onSave={async (data) => {
         const approver = value(data,'approver_employee_id'); if (!approver) throw new Error('Choose an active officeholder with a verified login.');
         await apiClient.post('/hr/directory/approval-assignments',{ level,department_id: level === 'chief_secretary' ? null : department,division_id: level === 'division' ? value(data,'division_id') : null,approver_employee_id: approver,effective_from: value(data,'effective_from'),effective_to: value(data,'effective_to') || null,reason: value(data,'reason') }); onSaved();

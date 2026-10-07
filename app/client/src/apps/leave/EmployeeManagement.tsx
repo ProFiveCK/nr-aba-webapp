@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { useAuth } from '../../contexts/useAuth';
 import { GovernmentWorkflowManagement } from './GovernmentWorkflowManagement';
 import { GovernmentFoundation } from './GovernmentFoundation';
+import { GovernmentPayroll } from './GovernmentPayroll';
 import { EmployeeOnboarding } from './EmployeeOnboarding';
 import { HrAccessManagement } from './HrAccessManagement';
 import { ScopedBalances } from './ScopedBalances';
@@ -40,7 +41,7 @@ export function EmployeeManagement({ legacyTools }: { legacyTools: ReactNode }) 
     return <div className="space-y-4">
         <div><h2 className="text-2xl font-semibold text-gray-950">Employee management</h2><p className="mt-1 text-sm text-gray-600">Prepare verified identities, appointments and the enterprise approval structure for government leave.</p></div>
         <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">{scopeSummary}</p>
-        <nav aria-label="Employee management" className="app-panel flex flex-wrap gap-2 p-3">{[['directory','Employees'],...(central ? [['import','Payroll import'],['organisation','Organisation & approvers'],['access','HR access'],['onboarding','Onboarding'],['foundations','Policy & balances'],['government-workflow','Government workflow'],['legacy','Historical balances & tools']] : user?.permissions?.hr_balance_manage ? [['balances','Balances']] : [])].map(([id,label]) => <Button key={id} variant={tab === id ? 'primary' : 'secondary'} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}</Button>)}</nav>
+        <nav aria-label="Employee management" className="app-panel flex gap-2 overflow-x-auto p-3 sm:flex-wrap">{[['directory','Employees'],...(central ? [['import','Payroll import'],['organisation','Organisation & approvers'],['access','HR access'],['onboarding','Onboarding'],['foundations','Policy & balances'],['government-workflow','Government workflow'],['payroll','Payroll & handover'],['legacy','Historical balances & tools']] : user?.permissions?.hr_balance_manage ? [['balances','Balances']] : [])].map(([id,label]) => <Button key={id} className="shrink-0" variant={tab === id ? 'primary' : 'secondary'} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}</Button>)}</nav>
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         {tab === 'directory' && <>
             <form className="app-panel grid items-end gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5" onSubmit={(e) => { e.preventDefault(); setSearch(query.trim()); setPage(0); }}>
@@ -53,9 +54,9 @@ export function EmployeeManagement({ legacyTools }: { legacyTools: ReactNode }) 
             <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-gray-600">{list.total} matching employees · 50 per page</p>{central && <Button onClick={() => setCreating(true)}>Add verified employee</Button>}</div>
             {loading ? <LoadingState label="Loading employee page…" /> : <div className="app-panel divide-y divide-gray-100">
                 {!list.employees.length && <p className="p-5 text-sm text-gray-500">No employees match these filters. Prepare the Payroll import or add a verified employee.</p>}
-                {list.employees.map((employee) => <article key={employee.id} className="flex flex-wrap items-start justify-between gap-3 p-4">
+                {list.employees.map((employee) => <article key={employee.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 p-4">
                     <div className="min-w-0"><h3 className="break-words font-semibold text-gray-900">{employee.display_name}</h3><p className="break-words text-sm text-gray-600">{employee.department_code || 'Department unverified'}{employee.division_code ? ` / ${employee.division_code}` : ''} · {employee.status}</p><p className="break-words text-xs text-gray-500">Payroll ID: {employee.external_ids?.map((id) => id.external_id).join(', ') || 'Missing'} · {employee.reviewer_id ? 'Login linked' : 'Login unlinked'}</p><p className="text-xs text-gray-500">{employee.employment_category || 'Current appointment unrecorded'}{employee.is_teacher ? ' · Teacher' : ''}{employee.is_intern ? ' · Intern' : ''}{employee.counts_for_service == null ? ' · Service credit unknown' : employee.counts_for_service ? ' · Service included' : ' · Service excluded'}</p></div>
-                    <Button variant="secondary" disabled={opening} onClick={() => void open(employee.id)}>Manage {employee.display_name}</Button>
+                    <Button variant="secondary" className="min-w-24" aria-label={`Manage ${employee.display_name}`} disabled={opening} onClick={() => void open(employee.id)}>Manage</Button>
                 </article>)}
                 <div className="px-3"><Pager page={page} pageCount={Math.ceil(list.total / list.page_size)} total={list.total} pageSize={list.page_size} setPage={setPage} /></div>
             </div>}
@@ -65,6 +66,7 @@ export function EmployeeManagement({ legacyTools }: { legacyTools: ReactNode }) 
         {tab === 'access' && central && <HrAccessManagement departments={departments} />}
         {tab === 'government-workflow' && central && <GovernmentWorkflowManagement departments={departments} />}
         {tab === 'foundations' && central && <GovernmentFoundation />}
+        {tab === 'payroll' && central && <GovernmentPayroll />}
         {tab === 'onboarding' && central && <EmployeeOnboarding departments={departments} />}
         {tab === 'balances' && <ScopedBalances />}
         {tab === 'legacy' && central && legacyTools}

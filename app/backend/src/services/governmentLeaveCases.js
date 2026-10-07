@@ -1,3 +1,4 @@
+import {legacyTransferFor} from './governmentLeaveCutover.js';
 import {withTransaction} from '../lib/transaction.js';
 import {ServiceError} from '../lib/serviceError.js';
 import {recordAudit} from './auditService.js';
@@ -15,11 +16,12 @@ export const isAbsenceSql=(alias='r')=>`${alias}.code NOT IN ('long_service','re
 export const effectiveEndSql=(alias='r')=>`COALESCE((SELECT (ce.effect->>'effective_end')::date FROM hr_gov_case_effects ce WHERE ce.original_request_id=${alias}.id),${alias}.end_date)`;
 async function locked(client,id){const ref=await workflow.getRequest(client,id);const employee=await ledger.lockEmployee(client,ref.employee_id);const request=await workflow.getRequest(client,id);await client.query('SELECT id FROM hr_gov_requests WHERE id=$1 FOR UPDATE',[id]);return {request,employee};}
 async function snapshot(client,employeeId,input){const context=await ledger.loadContext(client,employeeId);const evaluation=rules(()=>caseFoundation(context,input));return {context,evaluation};}
-async function overlap(client,employeeId,input,exclude=null){
+async function overlap(client,employeeId,input,exclude=null,transferRequestId=null){
  if(NON_ABSENCE_CODES.includes(input.code))return;
  if(input.code==='furlough'&&input.start_date===input.end_date&&(!exclude||(await determinationFor(client,exclude))?.determination.facts.action!=='take_leave'))return;
  if((await client.query(`SELECT 1 FROM hr_gov_requests r WHERE r.employee_id=$1 AND r.status IN ('pending','approved') AND ($2::uuid IS NULL OR r.id<>$2) AND ${isAbsenceSql()} AND ${effectiveAbsenceSql()} AND daterange(r.start_date,${effectiveEndSql()},'[]') && daterange($3,$4,'[]')`,[employeeId,exclude,input.start_date,input.end_date])).rowCount)fail('The dates overlap another submitted or granted absence.');
- if((await client.query("SELECT 1 FROM hr_leave_applications WHERE employee_id=$1 AND status IN ('pending','approved') AND daterange(start_date,end_date,'[]') && daterange($2,$3,'[]')",[employeeId,input.start_date,input.end_date])).rowCount)fail('Reconcile overlapping historical pending or granted leave first.');
+ const transfer=await legacyTransferFor(client,employeeId,input,transferRequestId||exclude);
+ if((await client.query("SELECT 1 FROM hr_leave_applications WHERE employee_id=$1 AND status IN ('pending','approved') AND ($4::uuid IS NULL OR id<>$4) AND daterange(start_date,end_date,'[]') && daterange($2,$3,'[]')",[employeeId,input.start_date,input.end_date,transfer?.legacy_request_id||null])).rowCount)fail('Reconcile overlapping historical pending or granted leave first.');
 }
 export async function submitCase(pool,{user,actor,employeeId,data,documents=[],client:existingClient}){
  const input={code:data.code,start_date:data.start_date,end_date:data.end_date,reason:text(data.reason,'case explanation',10,4000),event_reference:text(data.event_reference,'event reference'),related_request_id:data.related_request_id||null,assisted_reference:data.assisted_reference?text(data.assisted_reference,'employee assisted-entry authority'):null,notice_date:workflow.today()};
@@ -31,7 +33,8 @@ export async function submitCase(pool,{user,actor,employeeId,data,documents=[],c
   const separationCase=employee.status!=='active'&&isCentralHr(state.user)&&['long_service','furlough','recreation_separation'].includes(input.code)&&input.start_date===input.end_date;
   if(employee.status!=='active'&&!separationCase||!employee.department_id||!employee.division_id)fail('An active employee and verified placement are required.');
   const old=(await client.query('SELECT * FROM hr_gov_requests WHERE id=$1',[data.request_id])).rows[0];if(old){const legacyHash=fingerprint({input:{...input,notice_date:old.application_snapshot.input.notice_date},documents:documents.map(d=>({sha256:d.sha256,file_name:d.file_name}))});if(old.employee_id!==employeeId||![hash,legacyHash].includes(old.payload_hash))fail('The request key was used for different facts.');return {id:old.id,status:old.status};}
-  const {evaluation}=await snapshot(client,employeeId,input);await overlap(client,employeeId,input);
+  const transfer=await legacyTransferFor(client,employeeId,input,data.request_id);if(transfer&&(!isCentralHr(state.user)||input.assisted_reference!==transfer.source_reference))fail('Use central HR assisted entry with the certified transfer reference.',403);
+  const {evaluation}=await snapshot(client,employeeId,input);await overlap(client,employeeId,input,null,transfer?data.request_id:null);
   if((await client.query("SELECT 1 FROM hr_gov_requests WHERE employee_id=$1 AND code=$2 AND status IN ('pending','approved') AND application_snapshot->'input'->>'event_reference'=$3",[employeeId,input.code,input.event_reference])).rowCount)fail('This event reference already has a pending or granted case.');
   if(input.related_request_id){
    const original=await workflow.getRequest(client,input.related_request_id);if(original.employee_id!==employeeId||original.status!=='approved')fail('Link an approved case for the same employee.');

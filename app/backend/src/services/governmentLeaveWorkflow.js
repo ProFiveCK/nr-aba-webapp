@@ -1,3 +1,4 @@
+import {assertCutoverResolved,legacyTransferFor} from './governmentLeaveCutover.js';
 import {randomUUID} from 'node:crypto';
 import {withTransaction} from '../lib/transaction.js';
 import {ServiceError} from '../lib/serviceError.js';
@@ -71,7 +72,7 @@ export async function prepareConfiguration(pool,{user,actor,employeeId,data}) {
     await assertCentral(client,user);await ledger.lockEmployee(client,employeeId);
     const context=await ledger.loadContext(client,employeeId);
     if(!Array.isArray(data.enabled_codes)||new Set(data.enabled_codes).size!==data.enabled_codes.length||data.enabled_codes.some(c=>!COMMON_CODES.includes(c)))fail('Select distinct common leave codes.',400);
-    if(data.enabled_codes.length)readyConfiguration(context,data.enabled_codes);
+    if(data.enabled_codes.length){await assertCutoverResolved(client,employeeId,{activation:true});readyConfiguration(context,data.enabled_codes);}
     const history=cleanHistory(data.medical_history||[],context),medical=context.entitlements.find(e=>e.code==='medical'&&e.period_start<=today()&&e.period_end>=today());
     for(const code of data.enabled_codes.filter(code=>['medical','special'].includes(code))) {
       const account=context.entitlements.find(e=>e.code===code&&e.period_start<=today()&&e.period_end>=today());
@@ -93,7 +94,7 @@ export async function publishConfiguration(pool,{user,actor,id,reason}) {
     await ledger.lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT * FROM hr_gov_workflow_configs WHERE id=$1 FOR UPDATE',[id]);
     if(row.status==='published')return row;if(row.prepared_by===actor.id)fail('A different central HR officer must approve activation.',403);
     const context=await ledger.loadContext(client,row.employee_id);if(fingerprint(context)!==row.snapshot_hash)fail('The employee foundations changed. Prepare a fresh configuration.');
-    if(row.enabled_codes.length)readyConfiguration(context,row.enabled_codes);
+    if(row.enabled_codes.length){await assertCutoverResolved(client,row.employee_id,{activation:true});readyConfiguration(context,row.enabled_codes);}
     const {rows:[after]}=await client.query("UPDATE hr_gov_workflow_configs SET status='published',approved_by=$2,approved_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id]);
     await audit(client,actor,'hr.gov.workflow.published',id,{employee_id:row.employee_id,enabled_codes:row.enabled_codes,reason:reasonText(reason)});return after;
   });
@@ -155,7 +156,7 @@ export async function bindingIssue(client,request,stage) {
 async function medicalHistory(client,employeeId,exclude=null) {
   const {rows}=await client.query(`SELECT ${normalizedDates},to_char(${cases.effectiveEndSql()},'YYYY-MM-DD') AS end_date,medical_mode='exemption' AS uncertified,application_snapshot->'evaluation'->'segments'->0->>'service_period_start' AS period_start FROM hr_gov_requests r WHERE employee_id=$1 AND code='medical' AND status IN ('pending','approved') AND ${cases.effectiveAbsenceSql()} AND ($2::uuid IS NULL OR id<>$2)`,[employeeId,exclude]);return rows;
 }
-async function assess(client,employeeId,input,exclude=null,retainedConfig=null) {
+async function assess(client,employeeId,input,exclude=null,retainedConfig=null,transferRequestId=null) {
   const config=retainedConfig||await configurationFor(client,employeeId);
   const evaluation=await ledger.evaluate(client,employeeId,{...input,notice_date:input.notice_date||today(),certificate_available:input.medical_mode==='certificate',justification_available:!!input.reason});
   const context=await ledger.loadContext(client,employeeId);
@@ -172,13 +173,15 @@ async function assess(client,employeeId,input,exclude=null,retainedConfig=null) 
     const issue=policy?await annualPoolIssue(client,account,[],policy):null;if(issue)evaluation.issues.push(issue);
   }
   if((await client.query(`SELECT 1 FROM hr_gov_requests r WHERE employee_id=$1 AND status IN ('pending','approved') AND ${cases.isAbsenceSql()} AND ${cases.effectiveAbsenceSql()} AND ($2::uuid IS NULL OR id<>$2) AND daterange(start_date,${cases.effectiveEndSql()},'[]') && daterange($3,$4,'[]')`,[employeeId,exclude,input.start_date,input.end_date])).rowCount)evaluation.issues.push('The dates overlap another submitted or granted absence.');
-  if((await client.query("SELECT 1 FROM hr_leave_applications WHERE employee_id=$1 AND status IN ('pending','approved') AND daterange(start_date,end_date,'[]') && daterange($2,$3,'[]')",[employeeId,input.start_date,input.end_date])).rowCount)evaluation.issues.push('Historical pending/future leave overlaps these dates. HR must reconcile it before applying.');
+  const transfer=await legacyTransferFor(client,employeeId,input,transferRequestId||exclude);
+  if((await client.query("SELECT 1 FROM hr_leave_applications WHERE employee_id=$1 AND status IN ('pending','approved') AND ($4::uuid IS NULL OR id<>$4) AND daterange(start_date,end_date,'[]') && daterange($2,$3,'[]')",[employeeId,input.start_date,input.end_date,transfer?.legacy_request_id||null])).rowCount)evaluation.issues.push('Historical pending/future leave overlaps these dates. HR must reconcile it before applying.');
   evaluation.issues=[...new Set(evaluation.issues)];evaluation.eligible_for_preview=!evaluation.issues.length;evaluation.submission_enabled=evaluation.eligible_for_preview;
   return {config,evaluation,context};
 }
 export async function previewRequest(client,user,employeeId,input) {
   const employee=await ledger.lockEmployee(client,employeeId);
   if(employee.reviewer_id!==user.id||user.permissions?.hr_leave_apply!==true)fail('Only the verified employee can apply for this record.',403);
+  await assertCutoverResolved(client,employeeId);
   return (await assess(client,employeeId,input)).evaluation;
 }
 // Shared office locks allow unrelated employees to apply concurrently while
@@ -192,7 +195,9 @@ export async function submitRequest(pool,{user,actor,employeeId,data,documents=[
     if(!state||!(employee.reviewer_id===user.id&&state.user.permissions.hr_leave_apply||isCentralHr(state.user)&&typeof data.assisted_reference==='string'&&data.assisted_reference.trim().length>=5))fail('Only the current verified employee may submit this application.',403);
     const {rows:[old]}=await client.query('SELECT * FROM hr_gov_requests WHERE id=$1',[data.request_id]);
     if(old){if(old.employee_id!==employeeId||old.payload_hash!==payloadHash)fail('The request key was already used for a different application.');return {id:old.id,status:old.status};}
-    const {config,evaluation}=await assess(client,employeeId,input);if(!evaluation.eligible_for_preview)fail(evaluation.issues.join(' '));
+    if(employee.reviewer_id===user.id&&!data.assisted_reference)await assertCutoverResolved(client,employeeId);
+    const transfer=await legacyTransferFor(client,employeeId,input,data.request_id);if(transfer&&(!isCentralHr(state.user)||data.assisted_reference?.trim()!==transfer.source_reference))fail('The certified transfer requires central HR assisted entry with its exact signed reconciliation reference.',403);
+    const {config,evaluation}=await assess(client,employeeId,input,null,null,transfer?data.request_id:null);if(!evaluation.eligible_for_preview)fail(evaluation.issues.join(' '));
     if(!employee.department_id||!employee.division_id)fail('HR must verify the department and division.');
     if(input.code==='medical'&&input.medical_mode==='certificate'&&!documents.length)fail('Attach the medical certificate before submitting.',400);
     const applicationSnapshot={assisted_by:data.assisted_reference?actor.id:null,assisted_reference:data.assisted_reference||null,regime:'government',engine_version:ENGINE_VERSION,employee:{id:employee.id,name:employee.display_name,department_id:employee.department_id,division_id:employee.division_id,department_name:employee.department_code,division_name:employee.division_code},config_id:config.id,input:{...input,notice_date:today()},evaluation};

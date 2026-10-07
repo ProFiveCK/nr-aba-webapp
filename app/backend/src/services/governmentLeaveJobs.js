@@ -1,3 +1,4 @@
+import {assertCutoverResolved} from './governmentLeaveCutover.js';
 import {LOCK_KEYS,withAdvisoryLock} from '../lib/advisoryLock.js';
 import {withTransaction} from '../lib/transaction.js';
 import {ServiceError} from '../lib/serviceError.js';
@@ -76,6 +77,7 @@ async function executeEmployeeJobs(pool,{user,actor,employeeId,asOf,clockDate,or
   return withTransaction(pool,async client=>{
     if(origin==='manual')await assertCentral(client,user);
     await ledger.lockEmployee(client,employeeId);
+    await assertCutoverResolved(client,employeeId);
     let context=await ledger.loadContext(client,employeeId);const config=await configurationFor(client,employeeId);
     if(context.employee.status!=='active'||context.employee.leave_policy_regime!=='government')fail('Only an active government employee can run these jobs.');
     const {rows:plans}=await client.query("SELECT DISTINCT ON(code) *,to_char(first_post_end,'YYYY-MM-DD') AS first_post_end FROM hr_gov_job_plans WHERE employee_id=$1 AND status='published' ORDER BY code,approved_at DESC,id DESC",[employeeId]);

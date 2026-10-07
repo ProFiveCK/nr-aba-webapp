@@ -86,27 +86,29 @@ export async function addFoundationRecord(pool,{user,actor,employeeId,kind,data}
  }).catch(err=>{if(err.code==='23505')fail('A certified record already exists for these dates or this pattern. Prepare a successor.');if(err.code==='23514'||err.code==='23503')fail('Verify the dates, units and referenced employee/pattern.',400);throw err;});
 }
 async function openingSnapshot(client,employeeId){const context=await loadContext(client,employeeId);const {rows:historical}=await client.query('SELECT b.id,b.leave_type_id,t.name AS leave_type_name,b.year,b.balance,b.pending FROM hr_leave_balances b JOIN hr_leave_types t ON t.id=b.leave_type_id WHERE b.employee_id=$1 ORDER BY b.year,b.leave_type_id',[employeeId]);return {context,historical,hash:fingerprint({context,historical})};}
-export async function prepareOpening(pool,{user,actor,employeeId,data}){
+export async function prepareOpening(pool,{client:existingClient=null,user,actor,employeeId,data}){
  central(user);const reason=managementReason(data.reason);try{if(units(data.amount)<0n)fail('Opening must be nonnegative.',400);}catch(err){if(err.status)throw err;fail(err.message,400);}
- return withTransaction(pool,async client=>{await lockEmployee(client,employeeId);const snapshot=await openingSnapshot(client,employeeId);if(snapshot.context.employee.leave_policy_regime!=='government')fail('Enroll the employee before preparing openings.');
+ const work=async client=>{await lockEmployee(client,employeeId);const snapshot=await openingSnapshot(client,employeeId);if(snapshot.context.employee.leave_policy_regime!=='government')fail('Enroll the employee before preparing openings.');
   const policy=snapshot.context.policies.find(p=>p.id===data.policy_version_id&&p.effective_from<=data.as_of&&p.effective_to>=data.as_of);if(!policy)fail('Select a published policy covering the opening date.');
   const facts=serviceFacts(snapshot.context,data.as_of);if(facts.issues.length)fail(facts.issues.join(' '));
   if(data.period_start!==facts.period_start||data.period_end!==facts.period_end)fail('Opening period must match the certified service year.');
   if(dayNumber(data.as_of)<dayNumber(data.period_start)||dayNumber(data.as_of)>dayNumber(data.period_end))fail('Opening date must be inside its entitlement period.',400);
   const {rows:[row]}=await client.query(`INSERT INTO hr_gov_openings(employee_id,code,policy_version_id,period_start,period_end,as_of,amount,source_reference,payroll_reference,snapshot_hash,historical_snapshot,prepared_by,reason)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,[employeeId,data.code,policy.id,data.period_start,data.period_end,data.as_of,decimal(units(data.amount)),data.source_reference,data.payroll_reference,snapshot.hash,JSON.stringify(snapshot.historical),actor.id,reason]);await audit(client,actor,'hr.gov.opening.prepared',row.id,row);return row;
- });
+ };
+ return existingClient?work(existingClient):withTransaction(pool,work);
 }
-export async function certifyOpening(pool,{user,actor,id,reason}){
+export async function certifyOpening(pool,{client:existingClient=null,user,actor,id,reason}){
  central(user);reason=managementReason(reason);
- return withTransaction(pool,async client=>{const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_openings WHERE id=$1',[id]);if(!ref)fail('Opening not found.',404);await lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT *,to_char(as_of,\'YYYY-MM-DD\') AS as_of FROM hr_gov_openings WHERE id=$1 FOR UPDATE',[id]);if(row.status==='certified')return row;
+ const work=async client=>{const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_openings WHERE id=$1',[id]);if(!ref)fail('Opening not found.',404);await lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT *,to_char(as_of,\'YYYY-MM-DD\') AS as_of FROM hr_gov_openings WHERE id=$1 FOR UPDATE',[id]);if(row.status==='certified')return row;
   if(row.prepared_by===actor.id)fail('A different central HR officer must certify the reviewed opening.',403);
   if((await openingSnapshot(client,row.employee_id)).hash!==row.snapshot_hash)fail('Employee, policy, calendar or balances changed after preview. Prepare a new opening.');
   if((await client.query("SELECT 1 FROM hr_gov_entitlements WHERE employee_id=$1 AND code=$2 AND daterange(period_start,period_end,'[]') && daterange($3,$4,'[]')",[row.employee_id,row.code,row.period_start,row.period_end])).rowCount)fail('This entitlement period is already certified. Use an audited correction.');
   const {rows:[entitlement]}=await client.query('INSERT INTO hr_gov_entitlements(employee_id,code,policy_version_id,period_start,period_end,as_of,opening_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',[row.employee_id,row.code,row.policy_version_id,row.period_start,row.period_end,row.as_of,row.id]);
   await postMovement(client,{entitlementId:entitlement.id,kind:'opening',amount:row.amount,effectiveDate:row.as_of,eventKey:`opening:${row.id}`,sourceReference:row.source_reference,actor,reason});
   const {rows:[after]}=await client.query("UPDATE hr_gov_openings SET status='certified',certified_by=$2,certified_at=NOW(),certification_reason=$3 WHERE id=$1 RETURNING *",[id,actor.id,reason]);await audit(client,actor,'hr.gov.opening.certified',id,{...after,entitlement_id:entitlement.id});return after;
- });
+ };
+ return existingClient?work(existingClient):withTransaction(pool,work);
 }
 export async function postMovement(client,{entitlementId,kind,amount,effectiveDate,eventKey,sourceReference,actor,reason,reversesId=null,excludeCaseRequestId=null}){
  const value=units(amount);const {rows:[account]}=await client.query('SELECT *,to_char(as_of,\'YYYY-MM-DD\') AS as_of,to_char(period_end,\'YYYY-MM-DD\') AS period_end FROM hr_gov_entitlements WHERE id=$1 FOR UPDATE',[entitlementId]);if(!account)fail('Entitlement not found.',404);

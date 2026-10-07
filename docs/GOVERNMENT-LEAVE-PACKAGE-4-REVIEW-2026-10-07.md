@@ -47,7 +47,7 @@ Financial prior-history/unit/transition facts are frozen when first committed an
 
 Supported assisted periods are bounded to 731 calendar dates, pay schedules to 24 segments and evidence to twelve retained files (three PDF/PNG/JPEG files of at most 5 MB per upload). Longer study/exceptional cases need an approved segmented plan. File signatures/size limits are checked; practitioner authenticity, Gazette authority, appointment facts and evidence content require HR verification. Malware screening and operational retention/security controls remain rollout work.
 
-Actual Payroll/Salary Unit exports, broad legacy cutover, reconciliation exchange and TechnologyOne handover are **Package 5**. Concurrent-user/load tests, pilot acceptance, backup/restore, operational notifications, scheduler activation and production readiness are **Package 6**. These local checks do not certify a live deployment or 2,000 simultaneous users.
+The [Package 5 review guide](GOVERNMENT-LEAVE-PACKAGE-5-REVIEW-2026-10-07.md) covers the implemented local Salary Unit exchange, opening/legacy reconciliation and TechnologyOne handover rehearsal; real format acceptance and operational cutover remain outstanding. Concurrent-user/load tests, pilot acceptance, backup/restore, operational notifications, scheduler activation and production readiness are **Package 6**. These local checks do not certify a live deployment or 2,000 simultaneous users.
 
 ## Validation and local review evidence
 

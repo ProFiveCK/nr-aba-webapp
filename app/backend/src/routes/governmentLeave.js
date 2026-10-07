@@ -1,3 +1,4 @@
+import governmentLeavePayrollRouter from './governmentLeavePayroll.js';
 import governmentLeaveWorkflowRouter from './governmentLeaveWorkflow.js';
 import express from 'express';
 import {pool} from '../db.js';
@@ -10,6 +11,7 @@ import * as service from '../services/governmentLeave.js';
 const router=express.Router(),central=requirePermission(PERMISSIONS.HR_ADMIN),access=requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_STAFF_MANAGE,PERMISSIONS.HR_BALANCE_MANAGE,PERMISSIONS.HR_LEAVE_APPROVE);
 router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
 router.use('/workflow',governmentLeaveWorkflowRouter);
+router.use('/payroll',governmentLeavePayrollRouter);
 const reason=body('reason').isString().trim().isLength({min:10,max:1000}),reference=body('source_reference').isString().trim().isLength({min:5,max:500}),id=param('id').isUUID();
 const date=name=>body(name).isString().custom(value=>{dayNumber(value);return true;});
 const actor=req=>({id:req.user.id,email:req.user.email,ip:req.ip});

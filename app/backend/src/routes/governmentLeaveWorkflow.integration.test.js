@@ -134,6 +134,27 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   assert.deepEqual((await pool.query('SELECT * FROM hr_employees WHERE id=$1',[employee.id])).rows[0],before);assert.deepEqual((await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows,balances);
   const again=await foundations.previewInitialFoundations(pool,{user:user(hr),data});assert.equal(again.ready,0);assert.match(again.employees[0].issues.join(' '),/already exists/);
  });
+ test('initial import reuses database dates, detects changed dates and preserves staff and balances',async()=>{
+  await commissioningFixture();await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
+  const foundations=await import('../services/governmentLeaveInitialFoundations.js');
+  const pattern=(await pool.query('SELECT work_pattern_id FROM hr_employee_service_periods WHERE employee_id=$1',[employee.id])).rows[0].work_pattern_id;
+  await pool.query('TRUNCATE hr_employee_service_periods,hr_gov_service_bases CASCADE');
+  const data={reuse_recorded_dates:true,employees:[{employee_id:employee.id,service_start:'1900-01-01'}],effective_from:'2026-10-01',employment_category:'permanent',anniversary_method:'calendar',leap_day_method:'mar1',work_pattern_id:pattern,source_reference:'Synthetic existing personnel register',facts_confirmed:true,reason};
+  const missing=await foundations.previewInitialFoundations(pool,{user:user(hr),data:{...data,employees:[{employee_id:employee.id}]}});assert.equal(missing.ready,0);
+  const entered=await foundations.previewInitialFoundations(pool,{user:user(hr),data});assert.equal(entered.ready,1);assert.equal(entered.employees[0].date_source,'entered_date');
+  await pool.query("UPDATE hr_employees SET join_date='2026-01-01' WHERE id=$1",[employee.id]);
+  const before=(await pool.query('SELECT * FROM hr_employees WHERE id=$1',[employee.id])).rows[0],balances=(await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows;
+  const preview=await foundations.previewInitialFoundations(pool,{user:user(hr),data});assert.equal(preview.ready,1);assert.equal(preview.employees[0].service_start,'2026-01-01');assert.equal(preview.employees[0].date_source,'existing_register');
+  await pool.query("UPDATE hr_employees SET join_date='2026-01-02' WHERE id=$1",[employee.id]);
+  await assert.rejects(foundations.applyInitialFoundations(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}}),/changed/);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_employee_service_periods WHERE employee_id=$1',[employee.id])).rows[0].n,0);
+  await pool.query("UPDATE hr_employees SET join_date='2026-01-01' WHERE id=$1",[employee.id]);
+  assert.equal((await foundations.applyInitialFoundations(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}})).prepared,1);
+  const period=(await pool.query("SELECT to_char(start_date,'YYYY-MM-DD') AS start_date,work_pattern_id FROM hr_employee_service_periods WHERE employee_id=$1",[employee.id])).rows[0];assert.equal(period.start_date,'2026-01-01');assert.equal(period.work_pattern_id,pattern);
+  const basis=(await pool.query("SELECT to_char(continuity_start,'YYYY-MM-DD') AS continuity_start FROM hr_gov_service_bases WHERE employee_id=$1",[employee.id])).rows[0];assert.equal(basis.continuity_start,'2026-01-01');
+  const audit=(await pool.query("SELECT after FROM audit_log WHERE action='hr.gov.initial_foundations.applied' ORDER BY id DESC LIMIT 1")).rows[0].after;assert.equal(audit.employees[0].service_start,'2026-01-01');assert.equal(audit.employees[0].date_source,'existing_register');
+  assert.deepEqual((await pool.query('SELECT * FROM hr_employees WHERE id=$1',[employee.id])).rows[0],before);assert.deepEqual((await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows,balances);
+ });
  test('initial source credit records an actual missing amount, never seeds a default or overwrites history',async()=>{
   const data=await commissioningFixture();await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
   const source=(await pool.query("SELECT b.*,t.name FROM hr_leave_balances b JOIN hr_leave_types t ON t.id=b.leave_type_id WHERE employee_id=$1 AND t.name='Synthetic Special source'",[employee.id])).rows[0];await pool.query('DELETE FROM hr_leave_balances WHERE id=$1',[source.id]);

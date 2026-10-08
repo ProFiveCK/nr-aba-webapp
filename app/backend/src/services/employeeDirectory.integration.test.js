@@ -72,6 +72,15 @@ describe('employee directory and enterprise approval foundation', { skip: skipWi
     assert.equal((await auth.lookupSession((await auth.createSession(actor.id)).tokenId)).account_type, 'staff');
   });
 
+  test('directory exposes recorded ISO dates and keeps genuinely missing dates empty', async () => {
+    const recorded = await createEmployee(pool, { name: 'Recorded start', joinDate: '2020-02-29' });
+    const missing = await createEmployee(pool, { name: 'Missing start', joinDate: null });
+    const response = await call(await tokenFor(actor), '/api/hr/directory');
+    assert.equal(response.status, 200);
+    assert.equal(response.body.employees.find(row => row.id === recorded.id).join_date, '2020-02-29');
+    assert.equal(response.body.employees.find(row => row.id === missing.id).join_date, null);
+  });
+
   test('first use cannot claim a matching name or create a staff record; inactive links fail', async () => {
     const employee = await createEmployee(pool, { name: 'Same Name' });
     const login = await account({ name: 'Same Name', permissions: { hr_access: true } });

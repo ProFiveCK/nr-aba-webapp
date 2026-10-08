@@ -51,7 +51,7 @@ export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, sea
         AND (p.end_date IS NULL OR p.end_date >= (NOW() AT TIME ZONE 'Pacific/Nauru')::date)
         AND p.employment_category <> 'unknown' AND p.counts_for_service IS NOT NULL)))`;
   const { rows } = await pool.query(
-    `SELECT e.id, e.display_name, e.status, e.reviewer_id, e.department_id, e.division_id, e.leave_policy_regime,
+    `SELECT e.id, e.display_name, to_char(e.join_date,'YYYY-MM-DD') AS join_date, e.status, e.reviewer_id, e.department_id, e.division_id, e.leave_policy_regime,
        e.department_code, e.division_code, d.name AS department_name, v.name AS division_name,
        p.employment_category, p.is_teacher, p.is_intern, p.counts_for_service,
        COALESCE((SELECT json_agg(json_build_object('source', x.source, 'external_id', x.external_id) ORDER BY x.external_id)

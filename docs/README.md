@@ -8,3 +8,5 @@ This folder contains reference guides for Submitters (Users) and Reviewers, plus
 - Flow diagrams: ./Flows.md
 
 If you view these on GitHub or in VS Code, Mermaid diagrams should render in the Markdown preview.
+
+- Government Leave production deployment and Treasury setup: [deployment checklist](GOVERNMENT-LEAVE-PRODUCTION-DEPLOYMENT-2026-10-08.md)

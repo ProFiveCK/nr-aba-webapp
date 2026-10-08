@@ -20,6 +20,7 @@ import {
   SMTP_USER,
 } from '../config.js';
 import { formatBatchCode, lowerEmail } from '../utils/helpers.js';
+import { localProductionReview } from './localReviewMode.js';
 
 let testingModeEnabled = false;
 let testingModeState = {
@@ -30,7 +31,7 @@ let testingModeState = {
 };
 
 let mailTransport = null;
-if (SMTP_HOST) {
+if (SMTP_HOST && !localProductionReview) {
   mailTransport = nodemailer.createTransport({
     host: SMTP_HOST,
     port: SMTP_PORT,
@@ -94,6 +95,7 @@ async function refreshTestingModeSetting() {
 }
 
 async function sendMail(options = {}) {
+  if (localProductionReview) return;
   const subject = options.subject || '(no subject)';
   if (testingModeEnabled) {
     console.info(
@@ -332,6 +334,7 @@ if (!SMTP_ENC_KEY_HEX) {
 
 // Helper function to reload mail transport with new settings
 async function reloadMailTransport() {
+  if (localProductionReview) { mailTransport = null; return null; }
   try {
     const { rows } = await pool.query(`
       SELECT smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass_encrypted, from_email, reply_to_email

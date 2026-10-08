@@ -7,6 +7,7 @@ import { toIsoDate } from '../../../lib/date';
 
 interface CalendarEntry {
     id: string;
+    employee_id?: string;
     employee_name: string;
     department_code: string | null;
     leave_type_name: string;
@@ -37,7 +38,13 @@ export function Calendar() {
             const data = await apiClient.get<CalendarEntry[]>(
                 `/hr/calendar?from=${bounds.from}&to=${bounds.to}`
             );
-            setEntries(data || []);
+            const government: CalendarEntry[] = [];
+            for (let page = 1; ; page++) {
+                const result = await apiClient.get<{entries: CalendarEntry[]; has_more: boolean}>(`/hr/government/workflow/calendar?from=${bounds.from}&to=${bounds.to}&page=${page}`);
+                government.push(...result.entries);
+                if (!result.has_more) break;
+            }
+            setEntries([...(data || []), ...government]);
         } catch (err) {
             addToast((err as Error)?.message || 'Unable to load the leave calendar.', 'error');
         } finally {
@@ -56,7 +63,7 @@ export function Calendar() {
     const byPerson = useMemo(() => {
         const map = new Map<string, { name: string; days: Set<number>; studyDays: Set<number>; types: Set<string> }>();
         for (const entry of entries) {
-            const record = map.get(entry.employee_name) ?? {
+            const record = map.get(entry.employee_id || entry.employee_name) ?? {
                 name: entry.employee_name,
                 days: new Set<number>(),
                 studyDays: new Set<number>(),
@@ -72,7 +79,7 @@ export function Calendar() {
                     target.add(cursor.getDate());
                 }
             }
-            map.set(entry.employee_name, record);
+            map.set(entry.employee_id || entry.employee_name, record);
         }
         return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
     }, [entries, bounds.start, bounds.end]);

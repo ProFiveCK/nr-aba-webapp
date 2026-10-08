@@ -1,3 +1,4 @@
+import { AustralianDateInput } from '../../../components/AustralianDateInput';
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../../lib/api';
 import { useToast } from '../../../contexts/useToast';
@@ -5,7 +6,8 @@ import { useConfirm } from '../../../contexts/useConfirm';
 import { Button, LoadingState, Modal, ModalActions } from '../../../components/Ui';
 import type { LeaveType, ResetPeriod } from '../types';
 import { PublicHolidays } from '../PublicHolidays';
-import { OrgUnits } from '../OrgUnits';
+import { GovernmentFoundation } from '../GovernmentFoundation';
+import { Link } from 'react-router-dom';
 
 const RESET_OPTIONS: { value: ResetPeriod; label: string }[] = [
     { value: 'none', label: 'Never reset' },
@@ -33,7 +35,7 @@ function YesNo({ value }: { value: boolean }) {
     return <span className={value ? 'text-gray-700' : 'text-gray-400'}>{value ? 'Yes' : 'No'}</span>;
 }
 
-export function Policies() {
+function HistoricalPolicySettings() {
     const { addToast } = useToast();
     const { confirm } = useConfirm();
     const [types, setTypes] = useState<LeaveType[]>([]);
@@ -199,8 +201,6 @@ export function Policies() {
         <div className="space-y-4">
             <PublicHolidays />
 
-            <OrgUnits />
-
             <div className="space-y-3 app-panel p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -222,8 +222,7 @@ export function Policies() {
                 <div className="flex flex-wrap items-end gap-3">
                     <label className="text-sm">
                         <span className="mb-1 block font-medium text-gray-700">First accrual date</span>
-                        <input
-                            type="date"
+                        <AustralianDateInput
                             value={anchorDate}
                             onChange={(e) => setAnchorDate(e.target.value)}
                             className="rounded-md border border-gray-300 px-3 py-2 text-sm"
@@ -497,4 +496,18 @@ export function Policies() {
             )}
         </div>
     );
+}
+
+export function Policies({initialSetupAdopted=false}:{initialSetupAdopted?:boolean|null}) {
+    const [historical, setHistorical] = useState(false);
+    return <div className="space-y-5">
+        <p className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">{initialSetupAdopted===null?<>View the <Link className="font-semibold underline" to="/leave/settings?view=initial-setup">setup record</Link> to check initial database adoption.</>:initialSetupAdopted?<>Database setup adopted. <Link className="font-semibold underline" to="/leave/settings?view=initial-setup">View setup record</Link>. Employee calculation activation is shown below.</>:<>Configuring the existing database for the first time? <Link className="font-semibold underline" to="/leave/settings?view=initial-setup">Open initial setup</Link> to bring current employees, organisation and leave types into one review.</>}</p>
+        <p className="text-sm text-gray-600">Manage Government rules, Gazette holidays and work schedules here. Review each employee’s arrangement and balances under Employees; manage departments and approval offices under Organisation.</p>
+        <GovernmentFoundation view="policies" />
+        <details className="border-t border-gray-200 pt-4" onToggle={event => setHistorical(event.currentTarget.open)}>
+            <summary className="cursor-pointer text-sm font-medium text-gray-700">Existing Finance rules — still in use for the existing workflow</summary>
+            <p className="my-3 text-sm text-gray-600">These leave types, holidays and accrual settings continue to govern employees using the existing workflow. Publishing a Government policy does not replace these settings or change their balances.</p>
+            {historical && <HistoricalPolicySettings />}
+        </details>
+    </div>;
 }

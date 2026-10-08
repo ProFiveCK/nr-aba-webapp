@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { pool, initSchema } from './db.js';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
+import { startGovernmentLeaveScheduler } from './services/governmentLeaveJobs.js';
 import { runDueLeaveAccruals } from './services/leaveAccrual.js';
 import { LOCK_KEYS, withAdvisoryLock } from './lib/advisoryLock.js';
 import { buildCookieParser, csrfGuard } from './services/authService.js';
@@ -17,6 +18,7 @@ import {
 } from './middleware/errors.js';
 import { refreshTestingModeSetting, reloadMailTransport } from './services/mailService.js';
 import {
+  GOVERNMENT_LEAVE_SCHEDULER_ENABLED,
   FRONTEND_BASE_URL,
   PASS_HASH_ROUNDS,
   PASSWORD_MIN_LENGTH,
@@ -109,7 +111,8 @@ const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Too many requests. Please try again later.' },
-  skip: (req) => req.path.startsWith('/auth/'),
+  // HR endpoints enforce an authenticated account budget in requirePermission.
+  skip: (req) => req.path.startsWith('/auth/') || req.path === '/hr' || req.path.startsWith('/hr/'),
 });
 app.use('/api', generalLimiter);
 
@@ -126,7 +129,7 @@ const authLimiter = rateLimit({
   message: { message: 'Too many authentication attempts for this account. Please try again later.' },
   skipSuccessfulRequests: true, // successful logins reset the in-memory attempt budget
   keyGenerator: (req) => {
-    const email = String(req.body?.email || '').toLowerCase().trim();
+    const email = req.body?.login_alias ? `payroll:${String(req.body.login_alias).trim()}` : String(req.body?.email || '').toLowerCase().trim();
     return email ? `email:${email}` : `ip:${ipKeyGenerator(req.ip)}`;
   },
 });
@@ -138,7 +141,7 @@ const authIpLimiter = rateLimit({
   message: { message: 'Too many sign-in attempts from your network. Please try again later.' },
   skipSuccessfulRequests: true,
 });
-for (const route of ['login', 'google', 'signup', 'forgot-password', 'reset-password']) {
+for (const route of ['login', 'google', 'signup', 'forgot-password', 'reset-password', 'activate-leave']) {
   app.use(`/api/auth/${route}`, authIpLimiter, authLimiter);
 }
 
@@ -228,6 +231,9 @@ initSchema()
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`RON ABA backend listening on port ${PORT}`);
     });
+
+    if (GOVERNMENT_LEAVE_SCHEDULER_ENABLED) startGovernmentLeaveScheduler(pool);
+    else console.log('[government-leave-jobs] Disabled; independently approved plans can be run by central HR.');
 
     // Fortnightly leave accrual. Runs any due periods on startup (catching up
     // after downtime) and then checks hourly.

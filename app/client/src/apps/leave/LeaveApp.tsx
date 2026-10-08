@@ -6,7 +6,6 @@ import { Overview } from './sections/Overview';
 import { MyLeave } from './sections/MyLeave';
 import { Approvals } from './sections/Approvals';
 import { Staff } from './sections/Staff';
-import { Policies } from './sections/Policies';
 import { Calendar } from './sections/Calendar';
 import { Report } from './sections/Report';
 
@@ -38,15 +37,16 @@ export function LeaveApp() {
 
     return (
         <div className="space-y-5">
+            {import.meta.env.VITE_LOCAL_REVIEW_KIND === 'production-copy' && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">Local production copy · Changes stay on this computer. Email, external connections and automatic accrual are disabled.</p>}
             <Routes>
                 <Route index element={<Navigate to={fallback} replace />} />
                 {visible.some((s) => s.id === 'overview') && <Route path="overview" element={<Overview onNavigate={goToSection} />} />}
                 {visible.some((s) => s.id === 'my-leave') && <Route path="my-leave" element={<MyLeave />} />}
                 {visible.some((s) => s.id === 'approvals') && <Route path="approvals" element={<Approvals />} />}
                 {visible.some((s) => s.id === 'calendar') && <Route path="calendar" element={<Calendar />} />}
-                {visible.some((s) => s.id === 'staff') && <Route path="staff" element={<Staff />} />}
+                {visible.some((s) => s.id === 'employees') && <><Route path="employees" element={<Staff key="employees" />} /><Route path="staff" element={<Navigate to="/leave/employees" replace />} /></>}
                 {visible.some((s) => s.id === 'report') && <Route path="report" element={<Report />} />}
-                {visible.some((s) => s.id === 'policies') && <Route path="policies" element={<Policies />} />}
+                {visible.some((s) => s.id === 'settings') && <><Route path="settings" element={<Staff key="settings" workspace="settings" />} /><Route path="policies" element={<Navigate to="/leave/settings?view=policies" replace />} /></>}
                 {/* An unknown or forbidden section, including one reached from
                     an old bookmark, falls back rather than showing nothing. */}
                 <Route path="*" element={<Navigate to={fallback} replace />} />

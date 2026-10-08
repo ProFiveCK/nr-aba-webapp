@@ -366,7 +366,7 @@ router.get('/capability-catalogue', requireAuth(['admin']), (_req, res) => {
 router.get('/reviewers', requireAuth(['admin']), async (_req, res) => {
   const { rows } = await pool.query(
     `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-            department_code, division_code, notify_on_submission, permissions
+            department_code, division_code, notify_on_submission, permissions, account_type
        FROM reviewers
       ORDER BY LOWER(COALESCE(NULLIF(display_name, ''), email)) ASC`
   );
@@ -435,7 +435,7 @@ router.post(
         `INSERT INTO reviewers (email, display_name, role, status, password_hash, must_change_password, department_code, division_code, notify_on_submission, permissions)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
          RETURNING id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-                   department_code, division_code, notify_on_submission, permissions`,
+                   department_code, division_code, notify_on_submission, permissions, account_type`,
         [email, displayName, role, status, passwordHash, true, departmentCode, divisionCode, notifyOnSubmission, permissions]
       );
       const reviewer = rows[0];
@@ -504,8 +504,7 @@ router.put(
     if (!handleValidation(req, res)) return;
     const reviewerId = req.params.id;
     const { rows: existingRows } = await pool.query(
-      `SELECT id, email, display_name, role, status, department_code, division_code, notify_on_submission, permissions
-         FROM reviewers WHERE id = $1`,
+      `SELECT id, email, display_name, role, status, department_code, division_code, notify_on_submission, permissions, account_type FROM reviewers WHERE id = $1`,
       [reviewerId]
     );
     if (!existingRows.length) {
@@ -513,6 +512,10 @@ router.put(
       return;
     }
     const existing = existingRows[0];
+    if (existing.account_type === 'employee' && req.body.role && req.body.role !== 'user') {
+      res.status(400).json({ message: 'Employee-only accounts use explicit Leave grants. Keep the user role.' });
+      return;
+    }
     const patch = {};
     if (req.body.display_name !== undefined) {
       patch.display_name = req.body.display_name === null ? null : (req.body.display_name?.trim() || null);
@@ -581,7 +584,7 @@ router.put(
       values.push(reviewerId);
       ({ rows } = await pool.query(
         `UPDATE reviewers SET ${fields.join(', ')} WHERE id = $${values.length} RETURNING id, email, display_name, role, status, last_login_at, created_at, updated_at,
-          must_change_password, department_code, division_code, notify_on_submission, permissions`,
+          must_change_password, department_code, division_code, notify_on_submission, permissions, account_type`,
         values
       ));
       const changed = Object.keys(patch).filter((key) => JSON.stringify(patch[key]) !== JSON.stringify(existing[key]));
@@ -598,7 +601,7 @@ router.put(
     } else {
       ({ rows } = await pool.query(
         `SELECT id, email, display_name, role, status, last_login_at, created_at, updated_at,
-          must_change_password, department_code, division_code, notify_on_submission, permissions
+          must_change_password, department_code, division_code, notify_on_submission, permissions, account_type
          FROM reviewers WHERE id = $1`,
         [reviewerId]
       ));
@@ -634,7 +637,7 @@ router.post(
     const reviewerId = req.params.id;
     const { rows } = await pool.query(
       `SELECT id, email, display_name, role, status, must_change_password, last_login_at, created_at, updated_at,
-              department_code, division_code, notify_on_submission, permissions
+              department_code, division_code, notify_on_submission, permissions, account_type
          FROM reviewers WHERE id = $1`,
       [reviewerId]
     );

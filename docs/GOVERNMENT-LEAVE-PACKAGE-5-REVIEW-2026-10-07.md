@@ -1,0 +1,51 @@
+# Government Leave Package 5 local review
+
+Date: 7 October 2026
+
+Package 5 adds the Salary Unit exchange register, independent opening and retained-leave reconciliation, and portable handover parts. The application remains in the isolated local Docker stack at [Leave Staff](http://localhost:8081/leave/staff). Open **Staff → Payroll & handover** for the three new work areas. This is a migration rehearsal implementation; real Salary Unit acceptance and operational cutover remain separate.
+
+## Walkthrough
+
+1. Open [local central HR](http://localhost:8081/review/hr). Employee rows now use aligned, fixed-width **Manage** buttons. Each accessible name still identifies its employee. Mobile management navigation scrolls horizontally.
+2. Choose **Payroll & handover → Salary Unit register**. The synthetic 1–14 November and 15–28 November periods are retained for review, with four and five dated instructions respectively. Both have independent synthetic Salary Unit receipts. Review a register and download its CSV or exact JSON.
+3. Prepare a different period, or revise an existing period after an approved application/amendment changes its instructions. **Check Payroll identities** exposes ambiguous verified assignment IDs for an explicit choice. A period without changes is downloaded again using its existing version.
+4. Choose **Opening & cutover review**, select the synthetic alias employee and load 7 October. The certified walkthrough preserves Recreation 18, Medical 9 and Special 2; it posts no difference. Inspect the dry-run targets and download the exact reviewed sources. New drafts require a second central HR officer to certify.
+5. For actual retained legacy leave, review every pending/future application. Keep it external, link an existing matching government application, or prepare a transfer with a new application key and explicitly selected policy type. Certification preserves the legacy record. **Submit retained application** enters the certified dates/type through assisted entry; evidence, HR determination and all applicable government approvals remain required.
+6. Choose **Portable handover**. Search and select up to 50 employees per part. The synthetic alias employee has a frozen part containing its PDFs, evidence and history, with an independent rehearsal receipt. Download the JSON and reconcile it against the receiving system.
+7. Use [independent local HR](http://localhost:8081/review/certifier) to review another officer's prepared sources and record actual reconciliation references. These gateways are synthetic local development accounts.
+
+## Salary Unit exchange
+
+Registers are immutable and numbered within an exact inclusive pay period, bounded to 62 days and 100,000 dated instructions. Different overlapping periods are rejected to prevent duplicate coverage. A new version links to its predecessor and records additions, removals and replacements. The full register replaces the previous version for that period; the corrections file presents the previous instruction to reverse and its replacement. Salary Unit must reconcile the version chain, including instructions it already processed, rather than treating every download as a new payment.
+
+Common leave exports the granted calculation's dated policy-day debit, scheduled hours and full-salary instruction. Event cases export their independently verified full, partial or zero salary segments. Financial cases and official allowances export the signed payable amount once at the event date. Per-employee, type, instruction and salary-rate totals use six-decimal arithmetic. Annual debits remain distinct from event/benefit units. Source and correction request IDs accompany the instructions. Approved cancellation or shortening changes the next register; original grants, PDFs and older exports remain intact.
+
+Only fresh central HR authority can prepare, read or download the exchange. Payroll lines omit clinical reasons, case evidence and attachments. Exact text Payroll IDs are preserved in JSON. CSV escapes formula-looking text and quotes/newlines; when opening CSV in Excel, import the Payroll ID column as **Text** to preserve leading zeros. The generic contract still needs Salary Unit approval and mapping to its actual payroll import format. It does not calculate salary from guessed rates, execute payments or generate an ABA file.
+
+A different central HR officer records the Salary Unit receipt against the exact snapshot checksum and a genuine reconciliation reference. Changed approved instructions require a fresh version; superseded versions cannot acquire a new receipt. Revisions require explicit correction reconciliation. Exporting or acknowledging a batch never deducts leave again.
+
+## Opening and legacy reconciliation
+
+A dry run freezes employee identity, exact IDs, service/calendar/policy facts, historical type balances, government balances and holds, movements, configurations, retained pending/future leave and prior benefit commitments. HR supplies signed Recreation, Medical and Special remaining-credit targets, Salary Unit reconciliation, historical type/pool transition and service/medical/prior-payout sources. Targets must account for previously deducted future legacy leave before a fresh transfer reserves or uses government credit. No automatic balance conversion is inferred from legacy leave-type names.
+
+A second officer certifies against the exact frozen context. Changed sources invalidate the dry run. Certification creates missing openings through the existing independent opening control or posts the precise correction to existing accounts, in one transaction with the certification and audit. Holds, nonnegative balances, governing caps and recorded Medical/Special annual-pool use are checked. Retries and concurrent certification post once. Historical five-day Special, split Medical types, source IDs, applications and PDFs are preserved.
+
+Every retained application needs a sourced disposition. Externally retained work blocks common employee submission, common activation and jobs until a fresh certified review resolves it. A certified transfer allocates one new government application, permits only sourced central assisted entry, and suppresses only its matching legacy overlap. Independent configuration can be prepared for that transfer; employee submission/jobs stay gated until its pending/approved government record exists. Old approvals never create a government grant automatically. Once the transferred application is approved, the calendar uses its government record; later cancellation cannot resurrect the old legacy absence.
+
+A transfer binds the reviewed legacy dates/status/type facts. Changed source facts fail closed. A cancelled/rejected transfer or a further historical correction needs renewed governed reconciliation; the original transfer key is not silently reused. Published workflow configuration, Medical history and job plans still have their separate independent controls. Migration certification does not turn on jobs or provide an approval bypass.
+
+## Portable handover and the 2,000 employee rollout
+
+Each part freezes one to 50 selected employees, with a 50 MiB file bound. At 50 employees per part, 2,000 employees require 40 reconciled parts; evidence-heavy records may need smaller parts. Parts carry identity and source IDs, appointment/service and calendar/policy facts, openings, balances/movements/holds, pending/future and completed workflows, determinations, ordered bindings/decisions, amendments/continuations, tasks, legacy records/types/adjustments, prior benefit commitments, dated office structure and job plans/posting boundaries. Granted PDF bytes and checksums are included; supporting evidence can be included or exported as a manifest. Personnel files require the approved transfer channel. Login passwords, tokens and session records are excluded.
+
+Per-part Payroll history contains only the selected employees' rows/corrections. Its original whole-register checksum remains labelled separately; use the part's checksum for the portable file. A second officer records a receiving-system rehearsal receipt. This does not activate TechnologyOne or stop the portal. Agree the final freeze boundary, stop portal submissions/jobs, capture and reconcile final changes, then activate one receiving accrual engine. Test on a restored database before actual cutover.
+
+Frozen long-service/furlough baselines and prior commitments are carried intact; this package does not silently replace their service basis or prior payout history. The Package 4 single-amendment boundary remains. Changes to an already committed benefit basis, additional grant amendments and disputed salary/policy examples need a further authorised reconciliation design and signed operational examples before enabling those cases.
+
+## Verification and remaining acceptance
+
+All 373 backend tests pass, including real-PostgreSQL checks. The suite covers batch retry/concurrency, version corrections, overlapping windows, exact IDs, independent receipts, revoked access, migration staleness/holds/pools, missing openings, preserved legacy balances, audit rollback, certified transfers and immutable handover sources. The 2,000-employee synthetic calculation produces 28,000 dated instructions over fourteen days with exact employee totals. This is not a simultaneous-user load certification.
+
+Local desktop/mobile browser review exercised Staff alignment, two synthetic Payroll cycles and downloads, opening review/certification and handover preparation/receipt without browser errors or page overflow. All 104 active frontend tests, lint and TypeScript/Vite build pass; one existing test remains skipped. Real payroll data/mapping, signed policy decisions, a receiving-system rehearsal and two operational Payroll cycle reconciliations remain acceptance inputs. Package 6 covers pilot capacity, backup/restore, accessibility, notifications, support/training, scheduler operations and department-wave rollout. No repository push or production deployment is included.
+
+Package 6 is now available locally: [pilot, rollout and operations review](GOVERNMENT-LEAVE-PACKAGE-6-REVIEW-2026-10-07.md). Staff workspaces are selected from the compact Staff workspace selector; government policies now live under the top-level Policies section.

@@ -1,3 +1,4 @@
+import {creditLimit,retainedTarget} from './governmentLeaveCarryover.js';
 import {submitCase} from './governmentLeaveCases.js';
 import {initialSetupReference} from './governmentLeaveInitialSetupReference.js';
 import {isCase} from '../lib/governmentLeaveCaseRules.js';
@@ -88,7 +89,7 @@ export async function acknowledgePayroll(pool,{user,actor,id,data}) {
 
 export async function migrationState(client,employeeId,cutover) {
   const context=await ledger.loadContext(client,employeeId),people=await identities(client,[employeeId]);
-  const balances=(await client.query('SELECT b.*,t.name AS leave_type_name FROM hr_leave_balances b JOIN hr_leave_types t ON t.id=b.leave_type_id WHERE b.employee_id=$1 ORDER BY b.year,b.leave_type_id',[employeeId])).rows;
+  const balances=(await client.query('SELECT b.*,t.name AS leave_type_name,t.is_active AS leave_type_active FROM hr_leave_balances b JOIN hr_leave_types t ON t.id=b.leave_type_id WHERE b.employee_id=$1 ORDER BY b.year,b.leave_type_id',[employeeId])).rows;
   const retained=(await client.query("SELECT id,leave_type_id,status,to_char(start_date,'YYYY-MM-DD') AS start_date,to_char(end_date,'YYYY-MM-DD') AS end_date,days FROM hr_leave_applications WHERE employee_id=$1 AND (status='pending' OR (status='approved' AND end_date>=$2)) ORDER BY id",[employeeId,cutover])).rows;
   const requests=(await client.query(`SELECT r.id,r.code,r.status,${requestDates},r.charge,r.payload_hash,r.stage_index,r.application_snapshot,r.grant_snapshot FROM hr_gov_requests r WHERE r.employee_id=$1 ORDER BY r.id`,[employeeId])).rows;
   const benefits=(await client.query('SELECT * FROM hr_gov_benefit_bases WHERE employee_id=$1 ORDER BY id',[employeeId])).rows;
@@ -97,7 +98,8 @@ export async function migrationState(client,employeeId,cutover) {
   const movements=(await client.query('SELECT l.* FROM hr_gov_ledger l JOIN hr_gov_entitlements e ON e.id=l.entitlement_id WHERE e.employee_id=$1 ORDER BY l.id',[employeeId])).rows;
   const configs=(await client.query('SELECT * FROM hr_gov_workflow_configs WHERE employee_id=$1 ORDER BY id',[employeeId])).rows;
   const initialSetup=await initialSetupReference(client);
-  const state={context,identity:people[employeeId],historical_balances:balances,retained_legacy_leave:retained,government_requests:requests,benefit_bases:benefits,benefit_commitments:commitments,effects,movements,configs,initial_setup:initialSetup};
+  const creditTransfers=(await client.query('SELECT * FROM hr_gov_credit_transfers WHERE employee_id=$1 ORDER BY code',[employeeId])).rows;
+  const state={context,identity:people[employeeId],historical_balances:balances,retained_legacy_leave:retained,government_requests:requests,benefit_bases:benefits,benefit_commitments:commitments,effects,movements,configs,initial_setup:initialSetup,credit_transfers:creditTransfers};
   return {state,hash:fingerprint(state)};
 }
 function migrationPlan(state,data) {
@@ -122,18 +124,21 @@ function migrationPlan(state,data) {
   const rows=targets.map(t=>{
     let value;try{value=units(t.amount);}catch{fail('Use nonnegative target days with up to six decimals.',400);}
     if(value<0n)fail('Targets must be nonnegative.',400);
-    const maximum=units(policy.rules[t.code==='recreation'?'recreation_cap_days':`${t.code}_annual_days`]);if(value>maximum)fail('The proposed balance exceeds the governing pool or cap. Obtain an approved transition before activation.');
     const account=state.context.entitlements.find(e=>e.code===t.code&&e.period_start===facts.period_start&&e.period_end===facts.period_end);
+    const retainedTransfer=retainedTarget(state,t,data.cutover_date,account);
+    const protectedAccount={...account,retained_credit:retainedTransfer?.amount||account?.retained_credit||'0'};
+    const limit=policy.rules[t.code==='recreation'?'recreation_cap_days':`${t.code}_annual_days`];
+    if(value>creditLimit(protectedAccount,limit))fail('The proposed balance exceeds the governing pool or cap. Select and independently certify its existing credit sources before activation.');
     if(account&&data.cutover_date<account.as_of)fail('A reconciliation cannot predate the certified opening.');
     if(account&&['medical','special'].includes(t.code)) {
       const latest=state.configs.filter(c=>c.status==='published').sort((a,b)=>new Date(b.approved_at)-new Date(a.approved_at))[0];
       const historical=t.code==='medical'&&String(latest?.medical_period_start||'').slice(0,10)===account.period_start?latest.medical_history.reduce((n,h)=>n+units(h.charge),0n):0n;
       const used=-state.movements.filter(m=>m.entitlement_id===account.id&&(m.kind==='use'||m.kind==='reversal'&&state.movements.some(old=>old.id===m.reverses_id&&old.kind==='use'))).reduce((n,m)=>n+units(m.amount),0n);
-      if(value+used+historical>maximum)fail('Target plus recorded and historical usage exceeds the single annual pool. Reconcile the remaining credit.');
+      if(value+used+historical>creditLimit(protectedAccount,limit,historical))fail('Target plus recorded and historical usage exceeds the single annual pool. Reconcile the remaining credit.');
     }
     const current=account?units(account.balance):0n,held=account?units(account.held):0n;
     if(value<held)fail('Target would spend held entitlement; resolve pending leave first.');
-    return {code:t.code,target:decimal(value),current:decimal(current),difference:decimal(value-current),held:decimal(held),entitlement_id:account?.id||null,policy_version_id:policy.id,period_start:facts.period_start,period_end:facts.period_end};
+    return {code:t.code,target:decimal(value),current:decimal(current),difference:decimal(value-current),held:decimal(held),entitlement_id:account?.id||null,policy_version_id:policy.id,period_start:facts.period_start,period_end:facts.period_end,retained_transfer:retainedTransfer};
   });
   return {targets:rows,dispositions,external_pending_count:dispositions.filter(d=>d.action==='retain_external'||d.action==='transfer_with_fresh_approval').length,
     activation:'Separate independent workflow activation after medical history, authorities and all retained external leave are resolved. Certification does not enable login, grants or accrual jobs.'};
@@ -164,7 +169,7 @@ export async function certifyMigration(pool,{user,actor,id,data}) {
     if(review.prepared_by===actor.id)fail('A different central HR officer must certify the migration.',403);
     if(data.context_hash!==review.context_hash)fail('Confirm the exact reviewed migration checksum.');
     const current=await migrationState(client,review.employee_id,review.cutover_date);if(current.hash!==review.context_hash)fail('Identity, service, balances or retained leave changed. Prepare a fresh dry run.');
-    migrationPlan(current.state,{cutover_date:review.cutover_date,targets:review.plan.targets.map(t=>({code:t.code,amount:t.target})),dispositions:review.plan.dispositions});
+    migrationPlan(current.state,{cutover_date:review.cutover_date,targets:review.plan.targets.map(t=>({code:t.code,amount:t.target,retained_balance_ids:t.retained_transfer?.source_balance_ids||[]})),dispositions:review.plan.dispositions});
     const postings=[];
     for(const target of review.plan.targets) {
       let entitlementId=target.entitlement_id;
@@ -176,6 +181,10 @@ export async function certifyMigration(pool,{user,actor,id,data}) {
       }else if(units(target.difference)!==0n) {
         const movement=await ledger.postMovement(client,{entitlementId,kind:'correction',amount:target.difference,effectiveDate:review.cutover_date,eventKey:`migration:${id}:${target.code}`,sourceReference:review.transition_reference,actor,reason:why});
         postings.push({code:target.code,entitlement_id:entitlementId,movement_id:movement.id,amount:target.difference});
+      }
+      if(target.retained_transfer) {
+        await client.query('INSERT INTO hr_gov_credit_transfers(entitlement_id,employee_id,code,review_id,cutover_date,amount,source_balance_ids) VALUES($1,$2,$3,$4,$5,$6,$7)',[entitlementId,review.employee_id,target.code,id,review.cutover_date,target.retained_transfer.amount,target.retained_transfer.source_balance_ids]);
+        postings.push({code:target.code,entitlement_id:entitlementId,retained_transfer:target.retained_transfer});
       }
     }
     for(const d of review.plan.dispositions.filter(d=>d.action==='transfer_with_fresh_approval')) {

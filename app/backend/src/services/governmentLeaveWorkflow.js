@@ -1,3 +1,4 @@
+import {creditLimit} from './governmentLeaveCarryover.js';
 import {assertDraftUsable} from './governmentLeaveDrafts.js';
 import {serviceCorrectionIssue} from './employeeServiceCorrections.js';
 import {assertCutoverResolved,legacyTransferFor} from './governmentLeaveCutover.js';
@@ -57,7 +58,7 @@ async function annualPoolIssue(client,account,history,policy) {
   if(history.some(h=>typeof h.charge!=='string'))return 'Review and reapprove the historical Medical charges before applying.';
   const prior=history.reduce((sum,h)=>sum+units(h.charge),0n);
   const {rows:[usage]}=await client.query("SELECT COALESCE(-SUM(amount),0)::text AS used FROM hr_gov_ledger WHERE entitlement_id=$1 AND (kind='use' OR (kind='reversal' AND reverses_id IN (SELECT id FROM hr_gov_ledger WHERE kind='use')))",[account.id]);
-  if(prior+units(account.balance)+units(usage.used)>units(policy.rules[`${account.code}_annual_days`]))return `${account.code==='medical'?'Medical':'Special'} opening/corrections and recorded usage exceed the single annual pool. Reconcile the historical cutover credit before activation or further application.`;
+  if(prior+units(account.balance)+units(usage.used)>creditLimit(account,policy.rules[`${account.code}_annual_days`],prior))return `${account.code==='medical'?'Medical':'Special'} opening/corrections and recorded usage exceed the single annual pool. Reconcile the historical cutover credit before activation or further application.`;
   return null;
 }
 function readyConfiguration(context,codes) {
@@ -65,7 +66,7 @@ function readyConfiguration(context,codes) {
   const facts=serviceFacts(context,today());if(facts.issues.length)fail(facts.issues.join(' '));
   for(const code of codes)if(!context.entitlements.some(e=>e.code===code&&e.period_start===facts.period_start&&e.period_end===facts.period_end&&e.as_of<=today()))fail(`Certify the ${code} opening for this service year first.`);
   const policy=context.policies.find(p=>p.effective_from<=today()&&p.effective_to>=today());if(!policy)fail('Publish an effective policy first.');
-  for(const code of codes){const account=context.entitlements.find(e=>e.code===code&&e.period_start===facts.period_start);const limit=policy.rules[code==='recreation'?'recreation_cap_days':`${code}_annual_days`];if(units(account.balance)>units(limit))fail('A balance exceeds the standard government quantum/cap. Resolve the signed transition before activation; historical balances are preserved.');}
+  for(const code of codes){const account=context.entitlements.find(e=>e.code===code&&e.period_start===facts.period_start);const limit=policy.rules[code==='recreation'?'recreation_cap_days':`${code}_annual_days`];if(units(account.balance)>creditLimit(account,limit))fail('A balance exceeds the standard government quantum/cap. Resolve the signed transition before activation; historical balances are preserved.');}
   if(!context.calendars.some(c=>c.effective_from<=today()&&c.effective_to>=today()))fail('Publish an approved calendar first.');
 }
 export async function prepareConfiguration(pool,{user,actor,employeeId,data}) {

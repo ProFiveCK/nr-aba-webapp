@@ -1,3 +1,4 @@
+import {creditLimit} from './governmentLeaveCarryover.js';
 import {withTransaction} from '../lib/transaction.js';
 import {ServiceError} from '../lib/serviceError.js';
 import {fingerprint,serviceFacts,units,dayNumber} from '../lib/governmentLeaveRules.js';
@@ -83,7 +84,7 @@ export async function employeeReadiness(client,employeeId){
    const limit=policy.rules[code==='recreation'?'recreation_cap_days':`${code}_annual_days`];
    const prior=code==='medical'&&config?.medical_period_start===entitlement.period_start?(config.medical_history||[]).reduce((n,h)=>n+units(h.charge||'0'),0n):0n;
    const used=(await client.query("SELECT COALESCE(-SUM(amount),0)::text AS amount FROM hr_gov_ledger WHERE entitlement_id=$1 AND (kind='use' OR (kind='reversal' AND reverses_id IN (SELECT id FROM hr_gov_ledger WHERE kind='use')))",[entitlement.id])).rows[0].amount;
-   if(units(entitlement.balance)+(code==='recreation'?0n:units(used)+prior)>units(limit))issues.push(`Reconcile the ${code} quantum and historical usage.`);
+   if(units(entitlement.balance)+(code==='recreation'?0n:units(used)+prior)>creditLimit(entitlement,limit,prior))issues.push(`Reconcile the ${code} quantum and historical usage.`);
   }
  }
  try{await assertCutoverResolved(client,employeeId);}catch(e){if(!e.status)throw e;issues.push(e.message);}

@@ -18,7 +18,7 @@ describe('government Payroll registers and migration rehearsal',{skip:skipWithou
  async function account(permissions){return(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES($1,'Synthetic Payroll reviewer','user','x',$2) RETURNING *",[`${randomUUID()}@example.test`,permissions])).rows[0];}
  async function opening(code,amount){const row=await l.prepareOpening(pool,{...args({code,amount,policy_version_id:policy.id,period_start:'2026-01-01',period_end:'2026-12-31',as_of:'2026-10-01',source_reference:'Synthetic opening source',payroll_reference:'Synthetic Salary Unit opening source',reason}),employeeId:employee.id});await l.certifyOpening(pool,{...args({},certifier),id:row.id,reason});}
  beforeEach(async()=>{
-  await resetLeaveTables(pool);await pool.query('TRUNCATE hr_gov_payroll_batches,hr_gov_handovers,hr_gov_policy_versions,hr_gov_calendars,hr_gov_pattern_approvals CASCADE');
+  await resetLeaveTables(pool);await pool.query('TRUNCATE hr_gov_initial_setups,hr_gov_payroll_batches,hr_gov_handovers,hr_gov_policy_versions,hr_gov_calendars,hr_gov_pattern_approvals CASCADE');
   hr=await account({hr_admin:true,hr_access:true});certifier=await account({hr_admin:true,hr_access:true});owner=await account({hr_access:true,hr_leave_apply:true});
   department=(await pool.query("INSERT INTO hr_departments(name) VALUES('Synthetic Payroll Department') RETURNING *")).rows[0];division=(await pool.query("INSERT INTO hr_divisions(name,department_id) VALUES('Synthetic Payroll Division',$1) RETURNING *",[department.id])).rows[0];
   employee=(await pool.query("INSERT INTO hr_employees(display_name,reviewer_id,department_id,division_id,leave_policy_regime) VALUES('Synthetic Payroll Employee',$1,$2,$3,'government') RETURNING *",[owner.id,department.id,division.id])).rows[0];
@@ -83,6 +83,68 @@ describe('government Payroll registers and migration rehearsal',{skip:skipWithou
   const legacyUrl=base.replace('/government/payroll','/calendar?from=2026-11-01&to=2026-11-14'),governmentUrl=base.replace('/payroll','/workflow/calendar?from=2026-11-01&to=2026-11-14');
   assert.equal((await(await fetch(legacyUrl,{headers})).json()).length,0);assert.equal((await(await fetch(governmentUrl,{headers})).json()).entries.length,1);
   await pool.query('INSERT INTO hr_gov_case_effects(request_id,original_request_id,effect,recorded_by) VALUES($1,$1,$2,$3)',[requestId,{action:'cancel_grant'},hr.id]);assert.equal((await(await fetch(legacyUrl,{headers})).json()).length,0);assert.equal((await(await fetch(governmentUrl,{headers})).json()).entries.length,0);assert.equal((await pool.query('SELECT status FROM hr_leave_applications WHERE id=$1',[legacy.id])).rows[0].status,'approved');
+ });
+
+ async function retainedSources(specs=[['special','5','0']]) {
+  const rows=[];
+  for(const [code,amount,pending='0'] of specs){
+   const type=(await pool.query('INSERT INTO hr_leave_types(name,default_days) VALUES($1,$2) RETURNING *',[`Synthetic transfer ${code} ${randomUUID()}`,amount])).rows[0];
+   const row=(await pool.query('INSERT INTO hr_leave_balances(employee_id,leave_type_id,year,balance,pending) VALUES($1,$2,2026,$3,$4) RETURNING *',[employee.id,type.id,amount,pending])).rows[0];rows.push({...row,code});
+  }
+  await pool.query("INSERT INTO hr_gov_initial_setups(status,plan,source_hash,summary,prepared_by,updated_by,reason,adopted_by) VALUES('adopted',$1,'synthetic','{}',$2,$2,$3,$2)",[{policy_id:policy.id,start_date:'2026-10-07',mappings:rows.map(row=>({leave_type_id:row.leave_type_id,code:row.code}))},hr.id,reason]);
+  return rows;
+ }
+ function carried(rows){return migration({targets:[{code:'recreation',amount:'20'},{code:'medical',amount:'10'},{code:'special',amount:'3'}].map(t=>{const selected=rows.filter(r=>r.code===t.code);return selected.length?{...t,amount:selected.reduce((n,r)=>n+Number(r.balance),0).toFixed(6),retained_balance_ids:selected.map(r=>r.id)}:t;})});}
+ async function activated(codes=['special'],history=[]){const draft=await w.prepareConfiguration(pool,{...args({enabled_codes:codes,medical_rule:'single_calendar_date_nonadjacent_scheduled_days',medical_history:history,source_reference:'Synthetic certified carried credit and Medical history',legacy_resolution_reference:'Synthetic resolved retained leave',reason}),employeeId:employee.id});await w.publishConfiguration(pool,{user:user(certifier),actor:certifier,id:draft.id,reason});return draft;}
+ test('full five-day Special credit becomes usable Government credit through independent certification exactly once',async()=>{
+  const sources=await retainedSources(),data=carried(sources),response=await http(`/employees/${employee.id}/migrations`,hr,data);assert.equal(response.status,201);const review=response.body;
+  await assert.rejects(certify(review,hr),/different/);await Promise.all([certify(review),certify(review)]);
+  const account=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='special');assert.equal(account.balance,'5.000000');assert.equal(account.retained_credit,'5.000000');assert.equal((await pool.query('SELECT balance FROM hr_leave_balances WHERE id=$1',[sources[0].id])).rows[0].balance,'5.00');
+  assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_credit_transfers')).rows[0].n,1);await assert.rejects(pool.query('UPDATE hr_gov_credit_transfers SET amount=6'),/immutable/);
+  await activated();await l.postMovement(pool,{entitlementId:account.id,kind:'use',amount:'-1',effectiveDate:'2026-10-08',eventKey:'synthetic-protected-special-use',sourceReference:'Synthetic approved Special use',actor:hr,reason});
+  const preview=await w.previewRequest(pool,user(owner),employee.id,{code:'special',start_date:'2026-11-02',end_date:'2026-11-03',reason,medical_mode:'not_applicable'});assert.equal(preview.submission_enabled,true);assert.equal(preview.charge,'2.000000');
+  await assert.rejects(prepare(carried(sources)),/already been transferred/);
+  await l.correctLedger(pool,{...args({entitlement_id:account.id,amount:'1',effective_date:'2026-10-08',event_key:randomUUID(),source_reference:'Synthetic excess correction',reason}),employeeId:employee.id});const excess=await w.previewRequest(pool,user(owner),employee.id,{code:'special',start_date:'2026-11-02',end_date:'2026-11-03',reason,medical_mode:'not_applicable'});assert.equal(excess.submission_enabled,false);assert.ok(excess.issues.some(i=>i.includes('single annual pool')));
+ });
+ test('source transfer validates employee, adopted mapping, exact credit and distinct rows without adding pending days',async()=>{
+  const sources=await retainedSources([['special','5','1']]),data=carried(sources),target=data.targets.find(t=>t.code==='special');
+  for(const change of [{amount:'6'},{retained_balance_ids:[sources[0].id,sources[0].id]},{retained_balance_ids:[randomUUID()]},{code:'medical'}]){const targets=data.targets.map(t=>t===target?{...t,...change}:t);await assert.rejects(prepare({...data,review_id:randomUUID(),targets}),e=>e.status===409||e.status===400);}
+  const review=await prepare(data);assert.equal(review.plan.targets.find(t=>t.code==='special').retained_transfer.amount,'5.000000');
+  const other=(await pool.query("INSERT INTO hr_employees(display_name) VALUES('Synthetic different credit owner') RETURNING *")).rows[0];await pool.query('UPDATE hr_leave_balances SET employee_id=$2 WHERE id=$1',[sources[0].id,other.id]);await assert.rejects(certify(review),/changed/);assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_credit_transfers')).rows[0].n,0);
+ });
+ test('adoption is required and a mismatched leave-type source cannot mint protected credit',async()=>{
+  const sources=await retainedSources(),data=carried(sources);await pool.query('TRUNCATE hr_gov_initial_setups CASCADE');await assert.rejects(prepare(data),/Adopt/);
+  await pool.query("INSERT INTO hr_gov_initial_setups(status,plan,source_hash,summary,prepared_by,updated_by,reason) VALUES('adopted',$1,'synthetic','{}',$2,$2,$3)",[{policy_id:policy.id,start_date:'2026-10-07',mappings:[{leave_type_id:sources[0].leave_type_id,code:'medical'}]},hr.id,reason]);await assert.rejects(prepare(data),/mapping/);
+  assert.equal((await http(`/employees/${employee.id}/migrations`,owner,data)).status,403);
+ });
+ test('older annual snapshots cannot be added to the latest carried credit',async()=>{
+  const sources=await retainedSources();const old=(await pool.query('INSERT INTO hr_leave_balances(employee_id,leave_type_id,year,balance,pending) VALUES($1,$2,2025,4,0) RETURNING *',[employee.id,sources[0].leave_type_id])).rows[0];await assert.rejects(prepare(carried([...sources,{...old,code:'special'}])),/latest retained balance/);
+ });
+ test('an inactive superseded type cannot be selected as current Medical credit',async()=>{
+  const sources=await retainedSources([['medical','7']]);await pool.query('UPDATE hr_leave_types SET is_active=FALSE WHERE id=$1',[sources[0].leave_type_id]);await assert.rejects(prepare(carried(sources)),/inactive historical type/);
+ });
+ test('a changed source credit invalidates certification and no transfer or correction is posted',async()=>{
+  const sources=await retainedSources(),review=await prepare(carried(sources));await pool.query('UPDATE hr_leave_balances SET balance=4 WHERE id=$1',[sources[0].id]);await assert.rejects(certify(review),/changed/);
+  assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='special').balance,'3.000000');assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_credit_transfers')).rows[0].n,0);
+ });
+ test('audit failure rolls back protected transfer, corrections and certification in one transaction',async()=>{
+  const sources=await retainedSources(),review=await prepare(carried(sources));await pool.query("CREATE FUNCTION synthetic_transfer_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.migration.certified' THEN RAISE EXCEPTION 'synthetic transfer audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER synthetic_transfer_audit_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION synthetic_transfer_audit_failure()");
+  try{await assert.rejects(certify(review),/synthetic transfer audit failure/);assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='special').balance,'3.000000');assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_credit_transfers')).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_migration_certifications')).rows[0].n,0);}finally{await pool.query('DROP TRIGGER synthetic_transfer_audit_failure ON audit_log; DROP FUNCTION synthetic_transfer_audit_failure()');}
+ });
+ test('protected credit cannot be created after Government use or increase the certified source amount',async()=>{
+  const sources=await retainedSources(),account=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='special');await l.postMovement(pool,{entitlementId:account.id,kind:'use',amount:'-1',effectiveDate:'2026-10-02',eventKey:'synthetic-started-special',sourceReference:'Synthetic approved use',actor:hr,reason});await assert.rejects(prepare(carried(sources)),/starts operating/);
+ });
+ test('later annual Special renewal follows the three-day Government rule and does not transfer the old credit again',async()=>{
+  const sources=await retainedSources();await certify(await prepare(carried(sources)));await activated();const jobs=await import('../services/governmentLeaveJobs.js');const plan=await jobs.prepareJobPlan(pool,{...args({code:'special',source_reference:'Synthetic reviewed Government renewal',reason}),employeeId:employee.id});await jobs.approveJobPlan(pool,{user:user(certifier),actor:certifier,id:plan.id,reason});
+  await jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id,asOf:'2027-01-01',clockDate:'2027-01-01'});const next=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='special'&&e.period_start==='2027-01-01');assert.equal(next.balance,'3.000000');assert.equal(next.retained_credit,'0');assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_credit_transfers')).rows[0].n,1);
+ });
+ test('carried Recreation above the cap stays spendable while future accrual stops at the Government cap',async()=>{
+  const sources=await retainedSources([['recreation','80']]);await certify(await prepare(carried(sources)));await activated(['recreation']);const jobs=await import('../services/governmentLeaveJobs.js');const plan=await jobs.prepareJobPlan(pool,{...args({code:'recreation',payroll_anchor:'2026-10-01',first_post_end:'2026-10-15',temporary_start:'appointment',source_reference:'Synthetic reviewed Government payroll cycle',reason}),employeeId:employee.id});await jobs.approveJobPlan(pool,{user:user(certifier),actor:certifier,id:plan.id,reason});
+  const run=await jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id,asOf:'2027-01-01',clockDate:'2027-01-01'});assert.ok(run.results[0].posts.every(p=>p.amount==='0.000000'&&p.capped));const next=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation'&&e.period_start==='2027-01-01');assert.equal(next.balance,'80.000000');assert.equal(next.retained_credit,'80.000000');
+ });
+ test('mapped Medical sources become one remaining pool and historical usage is not deducted twice',async()=>{
+  const sources=await retainedSources([['medical','7'],['medical','3']]);await pool.query('TRUNCATE hr_gov_openings CASCADE');await certify(await prepare(carried(sources)));await activated(['medical'],[{start_date:'2026-09-14',end_date:'2026-09-17',uncertified:false}]);
+  const context=await l.loadContext(pool,employee.id),medical=context.entitlements.filter(e=>e.code==='medical');assert.equal(medical.length,1);assert.equal(medical[0].balance,'10.000000');assert.equal(medical[0].retained_credit,'10.000000');const preview=await w.previewRequest(pool,user(owner),employee.id,{code:'medical',start_date:'2026-11-02',end_date:'2026-11-02',reason,medical_mode:'certificate'});assert.equal(preview.submission_enabled,true);assert.equal(preview.medical_exemptions_used,0);
  });
  test('repeated schema bootstrap keeps Payroll immutable constraints and existing versions',async()=>{await granted();const b=await p.preparePayroll(pool,args(period()));await (await import('../db.js')).initSchema();assert.equal((await p.payrollView(pool,user(hr),b.id)).version,1);await assert.rejects(pool.query('UPDATE hr_gov_payroll_batches SET version=2 WHERE id=$1',[b.id]),/immutable/);});
 });

@@ -32,13 +32,15 @@ The Finance copy reviewed on 08/10/2026 contains 29 employees, 25 linked logins 
 
 The existing Medical settings contain certified and uncertified buckets and an inactive older Sick type. They must not all be summed into the new ten-day pool. Special’s existing five-day setting differs from the corrected three-day rule; mapping alone is not authority to reduce existing credited balances.
 
-## Calculation cutover is still a separate delivery requirement
+## Complete the balance transfer and Government cutover for Treasury go-live
 
-This initial configuration does **not** activate Government calculations. The database lacks facts needed for those calculations; a join date and “leave entitled” flag do not prove permanent status or uninterrupted credited service.
+The rollout target is to carry Treasury's existing credited balances into Government Leave and use the Government rules going forward. Initial configuration is the first step in that same rollout; it does **not** activate Government calculations. The database lacks facts needed for those calculations; a join date and “leave entitled” flag do not prove permanent status or uninterrupted credited service.
 
 Before switching an employee, record the actual appointment category, credited continuity and exclusions, verified weekly schedule or roster, approved calendar, reviewed opening targets and retained leave dispositions. Review Medical history where applicable. Keep Payroll IDs as a payroll reconciliation requirement rather than an initial configuration prerequisite.
 
 The current preparation APIs enrol employees before opening/activation and can therefore interrupt legacy submission. They are not an atomic commissioning path. A future owner commissioning path must validate the complete reviewed source snapshot, create the Government foundations/openings/configuration and switch the employee arrangement in one transaction. If anything fails, the employee must remain on the existing workflow. If single-owner commissioning is used, it needs its own limited initial setup authority and auditable receipt; ordinary independent review must not be bypassed globally.
+
+After adoption, use the employee opening/cutover review to select the verified source balance rows and transfer their full credit with independent certification. The one-time transfer preserves above-limit credit (for example, an existing five-day Special balance) while future annual renewals use the Government allowance. Review the Medical sources and history as one pool, and reconcile Furlough separately under benefit controls. Then independently activate the employee and approve the update plans before Treasury go-live.
 
 Initial setup adoption therefore establishes the consolidated configuration and reusable current register. It must never be reported as completed calculation migration, completed employee readiness, or production deployment.
 

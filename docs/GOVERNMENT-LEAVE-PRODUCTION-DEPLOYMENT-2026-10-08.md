@@ -6,7 +6,7 @@ Prepared 08/10/2026. Release branch: `codex/government-leave-production`. Merge 
 
 The existing personnel register opens in the consolidated employee workspace, with retained balances, eligibility, managers, accounts, applications and approval PDFs. Government policy, initial setup, dated offices, service/opening certification, applications, Medical tracking, Payroll and readiness tools become available to authorised staff.
 
-**Deploy the upgraded workspace first with the current Finance leave rules. Government calculation cutover is a separate, reviewed step.** No employee is automatically enrolled and no balance is converted by the schema upgrade. Do not restore the development database over production or import the Treasury employees again.
+**The Treasury rollout finishes with existing credited balances carried into Government Leave and the Government policy governing future leave for the cohort.** The code upgrade, setup adoption, balance certification and employee activation are steps in this same rollout. The schema upgrade alone does not complete it: no employee is automatically enrolled and no balance is converted at startup. Keep Treasury submissions paused until the reviewed transfer and activation below are complete. Do not restore the development database over production or import the Treasury employees again.
 
 The 07/10/2026 backup used for verification contains 29 Finance/Treasury employees, 25 linked logins, 109 balance rows and six applications. Of those linked logins, 24 are active and one is inactive. Four staff have no linked login. Production may have newer records: compare against its own fresh snapshot, not these historical counts.
 
@@ -90,7 +90,7 @@ diff -u "$LEAVE_RELEASE_DIR/leave-before.jsonl" "$LEAVE_RELEASE_DIR/leave-after.
 
 A zero diff confirms all retained employee fields, balances, applications/PDF snapshots and legacy leave-type settings in the snapshot are preserved. New Government columns/tables are deliberately outside this comparison. If the comparison or API health fails, keep the site closed and investigate before continuing.
 
-Restore the saved Finance accrual setting, publish the built frontend and start the web service:
+Restore the saved Finance accrual setting for staff who have not yet cut over, publish the built frontend and start the web service for the authorised setup work. Keep the agreed Treasury submission pause in place through steps 4 and 5:
 
 ```bash
 dc up -d --no-deps --wait api
@@ -110,19 +110,24 @@ The first API startup applies the additive, idempotent schema through `initSchem
 4. **Adopt the existing register.** Settings → Initial setup: select the production policy and intended planning date; review every old-to-new type mapping; decide the unresolved Compassionate mapping explicitly; select only correct unique exact Finance/Treasury matches; review, save the draft, then Adopt existing database. If records changed since review, refresh and save a new revision. Adoption creates a production receipt and fills selected missing placement IDs; it does not enrol staff, change managers, replace rules or merge balances. See [initial setup guide](LEAVE-INITIAL-DATABASE-SETUP.md).
 5. **Resolve access exceptions.** Use Employees → Preparation issues → No verified login and Manage → Employee details to link each existing employee to their verified active portal account. Do not create duplicate personnel records. Review the linked inactive account with HR; reactivate only if it should currently have access. Confirm employee Leave capabilities and any unfinished password-change requirements. Existing linked active accounts keep their passwords/Google identities. Payroll IDs are not a prerequisite for continued retained Finance self-service.
 6. **Check HR and approval scopes.** Under Settings → HR access, set dated department/division scopes for noncentral HR/approvers. A capability alone no longer means government-wide personnel access. Existing nominated managers remain distinct from Government approval-office appointments. Test using each responsible officer's own account; appointments alone do not grant permissions.
-7. **Release the upgraded workspace.** Treasury can now use their existing rules/balances through the new screens. Resume paused external jobs, review queues daily and name the Treasury support contact. Government workflow queues are in-app; this release does not add Government workflow email reminders.
+7. **Continue to the Government cutover below.** Organisation setup and login access are preparation; they are not the Treasury go-live acceptance. Keep submissions paused, name the Treasury support contact and complete the balance transfer and activation before staff resume leave applications. Government workflow queues are in-app; this release does not add Government workflow email reminders.
 
-## 5. When Treasury is ready for Government calculations
+## 5. Carry Treasury balances and activate Government Leave
 
-Complete this in an agreed cutover window with the actual accountable officers:
+Complete this as part of the agreed Treasury release, with the actual accountable officers. Record the production cutover date and use a fresh production source snapshot:
 
 - Verify Payroll identifiers, appointment/category (including temporary/intern terms), credited continuity/exclusions, schedule/roster, calendar/Gazette dates and actual approval offices. Confirm appropriate acting/substitute officers where self-approval would occur.
-- Reconcile each employee's opening targets, prior Medical usage/uncertified occasions, annual/service periods and all retained pending/future applications. Keep certified/uncertified/inactive legacy Sick buckets separate during reconciliation; do not sum them. Retain existing credited Special balances unless a sourced reviewed correction authorises a change.
+- Reconcile each employee's opening targets, prior Medical usage/uncertified occasions, annual/service periods and every retained pending/future application. The existing credit is the starting balance; do not replace it with the new annual allowance, backdate a new award, or add pending days as extra credit.
+- Under **Prepare Government Leave → Opening & cutover review**, select the exact verified latest active balance rows for Recreation, Medical and Special. The target must equal their full remaining credit. The adopted mappings must match the selected Government type, and a second central HR officer must certify the exact source snapshot. Certification posts the opening/correction and its one-time transfer certificate together. A changed source invalidates the review; the same credit cannot be transferred again. Ordinary opening entries alone do not create a protected transfer.
+- Existing above-limit credit remains usable after its certified transfer. For example, five credited Special days become five Government days at cutover; the next approved annual renewal uses the Government three-day rule. Recreation accrual stops at the Government cap without clipping a protected opening above that cap. Government Medical remains one shared pool; review the active certified/uncertified source rows and baseline usage/occasions, excluding superseded or duplicate historical Sick balances. The 07/10 copy had 15 Special balances above three days, so source-backed transfer is material to Treasury's activation.
+- Reconcile the six recorded Furlough balances separately against verified credited service and prior leave/payout baselines under the Government Furlough/benefit controls. Preserve the reviewed remaining credit through the signed transition; do not merge Furlough into Recreation or a common annual opening. Unresolved differences remain an assisted HR case and block that employee's completed rollout.
 - Employees → Manage → Prepare Government Leave guides identity/service, login/enrolment, service/openings, retained-leave reconciliation and independent activation. **Enrolment currently pauses existing submissions before openings/reconciliation can be completed.** Schedule the whole preparation window and keep assisted HR handling available; do not enrol the whole department merely to explore the screens.
 - Obtain independent certification/activation and approved update plans. Confirm the employee preview/submission, actual approval chain, evidence, final PDF and Salary Unit acknowledgement with a small real pilot. Record readiness, receiving-system reconciliation, support/training and recovery evidence.
-- Only then consider `GOVERNMENT_LEAVE_SCHEDULER=on`; recreate the API with `dc up -d --no-deps --wait api`. Use one agreed accrual owner and check the first complete due run. Government plans and employee configuration must be independently published before scheduled jobs can post.
+- After configurations and update plans are independently approved, set `GOVERNMENT_LEAVE_SCHEDULER=on`; recreate the API with `dc up -d --no-deps --wait api`. Use one agreed accrual owner and check the first complete due run. Government plans and employee configuration must be independently published before scheduled jobs can post.
 
-Deploying code and adopting setup do not satisfy these employee cutover controls. The portal remains the interim leave system; TechnologyOne Leave handover is a later project.
+**Treasury go-live acceptance:** every active employee in the agreed production cohort has verified access, the applicable Government types independently activated, source-backed carried credits reconciled exactly, retained leave resolved, actual approval offices tested, and approved scheduling under one accrual owner. Review the cohort in Operations → rollout readiness and record any assisted cases explicitly; do not label the whole cohort ready while a member is blocked. Resume Treasury submissions and paused jobs only after this check, then verify the first complete due run and monitor the real approval queues.
+
+Government policy is the common operating rule after cutover, including its category-specific eligibility and approvals. Historical Finance records remain audit history. The portal remains the interim leave system; TechnologyOne Leave handover is a later project.
 
 ## Recovery if the release fails
 
@@ -150,8 +155,9 @@ Additive tables can usually remain for a code rollback before any Government cut
 
 ## Release verification
 
-- Local CI: 477 backend tests passed with none skipped; 120 frontend tests passed with one existing skip; lint, TypeScript/Vite build and runtime dependency audit passed (zero vulnerabilities).
+- Local CI: 488 backend tests passed with none skipped; 120 frontend tests passed with one existing skip; lint, TypeScript/Vite build and runtime dependency audit passed (zero vulnerabilities).
 - Production Docker API image built successfully and ran with its Node 20 runtime in an isolated local stack.
 - Fresh 07/10 production-backup restore: all 37 original table projections/18,892 source rows preserved after two schema initializations; 29 personnel/25 linked logins/109 balances/six applications retained; zero Government employees, policies or adopted setups created automatically.
-- Desktop and 390px release workspace/Settings checks use the fresh isolated copy, without changing employee records.
+- Certified credit transfer tests cover full five-day Special usability, Medical source consolidation and prior usage, source ownership/mapping, changed-source rejection, atomic audit rollback, duplicate prevention, the next three-day Special renewal, and capped future Recreation accrual.
+- Desktop and 390px release workspace/Settings checks use the fresh isolated copy, without changing employee records. The new transfer form was checked separately using a clearly labelled synthetic employee; source selection populated 20/10/5-day targets correctly, with no overflow or browser warnings/errors.
 - The local backup and previous review database remain separate from production. These checks establish release/build/data-preservation evidence; live production setup, permissions and employee cutover remain the operator's steps above.

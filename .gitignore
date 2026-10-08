@@ -56,6 +56,7 @@ pids/
 
 # Database dumps and archives
 *.sql
+!scripts/leave-production-snapshot.sql
 *.db
 *.sqlite
 archive/
@@ -114,3 +115,6 @@ __pycache__/
 .leave-review/
 .leave-production-review/
 backup/*.sql.gz
+
+# Private release verification against the production backup
+.leave-release-review/

@@ -100,9 +100,18 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
  test('draft removal and competing edit serialize, and audit failure rolls back removal and restoration',async()=>{
   const created=await call('/api/hr/government/policies',draftData()),path=`/api/hr/government/policies/${created.body.id}`;
   const results=await Promise.all([call(path,{reason,expected_revision:1},central,'DELETE'),call(path,{...draftData(),label:'Competing edit',expected_revision:1},central,'PUT')]);assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);
-  const another=await s.createPolicy(pool,{user:user(central),actor:central,data:draftData()}),args={user:user(central),actor:{...central,id:randomUUID()},id:another.id,reason,expected_revision:1,deleted:true};
-  await assert.rejects(s.setPolicyDraftDeleted(pool,args));let saved=(await pool.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1',[another.id])).rows[0];assert.equal(saved.deleted_at,null);assert.equal(saved.revision,1);
-  await s.setPolicyDraftDeleted(pool,{...args,actor:central});await assert.rejects(s.setPolicyDraftDeleted(pool,{...args,expected_revision:2,deleted:false}));saved=(await pool.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1',[another.id])).rows[0];assert.ok(saved.deleted_at);assert.equal(saved.revision,2);
+  const another=await s.createPolicy(pool,{user:user(central),actor:central,data:draftData()}),args={user:user(central),actor:central,id:another.id,reason,expected_revision:1,deleted:true};
+  const rejectAudit = async (action) => pool.query(`CREATE FUNCTION policy_test_reject_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN IF NEW.action='${action}' THEN RAISE EXCEPTION 'synthetic policy audit failure'; END IF; RETURN NEW; END; $$;
+    CREATE TRIGGER policy_test_reject_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION policy_test_reject_audit()`);
+  const restoreAudit = () => pool.query('DROP TRIGGER policy_test_reject_audit ON audit_log; DROP FUNCTION policy_test_reject_audit()');
+  await rejectAudit('hr.gov.policy.draft_deleted');
+  try { await assert.rejects(s.setPolicyDraftDeleted(pool,args), /synthetic policy audit failure/); } finally { await restoreAudit(); }
+  let saved=(await pool.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1',[another.id])).rows[0];assert.equal(saved.deleted_at,null);assert.equal(saved.revision,1);
+  await s.setPolicyDraftDeleted(pool,args);
+  await rejectAudit('hr.gov.policy.draft_restored');
+  try { await assert.rejects(s.setPolicyDraftDeleted(pool,{...args,expected_revision:2,deleted:false}), /synthetic policy audit failure/); } finally { await restoreAudit(); }
+  saved=(await pool.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1',[another.id])).rows[0];assert.ok(saved.deleted_at);assert.equal(saved.revision,2);
  });
  test('opening preview retains legacy data; independent certification, stale checks, overlap and retries are safe',async()=>{
   const type=await upsertLeaveType(pool,{name:'Synthetic Historical Special',defaultDays:5});await pool.query('INSERT INTO hr_leave_balances(employee_id,leave_type_id,year,balance,pending) VALUES ($1,$2,2026,5,1)',[employee.id,type.id]);

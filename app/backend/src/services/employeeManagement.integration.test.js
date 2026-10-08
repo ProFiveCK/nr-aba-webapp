@@ -45,7 +45,11 @@ describe('central HR management screens and bounded APIs', { skip: skipWithoutDa
     await assert.rejects(edit(employee.id,{...data,email:'changed@example.test'}),{status:400});
     const session=await auth.createSession(login.id);
     await edit(employee.id,{...data,status:'inactive'});assert.equal(await auth.lookupSession(session.tokenId),null);
-    await assert.rejects(edit(employee.id,{...data,status:'active'},{id:randomUUID()}),{code:'23503'});
+    await pool.query(`CREATE FUNCTION management_test_reject_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.action='hr.employee.details.verified' THEN RAISE EXCEPTION 'synthetic details audit failure'; END IF; RETURN NEW; END; $$;
+      CREATE TRIGGER management_test_reject_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION management_test_reject_audit()`);
+    try { await assert.rejects(edit(employee.id,{...data,status:'active'}), /synthetic details audit failure/); }
+    finally { await pool.query('DROP TRIGGER management_test_reject_audit ON audit_log; DROP FUNCTION management_test_reject_audit()'); }
     saved=(await pool.query('SELECT status FROM hr_employees WHERE id=$1',[employee.id])).rows[0];assert.equal(saved.status,'inactive');
   });
   test('concurrent opposite manager edits cannot create a cycle',async()=>{

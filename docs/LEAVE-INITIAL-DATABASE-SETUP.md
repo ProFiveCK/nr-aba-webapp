@@ -6,7 +6,7 @@ The existing employee database is the employee register. Keep its employee IDs, 
 
 ## Configure and adopt
 
-1. Select the published corrected Government policy already in the system and the intended start date. Initial setup does not publish a duplicate policy. The calculation engine resolves published policies by the application date.
+1. Select the authorised published corrected Government policy and the intended start date. If none exists in production, prepare and publish it under Policies first, using the actual signed source and dates. Initial setup does not publish a duplicate policy. The calculation engine resolves published policies by the application date.
 2. Review the old-to-new leave-type mapping. Suggested mappings are a convenience and require review. Decide whether each type maps to a Government leave code or is retained for historical reference. Mapping does not merge balances, rename old records, or grant an entitlement.
 3. Select unique exact organisation matches to adopt. Only missing managed department/division references are linked; uncertain matches stay visible. Existing text labels, nominated managers and login permissions are retained.
 4. Expand **Employee facts and stored balance comparison**. Stored years and pending amounts remain separate. Blank Government opening targets mean the verified target has not been determined. Rule defaults are not opening balances.

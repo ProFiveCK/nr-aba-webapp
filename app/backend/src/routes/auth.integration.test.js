@@ -27,7 +27,7 @@ describe('auth routes', { skip: skipWithoutDatabase }, () => {
   });
 
   const login = (email, password) => app.call('POST', '/api/auth/login', { body: { email, password } });
-  const clearLockout = (email) => pool.query('DELETE FROM login_attempts WHERE email = $1', [email]);
+  const clearLockout = (email) => pool.query("DELETE FROM login_attempts WHERE email = $1 OR email IN (SELECT 'account:' || id FROM reviewers WHERE email=$1)", [email]);
 
   test('an unknown account and a wrong password get the same answer, and both are audited', async () => {
     const { reviewer } = await createAccount(pool, 'auth-known@example.test');
@@ -45,11 +45,11 @@ describe('auth routes', { skip: skipWithoutDatabase }, () => {
     await clearLockout('auth-known@example.test');
   });
 
-  test('an inactive account says so only to someone who knows its password', async () => {
+  test('an inactive account returns the same generic denial even with its former password', async () => {
     const { password } = await createAccount(pool, 'auth-inactive@example.test', { status: 'inactive' });
     assert.equal((await login('auth-inactive@example.test', testPassword())).status, 401);
     const right = await login('auth-inactive@example.test', password);
-    assert.deepEqual([right.status, right.json.message], [403, 'Account inactive.']);
+    assert.deepEqual([right.status, right.json.message], [401, 'Invalid credentials.']);
     await clearLockout('auth-inactive@example.test');
   });
 

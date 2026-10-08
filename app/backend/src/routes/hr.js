@@ -778,28 +778,6 @@ router.post(
  * COALESCE a manager could be set but never removed, and a wrong join date
  * never blanked.
  */
-/**
- * Whether a staff record carries anything worth keeping.
- *
- * The record the portal creates for somebody on their first sign-in holds a
- * name, an address and nothing else. One HR made in advance holds the opening
- * balances, the join date, the department and the reporting line. Telling them
- * apart is what lets the login be moved off the empty one without asking
- * anybody to decide which history to lose.
- */
-async function employeeHistory(employeeId) {
-  const { rows } = await pool.query(
-    `SELECT (SELECT COUNT(*) FROM hr_leave_applications WHERE employee_id = $1)::int AS applications,
-            (SELECT COUNT(*) FROM hr_leave_adjustments  WHERE employee_id = $1)::int AS adjustments,
-            (SELECT COUNT(*) FROM hr_leave_balances
-              WHERE employee_id = $1 AND (balance <> 0 OR pending <> 0))::int AS balances,
-            (SELECT COUNT(*) FROM hr_employees WHERE manager_id = $1)::int AS reports`,
-    [employeeId]
-  );
-  const counts = rows[0];
-  return { ...counts, isEmpty: Object.values(counts).every((n) => n === 0) };
-}
-
 const EMPLOYEE_UPDATABLE = {
   display_name: { nullable: false },
   manager_id: { nullable: true },

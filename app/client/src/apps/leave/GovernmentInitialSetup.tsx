@@ -85,7 +85,7 @@ export function GovernmentInitialSetup({ onAdopted }: { onAdopted: () => Promise
                     <Field label="Intended start date"><AustralianDateInput aria-label="Intended start date" name="start_date" className={inputClass} value={plan.start_date} required disabled={adopted || busy} onChange={e => change({ ...plan, start_date: e.target.value })} /></Field>
                 </div>
                 {policy && <p className="break-words text-xs text-gray-600">Policy covers {formatDate(policy.effective_from)} to {formatDate(policy.effective_to)}. Source: {policy.source_reference}</p>}
-                <p className="text-xs text-gray-600">Choose the published corrected policy already here. The start date is a planning date; it does not enrol staff or backdate their balances.</p>
+                <p className="text-xs text-gray-600">Choose the published corrected policy from Policies. If none is listed, prepare and publish it there first. The start date is a planning date; it does not enrol staff or backdate their balances.</p>
             </div>
             <div className="app-panel overflow-hidden">
                 <div className="flex flex-wrap items-center justify-between gap-3 p-4"><h3 className="font-semibold text-gray-900">Existing leave types → Government rules</h3>{!adopted && <Button type="button" variant="secondary" disabled={busy} onClick={() => change({ ...plan, mappings: state.leave_types.map(t => ({ leave_type_id: t.id, code: t.suggested_code })) })}>Use suggested mappings</Button>}</div>

@@ -60,11 +60,12 @@ export async function generateGovernmentLeavePdf(grant) {
   line(grant.case_determination?`Event case | Scheduled hours: ${grant.evaluation.scheduled_hours} | No annual balance assigned`:`Granted charge: ${grant.charge} policy days | Scheduled hours: ${grant.evaluation.scheduled_hours}`);
   line(`Submitted: ${timestamp(grant.submitted_at)} | Final grant: ${timestamp(grant.granted_at)}`,{size:9});
   if(grant.code==='medical'){heading('Medical leave - certificate and uncertified usage');for(const row of medicalPdfLines(grant))line(row,{size:9});}
-  heading('Chief Secretary final grant and recorded approvals');
+  heading(`${grant.stages.at(-1)?.label||label(grant.stages.at(-1)?.level)} final grant and recorded approvals`);
   for(const stage of grant.stages) {
-    line(`${stage.ordinal+1}. ${label(stage.level)} - ${stage.binding?.approver_name||'Recorded officeholder'}`,{strong:true,size:9});
+    line(`${stage.ordinal+1}. ${stage.label||label(stage.level)} - ${stage.binding?.approver_name||'Recorded officeholder'}`,{strong:true,size:9});
     line(`Approved: ${timestamp(stage.decision?.decided_at)} | Decision ${stage.decision?.id||''}`,{size:8});
   }
+  if(grant.evidence_review){heading('HR supporting evidence verification');line(`Verified: ${timestamp(grant.evidence_review.recorded_at)} | HR officer: ${grant.evidence_review.actor_id}`,{size:9});line(`Source: ${grant.evidence_review.evidence_verification.source_reference}`,{size:9});}
   line('These are recorded electronic decisions. No handwritten signature is represented.',{size:9});
   heading('Explanation supplied by the employee');line(grant.reason,{size:9});
   if(grant.case_determination){heading('Reviewed case and pay determination');line(`Authority: ${grant.case_determination.source_reference}`,{size:9});line(`Evidence: ${grant.case_determination.evidence_reference}`,{size:9});for(const segment of grant.case_determination.pay_segments)line(`${governmentPdfDate(segment.start_date)} to ${governmentPdfDate(segment.end_date)}: ${segment.salary_percent}% salary`,{size:9});if(grant.case_determination.facts.payable_amount!==undefined)line(`Reviewed valuation: ${grant.case_determination.facts.payable_amount} AUD | ${grant.case_determination.facts.salary_valuation_reference}`,{size:9});if(grant.case_determination.facts.allowance_amount!==undefined)line(`Approved official allowance: ${grant.case_determination.facts.allowance_amount} AUD | ${grant.case_determination.facts.allowance_reference}`,{size:9});if(grant.case_determination.benefit)line(`Committed benefit: ${grant.case_determination.benefit.requested} ${grant.case_determination.benefit.unit} | Action: ${label(grant.case_determination.benefit.action)} | Prior history: ${grant.case_determination.benefit.prior}`,{size:9});if(grant.effect?.action)line(`Amendment: ${label(grant.effect.action)} | Original application: ${grant.case_determination.facts.original_request_id}`,{size:9});for(const task of grant.case_determination.tasks)line(`Follow-up: ${task.description} | Due: ${task.due_date?governmentPdfDate(task.due_date):'As soon as practicable / reviewed reference'}`,{size:9});}
@@ -78,6 +79,6 @@ export async function generateGovernmentLeavePdf(grant) {
   for(const segment of grant.evaluation.segments)line(`${governmentPdfDate(segment.date)} | ${segment.charge} policy days | ${segment.scheduled_hours} scheduled hours${segment.holiday_exempt?' | Public holiday exempt':''}`,{size:8});
   heading('Salary Unit');line('Acknowledgement is recorded separately after the final grant. This leave record does not initiate a payment.',{size:9});
   pdf.setTitle(`Government leave - ${printable(grant.employee.name)}`);
-  pdf.setSubject('Chief Secretary final grant; immutable personnel-file snapshot');
+  pdf.setSubject('Final leave grant; immutable personnel-file snapshot');
   return pdf.save();
 }

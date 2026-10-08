@@ -1,6 +1,27 @@
 import {initGovernmentLeaveCaseSchema} from './governmentLeaveCaseSchema.js';
 export async function initGovernmentLeaveWorkflowSchema(client) {
   await client.query(`
+    CREATE TABLE IF NOT EXISTS hr_gov_commissioning_reviews (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(), plan JSONB NOT NULL, snapshot_hash TEXT NOT NULL, snapshot JSONB NOT NULL,
+      prepared_by UUID NOT NULL REFERENCES reviewers(id), recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS hr_gov_commissioning_receipts (
+      review_id UUID PRIMARY KEY REFERENCES hr_gov_commissioning_reviews(id), actor_id UUID NOT NULL REFERENCES reviewers(id),
+      reason TEXT NOT NULL, result JSONB NOT NULL, recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    DROP TRIGGER IF EXISTS hr_gov_commissioning_reviews_immutable ON hr_gov_commissioning_reviews;
+    CREATE TRIGGER hr_gov_commissioning_reviews_immutable BEFORE UPDATE OR DELETE ON hr_gov_commissioning_reviews FOR EACH ROW EXECUTE FUNCTION hr_gov_immutable();
+    DROP TRIGGER IF EXISTS hr_gov_commissioning_receipts_immutable ON hr_gov_commissioning_receipts;
+    CREATE TRIGGER hr_gov_commissioning_receipts_immutable BEFORE UPDATE OR DELETE ON hr_gov_commissioning_receipts FOR EACH ROW EXECUTE FUNCTION hr_gov_immutable();
+    CREATE TABLE IF NOT EXISTS hr_gov_approval_routes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(), department_id UUID REFERENCES hr_departments(id),
+      stages JSONB NOT NULL CHECK(jsonb_typeof(stages)='array' AND jsonb_array_length(stages) BETWEEN 1 AND 5),
+      source_reference TEXT NOT NULL, recorded_by UUID NOT NULL REFERENCES reviewers(id), reason TEXT NOT NULL,
+      supersedes_id UUID REFERENCES hr_gov_approval_routes(id), recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_gov_approval_route_scope ON hr_gov_approval_routes(department_id,recorded_at DESC,id DESC);
+    DROP TRIGGER IF EXISTS hr_gov_approval_routes_immutable ON hr_gov_approval_routes;
+    CREATE TRIGGER hr_gov_approval_routes_immutable BEFORE UPDATE OR DELETE ON hr_gov_approval_routes FOR EACH ROW EXECUTE FUNCTION hr_gov_immutable();
     CREATE TABLE IF NOT EXISTS hr_gov_workflow_configs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), employee_id UUID NOT NULL REFERENCES hr_employees(id),
       enabled_codes TEXT[] NOT NULL CHECK(enabled_codes <@ ARRAY['recreation','medical','special']::text[]),
@@ -46,6 +67,13 @@ export async function initGovernmentLeaveWorkflowSchema(client) {
       approver_employee_id UUID NOT NULL REFERENCES hr_employees(id), reviewer_id UUID NOT NULL REFERENCES reviewers(id), approver_name TEXT NOT NULL,
       source_reference TEXT NOT NULL, recorded_by UUID REFERENCES reviewers(id), reason TEXT NOT NULL, recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE hr_gov_request_stages ADD COLUMN IF NOT EXISTS label TEXT;
+    CREATE TABLE IF NOT EXISTS hr_gov_evidence_reviews (
+      request_id UUID PRIMARY KEY REFERENCES hr_gov_requests(id), actor_id UUID NOT NULL REFERENCES reviewers(id),
+      evidence_verification JSONB NOT NULL, reason TEXT NOT NULL, recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    DROP TRIGGER IF EXISTS hr_gov_evidence_reviews_immutable ON hr_gov_evidence_reviews;
+    CREATE TRIGGER hr_gov_evidence_reviews_immutable BEFORE UPDATE OR DELETE ON hr_gov_evidence_reviews FOR EACH ROW EXECUTE FUNCTION hr_gov_immutable();
     CREATE INDEX IF NOT EXISTS idx_hr_gov_bindings_stage ON hr_gov_stage_bindings(stage_id,recorded_at DESC,id);
     CREATE INDEX IF NOT EXISTS idx_hr_gov_bindings_account ON hr_gov_stage_bindings(reviewer_id,stage_id);
     CREATE TABLE IF NOT EXISTS hr_gov_decisions (

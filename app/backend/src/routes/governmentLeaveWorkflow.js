@@ -12,6 +12,8 @@ import {COMMON_CODES,dayNumber} from '../lib/governmentLeaveRules.js';
 import {isCentralHr,employeeReadSql,employeeScopeSql} from '../services/hrAccess.js';
 import {linkedEmployee} from '../services/employeeDirectory.js';
 import * as workflow from '../services/governmentLeaveWorkflow.js';
+import {approvalRouteSettings,publishApprovalRoute,APPROVAL_OFFICES} from '../services/governmentLeaveApprovalRoutes.js';
+import {previewCommissioning,prepareCommissioning,applyCommissioning} from '../services/governmentLeaveCommissioning.js';
 import * as jobs from '../services/governmentLeaveJobs.js';
 import {governmentEvidenceUpload} from '../services/governmentLeaveUpload.js';
 const router=express.Router();
@@ -30,6 +32,22 @@ const applicationFields=[body('code').isIn(COMMON_CODES),date('start_date'),date
 router.get('/me',async(req,res)=>{
   const employee=await linkedEmployee(pool,req.user.id),config=await workflow.configurationFor(pool,employee.id);
   res.json({employee_id:employee.id,enabled_codes:config?.enabled_codes||[],medical_rule:config?.medical_rule||null,regime:employee.leave_policy_regime});
+});
+const commissioningFields=[reason,reference,date('cutover_date'),body('employees').isArray({min:1,max:50}),body('employees.*.employee_id').isUUID(),body('employees.*.medical_history').isArray({max:50}),body('employees.*.medical_history.*.start_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.end_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.uncertified').isBoolean(),body('history_confirmed').equals('true'),...['payroll_reference','transition_reference','history_reference'].map(name=>body(name).isString().trim().isLength({min:5,max:500}))];
+router.get('/commissioning',central,async(req,res)=>{
+ const {rows}=await pool.query('SELECT r.*,c.recorded_at AS applied_at FROM hr_gov_commissioning_reviews r LEFT JOIN hr_gov_commissioning_receipts c ON c.review_id=r.id ORDER BY r.recorded_at DESC,r.id DESC LIMIT 20');res.json({reviews:rows});
+});
+router.post('/commissioning/preview',central,commissioningFields,async(req,res)=>{if(!handleValidation(req,res))return;res.json(await previewCommissioning(pool,args(req)));});
+router.post('/commissioning',central,[...commissioningFields,body('snapshot_hash').isHexadecimal().isLength({min:64,max:64})],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await prepareCommissioning(pool,args(req)));});
+router.post('/commissioning/:id/apply',central,[id,reason,body('snapshot_hash').isHexadecimal().isLength({min:64,max:64})],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await applyCommissioning(pool,args(req)));});
+router.get('/approval-route',central,[query('department_id').optional().isUUID()],async(req,res)=>{
+ if(!handleValidation(req,res))return;res.json(await approvalRouteSettings(pool,req.query.department_id));
+});
+router.post('/approval-route',central,[reason,reference,body('department_id').optional({nullable:true}).isUUID(),body('expected_latest_id').optional({nullable:true}).isUUID(),body('stages').isArray({min:1,max:5}),body('stages.*.level').isIn(APPROVAL_OFFICES),body('stages.*.label').isString().trim().isLength({min:3,max:100})],async(req,res)=>{
+ if(!handleValidation(req,res))return;res.status(201).json(await publishApprovalRoute(pool,args(req)));
+});
+router.post('/requests/:id/evidence-review',central,[id,reason,reference,body('evidence_reviewed').isBoolean(),body('certificate_reviewed').optional().isBoolean(),body('justification_accepted').optional().isBoolean(),optionalDate('covers_start'),optionalDate('covers_end')],async(req,res)=>{
+ if(!handleValidation(req,res))return;res.json(await workflow.verifyRequestEvidence(pool,args(req)));
 });
 router.get('/administration',central,[query('employee_id').optional().isUUID()],async(req,res)=>{
   if(!handleValidation(req,res))return;const employeeId=req.query.employee_id||null;
@@ -82,7 +100,7 @@ router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query
   if(mode==='all'&&!isCentralHr(req.user))throw new ServiceError(403,'Central HR administration is required.');
   const scope=mode==='all'?'($1::uuid IS NOT NULL)':mode==='mine'?'e.reviewer_id=$1':`(${employeeScopeSql(req.user,'hr_report_read','$1')} OR EXISTS(SELECT 1 FROM hr_gov_request_stages s JOIN LATERAL(SELECT reviewer_id FROM hr_gov_stage_bindings b WHERE b.stage_id=s.id ORDER BY recorded_at DESC,id DESC LIMIT 1)b ON TRUE WHERE s.request_id=r.id AND b.reviewer_id=$1 AND (e.status='active' OR r.application_snapshot->>'separation_case'='true') AND e.department_id=r.department_id AND e.division_id=r.division_id))`;
   const where=`${scope} AND ($2='all' OR r.status=$2) AND ($4::uuid IS NULL OR r.employee_id=$4)`;
-  const {rows}=await pool.query(`SELECT r.id,r.employee_id,r.application_snapshot->'employee'->>'name' AS employee_name,r.code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge,r.status,r.submitted_at,r.stage_index,s.level AS current_level,b.approver_name AS current_approver,
+  const {rows}=await pool.query(`SELECT r.id,r.employee_id,r.application_snapshot->'employee'->>'name' AS employee_name,r.code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge,r.status,r.submitted_at,r.stage_index,s.level AS current_level,s.label AS current_label,b.approver_name AS current_approver,
     (SELECT count(*)::int FROM hr_gov_request_stages missing WHERE missing.request_id=r.id AND NOT EXISTS(SELECT 1 FROM hr_gov_stage_bindings mb WHERE mb.stage_id=missing.id)) AS unassigned_stages,
     EXISTS(SELECT 1 FROM hr_gov_salary_acknowledgements ack WHERE ack.request_id=r.id) AS salary_acknowledged
     FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id LEFT JOIN hr_gov_request_stages s ON s.request_id=r.id AND s.ordinal=r.stage_index

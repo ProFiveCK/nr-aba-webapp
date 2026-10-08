@@ -3,6 +3,7 @@ import { formatDate, todayIsoDate } from '../../lib/date';
 import { AustralianDateInput } from '../../components/AustralianDateInput';
 import { apiClient } from '../../lib/api';
 import { Button, LoadingState, Pager } from '../../components/Ui';
+import { GovernmentApprovalRoutes } from './GovernmentApprovalRoutes';
 import { StatutoryOffices } from './StatutoryOffices';
 import { OrgUnits } from './OrgUnits';
 import { ActionDialog, DirectoryPicker, Field, inputClass } from './ManagementFields';
@@ -12,9 +13,10 @@ import { appointmentTiming, organisationQuery } from './organisationBrowse';
 import type { ApprovalAssignment, WorkPattern } from './managementTypes';
 import type { OrgDepartment } from './types';
 
-type Section = 'departments' | 'approvers' | 'statutory';
+type Section = 'departments' | 'routes' | 'approvers' | 'statutory';
 const sections: { id: Section; label: string }[] = [
     { id: 'departments', label: 'Departments & divisions' },
+    { id: 'routes', label: 'Approval route' },
     { id: 'approvers', label: 'Leave approvers' },
     { id: 'statutory', label: 'Statutory & HR offices' },
 ];
@@ -26,6 +28,7 @@ export function OrganisationManagement({ departments, onChanged }: { departments
         <nav aria-label="Organisation sections" className="flex flex-wrap gap-2">{sections.map((item) => <button key={item.id} type="button" aria-current={section === item.id ? 'page' : undefined} onClick={() => setSection(item.id)} className={`rounded-lg px-3 py-2 text-sm font-medium ${section === item.id ? 'bg-brand text-white' : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}>{item.label}</button>)}</nav>
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         {section === 'departments' && <OrgUnits onChanged={() => { void onChanged().catch((err: Error) => setError(err.message)); }} onManageOffices={(id) => { setDepartment(id); setSection('approvers'); }} />}
+        {section === 'routes' && <GovernmentApprovalRoutes departments={departments} onNominate={()=>setSection('approvers')} />}
         {section === 'approvers' && <LeaveApprovers departments={departments} initialDepartment={department} />}
         {section === 'statutory' && <StatutoryOffices departments={departments} />}
     </div>;
@@ -47,7 +50,7 @@ function LeaveApprovers({ departments, initialDepartment }: { departments: OrgDe
     function reload() { setLoading(true); setVersion((current) => current + 1); }
     const today = todayIsoDate();
     return <section className="app-panel space-y-4 p-4 sm:p-5" aria-label="Leave approvers">
-        <div className="flex flex-wrap items-center justify-between gap-3"><p className="max-w-2xl text-sm text-gray-600">Divisional approver → Head of Department → Chief Secretary. Review appointments by department, office or date.</p><Button onClick={() => setAdding(true)}>Assign officeholder</Button></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><p className="max-w-2xl text-sm text-gray-600">Nominate the officeholders used by your configured route. Review appointments by department, office or date.</p><Button onClick={() => setAdding(true)}>Assign officeholder</Button></div>
         <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); filter(setAppliedSearch, search.trim()); }}><div className="min-w-0 flex-1 basis-56"><Field label="Search appointments"><input className={inputClass} type="search" maxLength={100} placeholder="Officeholder or department" value={search} onChange={(event) => setSearch(event.target.value)} /></Field></div><Button type="submit" variant="secondary">Search</Button></form>
         <div className="grid gap-3 sm:grid-cols-3"><Field label="Department"><select className={inputClass} value={department} onChange={(event) => filter(setDepartment, event.target.value)}><option value="">All departments and government-wide</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="Approval office"><select className={inputClass} value={level} onChange={(event) => filter(setLevel, event.target.value)}><option value="">All offices</option>{Object.entries(APPROVER_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></Field><Field label="Appointment dates"><select className={inputClass} value={timing} onChange={(event) => filter(setTiming, event.target.value)}><option value="">All dates</option><option value="current">Effective now</option><option value="upcoming">Upcoming</option><option value="ended">Ended</option></select></Field></div>
         <p className="text-xs text-gray-500">An appointment requires active staff, a verified login and a separate approval grant. Assigning an office does not grant account permissions.</p>

@@ -75,7 +75,8 @@ describe('government rollout readiness and release evidence',{skip:skipWithoutDa
   await rollout.approveCoverage(pool,{...args({snapshot_hash:row.snapshot_hash,reason},certifier),id:row.id});assert.equal((await rollout.previewWave(pool,user(hr),[employee.id])).ready,1);
   await pool.query('UPDATE hr_work_patterns SET hours_per_day=8 WHERE id=(SELECT work_pattern_id FROM hr_employee_service_periods WHERE employee_id=$1)',[employee.id]);assert.equal((await rollout.previewWave(pool,user(hr),[employee.id])).ready,0);
  });
- test('roster coverage requires every duty and off-duty date and stale replacements lose readiness',async()=>{
+ test('roster coverage requires every duty and off-duty date and stale replacements lose readiness',async(t)=>{
+  t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-07T00:00:00Z')});
   await readyEmployee();await l.addFoundationRecord(pool,{...args({effective_from:'2026-10-01',continuity_start:'2026-01-01',anniversary_method:'calendar',leap_day_method:'feb28',schedule_mode:'roster',source_reference:reason,reason}),employeeId:employee.id,kind:'basis'});
   const d={coverage_id:randomUUID(),label:'Synthetic roster duty coverage',employee_ids:[employee.id],effective_from:'2026-10-07',effective_to:'2026-10-08',source_reference:reason,reason};
   await assert.rejects(rollout.prepareCoverage(pool,args(d)),/off-duty/);

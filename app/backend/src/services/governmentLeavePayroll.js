@@ -102,7 +102,7 @@ export async function migrationState(client,employeeId,cutover) {
   const state={context,identity:people[employeeId],historical_balances:balances,retained_legacy_leave:retained,government_requests:requests,benefit_bases:benefits,benefit_commitments:commitments,effects,movements,configs,initial_setup:initialSetup,credit_transfers:creditTransfers};
   return {state,hash:fingerprint(state)};
 }
-function migrationPlan(state,data) {
+export function migrationPlan(state,data) {
   const targets=data.targets,dispositions=data.dispositions||[];
   if(!Array.isArray(targets)||targets.length!==3||new Set(targets.map(t=>t.code)).size!==3||targets.some(t=>!COMMON_CODES.includes(t.code)))fail('Specify a reviewed Recreation, Medical and Special target.',400);
   if(!Array.isArray(dispositions)||dispositions.length!==state.retained_legacy_leave.length||new Set(dispositions.map(d=>d.legacy_request_id)).size!==dispositions.length)fail('Review every pending and future legacy application exactly once.',400);
@@ -147,21 +147,21 @@ export async function previewMigration(pool,user,employeeId,cutover) {
   dayNumber(cutover);
   return withTransaction(pool,async client=>{await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await assertCentral(client,user);return (await migrationState(client,employeeId,cutover)).state;});
 }
-export async function prepareMigration(pool,{user,actor,employeeId,data}) {
+export async function prepareMigration(pool,{user,actor,employeeId,data,client:existingClient=null}) {
   dayNumber(data.cutover_date);if(data.cutover_date>today())fail('Use a cutover reconciliation date on or before today.',400);
   const normalized={cutover_date:data.cutover_date,targets:data.targets,dispositions:data.dispositions||[],source_reference:text(data.source_reference,'certified HR opening source'),payroll_reference:text(data.payroll_reference,'Salary Unit opening reconciliation'),transition_reference:text(data.transition_reference,'signed historical leave-type and pool transition'),history_reference:text(data.history_reference,'verified service, Medical history and prior payout reconciliation'),reason:reason(data.reason)};
-  return withTransaction(pool,async client=>{
+  const work=async client=>{
     await assertCentral(client,user);await ledger.lockEmployee(client,employeeId);
     const old=(await client.query('SELECT * FROM hr_gov_migration_reviews WHERE id=$1',[data.review_id])).rows[0];
     if(old){if(old.employee_id!==employeeId||old.prepared_by!==actor.id||old.payload_hash!==fingerprint(normalized))fail('Review key was already used for a different migration.');return old;}
     const {state,hash}=await migrationState(client,employeeId,data.cutover_date),plan=migrationPlan(state,normalized);
     const row=(await client.query('INSERT INTO hr_gov_migration_reviews(id,employee_id,cutover_date,prepared_by,source_reference,payroll_reference,transition_reference,history_reference,reason,payload_hash,context_hash,plan,snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *',[data.review_id,employeeId,data.cutover_date,actor.id,normalized.source_reference,normalized.payroll_reference,normalized.transition_reference,normalized.history_reference,normalized.reason,fingerprint(normalized),hash,plan,state])).rows[0];
     await audit(client,actor,'hr.gov.migration.prepared',row.id,{employee_id:employeeId,context_hash:hash,targets:plan.targets});return row;
-  });
+  };return existingClient?work(existingClient):withTransaction(pool,work);
 }
-export async function certifyMigration(pool,{user,actor,id,data}) {
+export async function certifyMigration(pool,{user,actor,id,data,client:existingClient=null}) {
   const why=reason(data.reason);
-  return withTransaction(pool,async client=>{
+  const work=async client=>{
     await assertCentral(client,user);
     const review=(await client.query("SELECT *,to_char(cutover_date,'YYYY-MM-DD') AS cutover_date FROM hr_gov_migration_reviews WHERE id=$1",[id])).rows[0];if(!review)fail('Migration review not found.',404);
     await ledger.lockEmployee(client,review.employee_id);
@@ -195,7 +195,7 @@ export async function certifyMigration(pool,{user,actor,id,data}) {
     }
     const row=(await client.query('INSERT INTO hr_gov_migration_certifications(review_id,actor_id,reason,postings) VALUES($1,$2,$3,$4) RETURNING *',[id,actor.id,why,JSON.stringify(postings)])).rows[0];
     await audit(client,actor,'hr.gov.migration.certified',id,{employee_id:review.employee_id,postings,external_pending_count:review.plan.external_pending_count});return row;
-  });
+  };return existingClient?work(existingClient):withTransaction(pool,work);
 }
 
 export async function prepareHandover(pool,{user,actor,data}) {

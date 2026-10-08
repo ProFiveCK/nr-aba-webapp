@@ -4,7 +4,8 @@ import {ServiceError} from '../lib/serviceError.js';
 import {fingerprint,serviceFacts,units,dayNumber} from '../lib/governmentLeaveRules.js';
 import {loadContext} from './governmentLeave.js';
 import {assertCutoverResolved} from './governmentLeaveCutover.js';
-import {assertCentral,accountState,configurationFor,effectiveOffices,bindingIssue,routeLevels,today} from './governmentLeaveWorkflow.js';
+import {assertCentral,accountState,configurationFor,effectiveOffices,bindingIssue,today} from './governmentLeaveWorkflow.js';
+import {approvalRouteFor} from './governmentLeaveApprovalRoutes.js';
 import {currentPayrollSnapshot} from './governmentLeavePayroll.js';
 import {assertDraftUsable} from './governmentLeaveDrafts.js';
 import {lockEmployee} from './governmentLeave.js';
@@ -88,8 +89,9 @@ export async function employeeReadiness(client,employeeId){
   }
  }
  try{await assertCutoverResolved(client,employeeId);}catch(e){if(!e.status)throw e;issues.push(e.message);}
+ const routes=[];for(const code of commonCodes)routes.push(await approvalRouteFor(client,employee.department_id,code));
  const offices=[];
- for(const level of [...new Set([...commonCodes.flatMap(routeLevels),...(period?.is_teacher?caseLevels('teacher_recreation'):[])])]){
+ for(const level of [...new Set([...routes.flatMap(r=>r.stages.map(s=>s.level)),...(period?.is_teacher?caseLevels('teacher_recreation'):[])])]){
   const matches=await effectiveOffices(client,employee,level);
   if(matches.length!==1){issues.push(`Assign one current ${level.replaceAll('_',' ')} officeholder.`);continue;}
   const office=matches[0],stage={level,binding:{...office,assignment_id:office.id}};
@@ -97,7 +99,7 @@ export async function employeeReadiness(client,employeeId){
   if(issue)issues.push(`${level.replaceAll('_',' ')}: ${issue}`);
   offices.push({level,id:office.id,approver_employee_id:office.approver_employee_id,reviewer_id:office.reviewer_id,issue});
  }
- return {employee_id:employeeId,display_name:employee.display_name,department_id:employee.department_id,payroll_id:references[0]?.external_id||null,ready:issues.length===0,issues:[...new Set(issues)],facts_hash:fingerprint({date,employee,context,config,account,references,offices,coverage})};
+ return {employee_id:employeeId,display_name:employee.display_name,department_id:employee.department_id,payroll_id:references[0]?.external_id||null,ready:issues.length===0,issues:[...new Set(issues)],facts_hash:fingerprint({date,employee,context,config,account,references,routes,offices,coverage})};
 }
 async function snapshot(client,employeeIds){const employees=[];for(const id of ids(employeeIds))employees.push(await employeeReadiness(client,id));return {as_of:today(),employees,ready:employees.filter(e=>e.ready).length,total:employees.length};}
 export async function previewWave(pool,user,employeeIds){return withTransaction(pool,async client=>{await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await assertCentral(client,user);return snapshot(client,employeeIds);});}

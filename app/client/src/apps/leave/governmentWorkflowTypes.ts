@@ -1,6 +1,7 @@
-export type GovernmentRequestSummary={id:string;employee_id:string;employee_name:string;code:string;start_date:string;end_date:string;charge:string;status:string;submitted_at:string;stage_index:number;current_level:string|null;current_approver:string|null;unassigned_stages:number;salary_acknowledged:boolean};
-export type GovernmentStage={id:string;ordinal:number;level:string;binding:{id:string;approver_name:string;reviewer_id:string}|null;decision:{decision:string;decided_at:string;note?:string}|null;issue:string|null;can_decide:boolean};
+export type GovernmentRequestSummary={id:string;employee_id:string;employee_name:string;code:string;start_date:string;end_date:string;charge:string;status:string;submitted_at:string;stage_index:number;current_level:string|null;current_label?:string|null;current_approver:string|null;unassigned_stages:number;salary_acknowledged:boolean};
+export type GovernmentStage={id:string;ordinal:number;level:string;label?:string|null;binding:{id:string;approver_name:string;reviewer_id:string}|null;decision:{decision:string;decided_at:string;note?:string}|null;issue:string|null;can_decide:boolean};
 export type GovernmentRequest=GovernmentRequestSummary&{
+ approval_route?:{id:string|null;configured:boolean;stages:{level:string;label:string}[]}|null;evidence_review_required?:boolean;evidence_review?:{actor_id:string;recorded_at:string}|null;can_verify_evidence?:boolean;
  case?:boolean;event_reference?:string;related_request_id?:string;assisted_entry?:boolean;can_prepare?:boolean;can_continue?:boolean;
  amendment?:{request_id:string;action:string;effective_end:string}|null;
  determination?:{id:string;prepared_by:string;version:number;source_reference:string;evidence_reference?:string;reason?:string;facts?:Record<string,unknown>;pay_segments:{start_date:string;end_date:string;salary_percent:string}[];discretion:string[];benefit:{requested:string;unit:string;action:string;service_years:number;prior:string}|null}|null;

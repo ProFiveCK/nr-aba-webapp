@@ -217,7 +217,7 @@ export function MyLeave() {
                 </div>
             )}
 
-            {governmentPending && <p role="status" className="app-panel border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Your employee login is ready. Government leave requests will open after the division, Head of Department and Chief Secretary approval workflow and certified opening balances are enabled. Any recorded historical balances shown here are awaiting that transition.</p>}
+            {governmentPending && <p role="status" className="app-panel border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Your employee record is linked. The administrator is preparing your Government leave migration. Historical balances remain visible; Government requests open when your reviewed credits and nominated approval route are applied.</p>}
             {/* Balances */}
             <div className="app-panel p-5 sm:p-6">
                 <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">

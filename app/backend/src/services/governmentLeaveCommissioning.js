@@ -8,6 +8,7 @@ import {approvalRouteFor} from './governmentLeaveApprovalRoutes.js';
 import {isCentralHr} from './hrAccess.js';
 import {lockEmployee} from './governmentLeave.js';
 import {recordAudit} from './auditService.js';
+import {assertInitialAdmin,withInitialAdminMigration} from './governmentLeaveInitialAdmin.js';
 
 const fail=(message,status=409)=>{throw new ServiceError(status,message);};
 const uuid=/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
@@ -18,7 +19,8 @@ function input(data){
  if(data.cutover_date>today())fail('Use a cutover date on or before today.',400);
  if(data.history_confirmed!==true)fail('Confirm the complete reviewed Medical history, including employees with no prior absences.',400);
  for(const key of ['source_reference','payroll_reference','transition_reference','history_reference','reason'])if(typeof data[key]!=='string'||data[key].trim().length<(key==='reason'?10:5)||data[key].length>(key==='reason'?1000:500))fail(`Provide ${key.replaceAll('_',' ')}.`,400);
- return {...Object.fromEntries(['cutover_date','source_reference','payroll_reference','transition_reference','history_reference','reason'].map(k=>[k,data[k].trim()])),history_confirmed:true,employees:data.employees.map(e=>({employee_id:e.employee_id.toLowerCase(),medical_history:e.medical_history||[]})).sort((a,b)=>a.employee_id.localeCompare(b.employee_id))};
+ if(data.initial_admin_setup!=null&&typeof data.initial_admin_setup!=='boolean')fail('Choose a valid initial admin migration option.',400);
+ return {...Object.fromEntries(['cutover_date','source_reference','payroll_reference','transition_reference','history_reference','reason'].map(k=>[k,data[k].trim()])),initial_admin_setup:data.initial_admin_setup===true,history_confirmed:true,employees:data.employees.map(e=>({employee_id:e.employee_id.toLowerCase(),medical_history:e.medical_history||[]})).sort((a,b)=>a.employee_id.localeCompare(b.employee_id))};
 }
 async function snapshot(client,plan){
  const employees=[];
@@ -36,6 +38,7 @@ async function snapshot(client,plan){
    }
    offices.push({level:stage.level,office,issue});if(issue)issues.push(issue);
   }
+  if(plan.initial_admin_setup&&!state.identity?.payroll_id)warnings.push('Payroll ID is unverified. Existing staff identity and credit can migrate; verify the Payroll ID before Payroll exchange.');
   if(!route.configured)issues.push('Configure the approval levels for this cohort before consolidation.');
   if(employee.status!=='active')issues.push('Inactive personnel keep their retained records. Consolidate active employees first.');
   if(employee.leave_policy_regime!=='legacy'||state.context.entitlements.length||state.government_requests.length)issues.push('Initial consolidation requires an existing employee with no Government postings or applications. Use reconciliation for later changes.');
@@ -54,7 +57,7 @@ async function snapshot(client,plan){
    return {code,amount:decimal(amount),retained_balance_ids:amount>0n?sources.map(b=>b.id):[],sources:sources.map(b=>({id:b.id,name:b.leave_type_name,year:b.year,balance:b.balance,pending:b.pending}))};
   });
   try{
-   const context={...state.context,employee:{...state.context.employee,leave_policy_regime:'government'}},migration=migrationPlan({...state,context},{cutover_date:plan.cutover_date,targets,dispositions:[]});
+   const context={...state.context,employee:{...state.context.employee,leave_policy_regime:'government'}},migration=migrationPlan({...state,context},{cutover_date:plan.cutover_date,targets,dispositions:[]},{allowMissingPayroll:plan.initial_admin_setup===true});
    const facts=serviceFacts(context,plan.cutover_date);
    if(facts.basis?.schedule_mode==='roster')issues.push('Use individual preparation for the reviewed roster/shift Medical rule.');
    context.entitlements=migration.targets.map(t=>({id:`preview-${t.code}`,code:t.code,balance:t.target,held:'0',available:t.target,as_of:plan.cutover_date,period_start:facts.period_start,period_end:facts.period_end,policy_version_id:t.policy_version_id,retained_credit:t.retained_transfer?.amount||'0'}));
@@ -66,11 +69,11 @@ async function snapshot(client,plan){
 }
 function view(result){return {snapshot_hash:result.hash,total:result.employees.length,ready:result.employees.filter(e=>!e.issues.length).length,employees:result.employees.map(e=>({employee_id:e.employee_id,display_name:e.display_name,payroll_id:e.payroll_id,targets:e.targets,warnings:e.warnings,issues:e.issues,route:e.route.stages}))};}
 export async function previewCommissioning(pool,{user,data}){
- const plan=input(data);return withTransaction(pool,async client=>{await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await assertCentral(client,user);return view(await snapshot(client,plan));});
+ const plan=input(data);return withTransaction(pool,async client=>{await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await assertCentral(client,user);if(plan.initial_admin_setup)await assertInitialAdmin(client,user.id);return view(await snapshot(client,plan));});
 }
 export async function prepareCommissioning(pool,{user,actor,data}){
  const plan=input(data);return withTransaction(pool,async client=>{
-  await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await assertCentral(client,user);const current=await snapshot(client,plan);
+  await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await assertCentral(client,user);if(plan.initial_admin_setup)await assertInitialAdmin(client,user.id);const current=await snapshot(client,plan);
   if(current.hash!==data.snapshot_hash)fail('The roster or balances changed. Preview the current cohort again.');
   if(current.employees.some(e=>e.issues.length))fail('Resolve every selected employee’s preparation issues before freezing the consolidation.');
   const {rows:[row]}=await client.query('INSERT INTO hr_gov_commissioning_reviews(plan,snapshot_hash,snapshot,prepared_by) VALUES($1,$2,$3,$4) RETURNING *',[plan,current.hash,current,user.id]);
@@ -85,11 +88,15 @@ export async function applyCommissioning(pool,{user,actor,id,data}){
   const {rows:[review]}=await client.query('SELECT * FROM hr_gov_commissioning_reviews WHERE id=$1 FOR UPDATE',[id]);if(!review)fail('Consolidation review not found.',404);
   if(data.snapshot_hash!==review.snapshot_hash)fail('Confirm the exact consolidation review.');
   const old=(await client.query('SELECT * FROM hr_gov_commissioning_receipts WHERE review_id=$1',[id])).rows[0];if(old)return old;
-  if(review.prepared_by===user.id)fail('A different HR officer must certify the cohort consolidation.',403);
+  const initialAdmin=review.plan.initial_admin_setup===true;
+  if(initialAdmin&&review.prepared_by!==user.id)fail('The preparing administrator must apply this initial admin migration.',403);
+  if(review.prepared_by===user.id&&!initialAdmin)fail('A different HR officer must certify the cohort consolidation.',403);
+  if(initialAdmin)await assertInitialAdmin(client,user.id);
   const preparer=await accountState(client,review.prepared_by);if(!preparer)fail('The original preparer account is inactive.',403);await assertCentral(client,preparer.user);
-  const why=data.reason;if(typeof why!=='string'||why.trim().length<10||why.length>1000)fail('Record the independent consolidation reason.',400);
+  const why=data.reason;if(typeof why!=='string'||why.trim().length<10||why.length>1000)fail('Record the consolidation reason.',400);
   for(const selected of review.plan.employees)await lockEmployee(client,selected.employee_id);
   const current=await snapshot(client,review.plan);if(current.hash!==review.snapshot_hash||current.employees.some(e=>e.issues.length))fail('The roster, rules, approvals or balances changed. Prepare a fresh consolidation review.');
+  const apply=async()=>{
   const result=[];
   for(const selected of review.plan.employees){
    const employeeId=selected.employee_id,source=current.employees.find(e=>e.employee_id===employeeId);
@@ -101,6 +108,8 @@ export async function applyCommissioning(pool,{user,actor,id,data}){
    result.push({employee_id:employeeId,migration_id:migration.id,configuration_id:config.id,targets:source.targets.map(t=>({code:t.code,amount:t.amount}))});
   }
   const {rows:[receipt]}=await client.query('INSERT INTO hr_gov_commissioning_receipts(review_id,actor_id,reason,result) VALUES($1,$2,$3,$4) RETURNING *',[id,user.id,why.trim(),JSON.stringify(result)]);
-  await recordAudit({client,actor,action:'hr.gov.commissioning.applied',entityType:'hr_gov_commissioning_reviews',entityId:id,after:{result,snapshot_hash:review.snapshot_hash}});return receipt;
+  await recordAudit({client,actor,action:'hr.gov.commissioning.applied',entityType:'hr_gov_commissioning_reviews',entityId:id,after:{result,snapshot_hash:review.snapshot_hash,approval_mode:initialAdmin?'initial_admin_setup':'independent'}});return receipt;
+  };
+  return initialAdmin?withInitialAdminMigration(client,review,actor,apply):apply();
  });
 }

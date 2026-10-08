@@ -56,6 +56,22 @@ describe('leave accrual', { skip: skipWithoutDatabase }, () => {
     }
   }
 
+  test('live migration and historical accrual serialize, then recheck the employee regime',async()=>{
+    const type=await upsertLeaveType(pool,{name:'T:Live migration annual',accruable:true,perFortnight:3}),employee=await createEmployee(pool,{name:'Synthetic live migration employee'});
+    await ensureBalance(pool,employee.id,type.id,YEAR);
+    const migration=await pool.connect(),accrual=await pool.connect();let pending;
+    try{
+      await migration.query('BEGIN');await migration.query("UPDATE hr_employees SET leave_policy_regime='government' WHERE id=$1",[employee.id]);
+      await accrual.query('BEGIN');const pid=(await accrual.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      pending=runLeaveAccrual(accrual,{periodEnd:'2026-10-09',actorId:null});
+      let waiting=false;
+      for(let i=0;i<100;i++){waiting=(await pool.query("SELECT wait_event_type='Lock' AS waiting FROM pg_stat_activity WHERE pid=$1",[pid])).rows[0]?.waiting;if(waiting)break;await new Promise(resolve=>setTimeout(resolve,20));}
+      assert.equal(waiting,true,'Historical accrual must wait for the live employee migration.');
+      await migration.query('COMMIT');const result=await pending;assert.equal(result.credited,0);await accrual.query('COMMIT');
+      assert.equal(Number((await readBalance(pool,employee.id,type.id,YEAR)).balance),0);
+    }finally{await migration.query('ROLLBACK');if(pending)await pending;await accrual.query('ROLLBACK');migration.release();accrual.release();}
+  });
+
   describe('crediting a fortnight', () => {
     test('credits each active entitled employee once per run', async () => {
       const type = await upsertLeaveType(pool, { name: 'T:Annual', accruable: true, perFortnight: 3 });

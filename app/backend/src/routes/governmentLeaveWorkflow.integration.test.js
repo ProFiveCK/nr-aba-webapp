@@ -89,6 +89,63 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   await pool.query("INSERT INTO hr_gov_initial_setups(status,plan,source_hash,summary,prepared_by,updated_by,reason) VALUES('adopted',$1,'synthetic','{}',$2,$2,$3)",[{policy_id:policy.id,start_date:'2026-10-01',mappings},hr.id,reason]);await customRoute();
   return {employees:[{employee_id:employee.id,medical_history:[]}],cutover_date:'2026-10-01',history_confirmed:true,source_reference:'Synthetic Treasury source register',payroll_reference:'Synthetic independently checked payroll balance',transition_reference:'Synthetic adopted full-credit transition',history_reference:'Synthetic complete zero-absence Medical review',reason};
  }
+ test('initial admin migrates existing credits without Payroll IDs and approves only the first accrual plan',async()=>{
+  const data={...await commissioningFixture(),initial_admin_setup:true};
+  await assert.rejects(commission.previewCommissioning(pool,{user:user(hr),data}),e=>e.status===403);
+  await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
+  await pool.query('DELETE FROM hr_employee_external_ids WHERE employee_id=$1',[employee.id]);
+  const before=(await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows;
+  const preview=await commission.previewCommissioning(pool,{user:user(hr),data});assert.equal(preview.ready,1,preview.employees[0].issues.join(' '));assert.ok(preview.employees[0].warnings.some(v=>/Payroll/.test(v)));
+  const review=await commission.prepareCommissioning(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}});
+  await assert.rejects(commission.applyCommissioning(pool,{user:user(certifier),actor:certifier,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}}),e=>e.status===403);
+  const args={user:user(hr),actor:hr,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}};
+  const receipt=await commission.applyCommissioning(pool,args);assert.equal(receipt.result.length,1);assert.equal((await commission.applyCommissioning(pool,args)).id,receipt.id);
+  assert.deepEqual((await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows,before);
+  assert.deepEqual((await l.loadContext(pool,employee.id)).entitlements.map(e=>e.balance).sort(),['10.000000','20.000000','5.000000']);
+  const planData={code:'medical',source_reference:'Synthetic initial renewal setup',reason};
+  const initial=await jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:planData});assert.equal(initial.initial_setup_review_id,review.id);
+  await jobs.approveJobPlan(pool,{user:user(hr),actor:hr,id:initial.id,reason});
+  const later=await jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:planData});assert.equal(later.initial_setup_review_id,null);
+  await assert.rejects(jobs.approveJobPlan(pool,{user:user(hr),actor:hr,id:later.id,reason}),/different central/);
+ });
+ test('initial admin mode rechecks authority and rolls back its entire migration on failure',async()=>{
+  const data={...await commissioningFixture(),initial_admin_setup:true};await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
+  const preview=await commission.previewCommissioning(pool,{user:user(hr),data}),review=await commission.prepareCommissioning(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}}),args={user:user(hr),actor:hr,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}};
+  await pool.query("UPDATE reviewers SET role='user' WHERE id=$1",[hr.id]);await assert.rejects(commission.applyCommissioning(pool,args),e=>e.status===403);await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);
+  await pool.query('UPDATE hr_leave_balances SET balance=balance+1 WHERE employee_id=$1',[employee.id]);await assert.rejects(commission.applyCommissioning(pool,args),/changed/);await pool.query('UPDATE hr_leave_balances SET balance=balance-1 WHERE employee_id=$1',[employee.id]);
+  await pool.query("CREATE FUNCTION synthetic_admin_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.commissioning.applied' THEN RAISE EXCEPTION 'synthetic admin failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER synthetic_admin_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION synthetic_admin_failure()");
+  try{await assert.rejects(commission.applyCommissioning(pool,args),/synthetic admin failure/);assert.equal((await l.loadContext(pool,employee.id)).employee.leave_policy_regime,'legacy');assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_credit_transfers')).rows[0].n,0);}finally{await pool.query('DROP TRIGGER synthetic_admin_failure ON audit_log; DROP FUNCTION synthetic_admin_failure()');}
+  await commission.applyCommissioning(pool,args);
+ });
+ test('initial foundations require verified dates and schedule and retain current staff and credits',async()=>{
+  await commissioningFixture();await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
+  const foundations=await import('../services/governmentLeaveInitialFoundations.js');
+  const pattern=(await pool.query('SELECT work_pattern_id FROM hr_employee_service_periods WHERE employee_id=$1',[employee.id])).rows[0].work_pattern_id;
+  await pool.query('TRUNCATE hr_employee_service_periods,hr_gov_service_bases CASCADE');
+  const data={employees:[{employee_id:employee.id,service_start:'2026-01-01'}],effective_from:'2026-10-01',employment_category:'permanent',anniversary_method:'calendar',leap_day_method:'feb28',work_pattern_id:pattern,source_reference:'Synthetic verified appointment record',facts_confirmed:true,reason};
+  const before=(await pool.query('SELECT * FROM hr_employees WHERE id=$1',[employee.id])).rows[0],balances=(await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows;
+  await assert.rejects(foundations.previewInitialFoundations(pool,{user:user(certifier),data}),e=>e.status===403);
+  const missing=await foundations.previewInitialFoundations(pool,{user:user(hr),data:{...data,employees:[{employee_id:employee.id,service_start:''}]}});assert.equal(missing.ready,0);
+  const preview=await foundations.previewInitialFoundations(pool,{user:user(hr),data});assert.equal(preview.ready,1);
+  await assert.rejects(foundations.applyInitialFoundations(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:'stale'}}),/changed/);
+  await pool.query("CREATE FUNCTION synthetic_foundations_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.initial_foundations.applied' THEN RAISE EXCEPTION 'synthetic foundations failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER synthetic_foundations_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION synthetic_foundations_failure()");
+  try{await assert.rejects(foundations.applyInitialFoundations(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}}),/synthetic foundations failure/);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_employee_service_periods WHERE employee_id=$1',[employee.id])).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_service_bases WHERE employee_id=$1',[employee.id])).rows[0].n,0);}finally{await pool.query('DROP TRIGGER synthetic_foundations_failure ON audit_log; DROP FUNCTION synthetic_foundations_failure()');}
+  assert.equal((await foundations.applyInitialFoundations(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}})).prepared,1);
+  assert.deepEqual((await pool.query('SELECT * FROM hr_employees WHERE id=$1',[employee.id])).rows[0],before);assert.deepEqual((await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows,balances);
+  const again=await foundations.previewInitialFoundations(pool,{user:user(hr),data});assert.equal(again.ready,0);assert.match(again.employees[0].issues.join(' '),/already exists/);
+ });
+ test('initial source credit records an actual missing amount, never seeds a default or overwrites history',async()=>{
+  const data=await commissioningFixture();await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
+  const source=(await pool.query("SELECT b.*,t.name FROM hr_leave_balances b JOIN hr_leave_types t ON t.id=b.leave_type_id WHERE employee_id=$1 AND t.name='Synthetic Special source'",[employee.id])).rows[0];await pool.query('DELETE FROM hr_leave_balances WHERE id=$1',[source.id]);
+  const {recordInitialCredit}=await import('../services/governmentLeaveInitialFoundations.js');
+  const input={employee_id:employee.id,leave_type_id:source.leave_type_id,year:2026,amount:'5',source_reference:'Synthetic actual missing source credit',reason},args={user:user(hr),actor:hr,data:input};
+  await assert.rejects(recordInitialCredit(pool,{user:user(certifier),actor:certifier,data:input}),e=>e.status===403);
+  await assert.rejects(recordInitialCredit(pool,{...args,data:{...input,amount:''}}),e=>e.status===400);
+  await pool.query("CREATE FUNCTION synthetic_credit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.initial_credit.recorded' THEN RAISE EXCEPTION 'synthetic credit failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER synthetic_credit_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION synthetic_credit_failure()");
+  try{await assert.rejects(recordInitialCredit(pool,args),/synthetic credit failure/);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_leave_balances WHERE employee_id=$1 AND leave_type_id=$2',[employee.id,source.leave_type_id])).rows[0].n,0);}finally{await pool.query('DROP TRIGGER synthetic_credit_failure ON audit_log; DROP FUNCTION synthetic_credit_failure()');}
+  assert.equal((await recordInitialCredit(pool,args)).balance,'5.00');await assert.rejects(recordInitialCredit(pool,args),/already exists/);
+  const preview=await commission.previewCommissioning(pool,{user:user(hr),data:{...data,initial_admin_setup:true}});assert.equal(preview.ready,1,preview.employees[0].issues.join(' '));assert.equal(preview.employees[0].targets.find(t=>t.code==='special').amount,'5.000000');
+ });
  test('cohort consolidation carries the original register into Government rules atomically without staging an employee pause',async()=>{
   const data=await commissioningFixture(),preview=await commission.previewCommissioning(pool,{user:user(hr),data});assert.equal(preview.ready,1,preview.employees[0].issues.join(' '));assert.deepEqual(preview.employees[0].targets.map(t=>t.amount),['20.000000','10.000000','5.000000']);
   const before=(await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows,review=await commission.prepareCommissioning(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}});
@@ -105,8 +162,10 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   await pool.query("CREATE FUNCTION synthetic_commission_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.commissioning.applied' THEN RAISE EXCEPTION 'synthetic consolidation audit failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER synthetic_commission_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION synthetic_commission_failure()");
   try{await assert.rejects(commission.applyCommissioning(pool,{user:user(certifier),actor:certifier,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}}),/synthetic consolidation audit failure/);assert.equal((await l.loadContext(pool,employee.id)).employee.leave_policy_regime,'legacy');assert.equal((await l.loadContext(pool,employee.id)).entitlements.length,0);assert.equal((await w.configurationFor(pool,employee.id)),null);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_credit_transfers')).rows[0].n,0);}finally{await pool.query('DROP TRIGGER synthetic_commission_failure ON audit_log; DROP FUNCTION synthetic_commission_failure()');}
  });
- test('a 29-person cohort is consolidated once and a failure on the second employee rolls back the entire cohort',async()=>{
+ for(const initialAdmin of [false,true])test(`a 29-person ${initialAdmin?'initial admin':'independent'} cohort is consolidated once and a failure on the second employee rolls back the entire cohort`,async()=>{
   const data=await commissioningFixture(),sourcePeriod=(await pool.query('SELECT * FROM hr_employee_service_periods WHERE employee_id=$1',[employee.id])).rows[0],sourceBasis=(await pool.query('SELECT * FROM hr_gov_service_bases WHERE employee_id=$1',[employee.id])).rows[0];
+  if(initialAdmin){data.initial_admin_setup=true;await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';}
+  const applier=initialAdmin?hr:certifier;
   for(let i=2;i<=29;i++){
    const person=(await pool.query("INSERT INTO hr_employees(display_name,department_id,division_id,leave_policy_regime) VALUES($1,$2,$3,'legacy') RETURNING *",[`Synthetic Treasury cohort ${i}`,department.id,division.id])).rows[0];
    await pool.query("INSERT INTO hr_employee_external_ids(employee_id,source,external_id,verified_by,reason) VALUES($1,'techone_payroll',$2,$3,$4)",[person.id,`SYNTHETIC-TREASURY-${i}`,hr.id,reason]);
@@ -116,8 +175,8 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   }
   const preview=await commission.previewCommissioning(pool,{user:user(hr),data});assert.equal(preview.ready,29,preview.employees.flatMap(e=>e.issues).join(' '));const review=await commission.prepareCommissioning(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}});
   await pool.query("CREATE FUNCTION synthetic_second_employee_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.workflow.prepared' AND EXISTS(SELECT 1 FROM hr_gov_workflow_configs WHERE status='published') THEN RAISE EXCEPTION 'synthetic second employee failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER synthetic_second_employee_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION synthetic_second_employee_failure()");
-  try{await assert.rejects(commission.applyCommissioning(pool,{user:user(certifier),actor:certifier,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}}),/second employee failure/);assert.equal((await pool.query("SELECT count(*)::int AS n FROM hr_employees WHERE id=ANY($1) AND leave_policy_regime='legacy'",[data.employees.map(e=>e.employee_id)])).rows[0].n,29);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_entitlements')).rows[0].n,0);}finally{await pool.query('DROP TRIGGER synthetic_second_employee_failure ON audit_log; DROP FUNCTION synthetic_second_employee_failure()');}
-  const receipt=await commission.applyCommissioning(pool,{user:user(certifier),actor:certifier,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}});assert.equal(receipt.result.length,29);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_credit_transfers')).rows[0].n,87);assert.equal((await pool.query("SELECT count(*)::int AS n FROM hr_gov_workflow_configs WHERE status='published'")).rows[0].n,29);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_leave_balances')).rows[0].n,116);
+  try{await assert.rejects(commission.applyCommissioning(pool,{user:user(applier),actor:applier,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}}),/second employee failure/);assert.equal((await pool.query("SELECT count(*)::int AS n FROM hr_employees WHERE id=ANY($1) AND leave_policy_regime='legacy'",[data.employees.map(e=>e.employee_id)])).rows[0].n,29);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_entitlements')).rows[0].n,0);}finally{await pool.query('DROP TRIGGER synthetic_second_employee_failure ON audit_log; DROP FUNCTION synthetic_second_employee_failure()');}
+  const receipt=await commission.applyCommissioning(pool,{user:user(applier),actor:applier,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}});assert.equal(receipt.result.length,29);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_credit_transfers')).rows[0].n,87);assert.equal((await pool.query("SELECT count(*)::int AS n FROM hr_gov_workflow_configs WHERE status='published'")).rows[0].n,29);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_leave_balances')).rows[0].n,116);
  });
  test('a nominated HoD can join the cohort but their own leave requires an explicit authorised substitute',async()=>{
   const data=await commissioningFixture();await pool.query("UPDATE reviewers SET permissions=permissions||'{\"hr_leave_approve\":true}'::jsonb WHERE id=$1",[owner.id]);owner.permissions.hr_leave_approve=true;await pool.query("UPDATE hr_approval_assignments SET approver_employee_id=$1 WHERE level='department'",[employee.id]);

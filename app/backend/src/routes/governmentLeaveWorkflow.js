@@ -14,6 +14,7 @@ import {linkedEmployee} from '../services/employeeDirectory.js';
 import * as workflow from '../services/governmentLeaveWorkflow.js';
 import {approvalRouteSettings,publishApprovalRoute,APPROVAL_OFFICES} from '../services/governmentLeaveApprovalRoutes.js';
 import {previewCommissioning,prepareCommissioning,applyCommissioning} from '../services/governmentLeaveCommissioning.js';
+import {previewInitialFoundations,applyInitialFoundations,recordInitialCredit} from '../services/governmentLeaveInitialFoundations.js';
 import * as jobs from '../services/governmentLeaveJobs.js';
 import {governmentEvidenceUpload} from '../services/governmentLeaveUpload.js';
 const router=express.Router();
@@ -33,10 +34,13 @@ router.get('/me',async(req,res)=>{
   const employee=await linkedEmployee(pool,req.user.id),config=await workflow.configurationFor(pool,employee.id);
   res.json({employee_id:employee.id,enabled_codes:config?.enabled_codes||[],medical_rule:config?.medical_rule||null,regime:employee.leave_policy_regime});
 });
-const commissioningFields=[reason,reference,date('cutover_date'),body('employees').isArray({min:1,max:50}),body('employees.*.employee_id').isUUID(),body('employees.*.medical_history').isArray({max:50}),body('employees.*.medical_history.*.start_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.end_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.uncertified').isBoolean(),body('history_confirmed').equals('true'),...['payroll_reference','transition_reference','history_reference'].map(name=>body(name).isString().trim().isLength({min:5,max:500}))];
+const commissioningFields=[reason,reference,date('cutover_date'),body('initial_admin_setup').optional().isBoolean({strict:true}),body('employees').isArray({min:1,max:50}),body('employees.*.employee_id').isUUID(),body('employees.*.medical_history').isArray({max:50}),body('employees.*.medical_history.*.start_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.end_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.uncertified').isBoolean(),body('history_confirmed').equals('true'),...['payroll_reference','transition_reference','history_reference'].map(name=>body(name).isString().trim().isLength({min:5,max:500}))];
 router.get('/commissioning',central,async(req,res)=>{
  const {rows}=await pool.query('SELECT r.*,c.recorded_at AS applied_at FROM hr_gov_commissioning_reviews r LEFT JOIN hr_gov_commissioning_receipts c ON c.review_id=r.id ORDER BY r.recorded_at DESC,r.id DESC LIMIT 20');res.json({reviews:rows});
 });
+router.post('/commissioning/initial-credit',central,[body('employee_id').isUUID(),body('leave_type_id').isUUID()],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await recordInitialCredit(pool,args(req)));});
+router.post('/commissioning/foundations/preview',central,async(req,res)=>{res.json(await previewInitialFoundations(pool,args(req)));});
+router.post('/commissioning/foundations/apply',central,async(req,res)=>{res.json(await applyInitialFoundations(pool,args(req)));});
 router.post('/commissioning/preview',central,commissioningFields,async(req,res)=>{if(!handleValidation(req,res))return;res.json(await previewCommissioning(pool,args(req)));});
 router.post('/commissioning',central,[...commissioningFields,body('snapshot_hash').isHexadecimal().isLength({min:64,max:64})],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await prepareCommissioning(pool,args(req)));});
 router.post('/commissioning/:id/apply',central,[id,reason,body('snapshot_hash').isHexadecimal().isLength({min:64,max:64})],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await applyCommissioning(pool,args(req)));});

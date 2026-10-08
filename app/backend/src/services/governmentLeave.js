@@ -1,4 +1,5 @@
 import {assertDraftUsable} from './governmentLeaveDrafts.js';
+import {initialAdminReview} from './governmentLeaveInitialAdmin.js';
 import {resolvedPublishedPoliciesSql,validateReplacementFields,approvePolicyReplacement} from './governmentLeavePolicyTransitions.js';
 import {randomUUID} from 'node:crypto';
 import {ServiceError} from '../lib/serviceError.js';
@@ -96,9 +97,9 @@ export async function createCalendar(pool,{user,actor,data}){
   const {rows:[row]}=await client.query('INSERT INTO hr_gov_calendars(label,effective_from,effective_to,holidays,source_reference,recorded_by,reason,supersedes_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[data.label,data.effective_from,data.effective_to,JSON.stringify(data.holidays),data.source_reference,actor.id,reason,data.supersedes_id||null]);await audit(client,actor,'hr.gov.calendar.published',row.id,row);return row;
  });
 }
-export async function addFoundationRecord(pool,{user,actor,employeeId,kind,data}){
+export async function addFoundationRecord(pool,{user,actor,employeeId,kind,data,client:existingClient=null}){
  central(user);const reason=managementReason(data.reason);
- return withTransaction(pool,async client=>{
+ const work=async client=>{
   if(employeeId)await lockEmployee(client,employeeId);
   let row;
   if(kind==='basis')({rows:[row]}=await client.query('INSERT INTO hr_gov_service_bases(employee_id,effective_from,continuity_start,anniversary_method,leap_day_method,schedule_mode,source_reference,recorded_by,reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',[employeeId,data.effective_from,data.continuity_start,data.anniversary_method,data.leap_day_method,data.schedule_mode,data.source_reference,actor.id,reason]));
@@ -120,7 +121,8 @@ export async function addFoundationRecord(pool,{user,actor,employeeId,kind,data}
   }
   else fail('Unknown foundation record.',400);
   await audit(client,actor,`hr.gov.${kind}.certified`,row.id,row);return row;
- }).catch(err=>{if(err.code==='23505')fail('A certified record already exists for these dates or this pattern. Prepare a successor.');if(err.code==='23514'||err.code==='23503')fail('Verify the dates, units and referenced employee/pattern.',400);throw err;});
+ };
+ return (existingClient?work(existingClient):withTransaction(pool,work)).catch(err=>{if(err.code==='23505')fail('A certified record already exists for these dates or this pattern. Prepare a successor.');if(err.code==='23514'||err.code==='23503')fail('Verify the dates, units and referenced employee/pattern.',400);throw err;});
 }
 async function openingSnapshot(client,employeeId){const context=await loadContext(client,employeeId);const {rows:historical}=await client.query('SELECT b.id,b.leave_type_id,t.name AS leave_type_name,b.year,b.balance,b.pending FROM hr_leave_balances b JOIN hr_leave_types t ON t.id=b.leave_type_id WHERE b.employee_id=$1 ORDER BY b.year,b.leave_type_id',[employeeId]);return {context,historical,hash:fingerprint({context,historical})};}
 export async function prepareOpening(pool,{client:existingClient=null,user,actor,employeeId,data}){
@@ -138,7 +140,7 @@ export async function prepareOpening(pool,{client:existingClient=null,user,actor
 export async function certifyOpening(pool,{client:existingClient=null,user,actor,id,reason}){
  central(user);reason=managementReason(reason);
  const work=async client=>{const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_openings WHERE id=$1',[id]);if(!ref)fail('Opening not found.',404);await lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT *,to_char(as_of,\'YYYY-MM-DD\') AS as_of FROM hr_gov_openings WHERE id=$1 FOR UPDATE',[id]);await assertDraftUsable(client,'opening',id);if(row.status==='certified')return row;
-  if(row.prepared_by===actor.id)fail('A different central HR officer must certify the reviewed opening.',403);
+  if(row.prepared_by===actor.id&&!initialAdminReview(client,actor.id,row.employee_id))fail('A different central HR officer must certify the reviewed opening.',403);
   if((await openingSnapshot(client,row.employee_id)).hash!==row.snapshot_hash)fail('Employee, policy, calendar or balances changed after preview. Prepare a new opening.');
   if((await client.query("SELECT 1 FROM hr_gov_entitlements WHERE employee_id=$1 AND code=$2 AND daterange(period_start,period_end,'[]') && daterange($3,$4,'[]')",[row.employee_id,row.code,row.period_start,row.period_end])).rowCount)fail('This entitlement period is already certified. Use an audited correction.');
   const {rows:[entitlement]}=await client.query('INSERT INTO hr_gov_entitlements(employee_id,code,policy_version_id,period_start,period_end,as_of,opening_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',[row.employee_id,row.code,row.policy_version_id,row.period_start,row.period_end,row.as_of,row.id]);

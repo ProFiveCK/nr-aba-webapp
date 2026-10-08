@@ -130,10 +130,10 @@ export async function setEmployeeOrganisation(pool, { employeeId, departmentId, 
   });
 }
 
-export async function addServicePeriod(pool, { employeeId, period, actor, reason }) {
+export async function addServicePeriod(pool, { employeeId, period, actor, reason, client:existingClient=null }) {
   const verifiedReason = requireReason(reason);
   if (period.end_date && period.end_date < period.start_date) throw badRequest('A service period cannot end before it starts.');
-  return withTransaction(pool, async (client) => {
+  const work=async (client) => {
     await lockEmployee(client, employeeId);
     const { rows: overlap } = await client.query(
       `SELECT id FROM hr_employee_service_periods WHERE employee_id = $1
@@ -151,7 +151,8 @@ export async function addServicePeriod(pool, { employeeId, period, actor, reason
     );
     await recordAudit({ client, actor, action: 'hr.employee.service_period.recorded', entityType: 'hr_employee', entityId: employeeId, after: created });
     return created;
-  });
+  };
+  return existingClient?work(existingClient):withTransaction(pool,work);
 }
 
 export async function closeServicePeriod(pool, { employeeId, periodId, endDate, actor, reason }) {

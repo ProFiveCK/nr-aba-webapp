@@ -1,4 +1,5 @@
 import {PDFDocument,StandardFonts,rgb} from 'pdf-lib';
+import {generateLeaveApplicationPdf} from './leaveApplicationPdf.js';
 const printable=value=>String(value??'').replace(/[^\x20-\x7e\n]/g,'?');
 const officeLabels={division:'Divisional approver',department:'Head of Department',hr_verifier:'HR verifier',relevant_secretary:'Relevant Secretary',chief_secretary:'Chief Secretary',minister:'Minister statutory decision'};
 const label=value=>officeLabels[value]||printable(value).replace(/_/g,' ').replace(/^./,s=>s.toUpperCase());
@@ -24,10 +25,19 @@ export function medicalPdfLines(grant) {
   rows.push('The two categories are usage records, not separate 7-day and 3-day entitlements.');
   return rows;
 }
+export function governmentApprovalFormSnapshot(grant) {
+ const mode=grant.medical_mode||grant.input?.medical_mode;
+ const names={recreation:'Annual',medical:mode==='certificate'?'Medical (with MC)':mode==='exemption'?'Medical (without MC)':'Medical (certificate status not recorded)',special:'Special',furlough:'Furlough',official:'Official',lwop:'Leave Without Pay',extended_medical:'Medical',extended_medical_minister:'Medical',maternity:'Maternity',paternity:'Paternity',adoption:'Adoption'};
+ const leaveName=names[grant.code]||label(grant.code);
+ const balances=grant.balances||[];
+ return {id:grant.id,regime:'government',employee_name:grant.employee.name,department_code:grant.employee.department_name,division_code:grant.employee.division_name,leave_type_name:leaveName,start_date:grant.start_date,end_date:grant.end_date,days:grant.charge,reason:grant.reason,applied_at:grant.submitted_at,approved_at:grant.granted_at,approved_by_name:grant.stages.at(-1)?.binding?.approver_name||'Recorded final approver',approval_snapshot_available:true,balances:balances.length?[{leave_type_name:leaveName,before:balances.reduce((n,b)=>n+Number(b.before),0),after:balances.reduce((n,b)=>n+Number(b.after),0)}]:[]};
+}
 export async function generateGovernmentLeavePdf(grant) {
   const pdf=await PDFDocument.create(),font=await pdf.embedFont(StandardFonts.Helvetica),bold=await pdf.embedFont(StandardFonts.HelveticaBold);
   const width=595.28,height=841.89,margin=44,maxWidth=width-2*margin;
-  let page,y,pageNumber=0;
+  const approval=await PDFDocument.load(await generateLeaveApplicationPdf(governmentApprovalFormSnapshot(grant)));
+  for(const approvedPage of await pdf.copyPages(approval,approval.getPageIndices())){approvedPage.setSize(width,height);pdf.addPage(approvedPage);}
+  let page,y,pageNumber=approval.getPageCount();
   function nextPage() {
     page=pdf.addPage([width,height]);pageNumber++;y=height-margin;
     page.drawText('REPUBLIC OF NAURU - PUBLIC SERVICE',{x:margin,y,size:11,font:bold,color:rgb(0.03,0.17,0.39)});y-=20;

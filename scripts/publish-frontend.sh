@@ -19,6 +19,9 @@
 #      lazy-loads chunks from the build it started with, so deleting those
 #      immediately breaks whoever is mid-session.
 set -euo pipefail
+# Static files must remain readable by nginx even when a backup session has
+# selected a restrictive umask.
+umask 022
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="${1:-$ROOT/app/client/build}"
@@ -39,11 +42,15 @@ fi
 # Any other top-level files (favicon, logo, robots...), excluding the page.
 find "$BUILD" -maxdepth 1 -type f ! -name index.html -exec cp -a {} "$LIVE/" \;
 
+find "$LIVE" -type d -exec chmod 755 {} +
+find "$LIVE" -type f -exec chmod 644 {} +
+
 # What this build owns, for the next publish to compare against.
 NEW_FILES="$(cd "$BUILD" && find . -type f | sed 's#^\./##' | sort)"
 
 # 2. The page itself, atomically.
 cp "$BUILD/index.html" "$LIVE/.index.html.new"
+chmod 644 "$LIVE/.index.html.new"
 mv -f "$LIVE/.index.html.new" "$LIVE/index.html"
 
 # 3. Remove files belonging to neither this build nor the one before it, so

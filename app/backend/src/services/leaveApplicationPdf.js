@@ -54,12 +54,15 @@ const CHECKBOXES = [
   { kind: 'adoption', label: 'Adoption leave', note: '(Attach relevant documents)' },
 ];
 
-function formKind(name) {
+export function leaveApplicationFormKind(name) {
   const value = String(name || '').trim().toLowerCase();
   if (value === 'annual' || value === 'annual leave') return 'annual';
   if (value === 'furlough' || value === 'furlough leave') return 'furlough';
   if (value === 'sick (with mc)' || value === 'sick leave (with mc)') return 'sickWithMc';
   if (value === 'sick (without mc)' || value === 'sick leave (without mc)') return 'sickWithoutMc';
+  if (value === 'medical (with mc)') return 'sickWithMc';
+  if (value === 'medical (without mc)') return 'sickWithoutMc';
+  if (value === 'medical (certificate status not recorded)') return 'sickUnspecified';
   if (value === 'sick' || value === 'sick leave') return 'sickUnspecified';
   if (value === 'special' || value === 'special leave') return 'special';
   if (value === 'leave without pay') return 'unpaid';
@@ -70,6 +73,7 @@ function formKind(name) {
   if (value === 'adoption' || value === 'adoption leave') return 'adoption';
   return null;
 }
+const formKind=leaveApplicationFormKind;
 
 // Any sick-leave kind ticks the parent "Sick leave" box, same as a person
 // would circle both the category and the with/without-certificate option on
@@ -189,7 +193,10 @@ export async function generateLeaveApplicationPdf(form) {
   let row = 171;
   const rowStep = 12.2;
   const selected = formKind(form.leave_type_name);
-  for (const item of CHECKBOXES) {
+  const government=form.regime==='government';
+  for (const original of CHECKBOXES) {
+    const item=government&&original.kind==='sick'?{...original,label:'Medical leave',note:'(With MC or approved non-MC absence)'}:
+      government&&original.kind==='medical'?{...original,label:'Extended medical leave'}:original;
     if (item.pair) {
       checkbox(58, row, selected === item.leftKind);
       text(item.left, 70, row, { size: 8 });
@@ -272,7 +279,10 @@ export async function generateLeaveApplicationPdf(form) {
   const dataRowH = 12.6;
   const daysX1 = group1X + subColWidth * 1.5;
   const daysX2 = group2X + subColWidth * 1.5;
-  for (const def of LEAVE_ROWS) {
+  for (const original of LEAVE_ROWS) {
+    const def=government&&original.kind==='sickWithMc'?{...original,label:'MEDICAL LEAVE (WITH M/C)'}:
+      government&&original.kind==='sickWithoutMc'?{...original,label:'MEDICAL LEAVE (WITHOUT M/C)'}:
+      government&&original.kind==='medical'?{...original,label:'EXTENDED MEDICAL LEAVE'}:original;
     box(margin, rowTop, contentWidth, dataRowH);
     vLine(labelColRight, rowTop, rowTop + dataRowH);
     vLine(group2X, rowTop, rowTop + dataRowH);

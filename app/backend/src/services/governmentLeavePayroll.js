@@ -8,6 +8,7 @@ import {withTransaction} from '../lib/transaction.js';
 import {recordAudit} from './auditService.js';
 import * as ledger from './governmentLeave.js';
 import {submitRequest,assertCentral,today} from './governmentLeaveWorkflow.js';
+import {initialAdminReview} from './governmentLeaveInitialAdmin.js';
 import {fingerprint,dayNumber,serviceFacts,COMMON_CODES,CODES,units,decimal} from '../lib/governmentLeaveRules.js';
 import {PAYROLL_FORMAT,HANDOVER_FORMAT,payrollLines,payrollDiff,payrollTotals} from '../lib/governmentLeavePayrollRules.js';
 
@@ -102,7 +103,7 @@ export async function migrationState(client,employeeId,cutover) {
   const state={context,identity:people[employeeId],historical_balances:balances,retained_legacy_leave:retained,government_requests:requests,benefit_bases:benefits,benefit_commitments:commitments,effects,movements,configs,initial_setup:initialSetup,credit_transfers:creditTransfers};
   return {state,hash:fingerprint(state)};
 }
-export function migrationPlan(state,data) {
+export function migrationPlan(state,data,{allowMissingPayroll=false}={}) {
   const targets=data.targets,dispositions=data.dispositions||[];
   if(!Array.isArray(targets)||targets.length!==3||new Set(targets.map(t=>t.code)).size!==3||targets.some(t=>!COMMON_CODES.includes(t.code)))fail('Specify a reviewed Recreation, Medical and Special target.',400);
   if(!Array.isArray(dispositions)||dispositions.length!==state.retained_legacy_leave.length||new Set(dispositions.map(d=>d.legacy_request_id)).size!==dispositions.length)fail('Review every pending and future legacy application exactly once.',400);
@@ -117,7 +118,7 @@ export function migrationPlan(state,data) {
       if(state.government_requests.some(r=>r.id===d.portal_request_id)||dispositions.filter(x=>x.portal_request_id===d.portal_request_id).length!==1)fail('Allocate a distinct unused government application key for each legacy transfer.');
     }else if(d.action!=='retain_external')fail('Retain externally or link a reviewed government application.',400);
   }
-  if(!state.identity?.payroll_id)fail('Verify one unambiguous Payroll ID before migration.');
+  if(!state.identity?.payroll_id&&!allowMissingPayroll)fail('Verify one unambiguous Payroll ID before migration.');
   const facts=serviceFacts(state.context,data.cutover_date);if(facts.issues.length)fail(facts.issues.join(' '));
   if(state.context.employee.leave_policy_regime!=='government')fail('Enroll this employee in the government regime first.');
   const policy=state.context.policies.find(p=>p.effective_from<=data.cutover_date&&p.effective_to>=data.cutover_date);if(!policy)fail('Publish the cutover policy first.');
@@ -154,7 +155,7 @@ export async function prepareMigration(pool,{user,actor,employeeId,data,client:e
     await assertCentral(client,user);await ledger.lockEmployee(client,employeeId);
     const old=(await client.query('SELECT * FROM hr_gov_migration_reviews WHERE id=$1',[data.review_id])).rows[0];
     if(old){if(old.employee_id!==employeeId||old.prepared_by!==actor.id||old.payload_hash!==fingerprint(normalized))fail('Review key was already used for a different migration.');return old;}
-    const {state,hash}=await migrationState(client,employeeId,data.cutover_date),plan=migrationPlan(state,normalized);
+    const {state,hash}=await migrationState(client,employeeId,data.cutover_date),plan=migrationPlan(state,normalized,{allowMissingPayroll:!!initialAdminReview(client,actor.id,employeeId)});
     const row=(await client.query('INSERT INTO hr_gov_migration_reviews(id,employee_id,cutover_date,prepared_by,source_reference,payroll_reference,transition_reference,history_reference,reason,payload_hash,context_hash,plan,snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *',[data.review_id,employeeId,data.cutover_date,actor.id,normalized.source_reference,normalized.payroll_reference,normalized.transition_reference,normalized.history_reference,normalized.reason,fingerprint(normalized),hash,plan,state])).rows[0];
     await audit(client,actor,'hr.gov.migration.prepared',row.id,{employee_id:employeeId,context_hash:hash,targets:plan.targets});return row;
   };return existingClient?work(existingClient):withTransaction(pool,work);
@@ -166,10 +167,10 @@ export async function certifyMigration(pool,{user,actor,id,data,client:existingC
     const review=(await client.query("SELECT *,to_char(cutover_date,'YYYY-MM-DD') AS cutover_date FROM hr_gov_migration_reviews WHERE id=$1",[id])).rows[0];if(!review)fail('Migration review not found.',404);
     await ledger.lockEmployee(client,review.employee_id);
     const old=(await client.query('SELECT * FROM hr_gov_migration_certifications WHERE review_id=$1',[id])).rows[0];if(old)return old;
-    if(review.prepared_by===actor.id)fail('A different central HR officer must certify the migration.',403);
+    if(review.prepared_by===actor.id&&!initialAdminReview(client,actor.id,review.employee_id))fail('A different central HR officer must certify the migration.',403);
     if(data.context_hash!==review.context_hash)fail('Confirm the exact reviewed migration checksum.');
     const current=await migrationState(client,review.employee_id,review.cutover_date);if(current.hash!==review.context_hash)fail('Identity, service, balances or retained leave changed. Prepare a fresh dry run.');
-    migrationPlan(current.state,{cutover_date:review.cutover_date,targets:review.plan.targets.map(t=>({code:t.code,amount:t.target,retained_balance_ids:t.retained_transfer?.source_balance_ids||[]})),dispositions:review.plan.dispositions});
+    migrationPlan(current.state,{cutover_date:review.cutover_date,targets:review.plan.targets.map(t=>({code:t.code,amount:t.target,retained_balance_ids:t.retained_transfer?.source_balance_ids||[]})),dispositions:review.plan.dispositions},{allowMissingPayroll:!!initialAdminReview(client,actor.id,review.employee_id)});
     const postings=[];
     for(const target of review.plan.targets) {
       let entitlementId=target.entitlement_id;

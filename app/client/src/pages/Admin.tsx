@@ -467,12 +467,8 @@ function SignupRequestsPanel() {
 // Which app groups (from the capability catalogue) this account actually has
 // a foothold in, with the specific capabilities granted in each — so the user
 // list grows a badge per app instead of a bespoke column per app.
-function accountAccessGroups(
-    account: AdminAccount,
-    capabilityGroups: CapabilityGroup[],
-    roleCapabilities: Record<string, string[]>
-) {
-    const effective = new Set([...(roleCapabilities[account.role] || []), ...(account.capabilities || [])]);
+function accountAccessGroups(account: AdminAccount, capabilityGroups: CapabilityGroup[]) {
+    const effective = new Set(account.capabilities || []);
     return capabilityGroups
         .map((group) => ({ ...group, granted: group.capabilities.filter((c) => effective.has(c.key)) }))
         .filter((group) => group.granted.length > 0);
@@ -622,7 +618,7 @@ function UserManagementPanel() {
             const matchesRole = roleFilter === 'all' || account.role === roleFilter;
             if (!matchesRole) return false;
             if (appFilter !== 'all') {
-                const effective = new Set([...(roleCapabilities[account.role] || []), ...(account.capabilities || [])]);
+                const effective = new Set(account.capabilities || []);
                 const group = capabilityGroups.find((g) => g.app === appFilter);
                 if (!group || !group.capabilities.some((c) => effective.has(c.key))) return false;
             }
@@ -632,7 +628,7 @@ function UserManagementPanel() {
                 .join(' ');
             return haystack.includes(term);
         });
-    }, [accounts, search, roleFilter, appFilter, capabilityGroups, roleCapabilities]);
+    }, [accounts, search, roleFilter, appFilter, capabilityGroups]);
     const accountPages = usePagination(filteredAccounts, `${search}|${roleFilter}|${appFilter}`);
 
     const resetForm = () => {
@@ -913,7 +909,7 @@ function UserManagementPanel() {
                                     </tr>
                                 ) : (
                                     accountPages.pageRows.map((account) => {
-                                        const accessGroups = accountAccessGroups(account, capabilityGroups, roleCapabilities);
+                                        const accessGroups = accountAccessGroups(account, capabilityGroups);
                                         const notifs = notificationSummary(account);
                                         return (
                                             <tr key={account.id}>
@@ -1136,7 +1132,10 @@ function UserManagementPanel() {
 
                         <div className="grid gap-3 sm:grid-cols-2">
                             {capabilityGroups.map((group) => {
-                                const fromRole = roleCapabilities[form.role] || [];
+                                // Capabilities are granted per account, not implied by the
+                                // role. The role's usual set is offered as a starting point
+                                // when creating an account, never as something locked on.
+                                const typicalForRole = roleCapabilities[form.role] || [];
                                 return (
                                     <div key={group.app} className="rounded-md border border-gray-200 bg-white p-3">
                                         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -1144,19 +1143,18 @@ function UserManagementPanel() {
                                         </p>
                                         <div className="space-y-1.5">
                                             {group.capabilities.map((capability) => {
-                                                const grantedByRole = fromRole.includes(capability.key);
-                                                const checked = form.capabilities.includes(capability.key) || grantedByRole;
+                                                const typical = typicalForRole.includes(capability.key);
+                                                const checked = form.capabilities.includes(capability.key);
                                                 return (
                                                     <label
                                                         key={capability.key}
-                                                        className={`flex items-start gap-2 text-sm ${grantedByRole ? 'text-gray-400' : 'text-gray-700'}`}
-                                                        title={grantedByRole ? `Granted by the ${form.role} role` : undefined}
+                                                        className="flex items-start gap-2 text-sm text-gray-700"
+                                                        title={typical ? `Usually granted to the ${form.role} role` : undefined}
                                                     >
                                                         <input
                                                             type="checkbox"
                                                             className="mt-0.5"
                                                             checked={checked}
-                                                            disabled={grantedByRole}
                                                             onChange={(e) => toggleCapability(capability.key, e.target.checked)}
                                                         />
                                                         <span>{capability.label}</span>

@@ -10,7 +10,7 @@ import {
   reviewerSummary,
   setCapabilities,
 } from '../services/authService.js';
-import { recordAudit } from '../services/auditService.js';
+import { actorFrom, recordAudit } from '../services/auditService.js';
 import { clearLoginAttempts } from '../services/loginAttempts.js';
 import {
   encryptSmtpPass,
@@ -139,6 +139,14 @@ router.post('/admin/signup-requests/:id/approve', requireAuth(['admin']), async 
       `UPDATE signup_requests SET status = 'approved', reviewed_at = NOW(), reviewer_id = $1, review_comment = $2, requested_role = $3 WHERE id = $4`,
       [reviewerId, review_comment || null, requestedRole, requestId]
     );
+    await recordAudit({
+      actor: actorFrom(req),
+      action: 'signup.approve',
+      entityType: 'reviewer',
+      entityId: created[0].id,
+      after: { email: reqData.email, role: requestedRole, capabilities: [...capabilities] },
+      metadata: { signup_request_id: requestId, comment: review_comment || null },
+    });
     // Send email to user
     await sendMail({
       to: reqData.email,
@@ -168,6 +176,14 @@ router.post('/admin/signup-requests/:id/reject', requireAuth(['admin']), async (
     `UPDATE signup_requests SET status = 'rejected', reviewed_at = NOW(), reviewer_id = $1, review_comment = $2 WHERE id = $3`,
     [reviewerId, review_comment || null, requestId]
   );
+  await recordAudit({
+    actor: actorFrom(req),
+    action: 'signup.reject',
+    entityType: 'signup_request',
+    entityId: requestId,
+    before: { email: reqData.email, requested_role: reqData.requested_role },
+    metadata: { comment: review_comment || null },
+  });
   // Optionally notify user of rejection
   await sendMail({
     to: reqData.email,
@@ -242,6 +258,13 @@ router.post(
          RETURNING id, department_code, division_code, name, allowed_bank_presets, created_at, updated_at`,
         [departmentCode, divisionCode, name, presets]
       );
+      await recordAudit({
+        actor: actorFrom(req),
+        action: 'department_profile.save',
+        entityType: 'department_profile',
+        entityId: rows[0].id,
+        after: rows[0],
+      });
       res.status(201).json({ profile: rows[0] });
     } catch (err) {
       console.error('Failed to save department profile', err);
@@ -293,6 +316,13 @@ router.put(
         res.status(404).json({ message: 'Department profile not found.' });
         return;
       }
+      await recordAudit({
+        actor: actorFrom(req),
+        action: 'department_profile.update',
+        entityType: 'department_profile',
+        entityId: rows[0].id,
+        after: rows[0],
+      });
       res.json({ profile: rows[0] });
     } catch (err) {
       if (err.code === '23505') {
@@ -310,11 +340,18 @@ router.delete(
   [requireAuth(['admin']), param('id').isUUID()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
-    const { rowCount } = await pool.query('DELETE FROM department_profiles WHERE id = $1', [req.params.id]);
-    if (!rowCount) {
+    const { rows: deleted } = await pool.query('DELETE FROM department_profiles WHERE id = $1 RETURNING *', [req.params.id]);
+    if (!deleted.length) {
       res.status(404).json({ message: 'Department profile not found.' });
       return;
     }
+    await recordAudit({
+      actor: actorFrom(req),
+      action: 'department_profile.delete',
+      entityType: 'department_profile',
+      entityId: deleted[0].id,
+      before: deleted[0],
+    });
     res.status(204).send();
   }
 );
@@ -402,6 +439,17 @@ router.post(
         [email, displayName, role, status, passwordHash, true, departmentCode, divisionCode, notifyOnSubmission, permissions]
       );
       const reviewer = rows[0];
+      await recordAudit({
+        actor: actorFrom(req),
+        action: 'reviewer.create',
+        entityType: 'reviewer',
+        entityId: reviewer.id,
+        after: {
+          email: reviewer.email, role: reviewer.role, status: reviewer.status,
+          department_code: reviewer.department_code, permissions: reviewer.permissions,
+        },
+        metadata: { temporary_password: generated },
+      });
       const sendEmail = req.body.send_email === true;
       if (sendEmail) {
         try {
@@ -413,7 +461,7 @@ router.post(
       if (req.body.capabilities !== undefined) {
         await setCapabilities(reviewer.id, req.body.capabilities, req.user.id);
         await recordAudit({
-          actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+          actor: actorFrom(req),
           action: 'reviewer.capabilities.set',
           entityType: 'reviewer',
           entityId: reviewer.id,
@@ -456,7 +504,7 @@ router.put(
     if (!handleValidation(req, res)) return;
     const reviewerId = req.params.id;
     const { rows: existingRows } = await pool.query(
-      `SELECT id, role, department_code, division_code, notify_on_submission, permissions, account_type FROM reviewers WHERE id = $1`,
+      `SELECT id, email, display_name, role, status, department_code, division_code, notify_on_submission, permissions, account_type FROM reviewers WHERE id = $1`,
       [reviewerId]
     );
     if (!existingRows.length) {
@@ -539,6 +587,17 @@ router.put(
           must_change_password, department_code, division_code, notify_on_submission, permissions, account_type`,
         values
       ));
+      const changed = Object.keys(patch).filter((key) => JSON.stringify(patch[key]) !== JSON.stringify(existing[key]));
+      if (changed.length) {
+        await recordAudit({
+          actor: actorFrom(req),
+          action: 'reviewer.update',
+          entityType: 'reviewer',
+          entityId: reviewerId,
+          before: Object.fromEntries(changed.map((key) => [key, existing[key]])),
+          after: Object.fromEntries(changed.map((key) => [key, patch[key]])),
+        });
+      }
     } else {
       ({ rows } = await pool.query(
         `SELECT id, email, display_name, role, status, last_login_at, created_at, updated_at,
@@ -551,7 +610,7 @@ router.put(
     if (req.body.capabilities !== undefined) {
       await setCapabilities(reviewerId, req.body.capabilities, req.user.id);
       await recordAudit({
-        actor: { id: req.user.id, email: req.user.email, ip: req.ip },
+        actor: actorFrom(req),
         action: 'reviewer.capabilities.set',
         entityType: 'reviewer',
         entityId: reviewerId,
@@ -598,6 +657,13 @@ router.post(
     await clearLoginAttempts(reviewer.email);
     await pool.query('DELETE FROM reviewer_sessions WHERE reviewer_id = $1', [reviewerId]);
     reviewer.must_change_password = true;
+    await recordAudit({
+      actor: actorFrom(req),
+      action: 'reviewer.password_reset',
+      entityType: 'reviewer',
+      entityId: reviewerId,
+      metadata: { email: reviewer.email, temporary_password: generated, emailed: req.body.send_email === true },
+    });
     const sendEmail = req.body.send_email === true;
     if (sendEmail) {
       try {
@@ -627,7 +693,7 @@ router.delete(
     try {
       await client.query('BEGIN');
       const { rows: targetRows } = await client.query(
-        'SELECT id, role FROM reviewers WHERE id = $1',
+        'SELECT id, email, display_name, role, status FROM reviewers WHERE id = $1',
         [targetId]
       );
       if (!targetRows.length) {
@@ -653,6 +719,13 @@ router.delete(
       await client.query('UPDATE signup_requests SET reviewer_id = NULL WHERE reviewer_id = $1', [targetId]);
       await client.query('DELETE FROM reviewers WHERE id = $1', [targetId]);
       await client.query('COMMIT');
+      await recordAudit({
+        actor: actorFrom(req),
+        action: 'reviewer.delete',
+        entityType: 'reviewer',
+        entityId: targetId,
+        before: target,
+      });
       res.status(204).send();
     } catch (err) {
       await client.query('ROLLBACK');
@@ -691,6 +764,13 @@ router.post(
                updated_at = NOW()`,
         [enabled, actorId]
       );
+      await recordAudit({
+        actor: actorFrom(req),
+        action: 'settings.testing_mode',
+        entityType: 'settings',
+        entityId: 'testing_mode',
+        after: { enabled },
+      });
       const state = await refreshTestingModeSetting();
       res.json(state);
     } catch (err) {
@@ -773,6 +853,15 @@ router.post(
           updated_by = EXCLUDED.updated_by
       `, [smtp_host, smtp_port, smtp_secure, smtp_user, passEncrypted, from_email, reply_to_email, support_email, actorId]);
       
+      await recordAudit({
+        actor: actorFrom(req),
+        action: 'settings.smtp',
+        entityType: 'settings',
+        entityId: 'smtp',
+        after: { smtp_host, smtp_port, smtp_secure, smtp_user, from_email, reply_to_email, support_email },
+        metadata: { password_changed: Boolean(smtp_pass) },
+      });
+
       // Reload mail transport with new settings
       await reloadMailTransport();
       

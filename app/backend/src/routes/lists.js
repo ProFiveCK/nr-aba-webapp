@@ -2,6 +2,7 @@ import express from 'express';
 import { body, param, handleValidation } from '../middleware/validation.js';
 import { pool } from '../db.js';
 import { requireAuth } from '../services/authService.js';
+import { actorFrom, recordAudit } from '../services/auditService.js';
 import {
   normalizeAccountNumber,
   normalizeAccountNumber as normalizeSupplierAccount,
@@ -11,6 +12,10 @@ import {
 import { BSB_REGEX, REVIEW_ACCESS_ROLES } from '../config.js';
 
 const router = express.Router();
+
+// Every change to these lists is a change to what may be paid, so each one is audited.
+const audit = (req, action, entityType, entityId, record = {}) =>
+  recordAudit({ actor: actorFrom(req), action, entityType, entityId, ...record });
 
 const BLACKLIST_IMPORT_LIMIT = 1000;
 
@@ -40,6 +45,7 @@ router.post(
        RETURNING *`,
       [name, description ?? null, currency.toUpperCase(), amount_limit, per_account_daily_limit ?? null, active !== undefined ? active : false]
     );
+    await audit(req, 'threshold.create', 'threshold', rows[0].id, { after: rows[0] });
     res.status(201).json(rows[0]);
   }
 );
@@ -87,6 +93,7 @@ router.put(
       res.status(404).json({ message: 'Threshold not found.' });
       return;
     }
+    await audit(req, 'threshold.update', 'threshold', id, { after: rows[0] });
     res.json(rows[0]);
   }
 );
@@ -94,11 +101,12 @@ router.put(
 router.delete('/thresholds/:id', [requireAuth(['admin']), param('id').isInt({ gt: 0 })], async (req, res) => {
   if (!handleValidation(req, res)) return;
   const id = Number(req.params.id);
-  const { rowCount } = await pool.query('DELETE FROM sanity_thresholds WHERE id = $1', [id]);
-  if (!rowCount) {
+  const { rows: deleted } = await pool.query('DELETE FROM sanity_thresholds WHERE id = $1 RETURNING *', [id]);
+  if (!deleted.length) {
     res.status(404).json({ message: 'Threshold not found.' });
     return;
   }
+  await audit(req, 'threshold.delete', 'threshold', id, { before: deleted[0] });
   res.status(204).send();
 });
 
@@ -128,6 +136,7 @@ router.post(
        RETURNING *`,
       [bsb, account, alias, notes ?? null, active !== undefined ? active : false]
     );
+    await audit(req, 'whitelist.create', 'whitelist_entry', rows[0].id, { after: rows[0] });
     res.status(201).json(rows[0]);
   }
 );
@@ -172,6 +181,7 @@ router.put(
       res.status(404).json({ message: 'Whitelist entry not found.' });
       return;
     }
+    await audit(req, 'whitelist.update', 'whitelist_entry', id, { after: rows[0] });
     res.json(rows[0]);
   }
 );
@@ -179,11 +189,12 @@ router.put(
 router.delete('/whitelist/:id', [requireAuth(['admin']), param('id').isInt({ gt: 0 })], async (req, res) => {
   if (!handleValidation(req, res)) return;
   const id = Number(req.params.id);
-  const { rowCount } = await pool.query('DELETE FROM whitelist_entries WHERE id = $1', [id]);
-  if (!rowCount) {
+  const { rows: deleted } = await pool.query('DELETE FROM whitelist_entries WHERE id = $1 RETURNING *', [id]);
+  if (!deleted.length) {
     res.status(404).json({ message: 'Whitelist entry not found.' });
     return;
   }
+  await audit(req, 'whitelist.delete', 'whitelist_entry', id, { before: deleted[0] });
   res.status(204).send();
 });
 
@@ -245,6 +256,7 @@ router.post(
         query,
         [bsb, account, allAccounts, label, notes, active]
       );
+      await audit(req, 'blacklist.create', 'blacklist_entry', rows[0].id, { after: rows[0] });
       res.status(201).json(rows[0]);
     } catch (err) {
       console.error('Failed to upsert blacklist entry', err);
@@ -347,6 +359,9 @@ router.post(
     } finally {
       client.release();
     }
+    await audit(req, 'blacklist.import', 'blacklist_entry', null, {
+      metadata: { inserted: stats.inserted, updated: stats.updated, skipped: invalid.length },
+    });
     res.status(201).json({
       inserted: stats.inserted,
       updated: stats.updated,
@@ -411,6 +426,7 @@ router.put(
     const values = entries.map(([, value]) => value);
     fields.push(`updated_at = NOW()`);
     values.push(id);
+    const { rows: [before] } = await pool.query('SELECT * FROM blacklist_entries WHERE id = $1', [id]);
     try {
       const { rows } = await pool.query(
         `UPDATE blacklist_entries SET ${fields.join(', ')} WHERE id = $${values.length} RETURNING *`,
@@ -420,6 +436,7 @@ router.put(
         res.status(404).json({ message: 'Blacklist entry not found.' });
         return;
       }
+      await audit(req, 'blacklist.update', 'blacklist_entry', id, { before, after: rows[0] });
       res.json(rows[0]);
     } catch (err) {
       if (err.code === '23505') {
@@ -436,11 +453,12 @@ router.delete('/blacklist/:id', [requireAuth(['admin']), param('id').isInt({ gt:
   if (!handleValidation(req, res)) return;
   const id = Number(req.params.id);
   try {
-    const { rowCount } = await pool.query('DELETE FROM blacklist_entries WHERE id = $1', [id]);
-    if (!rowCount) {
+    const { rows: deleted } = await pool.query('DELETE FROM blacklist_entries WHERE id = $1 RETURNING *', [id]);
+    if (!deleted.length) {
       res.status(404).json({ message: 'Blacklist entry not found.' });
       return;
     }
+    await audit(req, 'blacklist.delete', 'blacklist_entry', id, { before: deleted[0] });
     res.status(204).send();
   } catch (err) {
     console.error('Failed to delete blacklist entry', err);
@@ -589,6 +607,7 @@ router.patch(
     const fields = Object.keys(updates).map((key, index) => `${key} = $${index + 2}`);
     const values = [id, ...Object.values(updates)];
 
+    const { rows: [before] } = await pool.query('SELECT * FROM suppliers WHERE id = $1', [id]);
     try {
       const { rows } = await pool.query(
         `UPDATE suppliers SET ${fields.join(', ')} WHERE id = $1 RETURNING *`,
@@ -598,6 +617,11 @@ router.patch(
         res.status(404).json({ message: 'Supplier not found.' });
         return;
       }
+      const changed = Object.keys(updates).filter((key) => key !== 'updated_at');
+      await audit(req, 'supplier.update', 'supplier', id, {
+        before: Object.fromEntries(changed.map((key) => [key, before?.[key] ?? null])),
+        after: Object.fromEntries(changed.map((key) => [key, rows[0][key]])),
+      });
       res.json(mapSupplierRow(rows[0]));
     } catch (err) {
       console.error('Failed to update supplier', err);

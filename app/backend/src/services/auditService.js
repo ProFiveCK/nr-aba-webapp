@@ -28,3 +28,8 @@ export async function recordAudit({ actor, action, entityType, entityId, before,
     console.error('Failed to record audit entry', err);
   }
 }
+
+/** The actor fields recordAudit wants, from a signed-in request. */
+export function actorFrom(req) {
+  return { id: req.user?.id ?? null, email: req.user?.email ?? null, ip: req.ip };
+}

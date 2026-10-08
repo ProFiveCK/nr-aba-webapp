@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# The gate before anything reaches GitHub: this repo has no GitHub CI (it costs
+# money), so `npm run ci:local` runs here instead. It needs Docker running.
+# Turned on once per clone by: git config core.hooksPath .githooks
+# Emergency bypass: git push --no-verify
+set -euo pipefail
+
+zero=0000000000000000000000000000000000000000
+head=$(git rev-parse HEAD)
+checks=false
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue          # deleting a branch: nothing to test
+  if [ "$local_sha" != "$head" ]; then
+    echo "pre-push: you are pushing $local_sha but HEAD is $head." >&2
+    echo "ci:local tests the checked-out code, so check out what you push first." >&2
+    exit 1
+  fi
+  checks=true
+done
+$checks || exit 0
+
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "pre-push: uncommitted changes would be tested but not pushed. Commit or stash them first." >&2
+  exit 1
+fi
+
+cd "$(git rev-parse --show-toplevel)"
+echo "pre-push: running npm run ci:local (skip with git push --no-verify)" >&2
+npm run ci:local

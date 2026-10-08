@@ -6,6 +6,7 @@ import { ToastProvider } from './contexts/ToastContext';
 import { ConfirmProvider } from './contexts/ConfirmContext';
 import { Login } from './pages/Login';
 import { Layout } from './components/Layout';
+import { EmployeeActivation } from './components/EmployeeActivation';
 import { ResetPasswordModal } from './components/ResetPasswordModal';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { Dashboard } from './pages/Dashboard';
@@ -34,13 +35,14 @@ const SPINNER = (
 );
 
 function AuthedRoutes() {
+  const {user}=useAuth();
   return (
     <Routes>
       <Route element={<Layout />}>
         {/* Every app owns its page from the top: the portal draws the header
             bar and the app's section menu, and the app's own content starts
             immediately below. No app prints a portal-supplied title. */}
-        <Route index element={<Dashboard />} />
+        <Route index element={user?.account_type==='employee' ? <Navigate to="/leave" replace /> : <Dashboard />} />
         <Route path="aba/*" element={<AbaWorkflow />} />
         <Route path="banking/*" element={<Banking />} />
         <Route path="payroll/*" element={<Payroll />} />
@@ -62,6 +64,13 @@ function AuthedRoutes() {
 
 function AppContent() {
   const { isAuthenticated, isLoading, logout, requiresPasswordChange } = useAuth();
+  const [activationToken,setActivationToken] = useState<string | null>(()=>{
+    const hash=window.location.hash;
+    if(!hash.startsWith('#activate-leave='))return null;
+    const token=hash.substring('#activate-leave='.length);
+    window.history.replaceState(null,'',window.location.pathname+window.location.search);
+    return token || null;
+  });
   const [resetToken, setResetToken] = useState<string | null>(() => {
     const hash = window.location.hash;
     if (hash.startsWith('#reset-password=')) {
@@ -119,6 +128,8 @@ function AppContent() {
       onSuccess={handleResetPasswordSuccess}
     />
   );
+
+  if(activationToken) return <EmployeeActivation token={activationToken} onDone={()=>{setActivationToken(null);if(isAuthenticated)logout();}} />;
 
   if (isLoading) {
     return (

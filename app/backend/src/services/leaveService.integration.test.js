@@ -65,8 +65,12 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       return rows[0].id;
     }
 
-    test('the manager, when the staff record names one', async () => {
-      await pool.query("UPDATE hr_employees SET email = 'manager@example.test' WHERE id = $1", [manager.id]);
+    test('an active manager with approval capability and verified placement', async () => {
+      const {rows:[login]}=await pool.query(`INSERT INTO reviewers(email,display_name,role,password_hash,permissions)
+        VALUES ('manager@example.test','Manager','user','x','{"hr_leave_approve":true}') RETURNING id`);
+      const {rows:[department]}=await pool.query("INSERT INTO hr_departments(name) VALUES ('Notification Finance') RETURNING id");
+      await pool.query('UPDATE hr_employees SET department_id=$2 WHERE id=ANY($1::uuid[])',[[ana.id,manager.id],department.id]);
+      await pool.query("UPDATE hr_employees SET reviewer_id=$2,email='manager@example.test' WHERE id=$1",[manager.id,login.id]);
       const fresh = (await pool.query('SELECT * FROM hr_employees WHERE id = $1', [ana.id])).rows[0];
 
       const approvers = await service.leaveApprovers(pool, fresh);
@@ -433,7 +437,9 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       const other = await createLogin('leave-outsider@test', outsider.id);
       const reportAdminEmployee = await createEmployee(pool, { name: 'Report Admin' });
       const reportAdmin = await createLogin('leave-report-admin@test', reportAdminEmployee.id, { hr_admin: true });
-      await pool.query("UPDATE hr_employees SET department_code = 'FIN', division_code = 'Treasury' WHERE id = $1", [ana.id]);
+      const department=(await pool.query("INSERT INTO hr_departments(name) VALUES ('FIN') RETURNING id")).rows[0];
+      const division=(await pool.query("INSERT INTO hr_divisions(department_id,name) VALUES ($1,'Treasury') RETURNING id",[department.id])).rows[0];
+      await pool.query("UPDATE hr_employees SET department_code='FIN',division_code='Treasury',department_id=$2,division_id=$3 WHERE id=ANY($1::uuid[])",[ [ana.id,manager.id],department.id,division.id]);
       const { application } = await apply();
       await service.decideLeave(pool, {
         applicationId: application.id, decision: 'approved', note: '', actorId: supervisor.id, canAct: allowAll,
@@ -701,7 +707,7 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
 
   describe('pay rate visibility', () => {
     /** Calls an HR endpoint as an account with exactly these capabilities. */
-    async function callAs(permissions, path, { method = 'GET', body } = {}) {
+    async function callAs(permissions, path, { method = 'GET', body, scope = false } = {}) {
       const express = (await import('express')).default;
       const { default: hrRouter } = await import('../routes/hr.js');
       const auth = await import('./authService.js');
@@ -713,6 +719,16 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
         // must not be given the admin role as well.
         [email, JSON.stringify(permissions), permissions.hr_admin ? 'admin' : 'user']);
       const { rows: [account] } = await pool.query('SELECT * FROM reviewers WHERE email = $1', [email]);
+      if (scope) {
+        const {rows:departments}=await pool.query('SELECT id FROM hr_departments');
+        for (const department of departments) await pool.query(`INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,reason)
+          VALUES ($1,$2,ARRAY['hr_staff_manage'],'2020-01-01','Verified synthetic department scope')`,[account.id,department.id]);
+      }
+      if (path.startsWith('/calendar') && !permissions.hr_admin && !permissions.hr_staff_manage) {
+        // Employee links are now verified by HR; a read must never invent one.
+        const outsider = await createEmployee(pool, { name: 'Verified outsider' });
+        await pool.query('UPDATE hr_employees SET reviewer_id = $1 WHERE id = $2', [account.id, outsider.id]);
+      }
       const { tokenId, expiresAt } = await auth.createSession(account.id);
       const token = auth.buildTokenPayload(account, tokenId, expiresAt);
 
@@ -744,7 +760,9 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       // The endpoint selects e.*, so the field is stripped at the response
       // boundary rather than relying on every query remembering to exclude it.
       await pool.query('UPDATE hr_employees SET daily_rate = 150 WHERE id = $1', [ana.id]);
-      const { body } = await callAs({ hr_staff_manage: true }, '/employees');
+      const department=(await pool.query("INSERT INTO hr_departments(name) VALUES ('Scoped payroll') RETURNING id")).rows[0];
+      await pool.query('UPDATE hr_employees SET department_id=$2 WHERE id=$1',[ana.id,department.id]);
+      const { body } = await callAs({ hr_staff_manage: true }, '/employees',{scope:true});
       const row = body.find((e) => e.id === ana.id);
       assert.ok(row, 'the row is still returned');
       assert.equal(Object.hasOwn(row, 'daily_rate'), false, 'but not what they are paid');
@@ -763,18 +781,17 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       assert.equal((await callAs(staff, `/departments/${created.body.id}/divisions`, { method: 'POST', body: { name: 'Treasury' } })).status, 403);
       assert.equal((await callAs(admin, `/departments/${created.body.id}/divisions`, { method: 'POST', body: { name: 'Treasury' } })).status, 201);
 
-      const { body } = await callAs(staff, '/org-units');
+      const { body } = await callAs(staff, '/org-units',{scope:true});
       assert.deepEqual(body.map((d) => [d.name, d.divisions.map((v) => v.name)]), [['Finance', ['Treasury']]]);
     });
 
     test('staff must be given a listed department and division', async () => {
       const admin = { hr_admin: true };
-      const staff = { hr_staff_manage: true, hr_access: true };
       const finance = (await callAs(admin, '/departments', { method: 'POST', body: { name: 'Finance' } })).body;
       await callAs(admin, `/departments/${finance.id}/divisions`, { method: 'POST', body: { name: 'Treasury' } });
       const health = (await callAs(admin, '/departments', { method: 'POST', body: { name: 'Health' } })).body;
       await callAs(admin, `/departments/${health.id}/divisions`, { method: 'POST', body: { name: 'Clinics' } });
-      const create = (fields) => callAs(staff, '/employees', { method: 'POST', body: { display_name: 'New Person', ...fields } });
+      const create = (fields) => callAs(admin, '/employees', { method: 'POST', body: { display_name: 'New Person', ...fields } });
 
       const ok = await create({ department_code: 'finance', division_code: 'treasury' });
       assert.equal(ok.status, 201);
@@ -786,7 +803,7 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       assert.equal((await create({ department_code: 'Finance', division_code: 'Clinics' })).status, 400,
         'a division belongs to one department');
 
-      const edit = (fields) => callAs(staff, `/employees/${ok.body.id}`, { method: 'PUT', body: fields });
+      const edit = (fields) => callAs(admin, `/employees/${ok.body.id}`, { method: 'PUT', body: fields });
       assert.equal((await edit({ division_code: 'Clinics' })).status, 400);
       const moved = await edit({ department_code: 'Health', division_code: 'Clinics' });
       assert.equal(moved.status, 200);
@@ -815,7 +832,7 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
     });
 
     test('not being eligible for annual leave needs a reason, and study leave needs dates', async () => {
-      const staff = { hr_staff_manage: true, hr_access: true };
+      const staff = { hr_admin: true };
       const edit = (fields) => callAs(staff, `/employees/${ana.id}`, { method: 'PUT', body: fields });
 
       assert.equal((await edit({ leave_entitled: false })).status, 400, 'a reason is required');

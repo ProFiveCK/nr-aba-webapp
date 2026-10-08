@@ -1,3 +1,4 @@
+import { AustralianDateInput } from '../../../components/AustralianDateInput';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import { Search, X } from 'lucide-react';
@@ -11,6 +12,9 @@ import { formatDate } from '../types';
 import { toDateInputValue, todayIsoDate } from '../../../lib/date';
 import { csvCell, parseCsv } from '../../../lib/csv';
 import { BalancesReport } from '../BalancesReport';
+import { PayrollEmployeeImport } from '../PayrollEmployeeImport';
+import { ScopedBalances } from '../ScopedBalances';
+import { EmployeeManagement } from '../EmployeeManagement';
 import type {
     ImportResult,
     ImportRow,
@@ -68,7 +72,12 @@ function draftFor(employee: Employee): EmployeeDraft {
     };
 }
 
-export function Staff() {
+export function Staff({workspace='employees'}:{workspace?:'employees'|'settings'}) {
+    const { user } = useAuth();
+    return user?.permissions?.hr_admin || user?.permissions?.hr_staff_manage ? <EmployeeManagement workspace={workspace} legacyTools={<LegacyStaff />} /> : <ScopedBalances />;
+}
+
+function LegacyStaff() {
     const { addToast } = useToast();
     const { confirm } = useConfirm();
     const { user } = useAuth();
@@ -104,6 +113,7 @@ export function Staff() {
     const [creating, setCreating] = useState(false);
 
     const [showImport, setShowImport] = useState(false);
+    const [showPayrollImport, setShowPayrollImport] = useState(false);
     const [importRows, setImportRows] = useState<ImportRow[]>([]);
     const [importFileName, setImportFileName] = useState('');
     const [importParseError, setImportParseError] = useState('');
@@ -655,17 +665,24 @@ export function Staff() {
                         Balances report
                     </button>
                 </div>
-                <div className="flex w-full flex-col gap-2 min-[360px]:w-auto min-[360px]:flex-row">
-                    <button
+                <div className="flex w-full flex-col flex-wrap gap-2 sm:w-auto sm:flex-row">
+                    {canSeePay && <button
                         type="button"
-                        onClick={() => { setShowImport((s) => !s); setShowAddForm(false); }}
+                        onClick={() => { setShowPayrollImport((s) => !s); setShowImport(false); setShowAddForm(false); }}
                         className="whitespace-nowrap rounded-full border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
                     >
-                        {showImport ? 'Cancel' : 'Import from spreadsheet'}
+                        {showPayrollImport ? 'Close Payroll import' : 'Import Payroll employees'}
+                    </button>}
+                    <button
+                        type="button"
+                        onClick={() => { setShowImport((s) => !s); setShowAddForm(false); setShowPayrollImport(false); }}
+                        className="whitespace-nowrap rounded-full border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                        {showImport ? 'Cancel' : 'Staff / opening balances'}
                     </button>
                     <button
                         type="button"
-                        onClick={() => { setShowAddForm((s) => !s); setShowImport(false); }}
+                        onClick={() => { setShowAddForm((s) => !s); setShowImport(false); setShowPayrollImport(false); }}
                         className="whitespace-nowrap rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark"
                     >
                         {showAddForm ? 'Cancel' : '+ Add staff'}
@@ -673,11 +690,17 @@ export function Staff() {
                 </div>
             </div>
 
+            {showPayrollImport && canSeePay && <PayrollEmployeeImport onApplied={() => {
+                setReport(null);
+                void apiClient.get<Employee[]>('/hr/employees').then((staff) => setEmployees(staff || []))
+                    .catch((err: Error) => addToast(err.message || 'Import completed; refresh the staff directory.', 'error'));
+            }} />}
+
             {showImport && (
                 <div className="space-y-3 app-panel p-4">
                     <p className="text-xs text-gray-500">
-                        Bulk-create staff records (each starts with no login — link one in User Management, or it
-                        links itself the first time that person opens Leave). Download the template, fill it in,
+                        Bulk-create historical staff records and opening balances. HR must separately verify
+                        and link each login to its employee record. Download the template, fill it in,
                         and upload it back here. Department and division must match the lists in Policies;
                         rows that do not are skipped with the reason.
                     </p>
@@ -724,7 +747,7 @@ export function Staff() {
                                                 <td className="px-3 py-1.5 text-gray-900">{r.display_name}</td>
                                                 <td className="px-3 py-1.5 text-gray-600">{r.department_code || '—'}</td>
                                                 <td className="px-3 py-1.5 text-gray-600">{r.division_code || '—'}</td>
-                                                <td className="px-3 py-1.5 text-gray-600">{r.join_date || '—'}</td>
+                                                <td className="px-3 py-1.5 text-gray-600">{r.join_date ? formatDate(r.join_date) : '—'}</td>
                                                 <td className="px-3 py-1.5 text-gray-600">
                                                     {Object.keys(r.balances).length
                                                         ? Object.entries(r.balances).map(([k, v]) => `${k}: ${v}`).join(', ')
@@ -815,8 +838,7 @@ export function Staff() {
                                 <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>
                             ))}
                         </select>
-                        <input
-                            type="date"
+                        <AustralianDateInput
                             value={newJoinDate}
                             onChange={(e) => setNewJoinDate(e.target.value)}
                             className="rounded-md border border-gray-300 px-3 py-2 text-sm"
@@ -1053,8 +1075,7 @@ export function Staff() {
                                     </label>
                                     <label className="text-sm font-medium text-gray-700">
                                         Joining date
-                                        <input
-                                            type="date"
+                                        <AustralianDateInput
                                             value={draft.joinDate}
                                             onChange={(event) => setDraft({ ...draft, joinDate: event.target.value })}
                                             className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
@@ -1101,8 +1122,7 @@ export function Staff() {
                                                 <div className="grid gap-3 sm:grid-cols-2">
                                                     <label className="text-sm font-medium text-gray-700">
                                                         Study leave starts
-                                                        <input
-                                                            type="date"
+                                                        <AustralianDateInput
                                                             value={draft.studyLeaveStart}
                                                             onChange={(event) => setDraft({ ...draft, studyLeaveStart: event.target.value })}
                                                             className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
@@ -1110,8 +1130,7 @@ export function Staff() {
                                                     </label>
                                                     <label className="text-sm font-medium text-gray-700">
                                                         Expected return
-                                                        <input
-                                                            type="date"
+                                                        <AustralianDateInput
                                                             value={draft.studyLeaveEnd}
                                                             min={draft.studyLeaveStart || undefined}
                                                             onChange={(event) => setDraft({ ...draft, studyLeaveEnd: event.target.value })}

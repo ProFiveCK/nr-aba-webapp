@@ -1,9 +1,12 @@
+import { AustralianDateInput } from '../../../components/AustralianDateInput';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { apiClient } from '../../../lib/api';
+import { useAuth } from '../../../contexts/useAuth';
 import { useToast } from '../../../contexts/useToast';
 import { useConfirm } from '../../../contexts/useConfirm';
 import { EmptyState, LoadingState } from '../../../components/Ui';
+import { GovernmentMyLeave } from '../GovernmentRequests';
 import { printApprovedLeaveForm } from '../payrollForm';
 import {
     calculateWorkingDays,
@@ -21,6 +24,7 @@ import type { LeaveApplication, LeaveType, MyLeaveResponse, PublicHoliday } from
 
 export function MyLeave() {
     const { addToast } = useToast();
+    const { user } = useAuth();
     const { confirm } = useConfirm();
     const [summary, setSummary] = useState<MyLeaveResponse | null>(null);
     const [types, setTypes] = useState<LeaveType[]>([]);
@@ -79,6 +83,7 @@ export function MyLeave() {
         load();
     }, [load]);
 
+    const governmentPending = user?.account_type==='employee' || summary?.employee.leave_policy_regime==='government';
     const notEntitled = summary?.employee.leave_entitled === false;
     // The preview is exact only when the public holiday calendar loaded.
     const holidayDates = useMemo(() => new Set(holidays.map((h) => h.holiday_date)), [holidays]);
@@ -193,6 +198,8 @@ export function MyLeave() {
         </div>
     );
 
+    if (governmentPending && summary) return <div className="space-y-5"><GovernmentMyLeave employeeId={summary.employee.id}/><details className="app-panel space-y-3 p-5"><summary className="cursor-pointer font-semibold">Historical local leave records</summary><p className="text-sm text-gray-600">These retain their original leave types, balances and decisions. Government entitlements and applications are recorded separately.</p>{summary.balances.map(b=><p key={b.leave_type_id} className="text-sm">{b.leave_type_name}: {b.balance} historical days</p>)}{applications.map(a=><article key={a.id} className="space-y-1 rounded-lg border border-gray-200 p-3"><p className="text-sm">{a.leave_type_name} · {formatDate(a.start_date)} to {formatDate(a.end_date)} · {a.status}</p>{a.status==='approved'&&<button className="toolbar-button" onClick={()=>void printApprovedLeaveForm(a.id).catch((e:Error)=>addToast(e.message,'error'))}>Download historical approved PDF</button>}</article>)}</details></div>;
+
     return (
         <div className="space-y-6">
             <div className="flex flex-wrap items-end justify-between gap-3">
@@ -210,11 +217,12 @@ export function MyLeave() {
                 </div>
             )}
 
+            {governmentPending && <p role="status" className="app-panel border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Your employee login is ready. Government leave requests will open after the division, Head of Department and Chief Secretary approval workflow and certified opening balances are enabled. Any recorded historical balances shown here are awaiting that transition.</p>}
             {/* Balances */}
             <div className="app-panel p-5 sm:p-6">
                 <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
                     <h3 className="text-lg font-semibold text-gray-950">
-                        Leave balances {summary ? `— ${summary.year}` : ''}
+                        {governmentPending ? 'Recorded historical balances' : 'Leave balances'} {summary ? `— ${summary.year}` : ''}
                     </h3>
                     {summary?.manager && (
                         <p className="text-xs text-gray-500">Approver: {summary.manager.display_name}</p>
@@ -231,7 +239,7 @@ export function MyLeave() {
                                     </p>
                                     <p className="mt-2 text-3xl font-bold tabular-nums text-brand">{available}</p>
                                     <p className="text-xs text-gray-500">
-                                        days available
+                                        {governmentPending ? 'historical days · certification pending' : 'days available'}
                                         {Number(balance.pending) > 0 && ` · ${balance.pending} pending`}
                                     </p>
                                 </div>
@@ -240,13 +248,13 @@ export function MyLeave() {
                     </div>
                 ) : (
                     <p className="text-sm text-gray-500">
-                        No balances yet — they are created the first time you apply for each leave type.
+                        {governmentPending ? 'No historical balance rows. Certified government entitlements are shown separately above.' : 'No balances yet — they are created the first time you apply for each leave type.'}
                     </p>
                 )}
             </div>
 
             {/* Apply */}
-            {!notEntitled && (
+            {!notEntitled && !governmentPending && (
             <form onSubmit={submit} className="app-panel space-y-5 p-5 sm:p-6">
                 <div>
                     <h3 className="text-lg font-semibold text-gray-950">Apply for leave</h3>
@@ -268,8 +276,7 @@ export function MyLeave() {
                     </label>
                     <label className="text-sm">
                         <span className="mb-1 block font-medium text-gray-700">From</span>
-                        <input
-                            type="date"
+                        <AustralianDateInput
                             value={startDate}
                             onChange={(e) => setStartDate(e.target.value)}
                             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-blue-100"
@@ -278,8 +285,7 @@ export function MyLeave() {
                     </label>
                     <label className="text-sm">
                         <span className="mb-1 block font-medium text-gray-700">To</span>
-                        <input
-                            type="date"
+                        <AustralianDateInput
                             value={endDate}
                             min={startDate || undefined}
                             onChange={(e) => setEndDate(e.target.value)}

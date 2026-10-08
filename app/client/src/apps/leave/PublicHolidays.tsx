@@ -1,3 +1,4 @@
+import { AustralianDateInput } from '../../components/AustralianDateInput';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
@@ -103,8 +104,7 @@ export function PublicHolidays() {
             <div className="mt-4 flex flex-wrap items-end gap-3">
                 <label className="text-sm">
                     <span className="mb-1 block font-medium text-gray-700">Date</span>
-                    <input
-                        type="date"
+                    <AustralianDateInput
                         value={date}
                         onChange={(e) => setDate(e.target.value)}
                         className="rounded-md border border-gray-300 px-3 py-2 text-sm"

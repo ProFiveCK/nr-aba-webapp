@@ -59,8 +59,11 @@ export const INELIGIBLE_REASON_LABELS: Record<IneligibleReason, string> = {
 };
 
 export interface Employee {
+    leave_policy_regime?: 'legacy' | 'government';
     id: string;
     reviewer_id: string | null;
+    department_id?: string | null;
+    division_id?: string | null;
     display_name: string;
     position_title: string | null;
     email: string | null;
@@ -112,10 +115,7 @@ export const STATUS_STYLES: Record<LeaveStatus, string> = {
     cancelled: 'bg-gray-100 text-gray-600',
 };
 
-export function formatDate(value: string | null): string {
-    if (!value) return '—';
-    return new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-}
+export { formatDate } from '../../lib/date';
 
 export interface PublicHoliday {
     id: string;

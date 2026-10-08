@@ -6,6 +6,7 @@ import { EmptyState, LoadingState } from '../../../components/Ui';
 import { formatDate } from '../types';
 import { printApprovedLeaveForm } from '../payrollForm';
 import { LeaveAttachmentLinks } from '../LeaveAttachmentLinks';
+import { GovernmentRequestList } from '../GovernmentRequests';
 import type { LeaveApplication } from '../types';
 
 export function Approvals() {
@@ -79,13 +80,14 @@ export function Approvals() {
         }
     };
 
-    if (loading) return <LoadingState label="Loading approvals…" />;
+    if (loading) return <div className="space-y-5"><GovernmentRequestList mode="queue"/><LoadingState label="Loading existing local approvals…" /></div>;
 
     return (
         <div className="space-y-5">
+            <GovernmentRequestList mode="queue"/>
             <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#2a5ba5]">Manager queue</p>
-                <h2 className="mt-1 text-xl font-bold text-gray-950">Leave approvals</h2>
+                <h2 className="mt-1 text-xl font-bold text-gray-950">Existing local leave approvals</h2>
                 <p className="mt-1 text-sm text-gray-500">{items.length} request{items.length === 1 ? '' : 's'} awaiting your decision.</p>
             </div>
             {lastApproved && (

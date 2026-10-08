@@ -16,6 +16,8 @@ import {
   ROLE_CAPABILITIES,
 } from '../config.js';
 import { lowerEmail } from '../utils/helpers.js';
+import { activeScopeSql } from './hrAccess.js';
+import { employeeApiLimiter } from '../middleware/employeeApiLimit.js';
 
 export function setAuthCookie(res, token, expiresAt) {
   res.cookie(COOKIE_NAME, token, {
@@ -99,9 +101,10 @@ export async function lookupSession(tokenId) {
   const { rows } = await pool.query(
     `SELECT r.id, r.email, r.display_name, r.role, r.status, r.must_change_password, r.last_login_at,
             r.created_at, r.updated_at, r.department_code, r.division_code, r.notify_on_submission,
-            r.permissions, s.expires_at
+            r.permissions, r.account_type, r.onboarding_state, r.login_alias, s.expires_at, e.id AS employee_id, e.status AS employee_status
        FROM reviewer_sessions s
        JOIN reviewers r ON r.id = s.reviewer_id
+       LEFT JOIN hr_employees e ON e.reviewer_id = r.id
       WHERE s.token_id = $1`,
     [tokenId]
   );
@@ -163,7 +166,9 @@ export function hasPermission(permissions, permission) {
 
 export async function loadCapabilities(reviewerId) {
   const { rows } = await pool.query(
-    'SELECT capability FROM reviewer_capabilities WHERE reviewer_id = $1',
+    `SELECT capability FROM reviewer_capabilities WHERE reviewer_id = $1
+     UNION SELECT unnest(s.capabilities) FROM hr_access_scopes s WHERE s.reviewer_id=$1 AND ${activeScopeSql()}
+     UNION SELECT 'hr_access' FROM hr_access_scopes s WHERE s.reviewer_id=$1 AND ${activeScopeSql()}`,
     [reviewerId]
   );
   return rows.map((r) => r.capability);
@@ -207,19 +212,19 @@ export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS, 
     permissions[capability] ??= true;
   }
   // Defaults based on legacy role model for backward compatibility
-  if (['reviewer', 'admin'].includes(row.role)) {
+  if (row.account_type !== 'employee' && ['reviewer', 'admin'].includes(row.role)) {
     permissions.review_aba ??= true;
     permissions.notify_aba_submissions ??= row.notify_on_submission !== false;
     // FOREX TT defaults for reviewers/admins
     permissions.review_forex_tt ??= true;
     permissions.notify_forex_tt_submissions ??= row.notify_on_submission !== false;
   }
-  if (row.status === 'active') {
+  if (row.account_type !== 'employee' && row.status === 'active') {
     // All active users may submit ABA batches and FOREX TT requests
     permissions.submit_aba ??= true;
     permissions.submit_forex_tt ??= true;
   }
-  if (row.role === 'admin') {
+  if (row.account_type !== 'employee' && row.role === 'admin') {
     permissions.admin ??= true;
   }
   // Which apps an ordinary account can open is decided only by the
@@ -234,16 +239,23 @@ export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS, 
   // that repairs the others, so it must not be possible to arrive at a
   // database where every one of them has been narrowed out of the page that
   // would grant the capability back.
-  if (row.role === 'admin') {
+  if (row.account_type !== 'employee' && row.role === 'admin') {
     for (const capability of ROLE_CAPABILITIES.admin) {
       permissions[capability] ??= true;
     }
   }
+  if (row.account_type === 'employee') {
+    for (const key of Object.keys(permissions)) {
+      if (!key.startsWith('hr_')) delete permissions[key];
+    }
+  }
   return {
     id: row.id,
-    email: row.email,
+    email: row.email || '',
+    login_alias: row.login_alias || null,
     display_name: row.display_name,
     role: row.role,
+    account_type: row.account_type || 'staff',
     status: row.status,
     must_change_password: row.must_change_password ?? false,
     last_login_at: row.last_login_at,
@@ -297,6 +309,10 @@ export function requireAuth(roles = []) {
         res.status(403).json({ message: 'Account inactive.' });
         return;
       }
+      if (session.account_type === 'employee' && (session.employee_status !== 'active' || session.onboarding_state !== 'ready')) {
+        res.status(403).json({ message: 'An active, verified employee link is required. Contact HR.' });
+        return;
+      }
       const now = new Date();
       const expiry = new Date(session.expires_at);
       if (expiry <= now) {
@@ -310,6 +326,13 @@ export function requireAuth(roles = []) {
         res.status(403).json({ message: 'Change your password to continue.', code: 'PASSWORD_CHANGE_REQUIRED' });
         return;
       }
+      // Legacy finance routes also use role/any-login gates. A Leave-only
+      // identity must not inherit access through any of those older gates.
+      const path = requestPath.split('?')[0];
+      if (session.account_type === 'employee' && path !== '/api/hr' && !path.startsWith('/api/hr/') && !PASSWORD_CHANGE_PATHS.has(path)) {
+        res.status(403).json({ message: 'This account has employee Leave access only.' });
+        return;
+      }
       if (allowedRoles && !allowedRoles.includes(session.role)) {
         res.status(403).json({ message: 'Forbidden.' });
         return;
@@ -321,9 +344,11 @@ export function requireAuth(roles = []) {
       const permissions = reviewerSummary(session, allowedPresets, capabilities).permissions;
       req.user = {
         id: session.id,
-        email: session.email,
+        email: session.email || '',
+        login_alias: session.login_alias || null,
         display_name: session.display_name,
         role: session.role,
+        account_type: session.account_type,
         must_change_password: session.must_change_password ?? false,
         tokenId: payload.tokenId,
         session_expires_at: session.expires_at,
@@ -355,7 +380,11 @@ export function requirePermission(...permissions) {
     authenticate(req, res, (err) => {
       if (err) return next(err);
       const granted = req.user?.permissions ?? {};
-      if (required.some((permission) => granted[permission] === true)) return next();
+      if (required.some((permission) => granted[permission] === true)) {
+        const path = (req.originalUrl || '').split('?')[0];
+        if (path === '/api/hr' || path.startsWith('/api/hr/')) return employeeApiLimiter(req, res, next);
+        return next();
+      }
       console.warn(`[auth] missing capability (${required.join(' or ')}) for ${req.method} ${req.originalUrl || req.path}`);
       res.status(403).json({ message: 'Forbidden.' });
     });

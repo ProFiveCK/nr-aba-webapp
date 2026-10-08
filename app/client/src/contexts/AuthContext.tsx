@@ -110,9 +110,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }, delayMs);
     }, [clearRefreshTimer, logout, saveSession]);
 
-    const login = useCallback(async (email: string, password: string) => {
+    const login = useCallback(async (email: string, password: string, mode: 'email' | 'payroll' = 'email') => {
         const response = await apiClient.post<LoginResponse>('/auth/login', {
-            email,
+            ...(mode === 'payroll' ? { login_alias: email } : { email }),
             password,
         });
 

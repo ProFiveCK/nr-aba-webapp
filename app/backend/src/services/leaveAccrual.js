@@ -75,7 +75,7 @@ export async function runLeaveAccrual(client, { periodEnd, actorId }) {
     client.query(
       "SELECT id, name, reset_period, default_days, is_accruable FROM hr_leave_types WHERE is_active = TRUE AND reset_period <> 'none'"
     ),
-    client.query("SELECT id, join_date FROM hr_employees WHERE status = 'active' AND leave_entitled = TRUE"),
+    client.query("SELECT id, join_date FROM hr_employees WHERE status = 'active' AND leave_entitled = TRUE AND leave_policy_regime='legacy'"),
   ]);
 
   let credited = 0;

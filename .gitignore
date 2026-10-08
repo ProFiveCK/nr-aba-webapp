@@ -56,6 +56,7 @@ pids/
 
 # Database dumps and archives
 *.sql
+!scripts/leave-production-snapshot.sql
 *.db
 *.sqlite
 archive/
@@ -109,3 +110,11 @@ cloudflare/secret/
 .cache/
 __pycache__/
 *.py[cod]
+
+# Isolated local Leave review runtime (generated secrets and state)
+.leave-review/
+.leave-production-review/
+backup/*.sql.gz
+
+# Private release verification against the production backup
+.leave-release-review/

@@ -2,173 +2,79 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
 import { useConfirm } from '../../contexts/useConfirm';
-import { Card, CardHeading, LoadingState } from '../../components/Ui';
+import { Button, LoadingState, Modal, Pager } from '../../components/Ui';
+import { Field, inputClass } from './ManagementFields';
+import { filterDepartments, organisationPage } from './organisationBrowse';
 import type { OrgDepartment } from './types';
 
-/** The departments and divisions staff records are chosen from. */
-export function OrgUnits() {
+/** Browse the existing organisation reference data; only one department is expanded at a time. */
+export function OrgUnits({ onChanged, onManageOffices }: { onChanged?: () => void; onManageOffices?: (departmentId: string) => void } = {}) {
     const { addToast } = useToast();
     const { confirm } = useConfirm();
     const [departments, setDepartments] = useState<OrgDepartment[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [newDepartment, setNewDepartment] = useState('');
-    const [newDivisions, setNewDivisions] = useState<Record<string, string>>({});
-
+    const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false), [error, setError] = useState('');
+    const [search, setSearch] = useState(''), [page, setPage] = useState(0), [selectedId, setSelectedId] = useState('');
+    const [dialog, setDialog] = useState<{ kind: 'department' | 'division'; department?: OrgDepartment } | null>(null);
+    const [name, setName] = useState(''), [dialogError, setDialogError] = useState('');
     const load = useCallback(async () => {
-        try {
-            setDepartments((await apiClient.get<OrgDepartment[]>('/hr/org-units')) || []);
-        } catch (err) {
-            addToast((err as Error)?.message || 'Unable to load departments.', 'error');
-        } finally {
-            setLoading(false);
-        }
-    }, [addToast]);
-
-    useEffect(() => {
-        load();
-    }, [load]);
-
-    const run = async (action: () => Promise<unknown>, success: string) => {
+        try { setDepartments((await apiClient.get<OrgDepartment[]>('/hr/org-units')) || []); setError(''); }
+        catch (err) { setError((err as Error).message || 'Unable to load departments.'); }
+        finally { setLoading(false); }
+    }, []);
+    useEffect(() => { void load(); }, [load]);
+    const matches = filterDepartments(departments, search);
+    const result = organisationPage(matches, page);
+    const selected = departments.find((department) => department.id === selectedId);
+    async function run(action: () => Promise<unknown>, success: string) {
         setSaving(true);
+        try { await action(); await load(); onChanged?.(); addToast(success, 'success'); }
+        finally { setSaving(false); }
+    }
+    function show(kind: 'department' | 'division', department?: OrgDepartment) { setName(''); setDialogError(''); setDialog({ kind, department }); }
+    async function save() {
+        if (!dialog || !name.trim()) return;
+        setDialogError('');
         try {
-            await action();
-            addToast(success, 'success');
-            await load();
-            return true;
-        } catch (err) {
-            addToast((err as Error)?.message || 'That change could not be saved.', 'error');
-            return false;
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const addDepartment = async () => {
-        const name = newDepartment.trim();
-        if (!name) {
-            addToast('Give the department a name.', 'error');
-            return;
-        }
-        if (await run(() => apiClient.post('/hr/departments', { name }), 'Department added.')) setNewDepartment('');
-    };
-
-    const addDivision = async (department: OrgDepartment) => {
-        const name = (newDivisions[department.id] || '').trim();
-        if (!name) {
-            addToast('Give the division a name.', 'error');
-            return;
-        }
-        const added = await run(
-            () => apiClient.post(`/hr/departments/${department.id}/divisions`, { name }),
-            'Division added.'
-        );
-        if (added) setNewDivisions((current) => ({ ...current, [department.id]: '' }));
-    };
-
-    const removeDepartment = async (department: OrgDepartment) => {
-        if (!(await confirm(`Remove the department "${department.name}"?`))) return;
-        await run(() => apiClient.delete(`/hr/departments/${department.id}`), 'Department removed.');
-    };
-
-    const removeDivision = async (departmentName: string, division: { id: string; name: string }) => {
-        if (!(await confirm(`Remove the division "${division.name}" from ${departmentName}?`))) return;
-        await run(() => apiClient.delete(`/hr/divisions/${division.id}`), 'Division removed.');
-    };
-
-    return (
-        <Card>
-            <CardHeading
-                title="Departments and divisions"
-                subtitle="Staff records choose from these lists. A division belongs to one department. Anything still assigned to staff cannot be removed."
-            />
-
-            <div className="mt-4 flex flex-wrap items-end gap-3">
-                <label className="flex-1 text-sm">
-                    <span className="mb-1 block font-medium text-gray-700">New department</span>
-                    <input
-                        type="text"
-                        value={newDepartment}
-                        maxLength={60}
-                        placeholder="Finance"
-                        onChange={(e) => setNewDepartment(e.target.value)}
-                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    />
-                </label>
-                <button
-                    type="button"
-                    onClick={addDepartment}
-                    disabled={saving}
-                    className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
-                >
-                    Add department
-                </button>
-            </div>
-
-            {loading ? (
-                <LoadingState label="Loading departments…" />
-            ) : departments.length === 0 ? (
-                <p className="mt-4 text-sm text-gray-500">No departments yet. Add one so it can be chosen on staff records.</p>
-            ) : (
-                <ul className="mt-4 divide-y divide-gray-100">
-                    {departments.map((department) => (
-                        <li key={department.id} className="py-3">
-                            <div className="flex items-center justify-between gap-3">
-                                <span className="text-sm font-semibold text-gray-900">{department.name}</span>
-                                <button
-                                    type="button"
-                                    onClick={() => removeDepartment(department)}
-                                    disabled={saving}
-                                    className="text-sm font-medium text-red-600 hover:underline disabled:opacity-50"
-                                >
-                                    Remove department
-                                </button>
-                            </div>
-                            <div className="mt-2 flex flex-wrap items-center gap-2">
-                                {department.divisions.length === 0 && (
-                                    <span className="text-xs text-gray-500">No divisions</span>
-                                )}
-                                {department.divisions.map((division) => (
-                                    <span
-                                        key={division.id}
-                                        className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 py-1 pl-3 pr-1.5 text-xs text-gray-800"
-                                    >
-                                        {division.name}
-                                        <button
-                                            type="button"
-                                            onClick={() => removeDivision(department.name, division)}
-                                            disabled={saving}
-                                            aria-label={`Remove ${division.name}`}
-                                            className="rounded-full px-1.5 text-gray-500 hover:bg-gray-200 hover:text-gray-800 disabled:opacity-50"
-                                        >
-                                            ×
-                                        </button>
-                                    </span>
-                                ))}
-                            </div>
-                            <div className="mt-2 flex items-center gap-2">
-                                <input
-                                    type="text"
-                                    value={newDivisions[department.id] || ''}
-                                    maxLength={60}
-                                    placeholder="New division"
-                                    aria-label={`New division in ${department.name}`}
-                                    onChange={(e) => setNewDivisions((current) => ({ ...current, [department.id]: e.target.value }))}
-                                    className="w-56 rounded-md border border-gray-300 px-3 py-1.5 text-sm"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => addDivision(department)}
-                                    disabled={saving}
-                                    className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                                >
-                                    Add division
-                                </button>
-                            </div>
-                        </li>
-                    ))}
+            await run(() => dialog.kind === 'department'
+                ? apiClient.post('/hr/departments', { name: name.trim() })
+                : apiClient.post(`/hr/departments/${dialog.department!.id}/divisions`, { name: name.trim() }),
+            dialog.kind === 'department' ? 'Department added.' : 'Division added.');
+            setDialog(null);
+        } catch (err) { setDialogError((err as Error).message || 'Unable to save this name.'); }
+    }
+    async function remove(kind: 'department' | 'division', id: string, label: string) {
+        if (!(await confirm(`Remove ${kind} "${label}"? Anything still assigned to staff cannot be removed.`))) return;
+        try {
+            await run(() => apiClient.delete(`/hr/${kind === 'department' ? 'departments' : 'divisions'}/${id}`), `${kind === 'department' ? 'Department' : 'Division'} removed.`);
+            if (kind === 'department') setSelectedId('');
+        } catch (err) { addToast((err as Error).message || 'Unable to remove this record.', 'error'); }
+    }
+    return <section className="app-panel space-y-4 p-4 sm:p-5" aria-label="Departments and divisions">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+            <Field label="Find a department or division"><input className={inputClass} type="search" maxLength={100} value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search existing names" /></Field>
+            <Button onClick={() => show('department')} disabled={saving}>Add department</Button>
+        </div>
+        <p className="text-sm text-gray-500">{departments.length} departments · Select one to manage its divisions. Staff records use these existing names.</p>
+        {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+        {loading ? <LoadingState label="Loading departments…" /> : <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(16rem,1fr)_minmax(0,1.5fr)]">
+            <div className="min-w-0">
+                <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200" aria-label="Department list">
+                    {result.rows.map((department) => <li key={department.id}><button type="button" aria-pressed={selectedId === department.id} onClick={() => setSelectedId(department.id)} className={`flex w-full items-center justify-between gap-3 px-3 py-3 text-left text-sm focus-visible:outline-2 focus-visible:outline-brand ${selectedId === department.id ? 'bg-blue-50 text-brand' : 'hover:bg-gray-50'}`}><span className="min-w-0 break-words font-medium">{department.name}</span><span className="shrink-0 text-xs text-gray-500">{department.divisions.length} divisions</span></button></li>)}
                 </ul>
-            )}
-        </Card>
-    );
+                {!result.total && <p className="py-6 text-sm text-gray-500">{departments.length ? 'No matching departments or divisions.' : 'No departments recorded yet.'}</p>}
+                <Pager {...result} setPage={setPage} />
+            </div>
+            <div className="min-w-0 rounded-lg border border-gray-200 p-4">
+                {selected ? <>
+                    <div className="flex flex-wrap items-start justify-between gap-2"><h3 className="min-w-0 break-words text-base font-semibold">{selected.name}</h3><Button variant="secondary" disabled={saving} onClick={() => show('division', selected)}>Add division</Button></div>
+                    <p className="mt-2 text-sm text-gray-500">{selected.divisions.length} divisions</p>
+                    <ul className="mt-3 max-h-80 divide-y divide-gray-100 overflow-y-auto">{selected.divisions.map((division) => <li key={division.id} className="flex items-center justify-between gap-3 py-3 text-sm"><span className="min-w-0 break-words">{division.name}</span><button type="button" disabled={saving} onClick={() => void remove('division', division.id, division.name)} aria-label={`Remove ${division.name}`} className="shrink-0 rounded px-2 py-1 font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Remove</button></li>)}</ul>
+                    {!selected.divisions.length && <p className="py-6 text-sm text-gray-500">No divisions recorded.</p>}
+                    <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4">{onManageOffices && <Button variant="secondary" onClick={() => onManageOffices(selected.id)}>Manage leave approvers</Button>}<button type="button" disabled={saving || selected.divisions.length > 0} onClick={() => void remove('department', selected.id, selected.name)} className="rounded px-2 py-1 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Remove department</button></div>
+                    <p className="mt-2 text-xs text-gray-500">Remove divisions first. Records still assigned to staff cannot be removed.</p>
+                </> : <p className="py-12 text-center text-sm text-gray-500">Select a department to view and manage its divisions.</p>}
+            </div>
+        </div>}
+        {dialog && <Modal title={dialog.kind === 'department' ? 'Add department' : `Add division to ${dialog.department?.name}`} onClose={() => setDialog(null)} closeDisabled={saving} size="md"><form className="space-y-4" onSubmit={(event) => { event.preventDefault(); if (!saving) void save(); }}><Field label={dialog.kind === 'department' ? 'Department name' : 'Division name'}><input className={inputClass} value={name} maxLength={60} required autoFocus disabled={saving} onChange={(event) => setName(event.target.value)} /></Field>{dialogError && <p role="alert" className="text-sm text-red-700">{dialogError}</p>}<div className="flex justify-end gap-2"><Button variant="secondary" disabled={saving} onClick={() => setDialog(null)}>Cancel</Button><Button type="submit" loading={saving} disabled={!name.trim()}>Save</Button></div></form></Modal>}
+    </section>;
 }

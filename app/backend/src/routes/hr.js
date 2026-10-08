@@ -319,6 +319,9 @@ router.post(
         employee,
         approvers,
       }))
+      .then((sentTo) => console.info(sentTo.length
+        ? `[leave] approval request for ${employee.display_name} (${application.id}) emailed to ${sentTo.join(', ')}`
+        : `[leave] approval request for ${employee.display_name} (${application.id}) not emailed: no approver address, SMTP not configured, or testing mode`))
       .catch((err) => console.error('Failed to notify the approver of a leave application', err));
   }
 );
@@ -432,7 +435,11 @@ router.post(
         decision,
         note,
         decidedBy: req.user.display_name || req.user.email,
-      }).catch((err) => console.error('Failed to notify applicant of leave decision', err));
+      })
+        .then((sentTo) => console.info(sentTo.length
+          ? `[leave] ${decision} notice for ${applicant.display_name} (${application.id}) emailed to ${sentTo.join(', ')}`
+          : `[leave] ${decision} notice for ${applicant.display_name} (${application.id}) not emailed: no applicant address, SMTP not configured, or testing mode`))
+        .catch((err) => console.error('Failed to notify applicant of leave decision', err));
     }
     res.json({ message: `Leave ${decision}.` });
   }
@@ -1200,7 +1207,7 @@ router.post(
       action: 'hr.balance.adjusted',
       entityType: 'hr_employee',
       entityId: req.body.employee_id,
-      after: { amount, reason, year },
+      after: { leave_type_id: req.body.leave_type_id, amount, reason, year },
     });
     res.status(201).json({ message: 'Balance adjusted.' });
   }

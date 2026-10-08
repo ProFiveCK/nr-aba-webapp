@@ -72,6 +72,11 @@ export async function recordInitialCredit(pool,{user,actor,data}) {
   if(employee.status!=='active'||employee.leave_policy_regime!=='legacy')fail('Record initial source credits before this existing active employee migrates.');
   const setup=await initialSetupReference(client);
   if(setup?.status!=='adopted'||!setup.mappings.some(m=>m.leave_type_id===data.leave_type_id&&['recreation','medical','special'].includes(m.code)))fail('Adopt the source type mapping before recording this initial credit.');
+  const code=setup.mappings.find(m=>m.leave_type_id===data.leave_type_id)?.code;
+  if(code==='recreation'){
+   const {rows:[appointment]}=await client.query('SELECT employment_category FROM hr_employee_service_periods WHERE employee_id=$1 AND start_date<=$2 AND (end_date IS NULL OR end_date>=$2)',[employee.id,today()]);
+   if(appointment?.employment_category==='temporary')fail('Recreation is not enabled for Temporary staff in the initial migration. An Annual source credit is not required.');
+  }
   const {rows:[type]}=await client.query('SELECT * FROM hr_leave_types WHERE id=$1 FOR SHARE',[data.leave_type_id]);
   if(!type?.is_active)fail('Choose an active mapped source type.');
   if((await client.query('SELECT id FROM hr_leave_balances WHERE employee_id=$1 AND leave_type_id=$2',[employee.id,type.id])).rowCount)fail('A source balance already exists. Retain it; use the normal reviewed correction tools if it needs correction.');

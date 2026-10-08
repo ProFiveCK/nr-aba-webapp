@@ -108,6 +108,51 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   const later=await jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:planData});assert.equal(later.initial_setup_review_id,null);
   await assert.rejects(jobs.approveJobPlan(pool,{user:user(hr),actor:hr,id:later.id,reason}),/different central/);
  });
+ test('Temporary cohort carries Medical and Special only, retains Annual history and cannot submit or accrue Recreation',async()=>{
+  const data={...await commissioningFixture(),initial_admin_setup:true};await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
+  await pool.query("UPDATE hr_employee_service_periods SET employment_category='temporary' WHERE employee_id=$1",[employee.id]);
+  const before=(await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows;
+  const preview=await commission.previewCommissioning(pool,{user:user(hr),data});assert.equal(preview.ready,1,preview.employees[0].issues.join(' '));
+  assert.deepEqual(preview.employees[0].enabled_codes,['medical','special']);assert.deepEqual(preview.employees[0].targets.map(t=>t.code),['medical','special']);assert.equal(preview.employees[0].excluded_targets[0].sources[0].balance,'20.00');
+  const review=await commission.prepareCommissioning(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}});
+  await pool.query("UPDATE hr_employee_service_periods SET employment_category='permanent' WHERE employee_id=$1",[employee.id]);
+  await assert.rejects(commission.applyCommissioning(pool,{user:user(hr),actor:hr,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}}),/changed/);
+  await pool.query("UPDATE hr_employee_service_periods SET employment_category='temporary' WHERE employee_id=$1",[employee.id]);
+  await pool.query("CREATE FUNCTION synthetic_temporary_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.commissioning.applied' THEN RAISE EXCEPTION 'synthetic temporary failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER synthetic_temporary_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION synthetic_temporary_failure()");
+  try{await assert.rejects(commission.applyCommissioning(pool,{user:user(hr),actor:hr,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}}),/synthetic temporary failure/);assert.equal((await l.loadContext(pool,employee.id)).employee.leave_policy_regime,'legacy');assert.equal((await l.loadContext(pool,employee.id)).entitlements.length,0);}finally{await pool.query('DROP TRIGGER synthetic_temporary_failure ON audit_log; DROP FUNCTION synthetic_temporary_failure()');}
+  const receipt=await commission.applyCommissioning(pool,{user:user(hr),actor:hr,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}});assert.deepEqual(receipt.result[0].enabled_codes,['medical','special']);
+  assert.deepEqual((await commission.applyCommissioning(pool,{user:user(hr),actor:hr,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}})).result,receipt.result);
+  assert.deepEqual((await w.configurationFor(pool,employee.id)).enabled_codes,['medical','special']);assert.deepEqual((await l.loadContext(pool,employee.id)).entitlements.map(t=>t.code).sort(),['medical','special']);
+  assert.deepEqual((await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows,before);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM hr_gov_credit_transfers WHERE code='recreation'")).rows[0].n,0);
+  const {employeeReadiness}=await import('../services/governmentLeaveRollout.js');
+  const readiness=await employeeReadiness(pool,employee.id);assert.equal(readiness.ready,true,readiness.issues.join(' '));
+  await assert.rejects(submit(application('recreation')),/not activated/);
+  await assert.rejects(jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{code:'recreation',source_reference:'Synthetic excluded Annual job attempt',reason}}),/opening/);
+  const medical=await submit(application('medical'));await evidence(medical.id);await decide(medical.id);assert.equal((await w.getRequest(pool,medical.id)).status,'approved');assert.ok((await w.getRequest(pool,medical.id)).final_pdf.length>100);
+  const special=await submit(application('special','2026-11-05'));await evidence(special.id);await decide(special.id);assert.equal((await w.getRequest(pool,special.id)).status,'approved');
+  assert.deepEqual((await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows,before);
+ });
+ test('Temporary migration needs no Annual source, still checks Special and reservations, and rejects invalid partial targets',async()=>{
+  const data={...await commissioningFixture(),initial_admin_setup:true};await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
+  const payroll=await import('../services/governmentLeavePayroll.js');
+  const original=await commission.previewCommissioning(pool,{user:user(hr),data}),pair=original.employees[0].targets.filter(t=>t.code!=='recreation');
+  const perma=(await payroll.migrationState(pool,employee.id,data.cutover_date)).state;perma.context.employee.leave_policy_regime='government';
+  assert.throws(()=>payroll.migrationPlan(perma,{...data,targets:pair,dispositions:[]}),e=>e.status===400);
+  await pool.query("UPDATE hr_employee_service_periods SET employment_category='temporary' WHERE employee_id=$1",[employee.id]);
+  const state=(await payroll.migrationState(pool,employee.id,data.cutover_date)).state;state.context.employee.leave_policy_regime='government';
+  assert.equal(payroll.migrationPlan(state,{...data,targets:pair,dispositions:[]}).targets.length,2);
+  for(const targets of [pair.slice(0,1),[pair[0],pair[0]],[]])assert.throws(()=>payroll.migrationPlan(state,{...data,targets,dispositions:[]}),e=>e.status===400);
+  const annual=(await pool.query("SELECT b.* FROM hr_leave_balances b JOIN hr_leave_types t ON t.id=b.leave_type_id WHERE b.employee_id=$1 AND t.name='Synthetic Annual source'",[employee.id])).rows[0];
+  await pool.query('DELETE FROM hr_leave_balances WHERE id=$1',[annual.id]);
+  const missingAnnual=await commission.previewCommissioning(pool,{user:user(hr),data});assert.equal(missingAnnual.ready,1,missingAnnual.employees[0].issues.join(' '));assert.equal(missingAnnual.employees[0].excluded_targets[0].sources.length,0);
+  const {recordInitialCredit}=await import('../services/governmentLeaveInitialFoundations.js');await assert.rejects(recordInitialCredit(pool,{user:user(hr),actor:hr,data:{employee_id:employee.id,leave_type_id:annual.leave_type_id,amount:'0',year:2026,source_reference:'Synthetic excluded Annual entry',reason}}),/Annual source credit is not required/);
+  await pool.query('INSERT INTO hr_leave_balances(employee_id,leave_type_id,year,balance,pending) VALUES($1,$2,2026,0.77,1)',[employee.id,annual.leave_type_id]);
+  const reserved=await commission.previewCommissioning(pool,{user:user(hr),data});assert.equal(reserved.ready,0);assert.match(reserved.employees[0].issues.join(' '),/recreation pending reservation/);
+  await pool.query('UPDATE hr_leave_balances SET pending=0 WHERE employee_id=$1',[employee.id]);
+  await pool.query("DELETE FROM hr_leave_balances WHERE employee_id=$1 AND leave_type_id IN (SELECT id FROM hr_leave_types WHERE name='Synthetic Special source')",[employee.id]);
+  const missingSpecial=await commission.previewCommissioning(pool,{user:user(hr),data});assert.equal(missingSpecial.ready,0);assert.match(missingSpecial.employees[0].issues.join(' '),/stored special credit/);assert.doesNotMatch(missingSpecial.employees[0].issues.join(' '),/stored recreation credit/);
+ });
  test('initial admin mode rechecks authority and rolls back its entire migration on failure',async()=>{
   const data={...await commissioningFixture(),initial_admin_setup:true};await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
   const preview=await commission.previewCommissioning(pool,{user:user(hr),data}),review=await commission.prepareCommissioning(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}}),args={user:user(hr),actor:hr,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}};

@@ -105,7 +105,9 @@ export async function migrationState(client,employeeId,cutover) {
 }
 export function migrationPlan(state,data,{allowMissingPayroll=false}={}) {
   const targets=data.targets,dispositions=data.dispositions||[];
-  if(!Array.isArray(targets)||targets.length!==3||new Set(targets.map(t=>t.code)).size!==3||targets.some(t=>!COMMON_CODES.includes(t.code)))fail('Specify a reviewed Recreation, Medical and Special target.',400);
+  const appointment=state.context.periods.find(p=>p.start_date<=data.cutover_date&&(!p.end_date||p.end_date>=data.cutover_date));
+  const temporaryPair=appointment?.employment_category==='temporary'&&Array.isArray(targets)&&targets.length===2&&targets.every(t=>['medical','special'].includes(t?.code))&&new Set(targets.map(t=>t.code)).size===2;
+  if(!temporaryPair&&(!Array.isArray(targets)||targets.length!==3||new Set(targets.map(t=>t?.code)).size!==3||targets.some(t=>!COMMON_CODES.includes(t?.code))))fail('Specify a reviewed Recreation, Medical and Special target, or Medical and Special only for a verified Temporary appointment.',400);
   if(!Array.isArray(dispositions)||dispositions.length!==state.retained_legacy_leave.length||new Set(dispositions.map(d=>d.legacy_request_id)).size!==dispositions.length)fail('Review every pending and future legacy application exactly once.',400);
   for(const d of dispositions) {
     const legacy=state.retained_legacy_leave.find(r=>r.id===d.legacy_request_id);if(!legacy)fail('A retained legacy application changed.');text(d.reference,'retained leave reconciliation');

@@ -74,8 +74,9 @@ export async function employeeReadiness(client,employeeId){
  const policy=context.policies.find(p=>p.effective_from<=date&&p.effective_to>=date);
  if(!policy)issues.push('Publish a current policy.');
  if(!context.calendars.some(c=>c.effective_from<=date&&c.effective_to>=date))issues.push('Publish a current holiday calendar.');
- const commonCodes=period?.is_teacher?['medical','special']:['recreation','medical','special'];
- if(!config||!commonCodes.every(c=>config.enabled_codes.includes(c)))issues.push(`Independently activate the ${period?.is_teacher?'Medical and Special types':'three common types'} under Applications & jobs.`);
+ const medicalSpecialOnly=period?.is_teacher||period?.employment_category==='temporary';
+ const commonCodes=medicalSpecialOnly?['medical','special']:['recreation','medical','special'];
+ if(!config||!commonCodes.every(c=>config.enabled_codes.includes(c)))issues.push(`Review and activate the ${medicalSpecialOnly?'Medical and Special types':'three common types'} under Applications & jobs.`);
  if(period?.is_teacher&&config?.enabled_codes.includes('recreation'))issues.push('Teacher Recreation must use the independently determined Education case route, not ordinary Recreation activation.');
  for(const code of commonCodes){
   const entitlement=context.entitlements.find(e=>e.code===code&&e.period_start===facts.period_start&&e.period_end===facts.period_end&&e.as_of<=date);

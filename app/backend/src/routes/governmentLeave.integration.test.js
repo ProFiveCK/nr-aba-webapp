@@ -49,6 +49,14 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
   const stale=await s.createPolicy(pool,{user:user(central),actor:central,data:{label:'Stale replacement',effective_from:'2026-11-01',effective_to:'2027-12-31',rules:DEFAULT_RULES,source_reference:'Signed stale policy review',supersedes_policy_id:policy.id,authority_reference:'Signed stale decision reference 2026/43',reason}});
   await assert.rejects(s.publishPolicy(pool,{user:user(certifier),actor:certifier,id:stale.id,reason,expected_revision:1}),/already been replaced/);
  });
+ test('system administrator publishes a sourced replacement with an explicit audit mode and fresh authority checks',async()=>{
+  await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[central.id]);central.role='admin';
+  const replacement=await s.createPolicy(pool,{user:user(central),actor:central,data:{label:'Administrator policy replacement',effective_from:'2026-11-01',effective_to:'2027-12-31',rules:{...DEFAULT_RULES,special_annual_days:'4'},source_reference:'Synthetic sourced policy correction',supersedes_policy_id:policy.id,authority_reference:'Synthetic recorded replacement authority',reason}});
+  await pool.query("UPDATE reviewers SET role='user' WHERE id=$1",[central.id]);await assert.rejects(s.publishPolicy(pool,{user:user(central),actor:central,id:replacement.id,reason,expected_revision:1}),e=>e.status===403);
+  await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[central.id]);await s.publishPolicy(pool,{user:user(central),actor:central,id:replacement.id,reason,expected_revision:1});
+  const transition=(await pool.query('SELECT * FROM hr_gov_policy_transitions WHERE successor_id=$1',[replacement.id])).rows[0];assert.equal(transition.review_mode,'administrator');assert.equal(transition.prepared_by,central.id);assert.equal(transition.approved_by,central.id);
+  assert.equal((await ctx()).policies.find(p=>p.id===policy.id).original_effective_to,'2027-12-31');
+ });
  const draftData=()=>({label:'Government review draft',effective_from:'2028-01-01',effective_to:'2028-12-31',rules:DEFAULT_RULES,source_reference:'HR corrected policy reference',reason});
  test('central HR can edit draft dates and rules with a before/after audit; protected publication and ownership fields are ignored',async()=>{
   const created=await call('/api/hr/government/policies',draftData());assert.equal(created.status,201);assert.equal(created.body.revision,1);

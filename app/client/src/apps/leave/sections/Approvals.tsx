@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../../lib/api';
 import { useToast } from '../../../contexts/useToast';
 import { useConfirm } from '../../../contexts/useConfirm';
-import { EmptyState, LoadingState } from '../../../components/Ui';
+import { LoadingState } from '../../../components/Ui';
 import { formatDate } from '../types';
 import { printApprovedLeaveForm } from '../payrollForm';
 import { LeaveAttachmentLinks } from '../LeaveAttachmentLinks';
@@ -80,14 +80,15 @@ export function Approvals() {
         }
     };
 
-    if (loading) return <div className="space-y-5"><GovernmentRequestList mode="queue"/><LoadingState label="Loading existing local approvals…" /></div>;
+    if (loading) return <div className="space-y-5"><GovernmentRequestList mode="queue"/><LoadingState label="Loading earlier approvals…" /></div>;
 
     return (
         <div className="space-y-5">
             <GovernmentRequestList mode="queue"/>
+            {(items.length>0||recent.length>0)&&<details open={items.length>0} className="app-panel p-4"><summary className="cursor-pointer font-semibold text-sm">{items.length?`${items.length} requests submitted before staff transfer`:'Earlier approval history'}</summary><div className="mt-4 space-y-4">
             <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#2a5ba5]">Manager queue</p>
-                <h2 className="mt-1 text-xl font-bold text-gray-950">Existing local leave approvals</h2>
+                <h2 className="mt-1 text-xl font-bold text-gray-950">Requests submitted before staff transfer</h2>
                 <p className="mt-1 text-sm text-gray-500">{items.length} request{items.length === 1 ? '' : 's'} awaiting your decision.</p>
             </div>
             {lastApproved && (
@@ -96,11 +97,6 @@ export function Approvals() {
                     <button type="button" onClick={() => void printForm(lastApproved)} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-hover">
                         Open approved leave PDF
                     </button>
-                </div>
-            )}
-            {!items.length && (
-                <div className="app-panel p-6">
-                    <EmptyState title="Nothing awaiting approval" detail="Leave from the people who report to you will appear here." />
                 </div>
             )}
             {items.map((application) => (
@@ -168,6 +164,7 @@ export function Approvals() {
                     </div>
                 </section>
             )}
+            </div></details>}
         </div>
     );
 }

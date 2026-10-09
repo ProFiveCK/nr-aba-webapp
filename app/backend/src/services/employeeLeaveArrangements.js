@@ -142,8 +142,8 @@ export async function employeeLeaveArrangements(client, { user, employeeId }) {
         : missingEnabledOpenings.length ? `Enabled types without a current certified opening: ${missingEnabledOpenings.join(', ')}. Retained balances are not automatically converted.`
           : 'Required openings for enabled common leave types are certified. Teacher recreation remains a discretionary case.' },
     item('reconciliation', 'Retained leave reconciliation', !cutoverIssue && !correctionIssue, cutoverIssue || correctionIssue || 'No retained-cutover or subsequent service-correction blocker was found; verify the migration and activation evidence.'),
-    item('approvals', 'Government approval offices', route.ready, 'Division, department, HR verifier, relevant Secretary for applicable leave, and Chief Secretary must be current. Minister is required for its specified case.'),
-    item('activation', 'Approved activation', enrolled && activationStatus === 'active', !enrolled ? 'Publication of policy or configuration alone does not enrol the employee.' : activationStatus === 'active' ? `Enabled: ${enabled.join(', ')}. Actual request eligibility is checked separately.` : activationStatus === 'paused' ? 'Latest approved configuration pauses common leave applications.' : 'An independent officer must approve the prepared activation configuration.'),
+    item('approvals', 'Government approval offices', route.ready, 'The nominated officers for the configured approval levels must be current. Other leave cases use their own approval routes.'),
+    item('activation', 'Approved activation', enrolled && activationStatus === 'active', !enrolled ? 'Publication of policy or configuration alone does not enrol the employee.' : activationStatus === 'active' ? `Enabled: ${enabled.join(', ')}. Actual request eligibility is checked separately.` : activationStatus === 'paused' ? 'Latest approved configuration pauses common leave applications.' : 'The system administrator or a different central HR officer reviews the prepared activation configuration.'),
   ];
   return result;
 }
@@ -156,20 +156,29 @@ export async function employeeLeavePolicyUsage(client, { user }) {
   const { rows: [counts] } = await client.query(`SELECT
     count(*) FILTER (WHERE e.status='active')::int AS active_employees,
     count(*) FILTER (WHERE e.status<>'active')::int AS inactive_employees,
+    count(*) FILTER (WHERE e.status='active' AND e.leave_policy_regime='legacy' AND NOT (NOT e.leave_entitled AND appointment.employment_category IS NOT DISTINCT FROM 'contract'))::int AS legacy_awaiting_migration,
     count(*) FILTER (WHERE e.status='active' AND e.leave_policy_regime='legacy' AND r.account_type IS DISTINCT FROM 'employee' AND e.leave_entitled)::int AS legacy_operational,
     count(*) FILTER (WHERE e.status='active' AND e.leave_policy_regime='legacy' AND r.account_type='employee')::int AS legacy_employee_account_blocked,
     count(*) FILTER (WHERE e.status='active' AND e.leave_policy_regime='legacy' AND r.account_type IS DISTINCT FROM 'employee' AND NOT e.leave_entitled)::int AS legacy_not_entitled,
+    count(*) FILTER (WHERE e.status='active' AND e.leave_policy_regime='legacy' AND NOT e.leave_entitled AND appointment.employment_category='contract')::int AS legacy_excluded_contracts,
     count(*) FILTER (WHERE e.status='active' AND e.leave_policy_regime='government' AND c.id IS NULL)::int AS government_awaiting_activation,
     count(*) FILTER (WHERE e.status='active' AND e.leave_policy_regime='government' AND cardinality(c.enabled_codes)>0)::int AS government_active,
     count(*) FILTER (WHERE e.status='active' AND e.leave_policy_regime='government' AND cardinality(c.enabled_codes)=0)::int AS government_paused
     FROM hr_employees e LEFT JOIN reviewers r ON r.id=e.reviewer_id
+    LEFT JOIN LATERAL (SELECT employment_category FROM hr_employee_service_periods WHERE employee_id=e.id AND start_date<=(NOW() AT TIME ZONE 'Pacific/Nauru')::date AND (end_date IS NULL OR end_date>=(NOW() AT TIME ZONE 'Pacific/Nauru')::date) ORDER BY start_date DESC LIMIT 1) appointment ON TRUE
     LEFT JOIN LATERAL (SELECT id,enabled_codes FROM hr_gov_workflow_configs WHERE employee_id=e.id AND status='published' ORDER BY approved_at DESC,id DESC LIMIT 1) c ON TRUE`);
   const { rows: [initialSetup] } = await client.query("SELECT count(*)>0 AS adopted,max(adopted_at) AS adopted_at FROM hr_gov_initial_setups WHERE status='adopted'");
+  const { rows: [jobs] } = await client.query(`SELECT count(*)::int AS government_missing_job_plans FROM hr_employees e
+    JOIN LATERAL (SELECT enabled_codes FROM hr_gov_workflow_configs WHERE employee_id=e.id AND status='published' ORDER BY approved_at DESC,id DESC LIMIT 1) c ON TRUE
+    WHERE e.status='active' AND e.leave_policy_regime='government' AND EXISTS (
+      SELECT 1 FROM unnest(c.enabled_codes) AS code(value) WHERE NOT EXISTS (
+        SELECT 1 FROM hr_gov_job_plans p WHERE p.employee_id=e.id AND p.code=code.value AND p.status='published'))`);
   const { rows: policies } = await client.query(resolvedPublishedPoliciesSql);
   const summary = p => p ? { id: p.id, label: p.label, effective_from: p.effective_from, effective_to: p.effective_to,
     published_at: p.published_at, rules: p.rules, timing: p.effective_from > asOf ? 'future' : p.effective_to < asOf ? 'past' : 'current' } : null;
   const latest = [...policies].sort((a, b) => new Date(b.published_at || 0) - new Date(a.published_at || 0) || b.id.localeCompare(a.id))[0];
-  return { as_of: asOf, population: 'active_employees', counts, initial_setup: initialSetup,
+  return { as_of: asOf, population: 'active_employees', counts: { ...counts, ...jobs }, initial_setup: initialSetup,
+    schedulers: { government: process.env.GOVERNMENT_LEAVE_SCHEDULER === 'on', legacy: process.env.ACCRUAL_SCHEDULER === 'on' },
     current_policy: summary(policies.find(p => p.effective_from <= asOf && p.effective_to >= asOf)),
     latest_published_policy: summary(latest), next_policy: summary(policies.find(p => p.effective_from > asOf)),
     activation_note: 'Active counts describe the latest published employee configuration, not request eligibility. Publishing a policy does not enrol or activate employees.' };

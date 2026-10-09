@@ -12,7 +12,7 @@ const noop=()=>{};
 const save=async()=>{};
 it('routine setup has an optional note while keeping the actual setup fields required',()=>{
  const html=renderToStaticMarkup(<ActionDialog title="Assign officeholder" automaticReason="Nominated the recorded leave officeholder." onClose={noop} onSave={save}><input name="approver_employee_id" required/></ActionDialog>);
- expect(html).toContain('Add a setup note (optional)');
+ expect(html).toContain('Add a note (optional)');
  expect(html).not.toContain('Verification reason');
  expect(html).not.toContain('name="reason"');
  const nominee=html.match(/<input[^>]*name="approver_employee_id"[^>]*>/)?.[0];
@@ -25,5 +25,5 @@ it('a correction still requires its verification reason and retains a provided e
  expect(html).toContain('Verification reason');
  expect(html).toMatch(/name="reason"[^>]*required/);
  expect(html).toContain('Correction supported by the reviewed balance record.');
- expect(html).not.toContain('Add a setup note (optional)');
+ expect(html).not.toContain('Add a note (optional)');
 });

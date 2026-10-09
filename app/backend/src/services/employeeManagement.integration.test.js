@@ -14,6 +14,8 @@ describe('central HR management screens and bounded APIs', { skip: skipWithoutDa
   });
   after(async()=>{if(server) await new Promise((resolve)=>server.close(resolve)); await pool?.end();});
   beforeEach(async()=>{
+    // These fixtures represent existing staff before Government setup adoption.
+    await pool.query('TRUNCATE hr_gov_initial_setups,hr_gov_initial_setup_revisions CASCADE');
     await pool.query('TRUNCATE hr_employee_import_batches,hr_work_patterns CASCADE'); await resetLeaveTables(pool);
     actor=await account({hr_admin:true});
     department=(await pool.query("INSERT INTO hr_departments(name) VALUES ('Finance') RETURNING *")).rows[0];

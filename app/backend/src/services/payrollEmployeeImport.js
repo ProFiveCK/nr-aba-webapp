@@ -5,6 +5,7 @@ import { badRequest, notFound, ServiceError } from '../lib/serviceError.js';
 import { normalizeNameKey } from '../lib/names.js';
 import { isImportDate, parsePayrollCsv } from '../lib/payrollEmployeeCsv.js';
 import { recordAudit } from './auditService.js';
+import { newEmployeeLeaveRegime } from './governmentLeaveDefaults.js';
 
 const conflict = (message) => new ServiceError(409, message);
 const digest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -250,6 +251,7 @@ export async function applyPayrollImport(pool, { batchId, revision, reviewNote, 
     if (batch.status === 'applied') return batch.result;
     if (batch.revision !== revision) throw conflict('The preview changed. Review the current revision before applying.');
     const rows = await storedRows(client, batchId);
+    const newRegime = await newEmployeeLeaveRegime(client);
     // The small government employee master is locked in ID order so reporting
     // line edits cannot create a cycle between validation and the batch write.
     await client.query('SELECT id FROM hr_employees ORDER BY id FOR UPDATE');
@@ -270,9 +272,9 @@ export async function applyPayrollImport(pool, { batchId, revision, reviewNote, 
       const changed = !before || Object.keys(profile).some((key) => profile[key] !== before[key]);
       if (row.decision === 'create') {
         // Manager FKs are written after all newly referenced employees exist.
-        await client.query(`INSERT INTO hr_employees (id, display_name, status, department_id, division_id, department_code, division_code, position_title, email)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [row.target_employee_id, profile.display_name, profile.status, profile.department_id,
-          profile.division_id, profile.department_code, profile.division_code, profile.position_title, profile.email]);
+        await client.query(`INSERT INTO hr_employees (id, display_name, status, department_id, division_id, department_code, division_code, position_title, email, leave_policy_regime)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [row.target_employee_id, profile.display_name, profile.status, profile.department_id,
+          profile.division_id, profile.department_code, profile.division_code, profile.position_title, profile.email, newRegime]);
         result.created++;
       } else if (changed) {
         await client.query(`UPDATE hr_employees SET display_name=$2,status=$3,department_id=$4,division_id=$5,department_code=$6,
@@ -298,7 +300,7 @@ export async function applyPayrollImport(pool, { batchId, revision, reviewNote, 
         result.service_periods_added++;
       }
       await recordAudit({ client, actor, action: 'hr.employee.import.applied', entityType: 'hr_employee', entityId: row.target_employee_id,
-        before: before || null, after: { ...profile, payroll_employee_id: data.payroll_employee_id },
+        before: before || null, after: { ...profile, payroll_employee_id: data.payroll_employee_id, ...(row.decision==='create'?{leave_policy_regime:newRegime}:{}) },
         metadata: { batch_id: batchId, source_hash: batch.source_hash, export_date: batch.export_date, row_number: row.row_number, review_reason: row.review_reason || note } });
     }
     for (const row of evaluated) if (row.decision !== 'skip' && row.input.data.manager_payroll_id) {

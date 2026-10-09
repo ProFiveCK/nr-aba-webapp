@@ -3,6 +3,7 @@ import {calendarSettings} from './governmentLeaveCalendarSettings.js';
 import {initialAdminReview} from './governmentLeaveInitialAdmin.js';
 import {resolvedPublishedPoliciesSql,validateReplacementFields,approvePolicyReplacement} from './governmentLeavePolicyTransitions.js';
 import {randomUUID} from 'node:crypto';
+import {assertCentral} from './governmentLeaveWorkflow.js';
 import {ServiceError} from '../lib/serviceError.js';
 import {withTransaction} from '../lib/transaction.js';
 import {recordAudit} from './auditService.js';
@@ -78,11 +79,11 @@ export async function setPolicyDraftDeleted(pool,{user,actor,id,reason,expected_
 export async function publishPolicy(pool,{user,actor,id,reason,expected_revision}){
  central(user);reason=managementReason(reason);
  if(expected_revision!==undefined&&(!Number.isInteger(expected_revision)||expected_revision<1))fail('Reload the policy before publishing it.',400);
- return withTransaction(pool,async client=>{await client.query("SELECT pg_advisory_xact_lock(hashtext('hr-gov-policies'))");const {rows:[row]}=await client.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1 FOR UPDATE',[id]);if(!row)fail('Policy not found.',404);
+ return withTransaction(pool,async client=>{await assertCentral(client,user);await client.query("SELECT pg_advisory_xact_lock(hashtext('hr-gov-policies'))");const {rows:[row]}=await client.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1 FOR UPDATE',[id]);if(!row)fail('Policy not found.',404);
   if(expected_revision!==undefined&&row.revision!==expected_revision)fail('This draft changed since you reviewed it. Cancel, refresh the page and review the latest draft before publishing.');
   if(row.deleted_at)fail('This draft was deleted. Restore and review it before publishing.');
   if(row.status==='published')return row;
-  await approvePolicyReplacement(client,{row,actor,reason,expected_revision});
+  await approvePolicyReplacement(client,{row,user,actor,reason,expected_revision});
   const {rows:[after]}=await client.query("UPDATE hr_gov_policy_versions SET status='published',published_by=$2,published_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id]);await audit(client,actor,'hr.gov.policy.published',id,{...after,publication_reason:reason});return after;
  });
 }

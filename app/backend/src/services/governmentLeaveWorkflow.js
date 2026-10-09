@@ -4,6 +4,7 @@ import {creditLimit} from './governmentLeaveCarryover.js';
 import {initialAdminReview} from './governmentLeaveInitialAdmin.js';
 import {assertDraftUsable} from './governmentLeaveDrafts.js';
 import {serviceCorrectionIssue} from './employeeServiceCorrections.js';
+import {configurationReviewMode} from './governmentLeaveAdministration.js';
 import {assertCutoverResolved,legacyTransferFor} from './governmentLeaveCutover.js';
 import {randomUUID} from 'node:crypto';
 import {withTransaction} from '../lib/transaction.js';
@@ -100,11 +101,12 @@ export async function publishConfiguration(pool,{user,actor,id,reason,client:exi
   const work=async client=>{
     await assertCentral(client,user);const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_workflow_configs WHERE id=$1',[id]);if(!ref)fail('Configuration not found.',404);
     await ledger.lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT * FROM hr_gov_workflow_configs WHERE id=$1 FOR UPDATE',[id]);
-    if(row.status==='published')return row;await assertDraftUsable(client,'configuration',row.id);if(row.prepared_by===actor.id&&!initialAdminReview(client,actor.id,row.employee_id))fail('A different central HR officer must approve activation.',403);
+    if(row.status==='published')return row;await assertDraftUsable(client,'configuration',row.id);
+    const reviewMode=await configurationReviewMode(client,{user,actor,preparedBy:row.prepared_by,initialReview:!!initialAdminReview(client,actor.id,row.employee_id)});
     const context=await ledger.loadContext(client,row.employee_id);if(fingerprint(context)!==row.snapshot_hash)fail('The employee foundations changed. Prepare a fresh configuration.');
     if(row.enabled_codes.length){await assertCutoverResolved(client,row.employee_id,{activation:true});readyConfiguration(context,row.enabled_codes);}
     const {rows:[after]}=await client.query("UPDATE hr_gov_workflow_configs SET status='published',approved_by=$2,approved_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id]);
-    await audit(client,actor,'hr.gov.workflow.published',id,{employee_id:row.employee_id,enabled_codes:row.enabled_codes,reason:reasonText(reason)});return after;
+    await audit(client,actor,'hr.gov.workflow.published',id,{employee_id:row.employee_id,enabled_codes:row.enabled_codes,reason:reasonText(reason),review_mode:reviewMode});return after;
   };return existingClient?work(existingClient):withTransaction(pool,work);
 }
 export async function assignConsentOffice(pool,{user,actor,data}) {

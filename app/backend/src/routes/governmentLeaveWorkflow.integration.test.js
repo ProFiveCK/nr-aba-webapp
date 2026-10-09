@@ -203,7 +203,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   try{assert.equal((await request(hr,{require_calendar_coverage:true,expected_revision:off.body.revision})).status,500);assert.deepEqual((await request(hr)).body,off.body);}
   finally{await pool.query('DROP TRIGGER synthetic_calendar_setting_failure ON audit_log; DROP FUNCTION synthetic_calendar_setting_failure()');}
  });
- test('initial admin migrates existing credits without Payroll IDs and approves only the first accrual plan',async()=>{
+ test('initial admin migrates existing credits without Payroll IDs and can review later routine schedules',async()=>{
   const data={...await commissioningFixture(),initial_admin_setup:true};
   await assert.rejects(commission.previewCommissioning(pool,{user:user(hr),data}),e=>e.status===403);
   await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
@@ -220,7 +220,35 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   const initial=await jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:planData});assert.equal(initial.initial_setup_review_id,review.id);
   await jobs.approveJobPlan(pool,{user:user(hr),actor:hr,id:initial.id,reason});
   const later=await jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:planData});assert.equal(later.initial_setup_review_id,null);
-  await assert.rejects(jobs.approveJobPlan(pool,{user:user(hr),actor:hr,id:later.id,reason}),/different central/);
+  await jobs.approveJobPlan(pool,{user:user(hr),actor:hr,id:later.id,reason});
+  const audit=(await pool.query("SELECT after FROM audit_log WHERE action='hr.gov.jobs.approved' AND entity_id=$1 ORDER BY created_at DESC LIMIT 1",[later.id])).rows[0];assert.equal(audit.after.review_mode,'administrator');
+ });
+ test('bulk first balance schedules preserve credits, align payroll dates, reject changed sources and roll back all plans on failure',async()=>{
+  const data={...await commissioningFixture(),initial_admin_setup:true};await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
+  const second=(await pool.query("INSERT INTO hr_employees(display_name,department_id,division_id,leave_policy_regime) VALUES('Synthetic second transferred employee',$1,$2,'legacy') RETURNING *",[department.id,division.id])).rows[0];
+  await pool.query("INSERT INTO hr_employee_service_periods(employee_id,start_date,employment_category,counts_for_service,work_pattern_id,reason) SELECT $2,start_date,employment_category,counts_for_service,work_pattern_id,reason FROM hr_employee_service_periods WHERE employee_id=$1",[employee.id,second.id]);
+  await l.addFoundationRecord(pool,{user:user(hr),actor:hr,employeeId:second.id,kind:'basis',data:{effective_from:'2026-01-01',continuity_start:'2026-01-01',anniversary_method:'calendar',leap_day_method:'feb28',schedule_mode:'weekly',source_reference:'Synthetic verified second employee service',reason}});
+  await pool.query('INSERT INTO hr_leave_balances(employee_id,leave_type_id,year,balance) SELECT $2,leave_type_id,year,balance FROM hr_leave_balances WHERE employee_id=$1',[employee.id,second.id]);data.employees.push({employee_id:second.id,medical_history:[]});
+  const reviewPreview=await commission.previewCommissioning(pool,{user:user(hr),data}),review=await commission.prepareCommissioning(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:reviewPreview.snapshot_hash}});
+  await commission.applyCommissioning(pool,{user:user(hr),actor:hr,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}});
+  const setup=await import('../services/governmentLeaveBalanceSetup.js'),body={employee_ids:[employee.id,second.id],payroll_anchor:'2026-10-07',calculation_confirmed:true};
+  const balances=(await l.loadContext(pool,employee.id)).entitlements.map(e=>e.balance);
+  assert.equal((await call('/balance-setup/preview',body,owner)).status,403);
+  const preview=await setup.previewBalanceSetup(pool,{user:user(hr),data:body});assert.equal(preview.ready,2,preview.employees.flatMap(e=>e.issues).join(' '));assert.equal(preview.employees[0].schedules.find(s=>s.code==='recreation').first_post_end,'2026-10-07');
+  await pool.query("UPDATE reviewers SET role='user' WHERE id=$1",[hr.id]);await assert.rejects(setup.applyBalanceSetup(pool,{user:user(hr),actor:hr,data:{...body,snapshot_hash:preview.snapshot_hash}}),e=>e.status===403);await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);
+  await pool.query("UPDATE hr_employees SET status='inactive' WHERE id=$1",[second.id]);await assert.rejects(setup.applyBalanceSetup(pool,{user:user(hr),actor:hr,data:{...body,snapshot_hash:preview.snapshot_hash}}),/changed/);await pool.query("UPDATE hr_employees SET status='active' WHERE id=$1",[second.id]);
+  await pool.query("CREATE FUNCTION synthetic_balance_setup_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.balance_schedules.applied' THEN RAISE EXCEPTION 'synthetic balance setup failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER synthetic_balance_setup_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION synthetic_balance_setup_failure()");
+  try{await assert.rejects(setup.applyBalanceSetup(pool,{user:user(hr),actor:hr,data:{...body,snapshot_hash:preview.snapshot_hash}}),/synthetic balance setup failure/);assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_job_plans')).rows[0].n,0);}finally{await pool.query('DROP TRIGGER synthetic_balance_setup_failure ON audit_log; DROP FUNCTION synthetic_balance_setup_failure()');}
+  const result=await setup.applyBalanceSetup(pool,{user:user(hr),actor:hr,data:{...body,snapshot_hash:preview.snapshot_hash}});assert.equal(result.created,6);assert.equal(result.retained,0);assert.deepEqual((await l.loadContext(pool,employee.id)).entitlements.map(e=>e.balance),balances);assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_job_posts')).rows[0].n,0);
+  await assert.rejects(setup.applyBalanceSetup(pool,{user:user(hr),actor:hr,data:{...body,snapshot_hash:preview.snapshot_hash}}),/changed/);
+  const fresh=await setup.previewBalanceSetup(pool,{user:user(hr),data:body}),retained=await setup.applyBalanceSetup(pool,{user:user(hr),actor:hr,data:{...body,snapshot_hash:fresh.snapshot_hash}});assert.equal(retained.created,0);assert.equal(retained.retained,6);
+ });
+ test('administrator activation still rechecks current role and does not grant self-approval of leave',async()=>{
+  await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
+  const draft=await w.prepareConfiguration(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{enabled_codes:['medical','special'],medical_rule:'single_calendar_date_nonadjacent_scheduled_days',medical_history:[],source_reference:'Synthetic routine administrator configuration',legacy_resolution_reference:'Synthetic existing leave reconciliation',reason}});
+  await pool.query("UPDATE reviewers SET role='user' WHERE id=$1",[hr.id]);await assert.rejects(w.publishConfiguration(pool,{user:user(hr),actor:hr,id:draft.id,reason}),e=>e.status===403);await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);
+  await w.publishConfiguration(pool,{user:user(hr),actor:hr,id:draft.id,reason});assert.deepEqual((await w.configurationFor(pool,employee.id)).enabled_codes,['medical','special']);
+  const request=await submit(application('medical'));await assert.rejects(decide(request.id,{},owner),e=>e.status===403);
  });
  test('Temporary cohort carries Medical and Special only, retains Annual history and cannot submit or accrue Recreation',async()=>{
   const data={...await commissioningFixture(),initial_admin_setup:true};await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';

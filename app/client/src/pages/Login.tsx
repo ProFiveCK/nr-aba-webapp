@@ -42,7 +42,6 @@ export function Login() {
 
     // Login State
     const [email, setEmail] = useState('');
-    const [loginMode,setLoginMode] = useState<'email' | 'payroll'>('email');
     const [password, setPassword] = useState('');
 
     // Signup State
@@ -164,7 +163,7 @@ export function Login() {
         setIsLoading(true);
 
         try {
-            await login(email.trim(), password, loginMode);
+            await login(email.trim(), password);
         } catch (err) {
             const errorMessage = (err as Error)?.message || 'Login failed. Please check your credentials.';
             setError(errorMessage);
@@ -275,21 +274,20 @@ export function Login() {
                     {isLogin ? (
                         /* Login Form */
                         <form key="login-form" onSubmit={handleLogin} className="space-y-4">
-                            <div><label htmlFor="login-mode" className={labelClass}>Sign in using</label><select id="login-mode" value={loginMode} onChange={e=>{setLoginMode(e.target.value as 'email' | 'payroll');setEmail('');}} className="w-full rounded-md border border-gray-300 p-3 text-sm" disabled={isLoading}><option value="email">Verified individual email</option><option value="payroll">Assigned Payroll ID</option></select>{loginMode==='payroll' && <p className="mt-1 text-xs text-gray-500">Use the exact ID assigned by HR, including letters and leading zeros. Your password is separate.</p>}</div>
                             <div>
-                                <label htmlFor="email" className={labelClass}>{loginMode === 'payroll' ? 'Payroll ID' : 'Email address'}</label>
+                                <label htmlFor="email" className={labelClass}>Email address</label>
                                 <div className="relative">
                                     <Mail className={iconClass} />
                                     <input
                                         id="email"
-                                        type={loginMode === 'payroll' ? 'text' : 'email'}
+                                        type="email"
                                         required
                                         autoComplete="username"
-                                        maxLength={loginMode === 'payroll' ? 100 : 254}
+                                        maxLength={254}
                                         value={email}
                                         onChange={(e) => setEmail(e.target.value)}
                                         className={fieldClass}
-                                        placeholder={loginMode === 'payroll' ? 'Exact Payroll ID' : 'name@example.nr'}
+                                        placeholder="name@example.nr"
                                         disabled={isLoading}
                                     />
                                 </div>
@@ -570,7 +568,6 @@ export function Login() {
                 closeDisabled={resetLoading}
             >
                     <form onSubmit={handleResetPassword} className="space-y-3">
-                        <p className="text-sm text-gray-600">If you use a Payroll ID and have no verified individual email, contact HR for an individual recovery link.</p>
                         <label className="text-sm font-medium text-gray-700">
                             Email address
                             <input

@@ -30,13 +30,13 @@ export async function linkedEmployee(pool, accountId) {
   return employee;
 }
 
-export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, search = '', departmentId = null, status = null, readiness = '', user = null } = {}) {
+export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, search = '', departmentId = null, status = null, readiness = '', regime = null, user = null } = {}) {
   const values = [status, departmentId, search.trim(), readiness];
   const scopeCondition = user ? employeeScopeSql(user,'hr_staff_manage','$5') : '($5::uuid IS NULL)';
-  values.push(user?.id || null);
+  values.push(user?.id || null, regime);
   // Retained names support central discovery only; scope authority still uses
   // verified department_id through scopeCondition, and reads never assign it.
-  const where = `${scopeCondition} AND ($1::text IS NULL OR e.status = $1) AND ($2::uuid IS NULL OR e.department_id = $2
+  const where = `${scopeCondition} AND ($6::text IS NULL OR e.leave_policy_regime = $6) AND ($1::text IS NULL OR e.status = $1) AND ($2::uuid IS NULL OR e.department_id = $2
     OR (e.department_id IS NULL AND EXISTS (SELECT 1 FROM hr_departments selected WHERE selected.id=$2
       AND lower(selected.name)=lower(e.department_code))))
     AND ($3 = '' OR position(lower($3) in lower(e.display_name)) > 0
@@ -62,7 +62,7 @@ export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, sea
        WHERE p.employee_id=e.id AND p.start_date <= (NOW() AT TIME ZONE 'Pacific/Nauru')::date
          AND (p.end_date IS NULL OR p.end_date >= (NOW() AT TIME ZONE 'Pacific/Nauru')::date)
        ORDER BY p.start_date DESC,p.id LIMIT 1) p ON TRUE
-     WHERE ${where} ORDER BY lower(e.display_name), e.id LIMIT $6 OFFSET $7`,
+     WHERE ${where} ORDER BY lower(e.display_name), e.id LIMIT $7 OFFSET $8`,
     [...values, pageSize, (page - 1) * pageSize]
   );
   const { rows: [count] } = await pool.query(`SELECT count(*)::int AS total FROM hr_employees e WHERE ${where}`, values);

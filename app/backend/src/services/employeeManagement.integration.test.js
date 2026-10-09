@@ -69,6 +69,28 @@ describe('central HR management screens and bounded APIs', { skip: skipWithoutDa
     assert.equal((await directory.listEmployeeDirectory(pool,{readiness:'missing_pattern'})).total,2);
     assert.equal((await call('?readiness=invented')).status,422);
   });
+  test('migration roster filters before pagination and returns separate accurate totals',async()=>{
+    await pool.query(`INSERT INTO hr_employees(display_name,department_id,division_id,leave_policy_regime)
+      SELECT 'Roster '||lpad(i::text,3,'0'),$1,$2,CASE WHEN i<=5 THEN 'government' ELSE 'legacy' END FROM generate_series(1,60)i`,[department.id,division.id]);
+    const query=`?department_id=${department.id}&status=active`;
+    const awaiting=await call(query+'&regime=legacy'),migrated=await call(query+'&regime=government'),second=await call(query+'&regime=legacy&page=2');
+    assert.equal(awaiting.status,200);assert.equal(awaiting.body.total,55);assert.equal(awaiting.body.employees.length,50);assert.equal(second.body.employees.length,5);
+    assert.ok(awaiting.body.employees.every(e=>e.leave_policy_regime==='legacy'));assert.equal(migrated.body.total,5);assert.ok(migrated.body.employees.every(e=>e.leave_policy_regime==='government'));
+    assert.equal(new Set([...awaiting.body.employees,...second.body.employees].map(e=>e.id)).size,55);
+    assert.equal((await call(query)).body.total,60);assert.equal((await call('?regime=invented')).status,422);
+    await pool.query("UPDATE hr_employees SET leave_policy_regime='government' WHERE id=$1",[awaiting.body.employees[0].id]);
+    assert.equal((await call(query+'&regime=legacy')).body.total,54);assert.equal((await call(query+'&regime=government')).body.total,6);
+  });
+  test('migration status filtering preserves department, active-staff and HR scope boundaries',async()=>{
+    const employee=await create();await pool.query("UPDATE hr_employees SET leave_policy_regime='government' WHERE id=$1",[employee.id]);
+    const outside=(await pool.query("INSERT INTO hr_departments(name) VALUES('Outside migration scope') RETURNING *")).rows[0];
+    await pool.query("INSERT INTO hr_employees(display_name,department_id,leave_policy_regime,status) VALUES('Outside migrated',$1,'government','active'),('Inactive migrated',$2,'government','inactive')",[outside.id,department.id]);
+    const staff=await account({hr_staff_manage:true});
+    const scopes=await import('./hrAccess.js');await scopes.grantHrScope(pool,{user:actor,actor,data:{reviewer_id:staff.id,department_id:department.id,capabilities:['hr_staff_manage'],effective_from:'2020-01-01',reason}});
+    const scoped=await call('?regime=government&status=active',undefined,'GET',staff);assert.equal(scoped.status,200);assert.equal(scoped.body.total,1);assert.equal(scoped.body.employees[0].id,employee.id);
+    assert.equal((await call(`?regime=government&status=active&department_id=${outside.id}`,undefined,'GET',staff)).body.total,0);
+    assert.equal((await call(`?regime=government&status=active&department_id=${department.id}`)).body.total,1);
+  });
   test('account picker has bounded stable pages and excludes credentials and permissions',async()=>{
     await pool.query(`INSERT INTO reviewers(email,display_name,role,password_hash) SELECT 'synthetic-'||i||'@example.test','Picker Employee '||lpad(i::text,4,'0'),'user','x' FROM generate_series(1,2000) i`);
     const first=await management.listLinkableAccounts(pool,{search:'Picker Employee'}),second=await management.listLinkableAccounts(pool,{search:'Picker Employee',page:2});

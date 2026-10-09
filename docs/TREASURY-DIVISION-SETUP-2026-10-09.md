@@ -38,3 +38,8 @@ Tick the setting when you want missing calendar coverage to block activation and
 In Settings → Readiness, preview the selected existing staff and review their carried credits and nominated division route. When every selected employee is ready, click **Migrate and consolidate**. This saves the reviewed snapshot and applies the whole cohort together; there is no separate freeze step, extra reason field or second officer for initial admin setup. A stale source still stops the apply transaction and requires a fresh preview.
 
 If a review was already frozen, expand its entry under **Recent consolidation reviews** and click **Migrate and consolidate**. The saved review is used directly. A connection failure after saving retains the review for retry; a successful apply is idempotent. **Migration applied** confirms that the selected staff now use Government leave with their reviewed carried credits. Temporary staff activate Medical and Special only and retain Annual history. Scheduled Government accrual remains off until plans are approved and application/approval/PDF checks are complete.
+
+
+## Staff migration list
+
+Settings → Readiness starts with **Staff to show → Awaiting migration**. The department roster includes only active staff who still use their existing leave arrangements. **Migrated staff** shows staff already on the Government regime for operating-readiness checks; it does not offer initial consolidation again. Filtering occurs before pagination, so counts and pages refer to the selected list. After a successful cohort apply, the selection clears and the awaiting list refreshes. Applied consolidation reviews remain in the history.

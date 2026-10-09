@@ -1,4 +1,5 @@
 import express from 'express';
+import {leaveOverview,leaveOverviewBreakdown,leavePlanning} from '../services/leaveOverview.js';
 import {createOrganisationDivision} from '../services/organisationHierarchy.js';
 import { body, param, query, handleValidation } from '../middleware/validation.js';
 import { pool } from '../db.js';
@@ -20,7 +21,7 @@ import { PERMISSIONS } from '../config.js';
 import { buildUpdateAssignments, changedFields, collectUpdates } from '../lib/sqlUpdate.js';
 import { normalizeNameKey } from '../lib/names.js';
 import { INELIGIBLE_REASONS, resolveEligibility } from '../lib/eligibility.js';
-import { calculateWorkingDays, monthsBetween, parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
+import { calculateWorkingDays, parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js';
 import { leaveAttachmentUpload, sha256 } from '../middleware/upload.js';
 
@@ -1513,11 +1514,9 @@ router.put(
 /**
  * Working days of one application that fall inside the reporting window.
  *
- * Every "days taken" figure on the overview uses this, so the tiles, the bars
- * and the trend line all measure the same thing and add up to each other. The
- * alternative — summing `a.days`, the application's whole length — credits a
- * ten-day absence entirely to whichever window it touches, so a leave starting
- * three days before the window still contributed all ten days to it.
+ * Retained-record reports split leave across the selected dates rather than
+ * counting an application's full length in every window it overlaps. The
+ * current leadership overview uses leaveOverview.js for both leave regimes.
  *
  * Mon-Fri inclusive, matching calculateWorkingDays() in lib/leaveDates.js, so a figure here is
  * comparable with the days deducted from a balance. Correlated on `a`, so it
@@ -1533,366 +1532,29 @@ const WORKING_DAYS_IN_RANGE = `(
      AND NOT EXISTS (SELECT 1 FROM hr_public_holidays h WHERE h.holiday_date = day::date)
 )`;
 
-// Aggregate KPIs for leadership: headcount, application throughput, usage by
-// type/department, a monthly trend, and who's out soon. HR_ADMIN only — this
-// is a leadership summary, not a personal or team view.
-router.get(
-  '/overview',
-  requirePermission(PERMISSIONS.HR_ADMIN),
-  [query('from').optional().isISO8601(), query('to').optional().isISO8601()],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const today = new Date();
-    const to = req.query.to || today.toISOString().slice(0, 10);
-    const from = req.query.from || new Date(today.getFullYear() - 1, today.getMonth(), today.getDate() + 1)
-      .toISOString().slice(0, 10);
-
-    const [
-      headcount, applications, turnaround, byType, byDepartment, monthly, upcoming,
-      pendingAge, negative, excess, studyReturnDue, coverage, liability, balanceByType,
-    ] = await Promise.all([
-      pool.query(
-        `SELECT
-           (SELECT COUNT(*) FROM hr_employees WHERE status = 'active') AS active_employees,
-           (SELECT COUNT(*) FROM (
-              SELECT a.employee_id FROM hr_leave_applications a
-               WHERE a.status = 'approved' AND a.start_date <= CURRENT_DATE AND a.end_date >= CURRENT_DATE
-              UNION
-              SELECT e.id FROM hr_employees e
-               WHERE e.status = 'active' AND e.leave_entitled = FALSE AND e.ineligible_reason = 'study_leave'
-                 AND e.study_leave_start <= CURRENT_DATE
-                 AND (e.study_leave_end IS NULL OR e.study_leave_end >= CURRENT_DATE)
-            ) away_today) AS on_leave_today,
-           (SELECT COUNT(*) FROM hr_employees e
-             WHERE e.status = 'active' AND e.leave_entitled = FALSE AND e.ineligible_reason = 'study_leave'
-               AND e.study_leave_start <= CURRENT_DATE
-               AND (e.study_leave_end IS NULL OR e.study_leave_end >= CURRENT_DATE)) AS on_study_leave`
-      ),
-      pool.query(
-        `SELECT status, COUNT(*) AS count
-           FROM hr_leave_applications
-          WHERE applied_at >= $1 AND applied_at < ($2::date + INTERVAL '1 day')
-          GROUP BY status`,
-        [from, to]
-      ),
-      pool.query(
-        `SELECT AVG(EXTRACT(EPOCH FROM (reviewed_at - applied_at)) / 3600) AS avg_hours
-           FROM hr_leave_applications
-          WHERE applied_at >= $1 AND applied_at < ($2::date + INTERVAL '1 day') AND reviewed_at IS NOT NULL`,
-        [from, to]
-      ),
-      pool.query(
-        `SELECT t.name AS leave_type, SUM(w.days) AS days, COUNT(*) FILTER (WHERE w.days > 0) AS count
-           FROM hr_leave_applications a
-           JOIN hr_leave_types t ON t.id = a.leave_type_id
-           CROSS JOIN LATERAL ${WORKING_DAYS_IN_RANGE} w
-          WHERE a.status = 'approved' AND a.start_date <= $2 AND a.end_date >= $1
-          GROUP BY t.name
-          ORDER BY days DESC`,
-        [from, to]
-      ),
-      pool.query(
-        `SELECT COALESCE(e.department_code, 'Unassigned') AS department_code, SUM(w.days) AS days, COUNT(*) FILTER (WHERE w.days > 0) AS count
-           FROM hr_leave_applications a
-           JOIN hr_employees e ON e.id = a.employee_id
-           CROSS JOIN LATERAL ${WORKING_DAYS_IN_RANGE} w
-          WHERE a.status = 'approved' AND a.start_date <= $2 AND a.end_date >= $1
-          GROUP BY department_code
-          ORDER BY days DESC`,
-        [from, to]
-      ),
-      pool.query(
-        `SELECT to_char(day, 'YYYY-MM') AS month,
-                COUNT(*)::numeric AS days, COUNT(DISTINCT a.id) AS count
-           FROM hr_leave_applications a
-           CROSS JOIN LATERAL generate_series(
-             GREATEST(a.start_date, $1::date), LEAST(a.end_date, $2::date), INTERVAL '1 day'
-           ) AS day
-          WHERE a.status = 'approved' AND a.start_date <= $2 AND a.end_date >= $1
-            AND EXTRACT(ISODOW FROM day) < 6
-            AND NOT EXISTS (SELECT 1 FROM hr_public_holidays h WHERE h.holiday_date = day::date)
-          GROUP BY month
-          ORDER BY month`,
-        [from, to]
-      ),
-      pool.query(
-        `SELECT e.display_name AS employee_name, t.name AS leave_type_name,
-                a.start_date, a.end_date, a.days
-           FROM hr_leave_applications a
-           JOIN hr_employees e ON e.id = a.employee_id
-           JOIN hr_leave_types t ON t.id = a.leave_type_id
-          WHERE a.status = 'approved' AND a.start_date >= CURRENT_DATE
-            AND a.start_date <= CURRENT_DATE + INTERVAL '30 days'
-          ORDER BY a.start_date
-          LIMIT 10`
-      ),
-      // ---- Exceptions: the things a manager should act on ----
-      //
-      // How long approvals have been waiting. "24 pending" is a workload;
-      // "3 waiting over five days" is something somebody has to do today.
-      pool.query(
-        `SELECT
-           COUNT(*) AS pending_approvals,
-           COUNT(*) FILTER (WHERE applied_at < NOW() - INTERVAL '5 days') AS over_five_days,
-           COALESCE(MAX(EXTRACT(EPOCH FROM (NOW() - applied_at)) / 86400), 0) AS oldest_days
-           FROM hr_leave_applications WHERE status = 'pending'`
-      ),
-      // Balances that have gone below zero. The staff report already paints
-      // these red, so they happen; the overview never said so.
-      pool.query(
-        `SELECT COUNT(DISTINCT e.id) AS count
-           FROM hr_leave_balances b
-           JOIN hr_employees e ON e.id = b.employee_id
-          WHERE e.status = 'active' AND b.year = $1 AND (b.balance - b.pending) < 0`,
-        [today.getFullYear()]
-      ),
-      // Staff sitting on more than twice their annual entitlement of an earned
-      // type. Both a growing liability and a wellbeing signal: people who
-      // never take leave.
-      pool.query(
-        `WITH excess_people AS (
-           SELECT DISTINCT e.id, e.display_name
-             FROM hr_leave_balances b
-             JOIN hr_leave_types t ON t.id = b.leave_type_id
-             JOIN hr_employees e ON e.id = b.employee_id
-            WHERE e.status = 'active' AND e.leave_entitled = TRUE AND b.year = $1
-              AND t.is_active = TRUE AND t.is_accruable = TRUE AND t.default_days > 0
-              AND (b.balance - b.pending) > 2 * t.default_days
-         )
-         SELECT COUNT(*) AS count,
-                COALESCE((
-                  SELECT json_agg(display_name ORDER BY display_name)
-                    FROM (SELECT display_name FROM excess_people ORDER BY display_name LIMIT 3) preview
-                ), '[]'::json) AS employee_names
-           FROM excess_people`,
-        [today.getFullYear()]
-      ),
-      // Study leave whose return date has been and gone. Nothing restores
-      // eligibility automatically — deliberately, because somebody has to
-      // confirm the person actually came back — so until an administrator
-      // does, they cannot apply for leave and accrue nothing. That is a
-      // silence worth breaking.
-      pool.query(
-        `SELECT COUNT(*) AS count,
-                COALESCE((
-                  SELECT json_agg(display_name ORDER BY display_name)
-                    FROM (
-                      SELECT display_name FROM hr_employees
-                       WHERE status = 'active' AND leave_entitled = FALSE
-                         AND ineligible_reason = 'study_leave'
-                         AND study_leave_end IS NOT NULL AND study_leave_end < CURRENT_DATE
-                       ORDER BY display_name LIMIT 3
-                    ) preview
-                ), '[]'::json) AS employee_names
-           FROM hr_employees
-          WHERE status = 'active' AND leave_entitled = FALSE
-            AND ineligible_reason = 'study_leave'
-            AND study_leave_end IS NOT NULL AND study_leave_end < CURRENT_DATE`
-      ),
-      // Coverage risk: a department with more than a third of its people away
-      // on the same working day in the next month. This is the question a
-      // roster cannot answer at a glance but a schedule depends on.
-      pool.query(
-        `WITH department_size AS (
-           SELECT COALESCE(department_code, 'Unassigned') AS department_code, COUNT(*) AS headcount
-             FROM hr_employees WHERE status = 'active'
-            GROUP BY 1
-         ),
-         away AS (
-           SELECT department_code, day, COUNT(DISTINCT employee_id) AS people_out
-             FROM (
-               SELECT a.employee_id, COALESCE(e.department_code, 'Unassigned') AS department_code, day::date AS day
-                 FROM hr_leave_applications a
-                 JOIN hr_employees e ON e.id = a.employee_id
-                 CROSS JOIN LATERAL generate_series(
-                   GREATEST(a.start_date, CURRENT_DATE),
-                   LEAST(a.end_date, CURRENT_DATE + INTERVAL '30 days'),
-                   INTERVAL '1 day'
-                 ) AS day
-                WHERE a.status = 'approved'
-                  AND a.start_date <= CURRENT_DATE + INTERVAL '30 days' AND a.end_date >= CURRENT_DATE
-                  AND EXTRACT(ISODOW FROM day) < 6
-                  AND NOT EXISTS (SELECT 1 FROM hr_public_holidays h WHERE h.holiday_date = day::date)
-               UNION ALL
-               SELECT e.id, COALESCE(e.department_code, 'Unassigned'), day::date
-                 FROM hr_employees e
-                 CROSS JOIN LATERAL generate_series(
-                   GREATEST(e.study_leave_start, CURRENT_DATE),
-                   LEAST(COALESCE(e.study_leave_end, CURRENT_DATE + 30), CURRENT_DATE + 30),
-                   INTERVAL '1 day'
-                 ) AS day
-                WHERE e.status = 'active' AND e.leave_entitled = FALSE AND e.ineligible_reason = 'study_leave'
-                  AND e.study_leave_start <= CURRENT_DATE + 30
-                  AND (e.study_leave_end IS NULL OR e.study_leave_end >= CURRENT_DATE)
-                  AND EXTRACT(ISODOW FROM day) < 6
-                  AND NOT EXISTS (SELECT 1 FROM hr_public_holidays h WHERE h.holiday_date = day::date)
-             ) absences
-            GROUP BY 1, 2
-         )
-         SELECT away.department_code, to_char(away.day, 'YYYY-MM-DD') AS day,
-                away.people_out, d.headcount,
-                ROUND(away.people_out * 100.0 / d.headcount) AS percent_out
-           FROM away JOIN department_size d USING (department_code)
-          WHERE d.headcount > 0 AND away.people_out * 3 > d.headcount
-          ORDER BY percent_out DESC, away.day
-          LIMIT 5`
-      ),
-      // Leave liability: what the unused balances would cost to pay out.
-      //
-      // Only accruable types count. Those are *earned* — untaken days are owed
-      // and are a provision on the books. An upfront grant like sick leave is
-      // an allowance, not something owed on separation, so including it would
-      // overstate the figure badly.
-      //
-      // Staff with no rate recorded are left out rather than counted at zero,
-      // and are reported alongside so the number is read with its coverage.
-      pool.query(
-        `SELECT
-           COALESCE(SUM(available * e.daily_rate), 0) AS liability,
-           COALESCE(SUM(available) FILTER (WHERE e.daily_rate IS NOT NULL), 0) AS valued_days,
-           COUNT(DISTINCT e.id) FILTER (WHERE e.daily_rate IS NULL) AS staff_without_rate,
-           COUNT(DISTINCT e.id) AS staff_total
-           FROM hr_leave_types t
-           CROSS JOIN hr_employees e
-           LEFT JOIN hr_leave_balances b
-             ON b.employee_id = e.id AND b.leave_type_id = t.id AND b.year = $1
-           CROSS JOIN LATERAL (
-             SELECT GREATEST(COALESCE(b.balance, 0) - COALESCE(b.pending, 0), 0) AS available
-           ) AS v
-          WHERE t.is_active = TRUE AND t.is_accruable = TRUE
-            AND e.status = 'active' AND e.leave_entitled = TRUE`,
-        [today.getFullYear()]
-      ),
-      // Stock, not flow: how many unused days are currently sitting on the
-      // books per leave type, across active staff, this calendar year. A
-      // type never touched for a given employee has no balance row yet
-      // (ensureBalance seeds it lazily) so it falls back to default_days (or
-      // zero for accruable types), the same number a first touch would seed.
-      pool.query(
-        `SELECT t.name AS leave_type,
-                SUM(GREATEST(COALESCE(b.balance, CASE WHEN t.is_accruable THEN 0 ELSE t.default_days END) - COALESCE(b.pending, 0), 0)) AS available_days
-           FROM hr_leave_types t
-           CROSS JOIN hr_employees e
-           LEFT JOIN hr_leave_balances b
-             ON b.employee_id = e.id AND b.leave_type_id = t.id AND b.year = $1
-          WHERE t.is_active = TRUE AND e.status = 'active' AND e.leave_entitled = TRUE
-          GROUP BY t.name
-          ORDER BY available_days DESC`,
-        [today.getFullYear()]
-      ),
-    ]);
-
-    const byTypeRows = byType.rows.map((r) => ({
-      leave_type: r.leave_type, days: Number(r.days), count: Number(r.count),
-    }));
-
-    const statusCounts = { pending: 0, approved: 0, rejected: 0, cancelled: 0 };
-    for (const row of applications.rows) statusCounts[row.status] = Number(row.count);
-
-    // Fill every month in range so the trend line has no gaps to misread as
-    // zero-vs-missing. Built by integer arithmetic on the YYYY-MM-DD strings
-    // rather than by stepping a Date, which would put the month a day out
-    // whenever the server's timezone is not the one the dates were written in.
-    const monthByKey = new Map(monthly.rows.map((r) => [r.month, { days: Number(r.days), count: Number(r.count) }]));
-    const trendMonths = monthsBetween(from, to).map((month) => ({
-      month,
-      days: monthByKey.get(month)?.days || 0,
-      count: monthByKey.get(month)?.count || 0,
-    }));
-
-    res.json({
-      from,
-      to,
-      headcount: {
-        active_employees: Number(headcount.rows[0].active_employees),
-        on_leave_today: Number(headcount.rows[0].on_leave_today),
-        on_study_leave: Number(headcount.rows[0].on_study_leave),
-      },
-      applications: {
-        ...statusCounts,
-        total: Object.values(statusCounts).reduce((sum, n) => sum + n, 0),
-        avg_turnaround_hours: turnaround.rows[0].avg_hours ? Number(turnaround.rows[0].avg_hours) : null,
-      },
-      // The figure every "days taken" panel sums to. Stated outright so the
-      // dashboard can be checked against itself at a glance.
-      days_taken: byTypeRows.reduce((sum, r) => sum + r.days, 0),
-      exceptions: {
-        pending_approvals: Number(pendingAge.rows[0].pending_approvals),
-        pending_over_five_days: Number(pendingAge.rows[0].over_five_days),
-        oldest_pending_days: Number(pendingAge.rows[0].oldest_days),
-        negative_balances: Number(negative.rows[0].count),
-        excess_balances: Number(excess.rows[0].count),
-        excess_employee_names: excess.rows[0].employee_names,
-        study_leave_return_due: Number(studyReturnDue.rows[0].count),
-        study_leave_return_names: studyReturnDue.rows[0].employee_names,
-        coverage_risks: coverage.rows.map((r) => ({
-          department_code: r.department_code,
-          day: r.day,
-          people_out: Number(r.people_out),
-          headcount: Number(r.headcount),
-          percent_out: Number(r.percent_out),
-        })),
-      },
-      liability: {
-        value: Number(liability.rows[0].liability),
-        days: Number(liability.rows[0].valued_days),
-        staff_without_rate: Number(liability.rows[0].staff_without_rate),
-        staff_total: Number(liability.rows[0].staff_total),
-      },
-      by_type: byTypeRows,
-      by_department: byDepartment.rows.map((r) => ({
-        department_code: r.department_code, days: Number(r.days), count: Number(r.count),
-      })),
-      monthly_trend: trendMonths,
-      upcoming: upcoming.rows.map((r) => ({ ...r, days: Number(r.days) })),
-      balance_by_type: balanceByType.rows.map((r) => ({
-        leave_type: r.leave_type, available_days: Number(r.available_days),
-      })),
-    });
-  }
-);
-
-// Who is behind a bar on the overview.
-//
-// The dashboard used to be a poster: a department could be shown taking twice
-// as much leave as any other with no way to ask who. This answers that, using
-// the same windowed measure as the chart so the rows add up to the bar.
-router.get(
-  '/overview/breakdown',
-  requirePermission(PERMISSIONS.HR_ADMIN),
-  [
-    query('dimension').isIn(['department', 'leave_type']),
-    query('value').isString().isLength({ min: 1, max: 200 }),
-    query('from').isISO8601(),
-    query('to').isISO8601(),
-  ],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const byDepartment = req.query.dimension === 'department';
-    const { rows } = await pool.query(
-      `SELECT e.display_name AS employee_name,
-              COALESCE(e.department_code, 'Unassigned') AS department_code,
-              t.name AS leave_type_name,
-              SUM(w.days) AS days,
-              COUNT(*) FILTER (WHERE w.days > 0) AS applications
-         FROM hr_leave_applications a
-         JOIN hr_employees e ON e.id = a.employee_id
-         JOIN hr_leave_types t ON t.id = a.leave_type_id
-         CROSS JOIN LATERAL ${WORKING_DAYS_IN_RANGE} w
-        WHERE a.status = 'approved' AND a.start_date <= $2 AND a.end_date >= $1
-          AND ${byDepartment ? "COALESCE(e.department_code, 'Unassigned') = $3" : 't.name = $3'}
-        GROUP BY e.display_name, department_code, t.name
-       HAVING SUM(w.days) > 0
-        ORDER BY days DESC, e.display_name`,
-      [req.query.from, req.query.to, req.query.value]
-    );
-    res.json({
-      dimension: req.query.dimension,
-      value: req.query.value,
-      rows: rows.map((r) => ({ ...r, days: Number(r.days), applications: Number(r.applications) })),
-    });
-  }
-);
+// The leadership dashboard combines current grants with retained historical
+// activity and reads current balances from each employee's leave regime.
+router.get('/overview', requirePermission(PERMISSIONS.HR_ADMIN),
+  [query('from').optional().isISO8601(),query('to').optional().isISO8601()],
+  async(req,res)=>{
+    if(!handleValidation(req,res))return;
+    const today=new Date(Date.now()+12*3600000).toISOString().slice(0,10);
+    const to=req.query.to||today;
+    const previousYear=new Date(`${today}T00:00:00Z`);
+    previousYear.setUTCFullYear(previousYear.getUTCFullYear()-1);
+    const from=req.query.from||previousYear.toISOString().slice(0,10);
+    res.json(await leaveOverview(pool,{user:req.user,from,to}));
+  });
+router.get('/overview/planning',requirePermission(PERMISSIONS.HR_ADMIN),async(req,res)=>{
+  res.json(await leavePlanning(pool,{user:req.user}));
+});
+router.get('/overview/breakdown',requirePermission(PERMISSIONS.HR_ADMIN),
+  [query('dimension').isIn(['department','leave_type']),query('value').isString().isLength({min:1,max:200}),query('from').isISO8601(),query('to').isISO8601()],
+  async(req,res)=>{
+    if(!handleValidation(req,res))return;
+    const {from,to,dimension,value}=req.query;
+    res.json(await leaveOverviewBreakdown(pool,{user:req.user,from,to,dimension,value}));
+  });
 
 // ===== Calendar and reporting =====
 

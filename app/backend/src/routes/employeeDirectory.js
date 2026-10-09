@@ -38,11 +38,12 @@ router.get('/', staffHr, [
   query('department_id').optional().isUUID(),
   query('status').optional().isIn(['active', 'inactive']),
   query('regime').optional().isIn(['legacy','government']),
+  query('contract_without_leave').optional().isIn(['exclude','only']),
   query('readiness').optional().isIn(['unlinked','missing_id','missing_placement','missing_service','missing_pattern']),
 ], async (req, res) => {
   if (!handleValidation(req, res)) return;
   res.json(await listEmployeeDirectory(pool, { page: Number(req.query.page) || 1, pageSize: Number(req.query.page_size) || 50,
-    search: req.query.search || '', departmentId: req.query.department_id || null, status: req.query.status || null, readiness: req.query.readiness || '',regime:req.query.regime || null,user:req.user }));
+    search: req.query.search || '', departmentId: req.query.department_id || null, status: req.query.status || null, readiness: req.query.readiness || '',regime:req.query.regime || null,contractWithoutLeave:req.query.contract_without_leave || null,user:req.user }));
 });
 
 router.get('/accounts', centralHr, [query('page').optional().isInt({min:1,max:100000}),query('search').optional().isString().isLength({max:100})], async (req,res) => {

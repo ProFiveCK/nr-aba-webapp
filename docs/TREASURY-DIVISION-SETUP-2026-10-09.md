@@ -43,3 +43,10 @@ If a review was already frozen, expand its entry under **Recent consolidation re
 ## Staff migration list
 
 Settings → Readiness starts with **Staff to show → Awaiting migration**. The department roster includes only active staff who still use their existing leave arrangements. **Migrated staff** shows staff already on the Government regime for operating-readiness checks; it does not offer initial consolidation again. Filtering occurs before pagination, so counts and pages refer to the selected list. After a successful cohort apply, the selection clears and the awaiting list refreshes. Applied consolidation reviews remain in the history.
+
+
+## Contract appointments without leave entitlement
+
+Contract status alone does not mean no leave entitlement. Where the owner confirms that a specific contract provides no paid leave, the employee's Contract appointment and explicit not-entitled flag are retained separately from paid staff. **Staff to show → Contract staff — no leave entitlement** lists those profiles. They are excluded from Awaiting migration, have no initial consolidation or operating-readiness selection, and need no Medical/Special opening credits. Their existing balances and history remain recorded.
+
+The operator service `governmentLeaveInitialContractExclusions.js` supports an owner-confirmed initial admin correction for active legacy staff with a single current simple appointment and no Government preparation, service correction history, or pending/future legacy leave. Preview and apply bind the exact source fingerprint; apply records immutable appointment correction history and atomic audit entries. It changes only the appointment category, explicit leave flag and source note, keeping dates, schedule, service bases, login, retained credits and history. It is not a public endpoint and does not change normal two-officer appointment corrections. No Government leave or accrual is enabled by this correction.

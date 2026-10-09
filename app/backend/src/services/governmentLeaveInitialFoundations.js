@@ -73,6 +73,8 @@ export async function recordInitialCredit(pool,{user,actor,data}) {
   const setup=await initialSetupReference(client);
   if(setup?.status!=='adopted'||!setup.mappings.some(m=>m.leave_type_id===data.leave_type_id&&['recreation','medical','special'].includes(m.code)))fail('Adopt the source type mapping before recording this initial credit.');
   const code=setup.mappings.find(m=>m.leave_type_id===data.leave_type_id)?.code;
+  const currentAppointment=(await client.query('SELECT employment_category FROM hr_employee_service_periods WHERE employee_id=$1 AND start_date<=$2 AND (end_date IS NULL OR end_date>=$2)',[employee.id,today()])).rows[0];
+  if(currentAppointment?.employment_category==='contract'&&employee.leave_entitled===false)fail('This Contract appointment has no leave entitlement. No source credit is required for initial migration.');
   if(code==='recreation'){
    const {rows:[appointment]}=await client.query('SELECT employment_category FROM hr_employee_service_periods WHERE employee_id=$1 AND start_date<=$2 AND (end_date IS NULL OR end_date>=$2)',[employee.id,today()]);
    if(appointment?.employment_category==='temporary')fail('Recreation is not enabled for Temporary staff in the initial migration. An Annual source credit is not required.');

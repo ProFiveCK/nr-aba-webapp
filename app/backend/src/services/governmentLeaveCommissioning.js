@@ -27,8 +27,13 @@ function input(data){
 async function snapshot(client,plan){
  const employees=[];
  for(const selected of plan.employees){
-  const {state,hash}=await migrationState(client,selected.employee_id,plan.cutover_date),employee=(await client.query('SELECT id,display_name,reviewer_id,status,department_id,division_id,leave_policy_regime FROM hr_employees WHERE id=$1',[selected.employee_id])).rows[0];
+  const {state,hash}=await migrationState(client,selected.employee_id,plan.cutover_date),employeeRow=(await client.query('SELECT id,display_name,reviewer_id,status,department_id,division_id,leave_policy_regime,leave_entitled FROM hr_employees WHERE id=$1',[selected.employee_id])).rows[0];
+  const {leave_entitled:leaveEntitled,...employee}=employeeRow;
   const legacyHistoryHash=(await client.query("SELECT md5(COALESCE(string_agg(md5(to_jsonb(a)::text),'' ORDER BY a.id),'')) AS hash FROM hr_leave_applications a WHERE employee_id=$1",[employee.id])).rows[0].hash;
+  const appointment=state.context.periods.find(p=>p.start_date<=plan.cutover_date&&(!p.end_date||p.end_date>=plan.cutover_date));
+  if(appointment?.employment_category==='contract'&&leaveEntitled===false){
+   employees.push({employee_id:employee.id,display_name:employee.display_name,payroll_id:state.identity?.payroll_id||null,source_hash:hash,legacy_history_hash:legacyHistoryHash,employee,route:{stages:[]},offices:[],enabled_codes:[],excluded_targets:[],targets:[],warnings:[],issues:['This Contract appointment has no leave entitlement. Exclude this staff profile from leave consolidation; no opening credits are required.']});continue;
+  }
   const route=await approvalRouteFor(client,employee.department_id,'recreation'),offices=[],issues=[],warnings=[];
   for(const stage of route.stages){
    const matches=await effectiveOffices(client,employee,stage.level),office=matches.length===1?matches[0]:null;
@@ -49,7 +54,6 @@ async function snapshot(client,plan){
   const placementIssue=await divisionPlacementIssue(client,employee.division_id);if(placementIssue)issues.push(placementIssue);
   if(state.initial_setup?.status!=='adopted')issues.push('Adopt the reviewed policy and leave-type mappings.');
   if(state.retained_legacy_leave.length)issues.push('Resolve pending or future legacy leave in the individual reconciliation workspace before cohort consolidation.');
-  const appointment=state.context.periods.find(p=>p.start_date<=plan.cutover_date&&(!p.end_date||p.end_date>=plan.cutover_date));
   if(appointment?.is_teacher)issues.push('Teacher Recreation uses the Education case route. Prepare this employee individually.');
   if(appointment&&!['permanent','temporary','contract'].includes(appointment.employment_category))issues.push('Verify a supported appointment category before activating common leave.');
   // Initial Treasury temporary staff use Medical/Special only. Retain their

@@ -30,13 +30,14 @@ export async function linkedEmployee(pool, accountId) {
   return employee;
 }
 
-export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, search = '', departmentId = null, status = null, readiness = '', regime = null, user = null } = {}) {
+export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, search = '', departmentId = null, status = null, readiness = '', regime = null, contractWithoutLeave = null, user = null } = {}) {
   const values = [status, departmentId, search.trim(), readiness];
   const scopeCondition = user ? employeeScopeSql(user,'hr_staff_manage','$5') : '($5::uuid IS NULL)';
-  values.push(user?.id || null, regime);
+  values.push(user?.id || null, regime, contractWithoutLeave);
   // Retained names support central discovery only; scope authority still uses
   // verified department_id through scopeCondition, and reads never assign it.
-  const where = `${scopeCondition} AND ($6::text IS NULL OR e.leave_policy_regime = $6) AND ($1::text IS NULL OR e.status = $1) AND ($2::uuid IS NULL OR e.department_id = $2
+  const excludedContract="(e.leave_entitled=FALSE AND EXISTS(SELECT 1 FROM hr_employee_service_periods c WHERE c.employee_id=e.id AND c.employment_category='contract' AND c.start_date<=(NOW() AT TIME ZONE 'Pacific/Nauru')::date AND (c.end_date IS NULL OR c.end_date>=(NOW() AT TIME ZONE 'Pacific/Nauru')::date)))";
+  const where = `($7::text IS NULL OR ($7='only' AND ${excludedContract}) OR ($7='exclude' AND NOT ${excludedContract})) AND ${scopeCondition} AND ($6::text IS NULL OR e.leave_policy_regime = $6) AND ($1::text IS NULL OR e.status = $1) AND ($2::uuid IS NULL OR e.department_id = $2
     OR (e.department_id IS NULL AND EXISTS (SELECT 1 FROM hr_departments selected WHERE selected.id=$2
       AND lower(selected.name)=lower(e.department_code))))
     AND ($3 = '' OR position(lower($3) in lower(e.display_name)) > 0
@@ -62,7 +63,7 @@ export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, sea
        WHERE p.employee_id=e.id AND p.start_date <= (NOW() AT TIME ZONE 'Pacific/Nauru')::date
          AND (p.end_date IS NULL OR p.end_date >= (NOW() AT TIME ZONE 'Pacific/Nauru')::date)
        ORDER BY p.start_date DESC,p.id LIMIT 1) p ON TRUE
-     WHERE ${where} ORDER BY lower(e.display_name), e.id LIMIT $7 OFFSET $8`,
+     WHERE ${where} ORDER BY lower(e.display_name), e.id LIMIT $8 OFFSET $9`,
     [...values, pageSize, (page - 1) * pageSize]
   );
   const { rows: [count] } = await pool.query(`SELECT count(*)::int AS total FROM hr_employees e WHERE ${where}`, values);

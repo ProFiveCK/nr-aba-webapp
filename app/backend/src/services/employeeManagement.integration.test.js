@@ -91,6 +91,45 @@ describe('central HR management screens and bounded APIs', { skip: skipWithoutDa
     assert.equal((await call(`?regime=government&status=active&department_id=${outside.id}`,undefined,'GET',staff)).body.total,0);
     assert.equal((await call(`?regime=government&status=active&department_id=${department.id}`)).body.total,1);
   });
+  test('only explicitly restricted contracts are excluded from the pending migration list',async()=>{
+    const contract=await create(),paid=await create({external_id:'000002',display_name:'Paid contract'}),temp=await create({external_id:'000003',display_name:'Temporary'});
+    for(const [e,category] of [[contract,'contract'],[paid,'contract'],[temp,'temporary']])await directory.addServicePeriod(pool,{employeeId:e.id,period:{start_date:'2020-01-01',employment_category:category,counts_for_service:true},actor,reason});
+    await pool.query('UPDATE hr_employees SET leave_entitled=FALSE WHERE id=ANY($1::uuid[])',[[contract.id,temp.id]]);
+    const query=`?department_id=${department.id}&regime=legacy`;
+    const pending=(await call(query+'&contract_without_leave=exclude')).body,excluded=(await call(query+'&contract_without_leave=only')).body;
+    assert.equal(pending.total,2);assert.ok(pending.employees.some(e=>e.id===paid.id));assert.ok(pending.employees.some(e=>e.id===temp.id));assert.equal(excluded.total,1);assert.equal(excluded.employees[0].id,contract.id);
+    assert.equal((await call(query)).body.total,3);assert.equal((await call('?contract_without_leave=invented')).status,422);
+  });
+  async function contractCorrectionFixture(){
+    actor=(await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1 RETURNING *",[actor.id])).rows[0];
+    const employee=await create();const period=await directory.addServicePeriod(pool,{employeeId:employee.id,period:{start_date:'2020-01-01',employment_category:'permanent',counts_for_service:true},actor,reason});
+    const module=await import('./governmentLeaveInitialContractExclusions.js');const data={employee_ids:[employee.id],no_paid_leave_confirmed:true,source_reference:'Owner confirmed initial contract terms with no leave entitlement',reason};
+    return {employee,period,module,data};
+  }
+  test('initial admin contract correction retains dates, schedule, identity and balances without opening Government leave',async()=>{
+    const {employee,period,module,data}=await contractCorrectionFixture();
+    const type=(await pool.query("INSERT INTO hr_leave_types(name,default_days,is_accruable) VALUES('Contract retained Annual',20,TRUE) RETURNING *")).rows[0];
+    await pool.query('INSERT INTO hr_leave_balances(employee_id,leave_type_id,year,balance,pending) VALUES($1,$2,2026,20,0)',[employee.id,type.id]);
+    const before=(await pool.query('SELECT * FROM hr_leave_balances WHERE employee_id=$1',[employee.id])).rows;
+    const beforeEmployee=(await pool.query('SELECT * FROM hr_employees WHERE id=$1',[employee.id])).rows[0];
+    const preview=await module.previewInitialContractExclusions(pool,{user:actor,data});assert.equal(preview.employees[0].start_date,period.start_date);
+    await assert.rejects(module.applyInitialContractExclusions(pool,{user:actor,actor,data:{...data,snapshot_hash:'stale'}}),/changed/);
+    await module.applyInitialContractExclusions(pool,{user:actor,actor,data:{...data,snapshot_hash:preview.snapshot_hash}});
+    const after=(await pool.query('SELECT * FROM hr_employee_service_periods WHERE id=$1',[period.id])).rows[0];assert.deepEqual({...after,employment_category:period.employment_category},period);assert.equal(after.employment_category,'contract');
+    const saved=(await pool.query('SELECT * FROM hr_employees WHERE id=$1',[employee.id])).rows[0];assert.equal(saved.leave_entitled,false);assert.equal(saved.leave_policy_regime,'legacy');assert.equal(saved.reviewer_id,beforeEmployee.reviewer_id);
+    assert.deepEqual((await pool.query('SELECT * FROM hr_leave_balances WHERE employee_id=$1',[employee.id])).rows,before);assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_entitlements WHERE employee_id=$1',[employee.id])).rows[0].n,0);
+    const correction=(await pool.query('SELECT * FROM hr_employee_service_corrections WHERE employee_id=$1',[employee.id])).rows[0];assert.equal(correction.status,'approved');assert.equal(correction.prepared_by,actor.id);assert.equal(correction.approved_by,actor.id);
+    await assert.rejects(pool.query("UPDATE hr_employee_service_corrections SET proposed='{}' WHERE id=$1",[correction.id]),/immutable/);
+  });
+  test('initial contract corrections require confirmed terms and roll back when their audit cannot be written',async()=>{
+    const {employee,period,module,data}=await contractCorrectionFixture();
+    await assert.rejects(module.previewInitialContractExclusions(pool,{user:actor,data:{...data,no_paid_leave_confirmed:false}}),/actual contract terms/);
+    const preview=await module.previewInitialContractExclusions(pool,{user:actor,data});
+    await pool.query("CREATE FUNCTION contract_correction_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.initial_contract_exclusion.applied' THEN RAISE EXCEPTION 'synthetic contract audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER contract_correction_audit_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION contract_correction_audit_failure()");
+    try{await assert.rejects(module.applyInitialContractExclusions(pool,{user:actor,actor,data:{...data,snapshot_hash:preview.snapshot_hash}}),/synthetic contract audit failure/);}finally{await pool.query('DROP TRIGGER contract_correction_audit_failure ON audit_log; DROP FUNCTION contract_correction_audit_failure()');}
+    assert.equal((await pool.query('SELECT employment_category FROM hr_employee_service_periods WHERE id=$1',[period.id])).rows[0].employment_category,'permanent');assert.equal((await pool.query('SELECT leave_entitled FROM hr_employees WHERE id=$1',[employee.id])).rows[0].leave_entitled,true);assert.equal((await pool.query('SELECT count(*)::int n FROM hr_employee_service_corrections WHERE employee_id=$1',[employee.id])).rows[0].n,0);
+    await pool.query("UPDATE hr_employees SET leave_policy_regime='government' WHERE id=$1",[employee.id]);await assert.rejects(module.previewInitialContractExclusions(pool,{user:actor,data}),/not migrated/);
+  });
   test('account picker has bounded stable pages and excludes credentials and permissions',async()=>{
     await pool.query(`INSERT INTO reviewers(email,display_name,role,password_hash) SELECT 'synthetic-'||i||'@example.test','Picker Employee '||lpad(i::text,4,'0'),'user','x' FROM generate_series(1,2000) i`);
     const first=await management.listLinkableAccounts(pool,{search:'Picker Employee'}),second=await management.listLinkableAccounts(pool,{search:'Picker Employee',page:2});

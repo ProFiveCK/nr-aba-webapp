@@ -276,6 +276,16 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   try{await assert.rejects(commission.applyCommissioning(pool,args),/synthetic admin failure/);assert.equal((await l.loadContext(pool,employee.id)).employee.leave_policy_regime,'legacy');assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_credit_transfers')).rows[0].n,0);}finally{await pool.query('DROP TRIGGER synthetic_admin_failure ON audit_log; DROP FUNCTION synthetic_admin_failure()');}
   await commission.applyCommissioning(pool,args);
  });
+ test('a contract explicitly recorded without leave entitlement cannot receive initial leave credits or consolidate',async()=>{
+  await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);
+  const data={...await commissioningFixture(),initial_admin_setup:true};
+  await pool.query("UPDATE hr_employee_service_periods SET employment_category='contract' WHERE employee_id=$1",[employee.id]);
+  await pool.query('UPDATE hr_employees SET leave_entitled=FALSE WHERE id=$1',[employee.id]);
+  const preview=await commission.previewCommissioning(pool,{user:user(hr),data});assert.equal(preview.ready,0);assert.equal(preview.employees[0].issues.length,1);assert.match(preview.employees[0].issues[0],/no leave entitlement/);assert.deepEqual(preview.employees[0].targets,[]);
+  await assert.rejects(commission.prepareCommissioning(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}}),/preparation issues/);
+  const type=(await pool.query('SELECT leave_type_id FROM hr_leave_balances WHERE employee_id=$1 LIMIT 1',[employee.id])).rows[0].leave_type_id;
+  const foundations=await import('../services/governmentLeaveInitialFoundations.js');await assert.rejects(foundations.recordInitialCredit(pool,{user:user(hr),actor:hr,data:{employee_id:employee.id,leave_type_id:type,amount:'10',year:2026,source_reference:reason,reason}}),/no leave entitlement/);
+ });
  test('initial foundations require verified dates and schedule and retain current staff and credits',async()=>{
   await commissioningFixture();await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
   const foundations=await import('../services/governmentLeaveInitialFoundations.js');

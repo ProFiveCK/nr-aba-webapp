@@ -31,3 +31,10 @@ The release archive contains a fresh production backup, the previous API image a
 When unticked, missing calendar coverage does not prevent initial consolidation, activation or leave applications. Dates without a calendar use the verified work schedule. Entered calendars continue to exempt their recorded holidays for Annual/Recreation and Medical. The preview identifies when it is using the schedule without holiday coverage. No fictional holiday calendar or assumed holiday dates are created.
 
 Tick the setting when you want missing calendar coverage to block activation and applications. Medical evidence, recorded balances, non-MC limits, self-approval checks and the nominated approval route continue to apply in either mode.
+
+
+## Apply the initial staff migration
+
+In Settings → Readiness, preview the selected existing staff and review their carried credits and nominated division route. When every selected employee is ready, click **Migrate and consolidate**. This saves the reviewed snapshot and applies the whole cohort together; there is no separate freeze step, extra reason field or second officer for initial admin setup. A stale source still stops the apply transaction and requires a fresh preview.
+
+If a review was already frozen, expand its entry under **Recent consolidation reviews** and click **Migrate and consolidate**. The saved review is used directly. A connection failure after saving retains the review for retry; a successful apply is idempotent. **Migration applied** confirms that the selected staff now use Government leave with their reviewed carried credits. Temporary staff activate Medical and Special only and retain Annual history. Scheduled Government accrual remains off until plans are approved and application/approval/PDF checks are complete.

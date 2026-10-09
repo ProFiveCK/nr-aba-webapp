@@ -1,33 +1,42 @@
 import { Link, useNavigate } from 'react-router-dom';
+import { ArrowRight, CalendarDays, Users, ShieldCheck, Clock3, UserRoundCog, WalletCards } from 'lucide-react';
 import { Button } from '../../components/Ui';
 import { formatDate } from '../../lib/date';
 import { reviewRecordLabel } from './reviewRecordNames';
-import { leaveSetupSteps, nextLeaveSetupView } from './leaveSetup';
 import type { LeavePolicyUsage } from './leaveSetup';
+
+const settings = [
+    { view: 'policies', title: 'Policy & calendars', detail: 'Leave entitlements, public holidays and working schedules.', icon: CalendarDays },
+    { view: 'organisation', title: 'Organisation & approvers', detail: 'Departments, reporting structure and approval routes.', icon: Users },
+    { view: 'accrual', title: 'Balance schedules', detail: 'Review employee access and approved automatic balance updates.', icon: Clock3 },
+    { view: 'access', title: 'HR access', detail: 'Assign the people who can manage employee records.', icon: ShieldCheck },
+    { view: 'accounts', title: 'Employee accounts', detail: 'Create secure employee logins and manage account access.', icon: UserRoundCog },
+    { view: 'payroll', title: 'Payroll instructions', detail: 'Prepare approved leave instructions and record reconciliation.', icon: WalletCards },
+];
 
 export function LeaveSetupStatus({ usage, onOpen }: { usage: LeavePolicyUsage; onOpen: (view: string) => void }) {
     const navigate = useNavigate();
-    function open(view: string) { if (view === 'employees') void navigate('/leave/employees'); else onOpen(view); }
-    const remaining = usage.counts.legacy_awaiting_migration;
-    return <section className="space-y-5" aria-label="Leave setup progress">
-        <div className="app-panel space-y-4 p-5 sm:p-6">
-            <div><h2 className="text-xl font-semibold text-gray-950">One leave policy for everyone</h2>
-                <p className="mt-2 max-w-3xl text-sm text-gray-600">The Government policy governs leave after staff are moved onto it. Moving staff carries their recorded balances forward and starts the Government approval route. Follow the steps below to finish setup.</p></div>
-            <dl className="grid gap-4 sm:grid-cols-3">
-                {[[usage.counts.government_active, 'Using Government leave'], [remaining, 'Awaiting staff transfer'], [usage.counts.government_awaiting_activation + usage.counts.government_paused, 'Need activation or are paused']].map(([count, label]) => <div key={label} className="rounded-lg bg-gray-50 p-4"><dt className="text-sm text-gray-600">{label}</dt><dd className="mt-1 text-3xl font-semibold text-brand">{count}</dd></div>)}
+    const needsReview = usage.counts.government_awaiting_activation + usage.counts.government_paused;
+    return <section className="space-y-6" aria-label="Leave settings overview">
+        <div className="app-panel space-y-5 p-5 sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0"><h3 className="text-lg font-semibold text-gray-950">Leave management</h3><p className="mt-1 max-w-2xl text-sm text-gray-600">Add employees directly, confirm their appointment and balances, and manage leave through the approved policy.</p></div>
+                <Button variant="secondary" onClick={() => void navigate('/leave/employees')}>Manage employees <ArrowRight className="h-4 w-4" aria-hidden="true"/></Button>
+            </div>
+            <dl className="grid gap-3 sm:grid-cols-3">
+                {[[usage.counts.active_employees, 'Active employees'], [needsReview, 'Access needs review'], [usage.counts.government_missing_job_plans, 'Balance schedules to review']].map(([count, label]) => <div key={label} className="rounded-xl bg-gray-50 p-4"><dt className="text-sm text-gray-600">{label}</dt><dd className="mt-2 text-3xl font-semibold tabular-nums text-gray-950">{count}</dd></div>)}
             </dl>
-            {usage.current_policy && <p className="text-sm text-gray-700">Policy: <strong>{reviewRecordLabel(usage.current_policy.label)}</strong> · {formatDate(usage.current_policy.effective_from)} to {formatDate(usage.current_policy.effective_to)}.</p>}
-            {remaining > 0 ? <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">The old calculations still serve {remaining} staff awaiting transfer. Complete their staff transfer below to replace those calculations. Historical records stay available.</p> : <p role="status" className="rounded-lg bg-green-50 p-3 text-sm text-green-900">No leave-entitled active staff remain on the old calculations.</p>}
-            {usage.counts.government_awaiting_activation + usage.counts.government_paused > 0 && <p className="text-sm text-gray-700">For staff in Government setup who still need activation, open their <Link className="font-semibold text-brand underline" to="/leave/employees">employee record</Link> and review Balance &amp; setup changes.</p>}
-            {usage.counts.legacy_excluded_contracts > 0 && <p className="text-xs text-gray-500">{usage.counts.legacy_excluded_contracts} Contract staff with no leave entitlement are listed separately under Staff transfer for review.</p>}
-            <Button onClick={() => open(nextLeaveSetupView(usage))}>Continue setup</Button>
+            {usage.current_policy ? <p className="text-sm text-gray-600">Current policy: <strong className="text-gray-900">{reviewRecordLabel(usage.current_policy.label)}</strong> · {formatDate(usage.current_policy.effective_from)} to {formatDate(usage.current_policy.effective_to)}.</p> : <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">No published policy covers today. Review Policy &amp; calendars before enabling leave applications.</p>}
+            <p className="text-sm text-gray-600">Automatic balance updates: <strong className={usage.schedulers.government ? 'text-green-800' : 'text-amber-800'}>{usage.schedulers.government ? 'Enabled' : 'Not enabled'}</strong>. {usage.schedulers.government ? 'Approved schedules update balances when they are due.' : 'Review schedules and contact the system administrator to enable automatic updates.'}</p>
+            {needsReview > 0 && <p className="text-sm text-gray-600">Review the appointment, balance and access settings in each affected <Link className="font-medium text-brand underline" to="/leave/employees">employee record</Link>.</p>}
         </div>
-        <ol className="space-y-3">
-            {leaveSetupSteps(usage).map((step, index) => <li key={step.view} className="app-panel flex flex-wrap items-center justify-between gap-3 p-4">
-                <div className="flex min-w-0 items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-50 text-sm font-semibold text-brand">{index + 1}</span><div className="min-w-0"><h3 className="font-semibold text-gray-900">{step.label}</h3><p className="mt-1 break-words text-sm text-gray-600">{reviewRecordLabel(step.detail)}</p></div></div>
-                <Button variant="secondary" onClick={() => open(step.view)}>{step.ready === true ? 'Review' : step.ready === null ? 'Manage approvers' : 'Set up'}</Button>
-            </li>)}
-        </ol>
-        <p className="text-sm text-gray-600">For daily work, use <Link className="font-semibold text-brand underline" to="/leave/employees">Employees</Link> to check a person’s balances and <Link className="font-semibold text-brand underline" to="/leave/approvals">Approvals</Link> to decide requests. Setup is only needed when policy, staff or schedules change.</p>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {settings.map(({ view, title, detail, icon: Icon }) => <button key={view} type="button" onClick={() => onOpen(view)} className="app-panel group flex h-full items-start gap-4 p-5 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
+                <span className="rounded-xl bg-blue-50 p-3 text-brand"><Icon className="h-5 w-5" aria-hidden="true"/></span>
+                <span className="min-w-0 flex-1"><span className="block font-semibold text-gray-950">{title}</span><span className="mt-1.5 block text-sm leading-6 text-gray-600">{detail}</span></span>
+                <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-gray-400 group-hover:text-brand" aria-hidden="true"/>
+            </button>)}
+        </div>
+        <p className="text-sm text-gray-600">Use <Link className="font-medium text-brand underline" to="/leave/approvals">Approvals</Link> for daily decisions. <button type="button" className="font-medium text-brand underline" onClick={() => onOpen('workflow')}>Open application follow-ups</button> for outstanding HR work.</p>
     </section>;
 }

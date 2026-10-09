@@ -4,8 +4,8 @@ type Setting={require_calendar_coverage:boolean;revision:number};
 
 export function CalendarRequirement({checked,disabled,onChange}:{checked:boolean;disabled:boolean;onChange:(checked:boolean)=>void}){
  return <div className="space-y-2 rounded-lg border border-gray-200 p-3">
-  <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={checked} disabled={disabled} onChange={e=>onChange(e.target.checked)} className="mt-1"/>Require a published holiday calendar before using Government leave (optional)</label>
-  <p className="text-sm text-gray-600">When unticked, migration and applications use the recorded work schedule for dates without a calendar. Holidays in entered calendars still apply. Tick when you want missing calendar coverage to stop activation and applications.</p>
+  <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={checked} disabled={disabled} onChange={e=>onChange(e.target.checked)} className="mt-1"/>Require a published holiday calendar for leave calculations</label>
+  <p className="text-sm text-gray-600">When unticked, leave calculations use the recorded work schedule for dates without a calendar. Holidays in entered calendars still apply. Tick to require calendar coverage before employee setup or leave applications can be completed.</p>
  </div>;
 }
 export function GovernmentCalendarSetting({onChanged}:{onChanged?:()=>void}){

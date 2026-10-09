@@ -65,21 +65,21 @@ export function Report() {
 
     return (
         <div className="space-y-4"><div><h2 className="text-xl font-semibold">Leave report</h2><p className="mt-1 text-sm text-gray-600">Choose the dates to view approved leave and download the report.</p></div>
-            <form className="flex flex-wrap items-end gap-3 app-panel p-4" onSubmit={e => e.preventDefault()}>
+            <form className="grid gap-4 app-panel p-5 sm:grid-cols-2 sm:p-6" onSubmit={e => e.preventDefault()}>
                 <label className="text-sm">
-                    <span className="mb-1 block font-medium text-gray-700">Period from</span>
-                    <AustralianDateInput aria-label="Period from" required value={from} onChange={(e) => setFrom(e.target.value)}
-                        className="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                    <span className="mb-1 block font-medium text-gray-700">From date</span>
+                    <AustralianDateInput aria-label="From date" required value={from} onChange={(e) => { setFrom(e.target.value); setRows(null); }}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm" />
                 </label>
                 <label className="text-sm">
-                    <span className="mb-1 block font-medium text-gray-700">to</span>
-                    <AustralianDateInput aria-label="Period through" required value={to} min={from} onChange={(e) => setTo(e.target.value)}
-                        className="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                    <span className="mb-1 block font-medium text-gray-700">To date</span>
+                    <AustralianDateInput aria-label="To date" required value={to} min={from} onChange={(e) => { setTo(e.target.value); setRows(null); }}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm" />
                 </label>
             </form>
 
             <GovernmentActivity from={from} to={to} details/>
-            <details className="app-panel p-4"><summary className="cursor-pointer text-sm font-semibold text-gray-600">Earlier records from before staff transfer</summary><div className="mt-4 space-y-4"><div className="flex flex-wrap gap-2"><button type="button" disabled={loading} onClick={()=>void run()} className="toolbar-button">{loading?'Building…':'Load earlier records'}</button>{rows&&rows.length>0&&<button type="button" className="toolbar-button" onClick={downloadCsv}>Download earlier CSV</button>}</div>
+            <details className="app-panel p-5 sm:p-6"><summary className="cursor-pointer text-sm font-semibold text-gray-600">Previous application summaries</summary><div className="mt-4 space-y-4"><div className="flex flex-wrap gap-2"><button type="button" disabled={loading || !from || !to || from > to} onClick={()=>void run()} className="toolbar-button">{loading?'Building…':'Load previous summaries'}</button>{rows&&rows.length>0&&<button type="button" className="toolbar-button" onClick={downloadCsv}>Download summary CSV</button>}</div>
             {rows === null ? (
                 <div className="app-panel p-4">
                     <EmptyState title="Choose a period" detail="Approved leave in the period is totalled per person and leave type." />

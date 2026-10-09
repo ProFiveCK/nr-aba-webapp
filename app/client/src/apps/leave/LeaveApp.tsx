@@ -22,7 +22,7 @@ export function LeaveApp() {
     // capabilities that make a section worth opening.
     if (!fallback) {
         return (
-            <div className="space-y-5">
+            <div className="leave-workspace min-w-0 space-y-6">
                 <h2 className="text-2xl font-bold tracking-tight text-gray-950 sm:text-3xl">Leave</h2>
                 <div className="rounded-xl border border-gray-200 bg-white p-6 text-center shadow-sm">
                     <p className="text-sm font-medium text-gray-900">No leave functions are enabled for your account</p>
@@ -36,7 +36,7 @@ export function LeaveApp() {
     const goToSection = (section: LeaveSection) => navigate(`/leave/${section}`);
 
     return (
-        <div className="space-y-5">
+        <div className="leave-workspace min-w-0 space-y-6">
             {import.meta.env.VITE_LOCAL_REVIEW_KIND === 'production-copy' && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">Local production copy · Changes stay on this computer. Email, external connections and automatic accrual are disabled.</p>}
             <Routes>
                 <Route index element={<Navigate to={fallback} replace />} />

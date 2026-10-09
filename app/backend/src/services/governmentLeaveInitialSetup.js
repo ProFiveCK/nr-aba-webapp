@@ -100,7 +100,7 @@ async function sourceHashes(client, tables) {
     const rowHash = "md5((to_jsonb(t)-'final_pdf'-'content'-'data'-'bytes')::text)";
     return `SELECT $${index + 1}::text AS name,count(*)::int AS records,md5(COALESCE(string_agg(${rowHash},'' ORDER BY ${rowHash}),'')) AS hash FROM ${quoteIdentifier(name)} t`;
   });
-  const { rows } = await client.query(queries.join(' UNION ALL '), tables);
+  const { rows } = await client.query(`SELECT * FROM (${queries.join(' UNION ALL ')}) source ORDER BY name`, tables);
   const { rows: settings } = await client.query("SELECT to_char(accrual_anchor_date,'YYYY-MM-DD') AS accrual_anchor_date FROM reviewer_settings WHERE id=TRUE");
   return { tables: rows, settings };
 }

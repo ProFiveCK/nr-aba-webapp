@@ -1,4 +1,5 @@
 import {assertDraftUsable} from './governmentLeaveDrafts.js';
+import {calendarSettings} from './governmentLeaveCalendarSettings.js';
 import {initialAdminReview} from './governmentLeaveInitialAdmin.js';
 import {resolvedPublishedPoliciesSql,validateReplacementFields,approvePolicyReplacement} from './governmentLeavePolicyTransitions.js';
 import {randomUUID} from 'node:crypto';
@@ -32,7 +33,7 @@ export async function loadContext(client,employeeId){
    (COALESCE((SELECT sum(h.amount) FROM hr_gov_reservations h JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE h.entitlement_id=e.id AND r.status='held'),0)+COALESCE((SELECT sum(h.amount) FROM hr_gov_case_credit_holds h JOIN hr_gov_requests cr ON cr.id=h.request_id WHERE h.entitlement_id=e.id AND cr.status='pending' AND h.determination_id=(SELECT id FROM hr_gov_case_determinations cd WHERE cd.request_id=cr.id ORDER BY version DESC LIMIT 1)),0))::text AS held,
    (COALESCE((SELECT sum(l.amount) FROM hr_gov_ledger l WHERE l.entitlement_id=e.id),0)-(COALESCE((SELECT sum(h.amount) FROM hr_gov_reservations h JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE h.entitlement_id=e.id AND r.status='held'),0)+COALESCE((SELECT sum(h.amount) FROM hr_gov_case_credit_holds h JOIN hr_gov_requests cr ON cr.id=h.request_id WHERE h.entitlement_id=e.id AND cr.status='pending' AND h.determination_id=(SELECT id FROM hr_gov_case_determinations cd WHERE cd.request_id=cr.id ORDER BY version DESC LIMIT 1)),0)))::text AS available
    FROM hr_gov_entitlements e WHERE e.employee_id=$1 ORDER BY e.period_start,e.id`,[employeeId])];for(const query of queries)results.push(await query());
- const keys=['policies','calendars','periods','bases','exclusions','patterns','pattern_approvals','rosters','entitlements'];return Object.fromEntries([['employee',employee],...keys.map((key,i)=>[key,results[i].rows])]);
+ const keys=['policies','calendars','periods','bases','exclusions','patterns','pattern_approvals','rosters','entitlements'];return Object.fromEntries([['employee',employee],['calendar_settings',await calendarSettings(client)],...keys.map((key,i)=>[key,results[i].rows])]);
 }
 export async function evaluate(client,employeeId,input){
  const context=await loadContext(client,employeeId);if(context.employee.leave_policy_regime!=='government')fail('Enroll this employee in the government regime before evaluation.');

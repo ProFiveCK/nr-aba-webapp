@@ -1,3 +1,4 @@
+import {calendarCoverageRequired,calendarFallbackNotice} from '../lib/governmentLeaveCalendarRules.js';
 import { governmentLeaveMedicalSummary } from './governmentLeaveMedicalSummary.js';
 import { ServiceError } from '../lib/serviceError.js';
 import { COMMON_CODES, serviceFacts } from '../lib/governmentLeaveRules.js';
@@ -133,7 +134,7 @@ export async function employeeLeaveArrangements(client, { user, employeeId }) {
     item('service', 'Certified service basis', !facts.issues.length && !!period, facts.issues.join(' ') || (period ? `Current appointment: ${period.employment_category}. Confirm applicable legal terms and credited service.` : 'Verify the current appointment.')),
     { key: 'eligibility', label: 'Leave eligibility', status: 'needs_review', detail: eligibilityReview ? 'The recorded employment category requires an authorised determination of applicable legal terms. Certified service facts remain recorded.' : 'Eligibility is evaluated for the selected leave type and actual request dates; recorded service facts alone do not grant leave.' },
     item('pattern', 'Verified work pattern', patternReady, basis?.schedule_mode === 'roster' ? 'Published roster conversions must cover every requested date, including off-duty dates.' : 'A weekly work pattern needs an approved policy-day conversion.'),
-    item('calendar', 'Approved calendar', context.calendars.some(c => c.effective_from <= asOf && c.effective_to >= asOf), 'Calendar coverage is checked again for every requested date.'),
+    item('calendar', calendarCoverageRequired(context) ? 'Required holiday calendar' : 'Holiday calendar (optional)', !calendarCoverageRequired(context) || context.calendars.some(c => c.effective_from <= asOf && c.effective_to >= asOf), calendarCoverageRequired(context) ? 'Calendar coverage is checked again for every requested date.' : calendarFallbackNotice),
     item('policy', 'Effective Government policy', !!policy, policy ? `${policy.label}: ${policy.effective_from} to ${policy.effective_to}.` : 'No published Government policy covers today.'),
     item('enrolment', 'Government enrolment', enrolled, enrolled ? 'Government regime is recorded; activation remains a separate approval.' : 'Existing regime is retained. Enrolment requires an explicit reviewed change.'),
     { key: 'openings', label: 'Government openings by leave type', status: !enabled.length ? 'needs_review' : missingEnabledOpenings.length ? 'missing' : 'ready',

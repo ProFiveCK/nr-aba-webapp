@@ -43,3 +43,15 @@ test('trusted Medical shift exception still requires one paid roster date and bo
  c.rosters[0].paid_hours='0';assert.match(calculateEvaluation(c,{...request,verified_single_shift_exemption:true}).issues.join(),/certificate/);
  c.rosters[0].paid_hours='20';c.rosters[0].policy_days='2.5';assert.match(calculateEvaluation(c,{...request,verified_single_shift_exemption:true}).issues.join(),/certificate/);
 });
+
+test('optional calendar coverage uses scheduled days and preserves entered holiday exemptions',()=>{
+ const c=context();c.calendar_settings={require_calendar_coverage:false};c.calendars=[];
+ const result=calculateEvaluation(c,input('medical'));
+ assert.equal(result.eligible_for_preview,true,result.issues.join(' '));assert.equal(result.charge,'1.000000');assert.equal(result.segments[0].calendar_id,null);assert.equal(result.warnings.length,1);
+ c.calendar_settings.require_calendar_coverage=true;
+ assert.match(calculateEvaluation(c,input('medical')).issues.join(' '),/calendar/);
+ c.calendar_settings.require_calendar_coverage=false;
+ c.calendars=[{id:'entered',effective_from:'2026-10-27',effective_to:'2026-10-27',holidays:[{date:'2026-10-27',name:'Entered holiday'}]}];
+ const mixed=calculateEvaluation(c,{...input('medical'),end_date:'2026-10-28',certificate_available:true});
+ assert.equal(mixed.eligible_for_preview,true,mixed.issues.join(' '));assert.equal(mixed.charge,'1.000000');assert.equal(mixed.segments[0].holiday_exempt,true);assert.equal(mixed.segments[1].calendar_id,null);
+});

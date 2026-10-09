@@ -1,3 +1,4 @@
+import {calendarCoverageRequired,calendarFallbackNotice} from '../lib/governmentLeaveCalendarRules.js';
 import {divisionPlacementIssue} from './organisationHierarchy.js';
 import {randomUUID} from 'node:crypto';
 import {ServiceError} from '../lib/serviceError.js';
@@ -40,6 +41,7 @@ async function snapshot(client,plan){
    offices.push({level:stage.level,office,issue});if(issue)issues.push(issue);
   }
   if(plan.initial_admin_setup&&!state.identity?.payroll_id)warnings.push('Payroll ID is unverified. Existing staff identity and credit can migrate; verify the Payroll ID before Payroll exchange.');
+  if(!calendarCoverageRequired(state.context)&&!state.context.calendars.some(c=>c.effective_from<=plan.cutover_date&&c.effective_to>=plan.cutover_date))warnings.push(calendarFallbackNotice);
   if(!route.configured)issues.push('Configure the approval levels for this cohort before consolidation.');
   if(employee.status!=='active')issues.push('Inactive personnel keep their retained records. Consolidate active employees first.');
   if(employee.leave_policy_regime!=='legacy'||state.context.entitlements.length||state.government_requests.length)issues.push('Initial consolidation requires an existing employee with no Government postings or applications. Use reconciliation for later changes.');

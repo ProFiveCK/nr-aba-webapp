@@ -1,3 +1,4 @@
+import {GovernmentCalendarSetting} from './GovernmentCalendarSetting';
 import {useEffect,useState} from 'react';
 import {Link} from 'react-router-dom';
 import {apiClient} from '../../lib/api';
@@ -44,6 +45,7 @@ export function GovernmentCommissioning({selected,names,starts,categories,onChan
  return <section className="app-panel space-y-4 p-4 sm:p-5" aria-label="Consolidate existing Treasury staff">
   <div><h3 className="text-lg font-semibold">Consolidate existing staff</h3><p className="mt-1 text-sm text-gray-600">Use the selected department roster above. Review its stored balances, verified service and approval route together. For initial setup, the system administrator can review and apply the migration. Staff keep using their current arrangements until the switch. Existing records, logins and credited balances carry forward.</p></div>
   {error&&<p role="alert" className="text-sm text-red-700">{error}</p>}{notice&&<p role="status" className="text-sm text-green-800">{notice}</p>}
+  {user?.role==='admin'&&<GovernmentCalendarSetting onChanged={refreshSetup}/>}
   {user?.role==='admin'&&<GovernmentInitialFoundations selected={selected} names={names} starts={starts} onChanged={refreshSetup}/>}
   {user?.role==='admin'&&<GovernmentInitialCredits selected={selected} names={names} categories={categories} onChanged={refreshSetup}/>}
   <Button disabled={!selected.length} onClick={()=>{setInitialAdmin(user?.role==='admin'&&(plan?.initial_admin_setup??true));setDialog('prepare');}}>Preview consolidation · {selected.length} selected</Button>

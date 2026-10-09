@@ -36,6 +36,13 @@ export async function initGovernmentLeaveSchema(client) {
       source_reference TEXT NOT NULL, recorded_by UUID REFERENCES reviewers(id), reason TEXT NOT NULL,
       recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS hr_gov_calendar_settings (
+      id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(id),
+      require_calendar_coverage BOOLEAN NOT NULL DEFAULT FALSE,
+      revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+      updated_by UUID REFERENCES reviewers(id), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO hr_gov_calendar_settings(id) VALUES(TRUE) ON CONFLICT(id) DO NOTHING;
     CREATE TABLE IF NOT EXISTS hr_gov_pattern_approvals (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), work_pattern_id UUID NOT NULL REFERENCES hr_work_patterns(id),
       source_reference TEXT NOT NULL, recorded_by UUID REFERENCES reviewers(id), reason TEXT NOT NULL,

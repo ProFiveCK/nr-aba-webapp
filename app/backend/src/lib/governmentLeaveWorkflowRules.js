@@ -1,11 +1,12 @@
 import {dayNumber,isoDay,units,decimal} from './governmentLeaveRules.js';
+import {calendarCoverageRequired} from './governmentLeaveCalendarRules.js';
 
 function scheduled(context,date) {
   const calendar=context.calendars.find(c=>c.effective_from<=date&&c.effective_to>=date);
   const basis=context.bases.filter(b=>b.effective_from<=date).at(-1);
   const period=context.periods.find(p=>p.start_date<=date&&(!p.end_date||p.end_date>=date));
-  if(!calendar||!basis||!period) return null;
-  if(calendar.holidays.some(h=>h.date===date)) return false;
+  if((!calendar&&calendarCoverageRequired(context))||!basis||!period) return null;
+  if(calendar?.holidays.some(h=>h.date===date)) return false;
   if(basis.schedule_mode==='roster') {
     const roster=context.rosters.find(r=>r.day===date);
     return roster?units(roster.policy_days)>0n:null;

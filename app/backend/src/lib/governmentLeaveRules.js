@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import {calendarCoverageRequired,calendarFallbackNotice} from './governmentLeaveCalendarRules.js';
 export const ENGINE_VERSION='gov-foundation-1';
 export const CODES = ['recreation','medical','special','teacher_recreation','extended_medical','extended_medical_minister','maternity','paternity','adoption','official','lwop','long_service','furlough','recreation_encashment','recreation_separation','attendance','amendment','witness_republic','witness_other'];
 export const COMMON_CODES=['recreation','medical','special'];
@@ -55,7 +56,7 @@ export function calculateEvaluation(context,input){
  const start=dayNumber(input.start_date),end=dayNumber(input.end_date),today=dayNumber(input.notice_date);
  if(end<start||end-start>365)throw new Error('Preview at most 366 consecutive calendar dates.');
  if(!CODES.includes(input.code))throw new Error('Choose a stable government leave code.');
- const issues=[],requirements=[],segments=[],policies=new Map(),services=new Map(),allocations=new Map();let charge=0n,hours=0;
+ const issues=[],requirements=[],warnings=[],segments=[],policies=new Map(),services=new Map(),allocations=new Map();let charge=0n,hours=0;
  const common=COMMON_CODES.includes(input.code);
  for(let n=start;n<=end;n++){
    const date=isoDay(n),policy=context.policies.find(p=>p.status==='published'&&p.effective_from<=date&&p.effective_to>=date);
@@ -78,7 +79,7 @@ export function calculateEvaluation(context,input){
      if(start-today<policy.rules.recreation_notice_days)issues.push(`Recreation requires at least ${policy.rules.recreation_notice_days} calendar days' notice.`);
    }
    if(!common)continue;
-   if(!calendar){issues.push('An approved calendar must cover every requested date.');continue;}
+   if(!calendar){if(calendarCoverageRequired(context)){issues.push('An approved calendar must cover every requested date.');continue;}warnings.push(calendarFallbackNotice);}
    let policyDays=0n,paidHours=0,rosterId=null,patternId=null;
    if(service.basis?.schedule_mode==='roster'){
      const roster=context.rosters.find(r=>r.day===date);if(!roster){issues.push('Published roster coverage is missing, including off-duty dates.');continue;}
@@ -89,12 +90,12 @@ export function calculateEvaluation(context,input){
      patternId=pattern.id;const weekday=new Date(n*86400000).getUTCDay()||7;
      if(pattern.working_weekdays.includes(weekday)){policyDays=1000000n;paidHours=Number(pattern.hours_per_day);}
    }
-   const holiday=calendar.holidays.some(h=>h.date===date),exempt=holiday&&['recreation','medical'].includes(input.code);
+   const holiday=calendar?.holidays.some(h=>h.date===date)||false,exempt=holiday&&['recreation','medical'].includes(input.code);
    const amount=exempt?0n:policyDays;charge+=amount;hours+=paidHours;
    const entitlement=context.entitlements.find(e=>e.code===input.code&&e.period_start===service.period_start&&e.period_end===service.period_end&&e.period_start<=date&&e.period_end>=date&&e.as_of<=date);
    if(amount>0n&&!entitlement)issues.push('Certified opening entitlement is missing for a charged date; forecast accrual is not spendable.');
    if(amount>0n&&entitlement){const old=allocations.get(entitlement.id)||{entitlement_id:entitlement.id,amount:0n};old.amount+=amount;allocations.set(entitlement.id,old);}
-   segments.push({date,charge:decimal(amount),scheduled_hours:paidHours,holiday_exempt:exempt,policy_version_id:policy.id,calendar_id:calendar.id,service_basis_id:service.basis?.id||null,service_period_id:period.id,employment_category:period.employment_category,is_teacher:period.is_teacher===true,is_intern:period.is_intern===true,work_pattern_id:patternId,roster_id:rosterId,entitlement_id:entitlement?.id||null,service_period_start:service.period_start,service_period_end:service.period_end});
+   segments.push({date,charge:decimal(amount),scheduled_hours:paidHours,holiday_exempt:exempt,policy_version_id:policy.id,calendar_id:calendar?.id||null,service_basis_id:service.basis?.id||null,service_period_id:period.id,employment_category:period.employment_category,is_teacher:period.is_teacher===true,is_intern:period.is_intern===true,work_pattern_id:patternId,roster_id:rosterId,entitlement_id:entitlement?.id||null,service_period_start:service.period_start,service_period_end:service.period_end});
  }
  if(common&&charge===0n)issues.push('The selected dates contain no chargeable absence.');
  if(input.code==='medical')requirements.push('Medical history and the three non-consecutive single-absence counter must be verified at submission.');
@@ -104,6 +105,6 @@ export function calculateEvaluation(context,input){
  if(!common)issues.push('This entitlement requires the assisted case module and an authorised determination.');
  const allocated=[...allocations.values()].map(a=>({...a,amount:decimal(a.amount)}));
  for(const item of allocated){const account=context.entitlements.find(e=>e.id===item.entitlement_id);if(units(item.amount)>units(account.available))issues.push('The request exceeds a certified entitlement after existing reservations.');}
- const result={engine_version:ENGINE_VERSION,code:input.code,eligible_for_preview:issues.length===0,submission_enabled:false,issues:[...new Set(issues)],requirements,charge:decimal(charge),scheduled_hours:hours,segments,allocations:allocated,policy_versions:[...policies.values()],service_bases:[...services.values()].filter(Boolean),required_offices:['division','head_of_department',...(['recreation','medical','lwop'].includes(input.code)?['relevant_secretary_consent']:[]),'chief_secretary'],source_reference:SOURCE};
+ const result={engine_version:ENGINE_VERSION,code:input.code,eligible_for_preview:issues.length===0,submission_enabled:false,issues:[...new Set(issues)],warnings:[...new Set(warnings)],requirements,charge:decimal(charge),scheduled_hours:hours,segments,allocations:allocated,policy_versions:[...policies.values()],service_bases:[...services.values()].filter(Boolean),required_offices:['division','head_of_department',...(['recreation','medical','lwop'].includes(input.code)?['relevant_secretary_consent']:[]),'chief_secretary'],source_reference:SOURCE};
  return {...result,input:{...input},snapshot_hash:fingerprint({context,input,result})};
 }

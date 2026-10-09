@@ -23,6 +23,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  async function grant(id){let result;for(let i=0;i<5;i++){const r=await w.getRequest(pool,id);if(r.status!=='pending')return r;result=await decide(id);}return result;}
  async function call(path,data,by=owner,method=data?'POST':'GET'){const session=await auth.createSession(by.id),token=auth.buildTokenPayload(by,session.tokenId,session.expiresAt);const response=await fetch(base+'/api/hr/government/workflow'+path,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});return {status:response.status,body:response.headers.get('content-type')?.includes('json')?await response.json():await response.arrayBuffer(),cache:response.headers.get('cache-control')};}
  beforeEach(async()=>{
+  await pool.query('UPDATE hr_gov_calendar_settings SET require_calendar_coverage=FALSE WHERE id=TRUE');
   await resetLeaveTables(pool);await pool.query('TRUNCATE hr_gov_policy_versions,hr_gov_calendars,hr_gov_pattern_approvals CASCADE');
   hr=await account({hr_admin:true,hr_access:true,hr_report_read:true,hr_evidence_read:true});certifier=await account({hr_admin:true,hr_access:true});owner=await account({hr_access:true,hr_leave_apply:true},'employee');
   department=(await pool.query("INSERT INTO hr_departments(name) VALUES('Synthetic Government Workflow') RETURNING *")).rows[0];division=(await pool.query("INSERT INTO hr_divisions(name,department_id) VALUES('Synthetic Division',$1) RETURNING *",[department.id])).rows[0];
@@ -169,6 +170,39 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   await pool.query("INSERT INTO hr_gov_initial_setups(status,plan,source_hash,summary,prepared_by,updated_by,reason) VALUES('adopted',$1,'synthetic','{}',$2,$2,$3)",[{policy_id:policy.id,start_date:'2026-10-01',mappings},hr.id,reason]);await customRoute();
   return {employees:[{employee_id:employee.id,medical_history:[]}],cutover_date:'2026-10-01',history_confirmed:true,source_reference:'Synthetic Treasury source register',payroll_reference:'Synthetic independently checked payroll balance',transition_reference:'Synthetic adopted full-credit transition',history_reference:'Synthetic complete zero-absence Medical review',reason};
  }
+ test('optional calendar allows initial migration and Medical approval without manufacturing a calendar',async()=>{
+  const data={...await commissioningFixture(),initial_admin_setup:true};
+  await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
+  await pool.query('TRUNCATE hr_gov_calendars CASCADE');
+  const before=(await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows;
+  const preview=await commission.previewCommissioning(pool,{user:user(hr),data});assert.equal(preview.ready,1,preview.employees[0].issues.join(' '));assert.ok(preview.employees[0].warnings.some(v=>/calendar.*optional/i.test(v)));
+  const review=await commission.prepareCommissioning(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}});
+  await commission.applyCommissioning(pool,{user:user(hr),actor:hr,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}});
+  assert.deepEqual((await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows,before);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_calendars')).rows[0].n,0);
+  const request=await submit(application('medical','2026-11-02'));await evidence(request.id);await decide(request.id);
+  const granted=await w.getRequest(pool,request.id);assert.equal(granted.status,'approved');assert.ok(granted.final_pdf.length>100);
+  assert.equal(granted.application_snapshot.evaluation.segments[0].calendar_id,null);assert.equal(granted.charge,'1.000000');
+  const settings=await import('../services/governmentLeaveCalendarSettings.js');
+  const current=await settings.calendarSettings(pool);await settings.updateCalendarSettings(pool,{user:user(hr),actor:hr,data:{require_calendar_coverage:true,expected_revision:current.revision}});
+  await assert.rejects(submit(application('medical','2026-11-05')),/calendar/);
+ });
+ test('calendar requirement HTTP changes need administration, retain audit, and reject stale revisions',async()=>{
+  const request=async(by,data)=>{
+   const session=await auth.createSession(by.id),token=auth.buildTokenPayload(by,session.tokenId,session.expiresAt);
+   const r=await fetch(base+'/api/hr/government/calendar-settings',{method:data?'PUT':'GET',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});return {status:r.status,body:await r.json()};
+  };
+  const original=await request(hr);assert.equal(original.status,200);assert.equal(original.body.require_calendar_coverage,false);
+  const data={require_calendar_coverage:true,expected_revision:original.body.revision};
+  assert.equal((await request(owner,data)).status,403);assert.equal((await request(hr,{...data,require_calendar_coverage:'false'})).status,422);
+  const changed=await request(hr,data);assert.equal(changed.status,200);assert.equal(changed.body.require_calendar_coverage,true);
+  assert.equal((await request(hr,data)).status,409);
+  const audit=(await pool.query("SELECT * FROM audit_log WHERE action='hr.gov.calendar_requirement.changed' ORDER BY created_at DESC LIMIT 1")).rows[0];assert.equal(audit.actor_id,hr.id);assert.equal(audit.before.require_calendar_coverage,false);assert.equal(audit.after.require_calendar_coverage,true);
+  const off=await request(hr,{require_calendar_coverage:false,expected_revision:changed.body.revision});
+  await pool.query("CREATE FUNCTION synthetic_calendar_setting_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.calendar_requirement.changed' THEN RAISE EXCEPTION 'synthetic calendar setting audit failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER synthetic_calendar_setting_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION synthetic_calendar_setting_failure()");
+  try{assert.equal((await request(hr,{require_calendar_coverage:true,expected_revision:off.body.revision})).status,500);assert.deepEqual((await request(hr)).body,off.body);}
+  finally{await pool.query('DROP TRIGGER synthetic_calendar_setting_failure ON audit_log; DROP FUNCTION synthetic_calendar_setting_failure()');}
+ });
  test('initial admin migrates existing credits without Payroll IDs and approves only the first accrual plan',async()=>{
   const data={...await commissioningFixture(),initial_admin_setup:true};
   await assert.rejects(commission.previewCommissioning(pool,{user:user(hr),data}),e=>e.status===403);

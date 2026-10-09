@@ -44,3 +44,9 @@ test('dated case dependencies ignore unrelated future publications but retain co
  c.policies[0].rules=DEFAULT_RULES;c.patterns[0].hours_per_day=8;
  assert.notEqual(caseFoundation(c,i).snapshot_hash,before.snapshot_hash);
 });
+
+test('an optional holiday calendar also permits scheduled assisted-case dates',()=>{
+ const c=context();c.calendars=[];c.calendar_settings={require_calendar_coverage:false};
+ const result=caseFoundation(c,input('official'));assert.ok(result.segments.length);assert.equal(result.segments[0].calendar_id,null);
+ c.calendar_settings.require_calendar_coverage=true;assert.throws(()=>caseFoundation(c,input('official')),/holiday coverage/);
+});

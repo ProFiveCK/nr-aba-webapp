@@ -1,4 +1,5 @@
 import {divisionPlacementIssue} from './organisationHierarchy.js';
+import {calendarCoverageRequired} from '../lib/governmentLeaveCalendarRules.js';
 import {creditLimit} from './governmentLeaveCarryover.js';
 import {initialAdminReview} from './governmentLeaveInitialAdmin.js';
 import {assertDraftUsable} from './governmentLeaveDrafts.js';
@@ -71,7 +72,7 @@ export function readyConfiguration(context,codes) {
   for(const code of codes)if(!context.entitlements.some(e=>e.code===code&&e.period_start===facts.period_start&&e.period_end===facts.period_end&&e.as_of<=today()))fail(`Certify the ${code} opening for this service year first.`);
   const policy=context.policies.find(p=>p.effective_from<=today()&&p.effective_to>=today());if(!policy)fail('Publish an effective policy first.');
   for(const code of codes){const account=context.entitlements.find(e=>e.code===code&&e.period_start===facts.period_start);const limit=policy.rules[code==='recreation'?'recreation_cap_days':`${code}_annual_days`];if(units(account.balance)>creditLimit(account,limit))fail('A balance exceeds the standard government quantum/cap. Resolve the signed transition before activation; historical balances are preserved.');}
-  if(!context.calendars.some(c=>c.effective_from<=today()&&c.effective_to>=today()))fail('Publish an approved calendar first.');
+  if(calendarCoverageRequired(context)&&!context.calendars.some(c=>c.effective_from<=today()&&c.effective_to>=today()))fail('Calendar coverage is required by the selected setting. Publish a calendar or untick the requirement in Settings.');
 }
 export async function prepareConfiguration(pool,{user,actor,employeeId,data,client:existingClient=null}) {
   ledger.central(user);

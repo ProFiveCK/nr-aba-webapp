@@ -1,4 +1,5 @@
 import {decorateDrafts} from '../services/governmentLeaveDrafts.js';
+import {calendarSettings,updateCalendarSettings} from '../services/governmentLeaveCalendarSettings.js';
 import governmentLeaveReportingRouter from './governmentLeaveReporting.js';
 import governmentLeaveDraftsRouter from './governmentLeaveDrafts.js';
 import {resolvedPublishedPoliciesSql} from '../services/governmentLeavePolicyTransitions.js';
@@ -26,6 +27,11 @@ const reason=body('reason').isString().trim().isLength({min:10,max:1000}),refere
 const date=name=>body(name).isString().custom(value=>{dayNumber(value);return true;});
 const actor=req=>({id:req.user.id,email:req.user.email,ip:req.ip});
 const data=req=>({user:req.user,actor:actor(req),data:req.body,employeeId:req.params.id});
+router.get('/calendar-settings',central,async(_req,res)=>res.json(await calendarSettings(pool)));
+router.put('/calendar-settings',central,[body('require_calendar_coverage').isBoolean({strict:true}),body('expected_revision').isInt({min:1,max:2147483646}).toInt()],async(req,res)=>{
+ if(!handleValidation(req,res))return;
+ res.json(await updateCalendarSettings(pool,data(req)));
+});
 router.get('/configuration',central,async(_req,res)=>{
  const [policies,calendars,patterns,deletedPolicies]=await Promise.all([pool.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_policy_versions WHERE deleted_at IS NULL ORDER BY recorded_at DESC LIMIT 100"),pool.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_calendars ORDER BY recorded_at DESC LIMIT 100"),pool.query('SELECT p.*,a.id AS approval_id,a.source_reference FROM hr_work_patterns p LEFT JOIN hr_gov_pattern_approvals a ON a.work_pattern_id=p.id ORDER BY p.name LIMIT 100'),pool.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_policy_versions WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 100")]);
  const resolved=(await pool.query(resolvedPublishedPoliciesSql)).rows;

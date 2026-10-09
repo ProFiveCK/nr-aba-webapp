@@ -1,3 +1,4 @@
+import {calendarCoverageRequired} from './governmentLeaveCalendarRules.js';
 import {dayNumber,isoDay,monthBoundary,serviceFacts,units,decimal,fingerprint} from './governmentLeaveRules.js';
 export const CASE_CODES=['teacher_recreation','extended_medical','extended_medical_minister','maternity','paternity','adoption','official','lwop','long_service','furlough','recreation_encashment','recreation_separation','witness_republic','witness_other','attendance','amendment'];
 export const FINANCIAL_CODES=['long_service','furlough','recreation_encashment','recreation_separation'];
@@ -25,7 +26,7 @@ export function caseFoundation(context,input){
   let charge='0.000000',hours=0,rosterId=null,patternId=null;
   if(!NON_ABSENCE_CODES.includes(input.code)){
    requireFact(!context.exclusions.some(x=>x.kind==='lwop'&&x.start_date<=date&&x.end_date>=date),'The case overlaps a recorded LWOP service exclusion. Reconcile it first.');
-   requireFact(calendar,'Approved holiday coverage is missing.');
+   requireFact(calendar||!calendarCoverageRequired(context),'Approved holiday coverage is missing.');
    if(service.basis.schedule_mode==='roster'){
     const roster=context.rosters.find(r=>r.day===date);requireFact(roster,'Published roster coverage, including off-duty dates, is required.');charge=decimal(units(roster.policy_days));hours=Number(roster.paid_hours);rosterId=roster.id;
    }else{

@@ -29,3 +29,12 @@ test('verified single-shift exception charges roster days while old approvals ke
  c.rosters=[{day:'2026-11-06',paid_hours:'12',policy_days:'2.5'}];assert.match(medicalAssessment(c,config,input,{...result,charge:'2.500000'}).issues.join(),/verified roster shift/);
  c.rosters=[{day:'2026-11-06',paid_hours:'12',policy_days:'1.5'}];const history=[1,2,3].map(n=>({start_date:`2026-0${n}-05`,end_date:`2026-0${n}-05`,uncertified:true,period_start:'2026-01-01'}));assert.match(medicalAssessment(c,config,input,result,history).issues.join(),/already committed/);
 });
+
+test('optional calendar coverage retains scheduled-day Medical adjacency and entered holidays',()=>{
+ const c=context();c.calendars=[];c.calendar_settings={require_calendar_coverage:false};
+ assert.equal(separatedMedicalDates(c,'2026-11-06','2026-11-10'),true);
+ assert.equal(separatedMedicalDates(c,'2026-11-06','2026-11-09'),false);
+ c.calendar_settings.require_calendar_coverage=true;assert.equal(separatedMedicalDates(c,'2026-11-06','2026-11-10'),null);
+ c.calendar_settings.require_calendar_coverage=false;
+ c.calendars=[{effective_from:'2026-11-09',effective_to:'2026-11-09',holidays:[{date:'2026-11-09'}]}];assert.equal(separatedMedicalDates(c,'2026-11-06','2026-11-10'),false);
+});

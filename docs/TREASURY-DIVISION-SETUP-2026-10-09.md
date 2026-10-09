@@ -22,4 +22,12 @@ Organisation setup alone does not activate Government leave for existing staff. 
 
 ## Code recovery
 
-The release archive contains a fresh production backup, the previous API image and frontend, a rollback script and row-hash verification. A code rollback retains the current production database and the added hierarchy column. Do not restore a development database over production. If parent-unit routes have been published, prefer forward recovery: the previous API does not understand the new middle approval office.
+The release archive contains a fresh production backup, the previous API image and frontend, a rollback script and row-hash verification. A code rollback retains the current production database and the added hierarchy column. Do not restore a development database over production. The available capabilities depend on which release is restored. Rolling back to code before optional calendar coverage restores its mandatory calendar checks; prefer forward recovery after staff have migrated without a calendar.
+
+## Optional holiday calendar coverage
+
+**Settings → Readiness** and **Settings → Policies → Holidays** share the checkbox **Require a published holiday calendar before using Government leave (optional)**. It starts unticked. Saving this administrator choice records the old and new setting automatically; no separate reason or second officer is required.
+
+When unticked, missing calendar coverage does not prevent initial consolidation, activation or leave applications. Dates without a calendar use the verified work schedule. Entered calendars continue to exempt their recorded holidays for Annual/Recreation and Medical. The preview identifies when it is using the schedule without holiday coverage. No fictional holiday calendar or assumed holiday dates are created.
+
+Tick the setting when you want missing calendar coverage to block activation and applications. Medical evidence, recorded balances, non-MC limits, self-approval checks and the nominated approval route continue to apply in either mode.

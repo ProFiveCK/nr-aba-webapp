@@ -15,11 +15,13 @@ docker run -d --rm --name "$CONTAINER" \
   -e POSTGRES_PASSWORD=test -e POSTGRES_USER=test -e POSTGRES_DB=test \
   -p "$PORT:5432" postgres:15 >/dev/null
 
+# The initialization server accepts Unix sockets before stopping again.
+# Wait for TCP so tests start only against the final Postgres server.
 for _ in $(seq 1 60); do
-  docker exec "$CONTAINER" pg_isready -U test >/dev/null 2>&1 && break
+  docker exec "$CONTAINER" pg_isready -h 127.0.0.1 -U test >/dev/null 2>&1 && break
   sleep 1
 done
-docker exec "$CONTAINER" pg_isready -U test >/dev/null
+docker exec "$CONTAINER" pg_isready -h 127.0.0.1 -U test >/dev/null
 
 export TEST_DATABASE_URL="postgres://test:test@127.0.0.1:$PORT/test"
 export JWT_SECRET=0123456789abcdef0123456789abcdef

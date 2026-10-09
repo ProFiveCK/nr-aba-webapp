@@ -28,7 +28,7 @@ export function OrganisationManagement({ departments, onChanged }: { departments
         <nav aria-label="Organisation sections" className="flex flex-wrap gap-2">{sections.map((item) => <button key={item.id} type="button" aria-current={section === item.id ? 'page' : undefined} onClick={() => setSection(item.id)} className={`rounded-lg px-3 py-2 text-sm font-medium ${section === item.id ? 'bg-brand text-white' : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}>{item.label}</button>)}</nav>
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         {section === 'departments' && <OrgUnits onChanged={() => { void onChanged().catch((err: Error) => setError(err.message)); }} onManageOffices={(id) => { setDepartment(id); setSection('approvers'); }} />}
-        {section === 'routes' && <GovernmentApprovalRoutes departments={departments} onNominate={()=>setSection('approvers')} />}
+        {section === 'routes' && <GovernmentApprovalRoutes departments={departments} onNominate={(id)=>{setDepartment(id);setSection('approvers');}} />}
         {section === 'approvers' && <LeaveApprovers departments={departments} initialDepartment={department} />}
         {section === 'statutory' && <StatutoryOffices departments={departments} />}
     </div>;
@@ -72,7 +72,7 @@ function LeaveApprovers({ departments, initialDepartment }: { departments: OrgDe
 
 function OfficeholderDialog({ departments, initialDepartment, onClose, onSaved }: { departments: OrgDepartment[]; initialDepartment: string; onClose: () => void; onSaved: () => void }) {
     const [level,setLevel] = useState('division'), [department,setDepartment] = useState(initialDepartment);
-    return <ActionDialog title="Assign leave officeholder" onClose={onClose} onSave={async (data) => {
+    return <ActionDialog title="Assign leave officeholder" automaticReason="Nominated the selected leave officeholder for the recorded scope and dates." onClose={onClose} onSave={async (data) => {
         const approver = value(data,'approver_employee_id'); if (!approver) throw new Error('Choose an active officeholder with a verified login.');
         await apiClient.post('/hr/directory/approval-assignments',{ level,department_id: level === 'chief_secretary' ? null : department,division_id: level === 'division' ? value(data,'division_id') : null,approver_employee_id: approver,effective_from: value(data,'effective_from'),effective_to: value(data,'effective_to') || null,reason: value(data,'reason') }); onSaved();
     }}><Field label="Approval office"><select className={inputClass} value={level} onChange={(e) => setLevel(e.target.value)}>{Object.entries(APPROVER_LABELS).map(([id,label]) => <option key={id} value={id}>{label}</option>)}</select></Field>
@@ -80,6 +80,6 @@ function OfficeholderDialog({ departments, initialDepartment, onClose, onSaved }
         {level === 'division' && <Field label="Division scope"><select key={department} className={inputClass} name="division_id" required><option value="">Choose division</option>{departments.find((item) => item.id === department)?.divisions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>}
         <DirectoryPicker name="approver_employee_id" label="Officeholder employee" requireLinked />
         <div className="grid gap-3 sm:grid-cols-2"><Field label="Effective from"><AustralianDateInput className={inputClass} name="effective_from"  defaultValue={todayIsoDate()} required /></Field><Field label="Effective to (optional)"><AustralianDateInput className={inputClass} name="effective_to"  /></Field></div>
-        <p className="text-xs text-gray-500">Record the appointment instrument or authorising evidence in the reason. Assignment alone cannot approve leave or supply a missing account grant.</p>
+        <p className="text-xs text-gray-500">Your nominee, division, dates, account and time are recorded automatically. The nominee also needs leave approval permission.</p>
     </ActionDialog>;
 }

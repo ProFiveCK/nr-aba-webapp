@@ -56,6 +56,26 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  test('a configured one-level Recreation route needs only its nominated final approver',async()=>{
   await customRoute();const r=await submit(),view=await w.requestView(pool,user(hr),r.id);assert.equal(view.stages.length,1);assert.equal(view.evidence_review_required,false);assert.equal(view.can_verify_evidence,false);await decide(r.id);assert.equal((await w.getRequest(pool,r.id)).status,'approved');assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_decisions WHERE request_id=$1',[r.id])).rows[0].n,1);
  });
+ test('one division level selects each division nominee and grants once without a HoD stage',async()=>{
+  const otherDivision=(await pool.query("INSERT INTO hr_divisions(name,department_id) VALUES('Synthetic second division',$1) RETURNING *",[department.id])).rows[0];
+  const otherAccount=await account({hr_access:true,hr_leave_approve:true});
+  const otherEmployee=(await pool.query("INSERT INTO hr_employees(display_name,reviewer_id,department_id,division_id) VALUES('Synthetic second division approver',$1,$2,$3) RETURNING *",[otherAccount.id,department.id,otherDivision.id])).rows[0];
+  await pool.query("INSERT INTO hr_approval_assignments(level,department_id,division_id,approver_employee_id,effective_from,reason) VALUES('division',$1,$2,$3,'2026-01-01',$4)",[department.id,otherDivision.id,otherEmployee.id,reason]);
+  await customRoute([{level:'division',label:'Divisional Chief'}]);
+  const first=await submit(),firstView=await w.requestView(pool,user(hr),first.id);
+  assert.deepEqual(firstView.stages.map(s=>s.level),['division']);assert.equal(firstView.stages[0].binding.reviewer_id,officers.division.account.id);
+  await assert.rejects(decide(first.id,{},otherAccount),e=>e.status===403);
+  await assert.rejects(decide(first.id,{},officers.department.account),e=>e.status===403);
+  await decide(first.id,{},officers.division.account);const firstGranted=await w.getRequest(pool,first.id);
+  assert.equal(firstGranted.status,'approved');assert.equal(firstGranted.grant_snapshot.stages.length,1);assert.ok(firstGranted.final_pdf.length>100);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_decisions WHERE request_id=$1',[first.id])).rows[0].n,1);
+  await pool.query('UPDATE hr_employees SET division_id=$2,division_code=$3 WHERE id=$1',[employee.id,otherDivision.id,otherDivision.name]);
+  const second=await submit(application('recreation','2026-11-05')),secondView=await w.requestView(pool,user(hr),second.id);
+  assert.deepEqual(secondView.stages.map(s=>s.level),['division']);assert.equal(secondView.stages[0].binding.reviewer_id,otherAccount.id);
+  await assert.rejects(decide(second.id,{},officers.division.account),e=>e.status===403);
+  await decide(second.id,{},otherAccount);assert.equal((await w.getRequest(pool,second.id)).status,'approved');
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_decisions WHERE request_id=$1',[second.id])).rows[0].n,1);
+ });
  test('two levels remain ordered and revisions affect new applications only',async()=>{
   const two=[{level:'division',label:'Treasury first approver'},{level:'department',label:'Treasury HoD'}],route=await customRoute(two),r=await submit();
   await customRoute([{level:'department',label:'Revised HoD'}],department.id,route.id);

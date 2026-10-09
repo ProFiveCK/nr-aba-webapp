@@ -4,6 +4,7 @@ import { Button, Modal, Pager } from '../../components/Ui';
 import { apiClient } from '../../lib/api';
 import type { OrgDepartment } from './types';
 import { ReviewRecordName } from './ReviewRecordName';
+import { divisionPath, orderedDivisions } from './organisationBrowse';
 import { reviewRecordLabel } from './reviewRecordNames';
 
 export const inputClass = 'w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand/30';
@@ -26,7 +27,7 @@ export function PlacementFields({ departments, initialDepartment = '', initialDi
     const [department, setDepartment] = useState(initialDepartment), [division, setDivision] = useState(initialDivision);
     return <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         <Field label="Department"><select name="department_id" className={inputClass} required value={department} onChange={(e) => { setDepartment(e.target.value); setDivision(''); }}><option value="">Choose department</option>{departments.map((item) => <option key={item.id} value={item.id}>{reviewRecordLabel(item.name)}</option>)}</select></Field>
-        <Field label="Division"><select name="division_id" className={inputClass} value={division} onChange={(e) => setDivision(e.target.value)}><option value="">No division assigned</option>{departments.find((item) => item.id === department)?.divisions.map((item) => <option key={item.id} value={item.id}>{reviewRecordLabel(item.name)}</option>)}</select></Field>
+        <Field label="Division"><select name="division_id" className={inputClass} value={division} onChange={(e) => setDivision(e.target.value)}><option value="">No division assigned</option>{orderedDivisions(departments.find((item) => item.id === department)?.divisions||[]).map((item) => <option key={item.id} value={item.id}>{reviewRecordLabel(divisionPath(item))}</option>)}</select></Field>
     </div>;
 }
 

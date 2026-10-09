@@ -32,7 +32,7 @@ type Summary = {
 };
 export type EmployeeSection = 'arrangements'|'details'|'applications'|'prepare';
 export type PreparationStep = 'identity'|'login'|'balances'|'reconciliation'|'activation';
-const stages:Record<string,string>={division:'Divisional approver',department:'Head of Department',hr_verifier:'HR evidence verifier',relevant_secretary:'Relevant Secretary',minister:'Minister',chief_secretary:'Chief Secretary'};
+const stages:Record<string,string>={division:'Divisional approver',parent_division:'Treasury / parent unit approver',department:'Head of Department',hr_verifier:'HR evidence verifier',relevant_secretary:'Relevant Secretary',minister:'Minister',chief_secretary:'Chief Secretary'};
 const leaveName=(code:string)=>code.replaceAll('_',' ').replace(/^./,c=>c.toUpperCase());
 const steps:[PreparationStep,string][]=[['identity','1. Identity & appointment'],['login','2. Login & enrolment'],['balances','3. Service & balances'],['reconciliation','4. Retained leave reconciliation'],['activation','5. Activation & accrual']];
 

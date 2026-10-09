@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appointmentTiming, filterDepartments, organisationPage, organisationQuery } from './organisationBrowse';
+import { divisionPath, orderedDivisions, appointmentTiming, filterDepartments, organisationPage, organisationQuery } from './organisationBrowse';
 
 const departments = Array.from({ length: 50 }, (_, index) => ({
     id: `department-${index}`, name: `Department ${String(index + 1).padStart(2, '0')}`,
@@ -52,5 +52,23 @@ describe('organisation API query contract', () => {
         expect(query.has('department_id')).toBe(false);
         expect(query.get('scope')).toBe('government');
         expect(query.get('level')).toBe('hr_verifier');
+    });
+});
+
+
+describe('Treasury division paths', () => {
+    it('groups actual divisions beneath Treasury and preserves flat units', () => {
+        const treasury = { id: 'treasury', name: 'Treasury' };
+        const accounting = { id: 'accounting', name: 'Accounting', parent_division_id: 'treasury', parent_division_name: 'Treasury' };
+        const systems = { id: 'systems', name: 'Financial Systems', parent_division_id: 'treasury', parent_division_name: 'Treasury' };
+        const other = { id: 'other', name: 'Other unit' };
+        expect(orderedDivisions([systems, treasury, accounting, other]).map(d => d.id)).toEqual(['other', 'treasury', 'accounting', 'systems']);
+        expect(divisionPath(accounting)).toBe('Treasury → Accounting');
+        expect(divisionPath(other)).toBe('Other unit');
+    });
+    it('keeps a scoped child visible when its parent is outside the returned scope', () => {
+        const child = { id: 'accounting', name: 'Accounting', parent_division_id: 'treasury', parent_division_name: 'Treasury' };
+        expect(orderedDivisions([child])).toEqual([child]);
+        expect(divisionPath(child)).toBe('Treasury → Accounting');
     });
 });

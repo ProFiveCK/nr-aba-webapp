@@ -1,7 +1,7 @@
 import {PDFDocument,StandardFonts,rgb} from 'pdf-lib';
 import {generateLeaveApplicationPdf} from './leaveApplicationPdf.js';
 const printable=value=>String(value??'').replace(/[^\x20-\x7e\n]/g,'?');
-const officeLabels={division:'Divisional approver',department:'Head of Department',hr_verifier:'HR verifier',relevant_secretary:'Relevant Secretary',chief_secretary:'Chief Secretary',minister:'Minister statutory decision'};
+const officeLabels={division:'Divisional approver',parent_division:'Treasury / parent unit approver',department:'Head of Department',hr_verifier:'HR verifier',relevant_secretary:'Relevant Secretary',chief_secretary:'Chief Secretary',minister:'Minister statutory decision'};
 const label=value=>officeLabels[value]||printable(value).replace(/_/g,' ').replace(/^./,s=>s.toUpperCase());
 export const governmentPdfDate=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}/.test(value)?`${value.slice(8,10)}/${value.slice(5,7)}/${value.slice(0,4)}`:String(value||'Not recorded');
 const timestamp=value=>{if(!value)return 'Not recorded';const date=new Date(value);return Number.isNaN(date.getTime())?'Not recorded':`${new Intl.DateTimeFormat('en-AU',{timeZone:'Pacific/Nauru',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(date)} Nauru`;};

@@ -11,7 +11,7 @@ import { withTransaction } from '../lib/transaction.js';
 import payrollEmployeeImportRouter from './payrollEmployeeImport.js';
 import { createManagedEmployee, createWorkPattern, listLinkableAccounts, updateManagedEmployee } from '../services/employeeManagement.js';
 import {
-  APPROVAL_LEVELS, EMPLOYMENT_CATEGORIES, addEmployeeExternalId, addServicePeriod, assignLeaveApprover, closeApprovalAssignment, closeServicePeriod,
+  NOMINATION_LEVELS, EMPLOYMENT_CATEGORIES, addEmployeeExternalId, addServicePeriod, assignLeaveApprover, closeApprovalAssignment, closeServicePeriod,
   employeeProfile, listEmployeeDirectory, previewApprovalChain, provisionEmployeeAccount, setEmployeeAccount, setEmployeeOrganisation,
 } from '../services/employeeDirectory.js';
 
@@ -126,7 +126,7 @@ router.post('/:id/account', centralHr, [employeeId, reason, body('email').isEmai
   res.status(201).json(await provisionEmployeeAccount(pool, { employeeId: req.params.id, email: req.body.email, actor: actor(req), reason: req.body.reason }));
 });
 
-router.post('/approval-assignments', centralHr, [reason, body('level').isIn(APPROVAL_LEVELS),
+router.post('/approval-assignments', centralHr, [reason, body('level').isIn(NOMINATION_LEVELS),
   body('department_id').optional({ nullable: true }).isUUID(), body('division_id').optional({ nullable: true }).isUUID(),
   body('approver_employee_id').isUUID(), dateOnly('effective_from', true), dateOnly('effective_to'),
 ], async (req, res) => {
@@ -134,7 +134,7 @@ router.post('/approval-assignments', centralHr, [reason, body('level').isIn(APPR
   res.status(201).json(await assignLeaveApprover(pool, { assignment: req.body, actor: actor(req), reason: req.body.reason }));
 });
 
-router.get('/approval-assignments', centralHr, [query('page').optional().isInt({ min: 1, max: 100000 }),query('page_size').optional().isInt({min:1,max:50}),query('search').optional().isString().isLength({max:100}),query('department_id').optional().isUUID(),query('level').optional().isIn(APPROVAL_LEVELS),query('timing').optional().isIn(['current','upcoming','ended'])], async (req, res) => {
+router.get('/approval-assignments', centralHr, [query('page').optional().isInt({ min: 1, max: 100000 }),query('page_size').optional().isInt({min:1,max:50}),query('search').optional().isString().isLength({max:100}),query('department_id').optional().isUUID(),query('level').optional().isIn(NOMINATION_LEVELS),query('timing').optional().isIn(['current','upcoming','ended'])], async (req, res) => {
   if (!handleValidation(req, res)) return;
   const page = Number(req.query.page) || 1, pageSize=Number(req.query.page_size)||50;
   const filters=[req.query.search?.trim()||'',req.query.department_id||null,req.query.level||null,req.query.timing||null];

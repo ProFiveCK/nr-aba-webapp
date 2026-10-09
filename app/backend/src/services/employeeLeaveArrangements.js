@@ -20,7 +20,7 @@ export async function employeeGovernmentRoute(client, employee) {
   const commonRoutes=new Map();
   for(const code of COMMON_CODES)commonRoutes.set(code,await approvalRouteFor(client,employee.department_id,code));
   const levelsFor = code => COMMON_CODES.includes(code) ? commonRoutes.get(code).stages.map(s=>s.level) : caseLevels(code);
-  const levels = ['division', 'department', 'hr_verifier', 'relevant_secretary', 'minister', 'chief_secretary'];
+  const levels = ['division', ...([...commonRoutes.values()].some(r=>r.stages.some(s=>s.level==='parent_division'))?['parent_division']:[]), 'department', 'hr_verifier', 'relevant_secretary', 'minister', 'chief_secretary'];
   const stages = [];
   for (const level of levels) {
     const offices = await effectiveOffices(client, request, level);
@@ -28,7 +28,7 @@ export async function employeeGovernmentRoute(client, employee) {
     let issue = !office ? 'Exactly one effective officeholder must be assigned.' : await bindingIssue(client, request,
       { level, binding: { ...office, assignment_id: office.id } });
     if (level === 'division' && !employee.division_id) issue = 'Employee division is unverified.';
-    if (['division', 'department', 'relevant_secretary', 'minister'].includes(level) && !employee.department_id) issue = 'Employee department is unverified.';
+    if (['division', 'parent_division', 'department', 'relevant_secretary', 'minister'].includes(level) && !employee.department_id) issue = 'Employee department is unverified.';
     stages.push({ level, label:commonRoutes.get('recreation').stages.find(s=>s.level===level)?.label||null, approver_employee_id: office?.approver_employee_id || null, approver_name: office?.approver_name || null,
       issue, conditional: ['relevant_secretary', 'minister'].includes(level), applies_to: codes.filter(code => levelsFor(code).includes(level)) });
   }

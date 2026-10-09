@@ -1,3 +1,4 @@
+import {divisionPlacementIssue} from './organisationHierarchy.js';
 import {creditLimit} from './governmentLeaveCarryover.js';
 import {initialAdminReview} from './governmentLeaveInitialAdmin.js';
 import {assertDraftUsable} from './governmentLeaveDrafts.js';
@@ -27,7 +28,8 @@ export async function accountState(client,id,scope=null) {
   if(!row||row.status!=='active'||row.onboarding_state!=='ready')return null;
   const {rows:grants}=await client.query('SELECT capability FROM reviewer_capabilities WHERE reviewer_id=$1 FOR SHARE',[id]);
   const {rows:scopes}=await client.query(`SELECT s.* FROM hr_access_scopes s WHERE s.reviewer_id=$1 AND ${activeScopeSql()} FOR SHARE`,[id]);
-  const permitted=scopes.filter(s=>scope&&s.department_id===scope.department_id&&(!s.division_id||s.division_id===scope.division_id));
+  const parentId=scope?.division_id?(await client.query('SELECT parent_division_id FROM hr_divisions WHERE id=$1',[scope.division_id])).rows[0]?.parent_division_id:null;
+  const permitted=scopes.filter(s=>scope&&s.department_id===scope.department_id&&(!s.division_id||s.division_id===scope.division_id||s.division_id===parentId));
   const capabilities=[...grants.map(g=>g.capability),...permitted.flatMap(s=>s.capabilities)];
   return {user:reviewerSummary({...row,permissions:{...row.permissions}},undefined,capabilities),approval:row.permissions?.hr_leave_approve!==false&&(row.permissions?.hr_leave_approve===true||capabilities.includes('hr_leave_approve'))};
 }
@@ -131,8 +133,8 @@ export async function closeConsentOffice(pool,{user,actor,id,data}) {
 }
 export function routeLevels(code) {return legacyRoute(code).map(stage=>stage.level);}
 export async function effectiveOffices(client,request,level) {
-  const enterprise=['division','department','chief_secretary'].includes(level),table=enterprise?'hr_approval_assignments':'(SELECT *,NULL::uuid AS division_id FROM hr_gov_consent_offices)';
-  const condition="((a.level='division' AND a.department_id=$3 AND a.division_id=$4) OR (a.level IN ('department','relevant_secretary','minister') AND a.department_id=$3) OR (a.level IN ('chief_secretary','hr_verifier') AND a.department_id IS NULL))";
+  const enterprise=['division','parent_division','department','chief_secretary'].includes(level),table=enterprise?'hr_approval_assignments':'(SELECT *,NULL::uuid AS division_id FROM hr_gov_consent_offices)';
+  const condition="((a.level='division' AND a.department_id=$3 AND a.division_id=$4) OR (a.level='parent_division' AND a.department_id=$3 AND a.division_id=(SELECT v.parent_division_id FROM hr_divisions v WHERE v.id=$4)) OR (a.level IN ('department','relevant_secretary','minister') AND a.department_id=$3) OR (a.level IN ('chief_secretary','hr_verifier') AND a.department_id IS NULL))";
   const {rows}=await client.query(`SELECT a.*,e.reviewer_id,e.display_name AS approver_name FROM ${table} a JOIN hr_employees e ON e.id=a.approver_employee_id ${enterprise?'': 'LEFT JOIN hr_gov_consent_withdrawals w ON w.office_id=a.id'} WHERE a.level=$1 AND a.effective_from<=$2 AND (${enterprise?'a.effective_to':'COALESCE(w.effective_to,a.effective_to)'} IS NULL OR ${enterprise?'a.effective_to':'COALESCE(w.effective_to,a.effective_to)'}>=$2) AND ${condition}`,[level,today(),request.department_id,request.division_id]);
   return rows.map(r=>({...r,assignment_kind:enterprise?'enterprise':'consent'}));
 }
@@ -205,6 +207,7 @@ export async function submitRequest(pool,{user,actor,employeeId,data,documents=[
     const transfer=await legacyTransferFor(client,employeeId,input,data.request_id);if(transfer&&(!isCentralHr(state.user)||data.assisted_reference?.trim()!==transfer.source_reference))fail('The certified transfer requires central HR assisted entry with its exact signed reconciliation reference.',403);
     const {config,evaluation}=await assess(client,employeeId,input,null,null,transfer?data.request_id:null);if(!evaluation.eligible_for_preview)fail(evaluation.issues.join(' '));
     if(!employee.department_id||!employee.division_id)fail('HR must verify the department and division.');
+    const placementIssue=await divisionPlacementIssue(client,employee.division_id);if(placementIssue)fail(placementIssue);
     if(input.code==='medical'&&input.medical_mode==='certificate'&&!documents.length)fail('Attach the medical certificate before submitting.',400);
     const approvalRoute=await approvalRouteFor(client,employee.department_id,input.code);
     const applicationSnapshot={approval_route:approvalRoute,assisted_by:data.assisted_reference?actor.id:null,assisted_reference:data.assisted_reference||null,regime:'government',engine_version:ENGINE_VERSION,employee:{id:employee.id,name:employee.display_name,department_id:employee.department_id,division_id:employee.division_id,department_name:employee.department_code,division_name:employee.division_code},config_id:config.id,input:{...input,notice_date:today()},evaluation};

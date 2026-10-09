@@ -23,7 +23,7 @@ export async function initGovernmentLeaveCaseSchema(client){
   ALTER TABLE hr_gov_requests DROP CONSTRAINT IF EXISTS hr_gov_requests_charge_check;
   ALTER TABLE hr_gov_requests ADD CONSTRAINT hr_gov_requests_charge_check CHECK(charge>=0 AND (code NOT IN ('recreation','medical','special') OR (charge>0 AND reservation_id IS NOT NULL AND config_id IS NOT NULL)));
   ALTER TABLE hr_gov_request_stages DROP CONSTRAINT IF EXISTS hr_gov_request_stages_level_check;
-  ALTER TABLE hr_gov_request_stages ADD CONSTRAINT hr_gov_request_stages_level_check CHECK(level IN ('division','department','hr_verifier','relevant_secretary','minister','chief_secretary'));
+  ALTER TABLE hr_gov_request_stages ADD CONSTRAINT hr_gov_request_stages_level_check CHECK(level IN ('division','parent_division','department','hr_verifier','relevant_secretary','minister','chief_secretary'));
   ALTER TABLE hr_gov_consent_offices DROP CONSTRAINT IF EXISTS hr_gov_consent_offices_level_check;
   ALTER TABLE hr_gov_consent_offices ADD CONSTRAINT hr_gov_consent_offices_level_check CHECK(level IN ('relevant_secretary','hr_verifier','minister'));
   ALTER TABLE hr_gov_consent_offices DROP CONSTRAINT IF EXISTS hr_gov_consent_offices_check;

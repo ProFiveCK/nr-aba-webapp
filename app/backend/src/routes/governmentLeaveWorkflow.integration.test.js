@@ -45,6 +45,66 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  });
  async function customRoute(stages=[{level:'department',label:'Treasury Head of Department'}],departmentId=department.id,expected=null){return routes.publishApprovalRoute(pool,{user:user(hr),actor:hr,data:{department_id:departmentId,expected_latest_id:expected,stages,source_reference:'Synthetic authorised Treasury route',reason}});}
  async function evidence(id,by=hr,changes={}){return w.verifyRequestEvidence(pool,{user:user(by),actor:by,id,data:{reason,evidence_reviewed:true,certificate_reviewed:true,justification_accepted:true,source_reference:'Synthetic independently verified personnel evidence',covers_start:'2026-01-01',covers_end:'2026-12-31',...changes}});}
+ async function treasuryHierarchy({move=true}={}){
+  const hierarchy=await import('../services/organisationHierarchy.js'),directory=await import('../services/employeeDirectory.js');
+  const child=await hierarchy.createOrganisationDivision(pool,{departmentId:department.id,name:'Financial Systems',parentDivisionId:division.id,actor:hr});
+  const sibling=await hierarchy.createOrganisationDivision(pool,{departmentId:department.id,name:'Accounting',parentDivisionId:division.id,actor:hr});
+  const leafAccount=await account({hr_access:true,hr_leave_approve:true});
+  const leaf=(await pool.query("INSERT INTO hr_employees(display_name,reviewer_id,department_id,division_id) VALUES('Synthetic Financial Systems officer',$1,$2,$3) RETURNING *",[leafAccount.id,department.id,child.id])).rows[0];
+  await directory.assignLeaveApprover(pool,{assignment:{level:'division',department_id:department.id,division_id:child.id,approver_employee_id:leaf.id,effective_from:'2026-01-01'},actor:hr,reason});
+  await directory.assignLeaveApprover(pool,{assignment:{level:'parent_division',department_id:department.id,division_id:division.id,approver_employee_id:officers.division.employee.id,effective_from:'2026-01-01'},actor:hr,reason});
+  officers.parent_division=officers.division;
+  if(move)await pool.query('UPDATE hr_employees SET division_id=$2,division_code=$3 WHERE id=$1',[employee.id,child.id,child.name]);
+  return {child,sibling,leafAccount};
+ }
+ test('nested one-level approval stops at the actual division and retains older parent-unit applications',async()=>{
+  await customRoute([{level:'division',label:'Divisional Chief'}]);
+  const old=await submit();
+  const {child,leafAccount}=await treasuryHierarchy({move:false});
+  // Adding real divisions must not remove authority from an already submitted application.
+  await decide(old.id,{},officers.division.account);
+  assert.equal((await w.getRequest(pool,old.id)).status,'approved');
+  await pool.query('UPDATE hr_employees SET division_id=$2,division_code=$3 WHERE id=$1',[employee.id,child.id,child.name]);
+  const next=await submit(application('recreation','2026-11-05'));
+  const view=await w.requestView(pool,user(hr),next.id);
+  assert.deepEqual(view.stages.map(s=>s.level),['division']);
+  assert.equal(view.stages[0].binding.reviewer_id,leafAccount.id);
+  assert.equal((await pool.query('SELECT division_id FROM hr_approval_assignments WHERE id=$1',[view.stages[0].binding.assignment_id])).rows[0].division_id,child.id);
+  await assert.rejects(decide(next.id,{},officers.parent_division.account),e=>e.status===403);
+  await assert.rejects(decide(next.id,{},officers.department.account),e=>e.status===403);
+  await decide(next.id,{},leafAccount);
+  const approved=await w.getRequest(pool,next.id);
+  assert.equal(approved.status,'approved');assert.equal(approved.grant_snapshot.stages.length,1);assert.ok(approved.final_pdf.length>100);
+ });
+ test('nested two and three level routes select Treasury separately from the Finance HoD',async()=>{
+  const {leafAccount}=await treasuryHierarchy();
+  const stages=[{level:'division',label:'Division'},{level:'parent_division',label:'Treasury'},{level:'department',label:'Finance HoD'}];
+  const two=await customRoute(stages.slice(0,2));
+  const first=await submit();
+  await customRoute(stages,department.id,two.id);
+  assert.deepEqual((await w.requestView(pool,user(hr),first.id)).stages.map(s=>s.level),['division','parent_division']);
+  await assert.rejects(decide(first.id,{},officers.parent_division.account),e=>e.status===403);
+  await decide(first.id,{},leafAccount);assert.equal((await w.getRequest(pool,first.id)).status,'pending');
+  await assert.rejects(decide(first.id,{},officers.department.account),e=>e.status===403);
+  await decide(first.id,{},officers.parent_division.account);assert.equal((await w.getRequest(pool,first.id)).status,'approved');
+  const second=await submit(application('recreation','2026-11-05'));
+  assert.deepEqual((await w.requestView(pool,user(hr),second.id)).stages.map(s=>s.level),['division','parent_division','department']);
+  await decide(second.id,{},leafAccount);await decide(second.id,{},officers.parent_division.account);
+  assert.equal((await w.getRequest(pool,second.id)).status,'pending');
+  await decide(second.id,{},officers.department.account);
+  const approved=await w.getRequest(pool,second.id);
+  assert.equal(approved.status,'approved');assert.equal(approved.grant_snapshot.stages.length,3);assert.ok(approved.final_pdf.length>100);
+ });
+ test('a new parent unit placement requires an actual child before Government submission',async()=>{
+  const {child}=await treasuryHierarchy();
+  await customRoute([{level:'division',label:'Divisional Chief'}]);
+  await pool.query('UPDATE hr_employees SET division_id=$2 WHERE id=$1',[employee.id,division.id]);
+  await assert.rejects(submit(),/actual division/);
+  const directory=await import('../services/employeeDirectory.js');
+  const assignment={department_id:department.id,approver_employee_id:officers.department.employee.id,effective_from:'2026-01-01'};
+  await assert.rejects(directory.assignLeaveApprover(pool,{assignment:{...assignment,level:'division',division_id:division.id},actor:hr,reason}),/division under/);
+  await assert.rejects(directory.assignLeaveApprover(pool,{assignment:{...assignment,level:'parent_division',division_id:child.id},actor:hr,reason}),/parent unit/);
+ });
  test('one nominated HoD grants once after separate private HR evidence verification',async()=>{
   const route=await customRoute(),r=await submit(application('special','2026-11-02'));
   const initial=await w.requestView(pool,user(hr),r.id);assert.equal(initial.stages.length,1);assert.equal(initial.stages[0].label,'Treasury Head of Department');assert.equal(initial.approval_route.id,route.id);assert.equal(initial.evidence_review_required,true);

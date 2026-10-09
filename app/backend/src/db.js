@@ -1,4 +1,5 @@
 import pg from 'pg';
+import {initOrganisationHierarchySchema,initParentApproverSchema} from './services/organisationHierarchy.js';
 import { initGovernmentLeaveSchema } from './services/governmentLeaveSchema.js';
 import dotenv from 'dotenv';
 import { ALL_CAPABILITIES, ROLE_CAPABILITIES } from './config.js';
@@ -935,6 +936,7 @@ export async function initSchema() {
     `);
     await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_divisions_name ON hr_divisions (department_id, lower(name))');
     await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_divisions_id_department ON hr_divisions(id, department_id)');
+    await initOrganisationHierarchySchema(client);
     await client.query(`
       CREATE TABLE IF NOT EXISTS hr_access_scopes (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1324,6 +1326,7 @@ export async function initSchema() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_email_attempted ON login_attempts(email, attempted_at)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_login_attempts_attempted_at ON login_attempts(attempted_at)');
 
+    await initParentApproverSchema(client);
     await initGovernmentLeaveSchema(client);
     await backfillCapabilities(client);
     await materialiseRoleFloor(client);

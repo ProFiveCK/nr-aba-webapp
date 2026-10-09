@@ -15,16 +15,16 @@ export function employeeScopeSql(user, capability, parameter = '$1', alias = 'e'
   if (!SCOPE_CAPABILITIES.includes(capability)) throw new Error('Invalid HR scope capability');
   if (user?.permissions?.[capability] !== true) return `(${parameter}::uuid IS NULL AND FALSE)`;
   return `EXISTS (SELECT 1 FROM hr_access_scopes s WHERE s.reviewer_id=${parameter} AND '${capability}'=ANY(s.capabilities)
-    AND ${activeScopeSql()} AND s.department_id=${alias}.department_id AND (s.division_id IS NULL OR s.division_id=${alias}.division_id))`;
+    AND ${activeScopeSql()} AND s.department_id=${alias}.department_id AND (s.division_id IS NULL OR s.division_id=${alias}.division_id OR s.division_id=(SELECT v.parent_division_id FROM hr_divisions v WHERE v.id=${alias}.division_id)))`;
 }
 
-/** Legacy manager access requires a verified, current placement in the same division. */
+/** Legacy manager access requires explicit assignment and the same division or its parent unit. */
 export function managerScopeSql(user, parameter = '$1', alias = 'e', includeSelf = false) {
   if (user?.permissions?.hr_leave_approve !== true && !includeSelf) return 'FALSE';
   return `EXISTS (SELECT 1 FROM hr_employees me WHERE me.reviewer_id=${parameter} AND me.status='active'
     AND (${includeSelf ? `${alias}.id=me.id OR ` : ''}(${user?.permissions?.hr_leave_approve === true ? 'TRUE' : 'FALSE'} AND ${alias}.manager_id=me.id
       AND me.department_id IS NOT NULL AND me.department_id=${alias}.department_id
-      AND me.division_id IS NOT DISTINCT FROM ${alias}.division_id)))`;
+      AND (me.division_id IS NOT DISTINCT FROM ${alias}.division_id OR me.division_id=(SELECT v.parent_division_id FROM hr_divisions v WHERE v.id=${alias}.division_id)))))`;
 }
 export function employeeReadSql(user, parameter = '$1', alias = 'e', includeSelf = false) {
   return `(${employeeScopeSql(user,'hr_staff_manage',parameter,alias)} OR ${employeeScopeSql(user,'hr_leave_approve',parameter,alias)}
@@ -44,7 +44,7 @@ export async function assertEmployeeScope(client, user, employeeId, capability) 
   if (isCentralHr(user)) return employee;
   if (user.permissions?.[capability] !== true) throw new ServiceError(404,'Employee not found.');
   const { rows } = await client.query(`SELECT s.id FROM hr_access_scopes s WHERE s.reviewer_id=$1 AND $2=ANY(s.capabilities)
-    AND ${activeScopeSql()} AND s.department_id=$3 AND (s.division_id IS NULL OR s.division_id=$4) FOR SHARE`,
+    AND ${activeScopeSql()} AND s.department_id=$3 AND (s.division_id IS NULL OR s.division_id=$4 OR s.division_id=(SELECT v.parent_division_id FROM hr_divisions v WHERE v.id=$4)) FOR SHARE`,
     [user.id,capability,employee.department_id,employee.division_id]);
   if (!rows.length) throw new ServiceError(404,'Employee not found.');
   return employee;

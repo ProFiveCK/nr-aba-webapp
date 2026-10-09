@@ -9,7 +9,7 @@ import { OrgUnits } from './OrgUnits';
 import { ActionDialog, DirectoryPicker, Field, inputClass } from './ManagementFields';
 import { value } from './managementForm';
 import { APPROVER_LABELS } from './managementTypes';
-import { appointmentTiming, organisationQuery } from './organisationBrowse';
+import { appointmentTiming, organisationQuery, divisionPath, orderedDivisions } from './organisationBrowse';
 import type { ApprovalAssignment, WorkPattern } from './managementTypes';
 import type { OrgDepartment } from './types';
 
@@ -74,10 +74,10 @@ function OfficeholderDialog({ departments, initialDepartment, onClose, onSaved }
     const [level,setLevel] = useState('division'), [department,setDepartment] = useState(initialDepartment);
     return <ActionDialog title="Assign leave officeholder" automaticReason="Nominated the selected leave officeholder for the recorded scope and dates." onClose={onClose} onSave={async (data) => {
         const approver = value(data,'approver_employee_id'); if (!approver) throw new Error('Choose an active officeholder with a verified login.');
-        await apiClient.post('/hr/directory/approval-assignments',{ level,department_id: level === 'chief_secretary' ? null : department,division_id: level === 'division' ? value(data,'division_id') : null,approver_employee_id: approver,effective_from: value(data,'effective_from'),effective_to: value(data,'effective_to') || null,reason: value(data,'reason') }); onSaved();
+        await apiClient.post('/hr/directory/approval-assignments',{ level,department_id: level === 'chief_secretary' ? null : department,division_id: ['division','parent_division'].includes(level) ? value(data,'division_id') : null,approver_employee_id: approver,effective_from: value(data,'effective_from'),effective_to: value(data,'effective_to') || null,reason: value(data,'reason') }); onSaved();
     }}><Field label="Approval office"><select className={inputClass} value={level} onChange={(e) => setLevel(e.target.value)}>{Object.entries(APPROVER_LABELS).map(([id,label]) => <option key={id} value={id}>{label}</option>)}</select></Field>
         {level !== 'chief_secretary' && <Field label="Department scope"><select className={inputClass} value={department} onChange={(e) => setDepartment(e.target.value)} required><option value="">Choose department</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>}
-        {level === 'division' && <Field label="Division scope"><select key={department} className={inputClass} name="division_id" required><option value="">Choose division</option>{departments.find((item) => item.id === department)?.divisions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>}
+        {['division','parent_division'].includes(level) && <Field label={level==='parent_division'?'Treasury / parent unit scope':'Division scope'}><select key={department} className={inputClass} name="division_id" required><option value="">Choose division</option>{orderedDivisions(departments.find((item) => item.id === department)?.divisions||[]).filter(item=>level!=='parent_division'||!item.parent_division_id).filter(item=>level!=='division'||!departments.find(d=>d.id===department)?.divisions.some(child=>child.parent_division_id===item.id)).map((item) => <option key={item.id} value={item.id}>{divisionPath(item)}</option>)}</select></Field>}
         <DirectoryPicker name="approver_employee_id" label="Officeholder employee" requireLinked />
         <div className="grid gap-3 sm:grid-cols-2"><Field label="Effective from"><AustralianDateInput className={inputClass} name="effective_from"  defaultValue={todayIsoDate()} required /></Field><Field label="Effective to (optional)"><AustralianDateInput className={inputClass} name="effective_to"  /></Field></div>
         <p className="text-xs text-gray-500">Your nominee, division, dates, account and time are recorded automatically. The nominee also needs leave approval permission.</p>

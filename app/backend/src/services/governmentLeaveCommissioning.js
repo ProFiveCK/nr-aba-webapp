@@ -1,3 +1,4 @@
+import {divisionPlacementIssue} from './organisationHierarchy.js';
 import {randomUUID} from 'node:crypto';
 import {ServiceError} from '../lib/serviceError.js';
 import {withTransaction} from '../lib/transaction.js';
@@ -43,6 +44,7 @@ async function snapshot(client,plan){
   if(employee.status!=='active')issues.push('Inactive personnel keep their retained records. Consolidate active employees first.');
   if(employee.leave_policy_regime!=='legacy'||state.context.entitlements.length||state.government_requests.length)issues.push('Initial consolidation requires an existing employee with no Government postings or applications. Use reconciliation for later changes.');
   if(!employee.department_id||!employee.division_id)issues.push('Verify the managed department and division.');
+  const placementIssue=await divisionPlacementIssue(client,employee.division_id);if(placementIssue)issues.push(placementIssue);
   if(state.initial_setup?.status!=='adopted')issues.push('Adopt the reviewed policy and leave-type mappings.');
   if(state.retained_legacy_leave.length)issues.push('Resolve pending or future legacy leave in the individual reconciliation workspace before cohort consolidation.');
   const appointment=state.context.periods.find(p=>p.start_date<=plan.cutover_date&&(!p.end_date||p.end_date>=plan.cutover_date));

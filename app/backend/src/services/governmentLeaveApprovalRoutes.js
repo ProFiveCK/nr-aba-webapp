@@ -3,8 +3,8 @@ import {withTransaction} from '../lib/transaction.js';
 import {recordAudit} from './auditService.js';
 import {assertCentral} from './governmentLeaveWorkflow.js';
 
-export const APPROVAL_OFFICES=['division','department','hr_verifier','relevant_secretary','chief_secretary'];
-export const OFFICE_LABELS={division:'Divisional approver',department:'Head of Department',hr_verifier:'HR verifier',relevant_secretary:'Relevant Secretary',chief_secretary:'Chief Secretary'};
+export const APPROVAL_OFFICES=['division','parent_division','department','hr_verifier','relevant_secretary','chief_secretary'];
+export const OFFICE_LABELS={division:'Divisional approver',parent_division:'Treasury / parent unit approver',department:'Head of Department',hr_verifier:'HR verifier',relevant_secretary:'Relevant Secretary',chief_secretary:'Chief Secretary'};
 const fail=(message,status=409)=>{throw new ServiceError(status,message);};
 export function legacyRoute(code){return ['division','department','hr_verifier',...(['recreation','medical'].includes(code)?['relevant_secretary']:[]),'chief_secretary'].map(level=>({level,label:OFFICE_LABELS[level]}));}
 

@@ -1,4 +1,5 @@
 import express from 'express';
+import {createOrganisationDivision} from '../services/organisationHierarchy.js';
 import { body, param, query, handleValidation } from '../middleware/validation.js';
 import { pool } from '../db.js';
 import { requirePermission } from '../services/authService.js';
@@ -478,14 +479,14 @@ router.get('/org-units', requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSI
   const {rows:allowed}=await pool.query(`SELECT DISTINCT department_id,division_id FROM hr_access_scopes s WHERE reviewer_id=$1 AND ${activeScopeSql()}`,[req.user.id]);
   const [{ rows: departments }, { rows: divisions }] = await Promise.all([
     pool.query('SELECT id, name FROM hr_departments ORDER BY lower(name)'),
-    pool.query('SELECT id, department_id, name FROM hr_divisions ORDER BY lower(name)'),
+    pool.query('SELECT v.id,v.department_id,v.name,v.parent_division_id,p.name AS parent_division_name FROM hr_divisions v LEFT JOIN hr_divisions p ON p.id=v.parent_division_id ORDER BY lower(v.name)'),
   ]);
   res.json(departments.filter(d=>isCentralHr(req.user)||allowed.some(s=>s.department_id===d.id)).map((department) => ({
     id: department.id,
     name: department.name,
     divisions: divisions
-      .filter((division) => division.department_id === department.id && (isCentralHr(req.user)||allowed.some(s=>s.department_id===department.id && (!s.division_id||s.division_id===division.id))))
-      .map((division) => ({ id: division.id, name: division.name })),
+      .filter((division) => division.department_id === department.id && (isCentralHr(req.user)||allowed.some(s=>s.department_id===department.id && (!s.division_id||s.division_id===division.id||s.division_id===division.parent_division_id))))
+      .map((division) => ({ id: division.id, name: division.name, parent_division_id:division.parent_division_id,parent_division_name:division.parent_division_name })),
   })));
 });
 
@@ -554,41 +555,13 @@ router.delete(
   }
 );
 
-router.post(
-  '/departments/:id/divisions',
-  requirePermission(PERMISSIONS.HR_ADMIN),
-  [param('id').isUUID(), body('name').isString().trim().isLength({ min: 1, max: 60 })],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const { rows: department } = await pool.query('SELECT id, name FROM hr_departments WHERE id = $1', [req.params.id]);
-    if (!department.length) {
-      res.status(404).json({ message: 'Department not found.' });
-      return;
-    }
-    let created;
-    try {
-      const { rows } = await pool.query(
-        'INSERT INTO hr_divisions (department_id, name) VALUES ($1, $2) RETURNING id, name',
-        [req.params.id, req.body.name.trim()]
-      );
-      created = rows[0];
-    } catch (err) {
-      if (err.code === '23505') {
-        res.status(409).json({ message: 'That division already exists in this department.' });
-        return;
-      }
-      throw err;
-    }
-    await recordAudit({
-      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-      action: 'hr.division.created',
-      entityType: 'hr_division',
-      entityId: created.id,
-      after: { name: created.name, department: department[0].name },
-    });
-    res.status(201).json(created);
-  }
-);
+router.post('/departments/:id/divisions',requirePermission(PERMISSIONS.HR_ADMIN),[
+ param('id').isUUID(),body('name').isString().trim().isLength({min:1,max:60}),body('parent_division_id').optional({nullable:true}).isUUID(),
+],async(req,res)=>{
+ if(!handleValidation(req,res))return;
+ const created=await createOrganisationDivision(pool,{departmentId:req.params.id,name:req.body.name,parentDivisionId:req.body.parent_division_id||null,actor:{id:req.user.id,email:req.user.email,ip:req.ip}});
+ res.status(201).json(created);
+});
 
 router.delete(
   '/divisions/:id',
@@ -614,6 +587,7 @@ router.delete(
       res.status(409).json({ message: `${staff[0].count} staff are assigned to this division. Move them first.` });
       return;
     }
+    if((await pool.query('SELECT 1 FROM hr_divisions WHERE parent_division_id=$1 LIMIT 1',[req.params.id])).rowCount){res.status(409).json({message:'This parent unit still contains divisions. Retain it while those divisions exist.'});return;}
     await pool.query('DELETE FROM hr_divisions WHERE id = $1', [req.params.id]);
     await recordAudit({
       actor: { id: req.user.id, email: req.user.email, ip: req.ip },

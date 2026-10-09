@@ -7,6 +7,7 @@ import { generateTempPassword, hashPassphrase } from './authService.js';
 
 export const EMPLOYMENT_CATEGORIES = ['permanent', 'probationary', 'temporary', 'contract', 'casual', 'unknown'];
 export const APPROVAL_LEVELS = ['division', 'department', 'chief_secretary'];
+export const NOMINATION_LEVELS = ['division','parent_division','department','chief_secretary'];
 
 function requireReason(reason) {
   if (typeof reason !== 'string' || reason.trim().length < 10 || reason.length > 1000) {
@@ -52,11 +53,11 @@ export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, sea
         AND p.employment_category <> 'unknown' AND p.counts_for_service IS NOT NULL)))`;
   const { rows } = await pool.query(
     `SELECT e.id, e.display_name, to_char(e.join_date,'YYYY-MM-DD') AS join_date, e.status, e.reviewer_id, e.department_id, e.division_id, e.leave_policy_regime,
-       e.department_code, e.division_code, d.name AS department_name, v.name AS division_name,
+       e.department_code, e.division_code, d.name AS department_name, v.name AS division_name, pv.name AS parent_division_name,
        p.employment_category, p.is_teacher, p.is_intern, p.counts_for_service,
        COALESCE((SELECT json_agg(json_build_object('source', x.source, 'external_id', x.external_id) ORDER BY x.external_id)
          FROM hr_employee_external_ids x WHERE x.employee_id = e.id), '[]'::json) AS external_ids
-     FROM hr_employees e LEFT JOIN hr_departments d ON d.id = e.department_id LEFT JOIN hr_divisions v ON v.id = e.division_id
+     FROM hr_employees e LEFT JOIN hr_departments d ON d.id = e.department_id LEFT JOIN hr_divisions v ON v.id = e.division_id LEFT JOIN hr_divisions pv ON pv.id=v.parent_division_id
      LEFT JOIN LATERAL (SELECT employment_category,is_teacher,is_intern,counts_for_service FROM hr_employee_service_periods p
        WHERE p.employee_id=e.id AND p.start_date <= (NOW() AT TIME ZONE 'Pacific/Nauru')::date
          AND (p.end_date IS NULL OR p.end_date >= (NOW() AT TIME ZONE 'Pacific/Nauru')::date)
@@ -225,7 +226,7 @@ export async function provisionEmployeeAccount(pool, { employeeId, email, actor,
 
 export async function assignLeaveApprover(pool, { assignment, actor, reason }) {
   const verifiedReason = requireReason(reason);
-  if ((assignment.level === 'division' && (!assignment.department_id || !assignment.division_id))
+  if ((['division','parent_division'].includes(assignment.level) && (!assignment.department_id || !assignment.division_id))
     || (assignment.level === 'department' && (!assignment.department_id || assignment.division_id))
     || (assignment.level === 'chief_secretary' && (assignment.department_id || assignment.division_id))) {
     throw badRequest('Division offices need department and division; HOD offices need only department; Chief Secretary is government-wide.');
@@ -236,6 +237,12 @@ export async function assignLeaveApprover(pool, { assignment, actor, reason }) {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('hr-approval-assignments'))");
     const approver = await lockEmployee(client, assignment.approver_employee_id);
     if (approver.status !== 'active' || !approver.reviewer_id) throw badRequest('Choose an active employee with a verified login link.');
+    if(['division','parent_division'].includes(assignment.level)){
+      const {rows:[unit]}=await client.query('SELECT parent_division_id,EXISTS(SELECT 1 FROM hr_divisions c WHERE c.parent_division_id=v.id) AS has_children FROM hr_divisions v WHERE id=$1 AND department_id=$2 FOR SHARE OF v',[assignment.division_id,assignment.department_id]);
+      if(!unit)throw badRequest('Choose an organisation unit in this department.');
+      if(assignment.level==='parent_division'&&unit.parent_division_id)throw badRequest('Choose Treasury or another parent unit for the parent-level approver.');
+      if(assignment.level==='division'&&unit.has_children)throw badRequest('Choose a division under this parent unit for the division-level approver.');
+    }
     const { rows: overlap } = await client.query(
       `SELECT id FROM hr_approval_assignments WHERE level = $1 AND department_id IS NOT DISTINCT FROM $2::uuid
          AND division_id IS NOT DISTINCT FROM $3::uuid

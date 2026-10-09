@@ -32,6 +32,8 @@ export interface LeaveAttachment {
 export interface OrgDivision {
     id: string;
     name: string;
+    parent_division_id?: string | null;
+    parent_division_name?: string | null;
 }
 
 export interface OrgDepartment {

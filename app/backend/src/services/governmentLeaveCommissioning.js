@@ -1,3 +1,4 @@
+import {approvedCarryoverPlan,carryApprovedApplications} from './governmentLeaveApprovedCarryover.js';
 import {calendarCoverageRequired,calendarFallbackNotice} from '../lib/governmentLeaveCalendarRules.js';
 import {divisionPlacementIssue} from './organisationHierarchy.js';
 import {randomUUID} from 'node:crypto';
@@ -53,7 +54,8 @@ async function snapshot(client,plan){
   if(!employee.department_id||!employee.division_id)issues.push('Verify the managed department and division.');
   const placementIssue=await divisionPlacementIssue(client,employee.division_id);if(placementIssue)issues.push(placementIssue);
   if(state.initial_setup?.status!=='adopted')issues.push('Adopt the reviewed policy and leave-type mappings.');
-  if(state.retained_legacy_leave.length)issues.push('Resolve pending or future legacy leave in the individual reconciliation workspace before cohort consolidation.');
+  if(state.retained_legacy_leave.some(r=>r.status==='pending'))issues.push('Resolve pending legacy applications before cohort consolidation. Approved leave carries forward with its existing approval during initial admin migration.');
+  if(!plan.initial_admin_setup&&state.retained_legacy_leave.some(r=>r.status==='approved'))issues.push('Use initial admin migration to carry existing approved leave, or reconcile it individually.');
   if(appointment?.is_teacher)issues.push('Teacher Recreation uses the Education case route. Prepare this employee individually.');
   if(appointment&&!['permanent','temporary','contract'].includes(appointment.employment_category))issues.push('Verify a supported appointment category before activating common leave.');
   // Initial Treasury temporary staff use Medical/Special only. Retain their
@@ -73,18 +75,20 @@ async function snapshot(client,plan){
    if(sources.some(b=>units(b.pending)!==0n))issues.push(`Reconcile the retained ${code} pending reservation before consolidation.`);
    return [{code,amount:decimal(amount),retained_balance_ids:amount>0n?sources.map(b=>b.id):[],sources:sources.map(b=>({id:b.id,name:b.leave_type_name,year:b.year,balance:b.balance,pending:b.pending}))}];
   });
+  let approvedLeave=[];
   try{
-   const context={...state.context,employee:{...state.context.employee,leave_policy_regime:'government'}},migration=migrationPlan({...state,context},{cutover_date:plan.cutover_date,targets,dispositions:[]},{allowMissingPayroll:plan.initial_admin_setup===true});
+   if(plan.initial_admin_setup)approvedLeave=await approvedCarryoverPlan(client,state,plan.cutover_date,enabledCodes);
+   const context={...state.context,employee:{...state.context.employee,leave_policy_regime:'government'}},migration=migrationPlan({...state,context},{cutover_date:plan.cutover_date,targets,dispositions:approvedLeave},{allowMissingPayroll:plan.initial_admin_setup===true,allowApprovedCarryover:plan.initial_admin_setup===true});
    const facts=serviceFacts(context,plan.cutover_date);
    if(facts.basis?.schedule_mode==='roster')issues.push('Use individual preparation for the reviewed roster/shift Medical rule.');
    context.entitlements=migration.targets.map(t=>({id:`preview-${t.code}`,code:t.code,balance:t.target,held:'0',available:t.target,as_of:plan.cutover_date,period_start:facts.period_start,period_end:facts.period_end,policy_version_id:t.policy_version_id,retained_credit:t.retained_transfer?.amount||'0'}));
    readyConfiguration(context,enabledCodes);const medicalHistory=cleanHistory(selected.medical_history,context,medicalRule);if(medicalHistory.filter(h=>h.uncertified).length>3)fail('Reconcile the uncertified Medical history before consolidation.');
   }catch(e){if(!e.status)throw e;issues.push(e.message);}
-  employees.push({employee_id:employee.id,display_name:employee.display_name,payroll_id:state.identity?.payroll_id||null,source_hash:hash,legacy_history_hash:legacyHistoryHash,employee,route,offices,enabled_codes:enabledCodes,excluded_targets:excludedTargets,targets,warnings,issues:[...new Set(issues)]});
+  employees.push({employee_id:employee.id,display_name:employee.display_name,payroll_id:state.identity?.payroll_id||null,source_hash:hash,legacy_history_hash:legacyHistoryHash,employee,route,offices,enabled_codes:enabledCodes,excluded_targets:excludedTargets,targets,approved_leave:approvedLeave,warnings,issues:[...new Set(issues)]});
  }
  return {employees,hash:fingerprint({plan,employees})};
 }
-function view(result){return {snapshot_hash:result.hash,total:result.employees.length,ready:result.employees.filter(e=>!e.issues.length).length,employees:result.employees.map(e=>({employee_id:e.employee_id,display_name:e.display_name,payroll_id:e.payroll_id,enabled_codes:e.enabled_codes,excluded_targets:e.excluded_targets,targets:e.targets,warnings:e.warnings,issues:e.issues,route:e.route.stages}))};}
+function view(result){return {snapshot_hash:result.hash,total:result.employees.length,ready:result.employees.filter(e=>!e.issues.length).length,employees:result.employees.map(e=>({employee_id:e.employee_id,display_name:e.display_name,payroll_id:e.payroll_id,enabled_codes:e.enabled_codes,excluded_targets:e.excluded_targets,targets:e.targets,approved_leave:e.approved_leave,warnings:e.warnings,issues:e.issues,route:e.route.stages}))};}
 export async function previewCommissioning(pool,{user,data}){
  const plan=input(data);return withTransaction(pool,async client=>{await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await assertCentral(client,user);if(plan.initial_admin_setup)await assertInitialAdmin(client,user.id);return view(await snapshot(client,plan));});
 }
@@ -118,11 +122,12 @@ export async function applyCommissioning(pool,{user,actor,id,data}){
   for(const selected of review.plan.employees){
    const employeeId=selected.employee_id,source=current.employees.find(e=>e.employee_id===employeeId);
    await client.query("UPDATE hr_employees SET leave_policy_regime='government' WHERE id=$1",[employeeId]);
-   const migration=await prepareMigration(pool,{client,user:preparer.user,actor:{id:review.prepared_by},employeeId,data:{...review.plan,review_id:randomUUID(),targets:source.targets,dispositions:[]}});
+   const migration=await prepareMigration(pool,{client,user:preparer.user,actor:{id:review.prepared_by},employeeId,data:{...review.plan,review_id:randomUUID(),targets:source.targets,dispositions:source.approved_leave||[]}});
    await certifyMigration(pool,{client,user,actor,id:migration.id,data:{context_hash:migration.context_hash,reason:why}});
    const config=await prepareConfiguration(pool,{client,user:preparer.user,actor:{id:review.prepared_by},employeeId,data:{...review.plan,enabled_codes:source.enabled_codes,medical_rule:medicalRule,medical_history:selected.medical_history,legacy_resolution_reference:review.plan.transition_reference}});
    await publishConfiguration(pool,{client,user,actor,id:config.id,reason:why});
-   result.push({employee_id:employeeId,migration_id:migration.id,configuration_id:config.id,enabled_codes:source.enabled_codes,excluded_targets:source.excluded_targets,targets:source.targets.map(t=>({code:t.code,amount:t.amount}))});
+   const approvedLeave=await carryApprovedApplications(client,{employee:source.employee,configurationId:config.id,dispositions:source.approved_leave||[],actor,cutover:review.plan.cutover_date});
+   result.push({approved_leave:approvedLeave,employee_id:employeeId,migration_id:migration.id,configuration_id:config.id,enabled_codes:source.enabled_codes,excluded_targets:source.excluded_targets,targets:source.targets.map(t=>({code:t.code,amount:t.amount}))});
   }
   const {rows:[receipt]}=await client.query('INSERT INTO hr_gov_commissioning_receipts(review_id,actor_id,reason,result) VALUES($1,$2,$3,$4) RETURNING *',[id,user.id,why.trim(),JSON.stringify(result)]);
   await recordAudit({client,actor,action:'hr.gov.commissioning.applied',entityType:'hr_gov_commissioning_reviews',entityId:id,after:{result,snapshot_hash:review.snapshot_hash,approval_mode:initialAdmin?'initial_admin_setup':'independent'}});return receipt;

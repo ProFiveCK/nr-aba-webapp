@@ -203,6 +203,78 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   try{assert.equal((await request(hr,{require_calendar_coverage:true,expected_revision:off.body.revision})).status,500);assert.deepEqual((await request(hr)).body,off.body);}
   finally{await pool.query('DROP TRIGGER synthetic_calendar_setting_failure ON audit_log; DROP FUNCTION synthetic_calendar_setting_failure()');}
  });
+ async function approvedLegacyFixture(){
+  const data={...await commissioningFixture(),initial_admin_setup:true};
+  await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[hr.id]);hr.role='admin';
+  const type=(await pool.query("SELECT id FROM hr_leave_types WHERE name='Synthetic Annual source'")).rows[0];
+  await pool.query('UPDATE hr_leave_balances SET balance=21.77 WHERE employee_id=$1 AND leave_type_id=$2',[employee.id,type.id]);
+  const snapshot={employee_name:employee.display_name,leave_type_name:'Annual',approved_by_name:'Original recorded approver',balance_year:2026,balances:[{leave_type_id:type.id,leave_type_name:'Annual',before:31.77,after:21.77}]};
+  const legacy=(await pool.query(`INSERT INTO hr_leave_applications(employee_id,leave_type_id,start_date,end_date,days,reason,status,reviewed_by,reviewed_at,payroll_form_snapshot)
+    VALUES($1,$2,'2026-10-19','2026-10-30',10,$3,'approved',$4,'2026-09-29',$5) RETURNING *`,[employee.id,type.id,reason,certifier.id,snapshot])).rows[0];
+  return {data,legacy,type};
+ }
+ test('initial admin carries approved future leave and its authority without another balance debit or approval',async()=>{
+  const {data,legacy}=await approvedLegacyFixture();
+  await pool.query('DELETE FROM hr_employee_external_ids WHERE employee_id=$1',[employee.id]);
+  const legacyBefore=(await pool.query('SELECT * FROM hr_leave_applications WHERE id=$1',[legacy.id])).rows[0];
+  const balancesBefore=(await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows;
+  const preview=await commission.previewCommissioning(pool,{user:user(hr),data});
+  assert.equal(preview.ready,1,preview.employees[0].issues.join(' '));
+  assert.equal(preview.employees[0].targets.find(t=>t.code==='recreation').amount,'21.770000');
+  assert.equal(preview.employees[0].approved_leave[0].approved_by,certifier.id);
+  assert.equal(preview.employees[0].approved_leave[0].days,'10.00');
+  const review=await commission.prepareCommissioning(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}});
+  const args={user:user(hr),actor:hr,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}};
+  const receipt=await commission.applyCommissioning(pool,args);
+  assert.equal(receipt.result[0].approved_leave[0].status,'approved');
+  const carried=await w.getRequest(pool,legacy.id);
+  assert.equal(carried.status,'approved');assert.equal(carried.charge,'10.000000');
+  assert.equal(carried.grant_snapshot.legacy_approval.approved_by,certifier.id);
+  assert.equal(carried.grant_snapshot.legacy_approval.balance_already_deducted,true);
+  assert.ok(carried.final_pdf.toString().startsWith('%PDF'));
+  assert.equal((await w.stagesFor(pool,legacy.id)).length,0);
+  assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'21.770000');
+  assert.deepEqual((await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows,balancesBefore);
+  assert.deepEqual((await pool.query('SELECT * FROM hr_leave_applications WHERE id=$1',[legacy.id])).rows[0],legacyBefore);
+  const assessment=await w.previewRequest(pool,user(owner),employee.id,application('recreation','2026-10-19','2026-10-20'));
+  assert.match(assessment.issues.join(' '),/overlap/);
+  const {currentPayrollSnapshot}=await import('../services/governmentLeavePayroll.js');
+  await pool.query("INSERT INTO hr_employee_external_ids(employee_id,source,external_id,verified_by,reason) VALUES($1,'techone_payroll','CARRIED-01',$2,$3)",[employee.id,hr.id,reason]);
+  const payroll=await currentPayrollSnapshot(pool,{period_start:'2026-10-19',period_end:'2026-10-30'});
+  assert.equal(payroll.lines.filter(l=>Number(l.policy_days)>0).length,10);
+  assert.ok(payroll.lines.every(l=>l.annual_debit==='0.000000'));
+  assert.deepEqual((await commission.applyCommissioning(pool,args)).result,receipt.result);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_requests WHERE id=$1',[legacy.id])).rows[0].n,1);
+  const {prepareMigration}=await import('../services/governmentLeavePayroll.js');
+  await assert.rejects(prepareMigration(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{...data,review_id:randomUUID(),targets:preview.employees[0].targets,dispositions:preview.employees[0].approved_leave}}),/Only the reviewed initial admin migration/);
+  const cases=await import('../services/governmentLeaveCases.js');
+  const amendment=await cases.submitCase(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{request_id:randomUUID(),code:'amendment',start_date:'2026-10-19',end_date:'2026-10-30',reason,event_reference:'Synthetic original approval cancellation',related_request_id:legacy.id,assisted_reference:reason},documents:[]});
+  await cases.prepareDetermination(pool,{user:user(hr),actor:hr,id:amendment.id,data:{reason,source_reference:'Synthetic signed cancellation authority',evidence_reference:'Synthetic existing approval reconciliation',facts:{eligibility_confirmed:true,original_request_id:legacy.id,action:'cancel_grant',salary_correction_reference:'Synthetic Salary Unit cancellation correction'},pay_segments:[{start_date:'2026-10-19',end_date:'2026-10-30',salary_percent:'100'}]}});
+  for(let step=0;step<7&&(await w.getRequest(pool,amendment.id)).status==='pending';step++)await decide(amendment.id,{discretion_confirmed:true});
+  assert.equal((await w.getRequest(pool,amendment.id)).status,'approved');
+  assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'31.770000');
+  assert.deepEqual((await w.getRequest(pool,legacy.id)).final_pdf,carried.final_pdf);
+  const afterCancellation=await w.previewRequest(pool,user(owner),employee.id,application('recreation','2026-10-19','2026-10-20'));
+  assert.doesNotMatch(afterCancellation.issues.join(' '),/overlap/);
+ });
+ test('approved carryover rechecks the approval and rolls back all transfer postings on failure',async()=>{
+  const {data,legacy}=await approvedLegacyFixture();
+  const preview=await commission.previewCommissioning(pool,{user:user(hr),data});
+  const review=await commission.prepareCommissioning(pool,{user:user(hr),actor:hr,data:{...data,snapshot_hash:preview.snapshot_hash}});
+  const args={user:user(hr),actor:hr,id:review.id,data:{snapshot_hash:review.snapshot_hash,reason}};
+  await pool.query('UPDATE hr_leave_applications SET reviewed_by=$2 WHERE id=$1',[legacy.id,hr.id]);
+  await assert.rejects(commission.applyCommissioning(pool,args),/changed/);
+  await pool.query('UPDATE hr_leave_applications SET reviewed_by=$2 WHERE id=$1',[legacy.id,certifier.id]);
+  await pool.query("CREATE FUNCTION synthetic_carry_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.approved_leave.carried' THEN RAISE EXCEPTION 'synthetic carry failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER synthetic_carry_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION synthetic_carry_failure()");
+  try{await assert.rejects(commission.applyCommissioning(pool,args),/synthetic carry failure/);assert.equal((await l.loadContext(pool,employee.id)).employee.leave_policy_regime,'legacy');assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_requests WHERE id=$1',[legacy.id])).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_legacy_transfers WHERE legacy_request_id=$1',[legacy.id])).rows[0].n,0);}
+  finally{await pool.query('DROP TRIGGER synthetic_carry_failure ON audit_log; DROP FUNCTION synthetic_carry_failure()');}
+ });
+ test('pending leave cannot use approved carryover or silently receive an approval',async()=>{
+  const {data,legacy}=await approvedLegacyFixture();
+  await pool.query("UPDATE hr_leave_applications SET status='pending' WHERE id=$1",[legacy.id]);
+  const preview=await commission.previewCommissioning(pool,{user:user(hr),data});
+  assert.equal(preview.ready,0);assert.match(preview.employees[0].issues.join(' '),/pending/);assert.deepEqual(preview.employees[0].approved_leave,[]);
+ });
  test('initial admin migrates existing credits without Payroll IDs and can review later routine schedules',async()=>{
   const data={...await commissioningFixture(),initial_admin_setup:true};
   await assert.rejects(commission.previewCommissioning(pool,{user:user(hr),data}),e=>e.status===403);

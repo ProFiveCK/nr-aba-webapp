@@ -12,3 +12,8 @@ it('also renders the route array returned by a fresh preview',()=>{
  const html=renderToStaticMarkup(<MemoryRouter><RosterReview people={[{...person,route:[{level:'division',label:'Division'},{level:'parent_division',label:'Treasury'}]}]}/></MemoryRouter>);
  expect(html).toContain('Division → Treasury');
 });
+
+it('explains that approved future leave keeps its approval and has already reduced the shown balance',()=>{
+ const html=renderToStaticMarkup(<MemoryRouter><RosterReview people={[{...person,route:[],approved_leave:[{legacy_request_id:'approved-source',code:'recreation',start_date:'2026-10-19',end_date:'2026-10-30',days:'10',approved_by_name:'Original approver'}]}]}/></MemoryRouter>);
+ expect(html).toContain('Existing approval retained');expect(html).toContain('Original approver');expect(html).toContain('already deducted from the shown balance');
+});

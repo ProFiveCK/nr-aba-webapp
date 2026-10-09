@@ -36,6 +36,7 @@ export async function initGovernmentLeavePayrollSchema(client) {
       employee_id UUID NOT NULL REFERENCES hr_employees(id),code TEXT NOT NULL,review_id UUID NOT NULL REFERENCES hr_gov_migration_reviews(id),
       legacy_hash TEXT NOT NULL,source_reference TEXT NOT NULL,recorded_by UUID NOT NULL REFERENCES reviewers(id),recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE hr_gov_legacy_transfers ADD COLUMN IF NOT EXISTS approval_preserved BOOLEAN NOT NULL DEFAULT FALSE;
     CREATE TABLE IF NOT EXISTS hr_gov_handovers (
       id UUID PRIMARY KEY,prepared_by UUID NOT NULL REFERENCES reviewers(id),source_reference TEXT NOT NULL,reason TEXT NOT NULL,
       payload_hash TEXT NOT NULL,snapshot_hash TEXT NOT NULL,snapshot JSONB NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

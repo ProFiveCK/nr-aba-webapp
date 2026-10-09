@@ -103,7 +103,7 @@ export async function migrationState(client,employeeId,cutover) {
   const state={context,identity:people[employeeId],historical_balances:balances,retained_legacy_leave:retained,government_requests:requests,benefit_bases:benefits,benefit_commitments:commitments,effects,movements,configs,initial_setup:initialSetup,credit_transfers:creditTransfers};
   return {state,hash:fingerprint(state)};
 }
-export function migrationPlan(state,data,{allowMissingPayroll=false}={}) {
+export function migrationPlan(state,data,{allowMissingPayroll=false,allowApprovedCarryover=false}={}) {
   const targets=data.targets,dispositions=data.dispositions||[];
   const appointment=state.context.periods.find(p=>p.start_date<=data.cutover_date&&(!p.end_date||p.end_date>=data.cutover_date));
   const temporaryPair=appointment?.employment_category==='temporary'&&Array.isArray(targets)&&targets.length===2&&targets.every(t=>['medical','special'].includes(t?.code))&&new Set(targets.map(t=>t.code)).size===2;
@@ -111,7 +111,10 @@ export function migrationPlan(state,data,{allowMissingPayroll=false}={}) {
   if(!Array.isArray(dispositions)||dispositions.length!==state.retained_legacy_leave.length||new Set(dispositions.map(d=>d.legacy_request_id)).size!==dispositions.length)fail('Review every pending and future legacy application exactly once.',400);
   for(const d of dispositions) {
     const legacy=state.retained_legacy_leave.find(r=>r.id===d.legacy_request_id);if(!legacy)fail('A retained legacy application changed.');text(d.reference,'retained leave reconciliation');
-    if(d.action==='portal_link') {
+    if(d.action==='carry_approved') {
+      const code=state.initial_setup?.mappings.find(m=>m.leave_type_id===legacy.leave_type_id)?.code;
+      if(!allowApprovedCarryover||legacy.status!=='approved'||d.code!==code||!targets.some(t=>t.code===code)||d.portal_request_id!==legacy.id||d.legacy_hash!==fingerprint(legacy))fail('Only the reviewed initial admin migration may carry an unchanged approved application.');
+    }else if(d.action==='portal_link') {
       const r=state.government_requests.find(r=>r.id===d.portal_request_id);
       if(!r||r.start_date!==legacy.start_date||r.end_date!==legacy.end_date||r.status!==legacy.status)fail('Link the same employee, dates and pending/approved state; fresh government approvals remain mandatory.');
       if(dispositions.filter(x=>x.portal_request_id===d.portal_request_id).length>1)fail('A government request cannot represent multiple legacy applications.');
@@ -157,7 +160,7 @@ export async function prepareMigration(pool,{user,actor,employeeId,data,client:e
     await assertCentral(client,user);await ledger.lockEmployee(client,employeeId);
     const old=(await client.query('SELECT * FROM hr_gov_migration_reviews WHERE id=$1',[data.review_id])).rows[0];
     if(old){if(old.employee_id!==employeeId||old.prepared_by!==actor.id||old.payload_hash!==fingerprint(normalized))fail('Review key was already used for a different migration.');return old;}
-    const {state,hash}=await migrationState(client,employeeId,data.cutover_date),plan=migrationPlan(state,normalized,{allowMissingPayroll:!!initialAdminReview(client,actor.id,employeeId)});
+    const {state,hash}=await migrationState(client,employeeId,data.cutover_date),plan=migrationPlan(state,normalized,{allowMissingPayroll:!!initialAdminReview(client,actor.id,employeeId),allowApprovedCarryover:!!initialAdminReview(client,actor.id,employeeId)});
     const row=(await client.query('INSERT INTO hr_gov_migration_reviews(id,employee_id,cutover_date,prepared_by,source_reference,payroll_reference,transition_reference,history_reference,reason,payload_hash,context_hash,plan,snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *',[data.review_id,employeeId,data.cutover_date,actor.id,normalized.source_reference,normalized.payroll_reference,normalized.transition_reference,normalized.history_reference,normalized.reason,fingerprint(normalized),hash,plan,state])).rows[0];
     await audit(client,actor,'hr.gov.migration.prepared',row.id,{employee_id:employeeId,context_hash:hash,targets:plan.targets});return row;
   };return existingClient?work(existingClient):withTransaction(pool,work);
@@ -172,7 +175,7 @@ export async function certifyMigration(pool,{user,actor,id,data,client:existingC
     if(review.prepared_by===actor.id&&!initialAdminReview(client,actor.id,review.employee_id))fail('A different central HR officer must certify the migration.',403);
     if(data.context_hash!==review.context_hash)fail('Confirm the exact reviewed migration checksum.');
     const current=await migrationState(client,review.employee_id,review.cutover_date);if(current.hash!==review.context_hash)fail('Identity, service, balances or retained leave changed. Prepare a fresh dry run.');
-    migrationPlan(current.state,{cutover_date:review.cutover_date,targets:review.plan.targets.map(t=>({code:t.code,amount:t.target,retained_balance_ids:t.retained_transfer?.source_balance_ids||[]})),dispositions:review.plan.dispositions},{allowMissingPayroll:!!initialAdminReview(client,actor.id,review.employee_id)});
+    migrationPlan(current.state,{cutover_date:review.cutover_date,targets:review.plan.targets.map(t=>({code:t.code,amount:t.target,retained_balance_ids:t.retained_transfer?.source_balance_ids||[]})),dispositions:review.plan.dispositions},{allowMissingPayroll:!!initialAdminReview(client,actor.id,review.employee_id),allowApprovedCarryover:!!initialAdminReview(client,actor.id,review.employee_id)});
     const postings=[];
     for(const target of review.plan.targets) {
       let entitlementId=target.entitlement_id;
@@ -190,11 +193,11 @@ export async function certifyMigration(pool,{user,actor,id,data,client:existingC
         postings.push({code:target.code,entitlement_id:entitlementId,retained_transfer:target.retained_transfer});
       }
     }
-    for(const d of review.plan.dispositions.filter(d=>d.action==='transfer_with_fresh_approval')) {
+    for(const d of review.plan.dispositions.filter(d=>['transfer_with_fresh_approval','carry_approved'].includes(d.action))) {
       const legacy=current.state.retained_legacy_leave.find(r=>r.id===d.legacy_request_id);
       const prior=(await client.query('SELECT * FROM hr_gov_legacy_transfers WHERE legacy_request_id=$1',[legacy.id])).rows[0];
       if(prior)fail('This legacy application already has a certified transfer. Reconcile its existing application.');
-      await client.query('INSERT INTO hr_gov_legacy_transfers(legacy_request_id,request_id,employee_id,code,review_id,legacy_hash,source_reference,recorded_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[legacy.id,d.portal_request_id,review.employee_id,d.code,id,fingerprint(legacy),d.reference,actor.id]);
+      await client.query('INSERT INTO hr_gov_legacy_transfers(legacy_request_id,request_id,employee_id,code,review_id,legacy_hash,source_reference,recorded_by,approval_preserved) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[legacy.id,d.portal_request_id,review.employee_id,d.code,id,fingerprint(legacy),d.reference,actor.id,d.action==='carry_approved']);
     }
     const row=(await client.query('INSERT INTO hr_gov_migration_certifications(review_id,actor_id,reason,postings) VALUES($1,$2,$3,$4) RETURNING *',[id,actor.id,why,JSON.stringify(postings)])).rows[0];
     await audit(client,actor,'hr.gov.migration.certified',id,{employee_id:review.employee_id,postings,external_pending_count:review.plan.external_pending_count});return row;
@@ -270,6 +273,7 @@ export async function submitLegacyTransfer(pool,{user,actor,id,data,documents=[]
  return withTransaction(pool,async client=>{
   await assertCentral(client,user);
   const t=(await client.query('SELECT * FROM hr_gov_legacy_transfers WHERE legacy_request_id=$1',[id])).rows[0];if(!t)fail('Certified transfer not found.',404);
+  if(t.approval_preserved)fail('This application was carried with its existing approval and does not need resubmission.');
   await ledger.lockEmployee(client,t.employee_id);
   const legacy=(await client.query("SELECT to_char(start_date,'YYYY-MM-DD') AS start_date,to_char(end_date,'YYYY-MM-DD') AS end_date FROM hr_leave_applications WHERE id=$1",[id])).rows[0];
   const input={request_id:t.request_id,code:t.code,...legacy,reason:reason(data.reason),medical_mode:t.code==='medical'?data.medical_mode:'not_applicable',related_request_id:data.related_request_id||null,event_reference:`legacy-transfer:${id}`,assisted_reference:t.source_reference};

@@ -16,6 +16,7 @@ import {approvalRouteSettings,publishApprovalRoute,APPROVAL_OFFICES} from '../se
 import {previewCommissioning,prepareCommissioning,applyCommissioning} from '../services/governmentLeaveCommissioning.js';
 import {previewInitialFoundations,applyInitialFoundations,recordInitialCredit} from '../services/governmentLeaveInitialFoundations.js';
 import * as jobs from '../services/governmentLeaveJobs.js';
+import { previewBalanceSetup, applyBalanceSetup } from '../services/governmentLeaveBalanceSetup.js';
 import {governmentEvidenceUpload} from '../services/governmentLeaveUpload.js';
 const router=express.Router();
 const access=requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_LEAVE_APPROVE,PERMISSIONS.HR_REPORT_READ);
@@ -32,13 +33,16 @@ const input=req=>({code:req.body.code,start_date:req.body.start_date,end_date:re
 const applicationFields=[body('code').isIn(COMMON_CODES),date('start_date'),date('end_date'),body('reason').isString().trim().isLength({min:10,max:4000}),body('medical_mode').custom((value,{req})=>req.body.code==='medical'?['certificate','exemption'].includes(value):value==null||value==='not_applicable').withMessage('Choose certificate or exemption for Medical leave.')];
 router.get('/me',async(req,res)=>{
   const employee=await linkedEmployee(pool,req.user.id),config=await workflow.configurationFor(pool,employee.id);
-  res.json({employee_id:employee.id,enabled_codes:config?.enabled_codes||[],medical_rule:config?.medical_rule||null,regime:employee.leave_policy_regime});
+  const policy=(await pool.query(`SELECT p.id,p.label,p.rules FROM hr_gov_policy_versions p LEFT JOIN hr_gov_policy_transitions t ON t.predecessor_id=p.id WHERE p.status='published' AND p.effective_from<=$1 AND LEAST(p.effective_to,COALESCE(t.effective_from-1,p.effective_to))>=$1`,[workflow.today()])).rows[0];
+  res.json({employee_id:employee.id,enabled_codes:config?.enabled_codes||[],medical_rule:config?.medical_rule||null,regime:employee.leave_policy_regime,policy:policy?{id:policy.id,label:policy.label,recreation_notice_days:policy.rules.recreation_notice_days}:null});
 });
 const commissioningFields=[reason,reference,date('cutover_date'),body('initial_admin_setup').optional().isBoolean({strict:true}),body('employees').isArray({min:1,max:50}),body('employees.*.employee_id').isUUID(),body('employees.*.medical_history').isArray({max:50}),body('employees.*.medical_history.*.start_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.end_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.uncertified').isBoolean(),body('history_confirmed').equals('true'),...['payroll_reference','transition_reference','history_reference'].map(name=>body(name).isString().trim().isLength({min:5,max:500}))];
 router.get('/commissioning',central,async(req,res)=>{
  const {rows}=await pool.query('SELECT r.*,c.recorded_at AS applied_at FROM hr_gov_commissioning_reviews r LEFT JOIN hr_gov_commissioning_receipts c ON c.review_id=r.id ORDER BY r.recorded_at DESC,r.id DESC LIMIT 20');res.json({reviews:rows});
 });
 router.post('/commissioning/initial-credit',central,[body('employee_id').isUUID(),body('leave_type_id').isUUID()],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await recordInitialCredit(pool,args(req)));});
+router.post('/balance-setup/preview',central,async(req,res)=>{res.json(await previewBalanceSetup(pool,args(req)));});
+router.post('/balance-setup/apply',central,async(req,res)=>{res.json(await applyBalanceSetup(pool,args(req)));});
 router.post('/commissioning/foundations/preview',central,async(req,res)=>{res.json(await previewInitialFoundations(pool,args(req)));});
 router.post('/commissioning/foundations/apply',central,async(req,res)=>{res.json(await applyInitialFoundations(pool,args(req)));});
 router.post('/commissioning/preview',central,commissioningFields,async(req,res)=>{if(!handleValidation(req,res))return;res.json(await previewCommissioning(pool,args(req)));});

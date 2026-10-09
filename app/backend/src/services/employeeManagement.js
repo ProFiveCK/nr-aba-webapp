@@ -1,6 +1,7 @@
 import { withTransaction } from '../lib/transaction.js';
 import { badRequest, notFound, ServiceError } from '../lib/serviceError.js';
 import { recordAudit } from './auditService.js';
+import { newEmployeeLeaveRegime } from './governmentLeaveDefaults.js';
 
 export function managementReason(value) {
   if (typeof value !== 'string' || value.trim().length < 10 || value.length > 1000) throw badRequest('Record a verification reason of 10–1,000 characters.');
@@ -18,6 +19,7 @@ export async function listLinkableAccounts(pool, { search = '', page = 1 } = {})
 export async function createManagedEmployee(pool, { data, actor, reason }) {
   const verifiedReason = managementReason(reason);
   return withTransaction(pool, async (client) => {
+    const regime = await newEmployeeLeaveRegime(client);
     const { rows: [department] } = await client.query('SELECT id,name FROM hr_departments WHERE id=$1 FOR SHARE',[data.department_id]);
     if (!department) throw badRequest('Choose a managed department.');
     let division = null;
@@ -25,8 +27,8 @@ export async function createManagedEmployee(pool, { data, actor, reason }) {
       ({ rows: [division] } = await client.query('SELECT id,name FROM hr_divisions WHERE id=$1 AND department_id=$2 FOR SHARE',[data.division_id,department.id]));
       if (!division) throw badRequest('Choose a division in this department.');
     }
-    const { rows: [employee] } = await client.query(`INSERT INTO hr_employees(display_name,department_id,division_id,department_code,division_code)
-      VALUES ($1,$2,$3,$4,$5) RETURNING id,display_name`, [data.display_name.trim(),department.id,division?.id || null,department.name,division?.name || null]);
+    const { rows: [employee] } = await client.query(`INSERT INTO hr_employees(display_name,department_id,division_id,department_code,division_code,leave_policy_regime)
+      VALUES ($1,$2,$3,$4,$5,$6) RETURNING id,display_name,leave_policy_regime`, [data.display_name.trim(),department.id,division?.id || null,department.name,division?.name || null,regime]);
     const { rows: [identifier] } = await client.query(`INSERT INTO hr_employee_external_ids(employee_id,source,external_id,verified_by,reason)
       VALUES ($1,'techone_payroll',$2,$3,$4) ON CONFLICT(source,external_id) DO NOTHING RETURNING id`,[employee.id,data.external_id.trim(),actor.id,verifiedReason]);
     if (!identifier) throw new ServiceError(409,'This Payroll ID already belongs to an employee. Find that record or use import reconciliation.');

@@ -68,6 +68,27 @@ describe('first-time Government leave configuration adoption', { skip: skipWitho
   const adopt = draft => setup.adoptInitialSetup(pool, { user: actor, actor, id: draft.id, data: { expected_revision: draft.revision, source_hash: draft.source_hash, reason } });
   const snapshot = async tables => Promise.all(tables.map(async table => (await pool.query(`SELECT to_jsonb(t) AS row FROM ${table} t ORDER BY to_jsonb(t)::text`)).rows));
 
+  test('adopted setup directs new managed and Payroll-imported staff to Government leave without switching existing records or granting credit', async () => {
+    const management = await import('./employeeManagement.js'), imports = await import('./payrollEmployeeImport.js');
+    const details = { display_name: 'Synthetic new staff', external_id: 'SETUP-NEW-1', department_id: department.id, division_id: division.id };
+    const before = await management.createManagedEmployee(pool, { data: { ...details, display_name: 'Synthetic pre-adoption staff', external_id: 'SETUP-BEFORE' }, actor, reason });
+    assert.equal(before.leave_policy_regime, 'legacy');
+    await adopt(await save());
+    const created = await management.createManagedEmployee(pool, { data: details, actor, reason });
+    assert.equal(created.leave_policy_regime, 'government');
+    await pool.query("INSERT INTO hr_employee_external_ids(employee_id,source,external_id,verified_by,reason) VALUES($1,'techone_payroll','SETUP-OLD',$2,$3)", [employee.id, actor.id, reason]);
+    const view = await imports.previewPayrollImport(pool, { actor, fileName: 'synthetic-new-staff.csv', exportDate: '2026-10-09', csv: 'payroll_employee_id,display_name,status,department_name\nSETUP-NEW-2,Synthetic imported new staff,active,Setup Finance\nSETUP-OLD,Existing retained employee,active,Setup Finance' });
+    await imports.applyPayrollImport(pool, { batchId: view.batch.id, revision: view.batch.revision, reviewNote: reason, actor });
+    const imported = (await pool.query("SELECT e.* FROM hr_employees e JOIN hr_employee_external_ids x ON x.employee_id=e.id WHERE x.external_id='SETUP-NEW-2'")).rows[0];
+    assert.equal(imported.leave_policy_regime, 'government');
+    assert.equal((await pool.query('SELECT leave_policy_regime FROM hr_employees WHERE id=$1', [employee.id])).rows[0].leave_policy_regime, 'legacy');
+    assert.equal((await pool.query('SELECT leave_policy_regime FROM hr_employees WHERE id=$1', [before.id])).rows[0].leave_policy_regime, 'legacy');
+    assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_entitlements WHERE employee_id=ANY($1::uuid[])', [[created.id, imported.id]])).rows[0].n, 0);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_workflow_configs WHERE employee_id=ANY($1::uuid[])', [[created.id, imported.id]])).rows[0].n, 0);
+    const audit = (await pool.query("SELECT after FROM audit_log WHERE action='hr.employee.import.applied' AND entity_id=$1", [imported.id])).rows[0];
+    assert.equal(audit.after.leave_policy_regime, 'government');
+  });
+
   test('state and paged records are read-only, preserve each year and medical pool, and never expose salary or clinical notes', async () => {
     const annual = await type({ name: 'Annual', accruable: true, perFortnight: 0.77, defaultDays: 20, maxBalance: 60 });
     const oldSick = await type({ name: 'Sick', defaultDays: 10, active: false });

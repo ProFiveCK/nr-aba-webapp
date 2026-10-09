@@ -518,7 +518,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
     ];
 
     return (
-        <div className="space-y-4"><GovernmentActivity from={activeRange.from} to={activeRange.to}/><p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">The measures below cover historical local leave. Review Government applications under Employees → Government applications & jobs, and certified balances under Employees → Government balances & service.</p>
+        <div className="space-y-4"><div className="app-panel space-y-3 p-4"><h2 className="text-xl font-semibold text-gray-950">Leave overview</h2><p className="text-sm text-gray-600">Current Government leave activity, balances and requests awaiting a decision.</p><div className="flex flex-wrap gap-3"><label className="text-sm font-medium">From<AustralianDateInput className="ml-2 rounded-lg border border-gray-300 px-3 py-2" value={activeRange.from} onChange={e=>{setCustomFrom(e.target.value);setCustomTo(activeRange.to);setPreset('custom');}}/></label><label className="text-sm font-medium">To<AustralianDateInput className="ml-2 rounded-lg border border-gray-300 px-3 py-2" min={activeRange.from} value={activeRange.to} onChange={e=>{setCustomTo(e.target.value);setCustomFrom(activeRange.from);setPreset('custom');}}/></label></div></div><GovernmentActivity from={activeRange.from} to={activeRange.to}/><details className="app-panel p-4"><summary className="cursor-pointer text-sm font-semibold text-gray-600">Earlier leave activity & planning</summary><div className="mt-4 space-y-4"><p className="text-sm text-gray-600">Retained records from before staff transfer. Current requests are under Approvals; each employee’s current balances are under Employees.</p>
             {loading && !data ? (
                 <LoadingState label="Loading overview…" />
             ) : !data ? (
@@ -856,6 +856,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                     </section>
                 </>
             )}
+        </div></details>
         </div>
     );
 }

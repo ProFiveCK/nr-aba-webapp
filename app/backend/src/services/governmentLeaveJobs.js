@@ -1,6 +1,7 @@
 import {serviceCorrectionIssue} from './employeeServiceCorrections.js';
 import {assertDraftUsable} from './governmentLeaveDrafts.js';
 import {firstAdminJobReview} from './governmentLeaveInitialAdmin.js';
+import {configurationReviewMode} from './governmentLeaveAdministration.js';
 import {transitionFortnightAmount} from '../lib/governmentLeaveAccrual.js';
 import {assertCutoverResolved} from './governmentLeaveCutover.js';
 import {LOCK_KEYS,withAdvisoryLock} from '../lib/advisoryLock.js';
@@ -12,9 +13,9 @@ import {assertCentral,configurationFor,today} from './governmentLeaveWorkflow.js
 import {fingerprint,dayNumber,isoDay,serviceFacts,units,decimal,ENGINE_VERSION} from '../lib/governmentLeaveRules.js';
 const fail=message=>{throw new ServiceError(409,message);};
 const audit=(client,actor,id,after)=>recordAudit({client,actor,action:'hr.gov.jobs.posted',entityType:'hr_gov_job_plan',entityId:id,after});
-export async function prepareJobPlan(pool,{user,actor,employeeId,data}) {
+export async function prepareJobPlan(pool,{user,actor,employeeId,data,client:existingClient}) {
   ledger.central(user);
-  return withTransaction(pool,async client=>{
+  const work=async client=>{
     await assertCentral(client,user);await ledger.lockEmployee(client,employeeId);
     const context=await ledger.loadContext(client,employeeId),facts=serviceFacts(context,today());
     if(facts.issues.length)fail(facts.issues.join(' '));
@@ -30,19 +31,21 @@ export async function prepareJobPlan(pool,{user,actor,employeeId,data}) {
     const {rows:[plan]}=await client.query(`INSERT INTO hr_gov_job_plans(employee_id,code,service_basis_id,first_post_end,payroll_anchor,temporary_start,method,source_reference,prepared_by,reason,snapshot_hash,initial_setup_review_id)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[employeeId,data.code,facts.basis.id,data.code==='recreation'?data.first_post_end:null,data.code==='recreation'?data.payroll_anchor:null,data.code==='recreation'?data.temporary_start:null,method,data.source_reference,actor.id,data.reason,fingerprint(context),initialReview]);
     await recordAudit({client,actor,action:'hr.gov.jobs.prepared',entityType:'hr_gov_job_plan',entityId:plan.id,after:plan});return plan;
-  });
+  };
+  return existingClient?work(existingClient):withTransaction(pool,work);
 }
-export async function approveJobPlan(pool,{user,actor,id,reason}) {
+export async function approveJobPlan(pool,{user,actor,id,reason,client:existingClient}) {
   ledger.central(user);
-  return withTransaction(pool,async client=>{
+  const work=async client=>{
     await assertCentral(client,user);const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_job_plans WHERE id=$1',[id]);if(!ref)fail('Job plan not found.');
     await ledger.lockEmployee(client,ref.employee_id);const {rows:[plan]}=await client.query('SELECT * FROM hr_gov_job_plans WHERE id=$1 FOR UPDATE',[id]);
     if(plan.status==='published')return plan;await assertDraftUsable(client,'job',plan.id);
-    if(plan.prepared_by===actor.id&&(!plan.initial_setup_review_id||await firstAdminJobReview(client,actor.id,plan.employee_id,plan.code)!==plan.initial_setup_review_id))fail('A different central HR officer must approve the job plan.');
+    const reviewMode=await configurationReviewMode(client,{user,actor,preparedBy:plan.prepared_by,initialReview:!!plan.initial_setup_review_id&&await firstAdminJobReview(client,actor.id,plan.employee_id,plan.code)===plan.initial_setup_review_id});
     if(fingerprint(await ledger.loadContext(client,plan.employee_id))!==plan.snapshot_hash)fail('Foundations changed after preparation. Prepare a fresh job plan.');
     const {rows:[after]}=await client.query("UPDATE hr_gov_job_plans SET status='published',approved_by=$2,approved_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id]);
-    await recordAudit({client,actor,action:'hr.gov.jobs.approved',entityType:'hr_gov_job_plan',entityId:id,after:{...after,approval_reason:reason}});return after;
-  });
+    await recordAudit({client,actor,action:'hr.gov.jobs.approved',entityType:'hr_gov_job_plan',entityId:id,after:{...after,approval_reason:reason,review_mode:reviewMode}});return after;
+  };
+  return existingClient?work(existingClient):withTransaction(pool,work);
 }
 function governingPolicy(context,date) {
   const policy=context.policies.find(p=>p.effective_from<=date&&p.effective_to>=date);

@@ -30,6 +30,16 @@ export async function initGovernmentLeaveSchema(client) {
       CHECK(predecessor_id<>successor_id), CHECK(prepared_by<>approved_by)
     );
     CREATE INDEX IF NOT EXISTS idx_hr_gov_policy_dates ON hr_gov_policy_versions(effective_from,effective_to) WHERE status='published';
+    ALTER TABLE hr_gov_policy_transitions ADD COLUMN IF NOT EXISTS review_mode TEXT NOT NULL DEFAULT 'independent_hr';
+    DO $$ DECLARE legacy_check RECORD; BEGIN
+      FOR legacy_check IN SELECT conname FROM pg_constraint WHERE conrelid='hr_gov_policy_transitions'::regclass
+        AND pg_get_constraintdef(oid)='CHECK ((prepared_by <> approved_by))'
+      LOOP EXECUTE format('ALTER TABLE hr_gov_policy_transitions DROP CONSTRAINT %I',legacy_check.conname); END LOOP;
+      IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='hr_gov_policy_transitions'::regclass AND conname='hr_gov_policy_transition_review_mode') THEN
+        ALTER TABLE hr_gov_policy_transitions ADD CONSTRAINT hr_gov_policy_transition_review_mode
+          CHECK(review_mode IN ('independent_hr','administrator') AND (prepared_by<>approved_by OR review_mode='administrator'));
+      END IF;
+    END $$;
     CREATE TABLE IF NOT EXISTS hr_gov_calendars (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), label TEXT NOT NULL, effective_from DATE NOT NULL,
       effective_to DATE NOT NULL CHECK(effective_to>=effective_from), holidays JSONB NOT NULL,

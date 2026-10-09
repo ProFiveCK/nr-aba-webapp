@@ -64,8 +64,8 @@ export function Report() {
     const totalDays = rows?.reduce((sum, row) => sum + Number(row.total_days), 0) ?? 0;
 
     return (
-        <div className="space-y-4"><p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">The historical report retains Finance leave records. The Government report below covers independently activated Government Leave. Review Government applications under Employees → Government applications & jobs. Government Payroll registers and exports are under Employees → Payroll & handover.</p>
-            <form className="flex flex-wrap items-end gap-3 app-panel p-4" onSubmit={e => { e.preventDefault(); void run(); }}>
+        <div className="space-y-4"><div><h2 className="text-xl font-semibold">Leave report</h2><p className="mt-1 text-sm text-gray-600">Choose the dates to view approved leave and download the report.</p></div>
+            <form className="flex flex-wrap items-end gap-3 app-panel p-4" onSubmit={e => e.preventDefault()}>
                 <label className="text-sm">
                     <span className="mb-1 block font-medium text-gray-700">Period from</span>
                     <AustralianDateInput aria-label="Period from" required value={from} onChange={(e) => setFrom(e.target.value)}
@@ -76,19 +76,10 @@ export function Report() {
                     <AustralianDateInput aria-label="Period through" required value={to} min={from} onChange={(e) => setTo(e.target.value)}
                         className="rounded-md border border-gray-300 px-3 py-2 text-sm" />
                 </label>
-                <button type="submit" disabled={loading}
-                    className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50">
-                    {loading ? 'Building…' : 'Run historical report'}
-                </button>
-                {rows !== null && rows.length > 0 && (
-                    <button type="button" onClick={downloadCsv}
-                        className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
-                        Download historical CSV
-                    </button>
-                )}
             </form>
 
             <GovernmentActivity from={from} to={to} details/>
+            <details className="app-panel p-4"><summary className="cursor-pointer text-sm font-semibold text-gray-600">Earlier records from before staff transfer</summary><div className="mt-4 space-y-4"><div className="flex flex-wrap gap-2"><button type="button" disabled={loading} onClick={()=>void run()} className="toolbar-button">{loading?'Building…':'Load earlier records'}</button>{rows&&rows.length>0&&<button type="button" className="toolbar-button" onClick={downloadCsv}>Download earlier CSV</button>}</div>
             {rows === null ? (
                 <div className="app-panel p-4">
                     <EmptyState title="Choose a period" detail="Approved leave in the period is totalled per person and leave type." />
@@ -130,6 +121,7 @@ export function Report() {
                     </table>
                 </div>
             )}
+            </div></details>
         </div>
     );
 }

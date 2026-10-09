@@ -210,10 +210,10 @@ describe('read-only employee leave arrangements', { skip: skipWithoutDatabase },
     const login = await account({}, 'employee');
     await pool.query('UPDATE hr_employees SET reviewer_id=$2 WHERE id=$1', [blocked.id, login.id]);
     await createEmployee(pool, { name: 'PRIVATE inactive employee', status: 'inactive' });
-    await createEmployee(pool, { name: 'PRIVATE ineligible employee', entitled: false });
+    const restricted = await createEmployee(pool, { name: 'PRIVATE ineligible employee', entitled: false });
     const readOnly = { query(sql, values) { assert.match(sql.trim(), /^SELECT\b/i); return pool.query(sql, values); } };
     const usage = await service.employeeLeavePolicyUsage(readOnly, { user: actor });
-    assert.deepEqual(usage.counts, { active_employees: 6, inactive_employees: 1, legacy_operational: 1, legacy_employee_account_blocked: 1,
+    assert.deepEqual(usage.counts, { active_employees: 6, inactive_employees: 1, legacy_awaiting_migration: 3, legacy_excluded_contracts: 0, government_missing_job_plans: 1, legacy_operational: 1, legacy_employee_account_blocked: 1,
       legacy_not_entitled: 1, government_awaiting_activation: 1, government_active: 1, government_paused: 1 });
     assert.equal(usage.current_policy.label, 'Published Government policy');
     assert.equal(usage.latest_published_policy.label, 'Future published policy'); assert.equal(usage.latest_published_policy.timing, 'future');
@@ -227,6 +227,14 @@ describe('read-only employee leave arrangements', { skip: skipWithoutDatabase },
     }
     const response = await usageHttp(actor); assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal((await usageHttp(await account({ hr_staff_manage: true }))).status, 403);
+    await pool.query("INSERT INTO hr_employee_service_periods(employee_id,start_date,employment_category,counts_for_service,reason) VALUES($1,'2020-01-01','contract',TRUE,$2)", [restricted.id, reason]);
+    const contracts = await service.employeeLeavePolicyUsage(readOnly, { user: actor });
+    assert.equal(contracts.counts.legacy_awaiting_migration, 2);
+    assert.equal(contracts.counts.legacy_excluded_contracts, 1);
+    await pool.query("UPDATE hr_employee_service_periods SET employment_category='temporary' WHERE employee_id=$1", [restricted.id]);
+    const temporary = await service.employeeLeavePolicyUsage(readOnly, { user: actor });
+    assert.equal(temporary.counts.legacy_awaiting_migration, 3);
+    assert.equal(temporary.counts.legacy_excluded_contracts, 0);
   });
 
   test('central department filtering finds unplaced retained names without converting placement or expanding scoped HR', async () => {

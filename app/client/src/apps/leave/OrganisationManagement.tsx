@@ -24,7 +24,7 @@ const sections: { id: Section; label: string }[] = [
 export function OrganisationManagement({ departments, onChanged }: { departments: OrgDepartment[]; patterns?: WorkPattern[]; onChanged: () => Promise<void> }) {
     const [section, setSection] = useState<Section>('departments'), [department, setDepartment] = useState(''), [error, setError] = useState('');
     return <div className="space-y-4">
-        <p className="text-sm text-gray-600">Current staff and their nominated managers are retained. Dated office appointments route new Government applications after independent activation.</p>
+        <p className="text-sm text-gray-600">Manage departments and divisions, nominate approvers, and set the approval steps for leave applications.</p>
         <nav aria-label="Organisation sections" className="flex flex-wrap gap-2">{sections.map((item) => <button key={item.id} type="button" aria-current={section === item.id ? 'page' : undefined} onClick={() => setSection(item.id)} className={`rounded-lg px-3 py-2 text-sm font-medium ${section === item.id ? 'bg-brand text-white' : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}>{item.label}</button>)}</nav>
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         {section === 'departments' && <OrgUnits onChanged={() => { void onChanged().catch((err: Error) => setError(err.message)); }} onManageOffices={(id) => { setDepartment(id); setSection('approvers'); }} />}

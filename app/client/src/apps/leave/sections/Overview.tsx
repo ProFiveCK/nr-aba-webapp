@@ -1,7 +1,8 @@
 import { AustralianDateInput } from '../../../components/AustralianDateInput';
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import { ArrowUpRight, Download, TriangleAlert } from 'lucide-react';
+import { ArrowUpRight, CalendarDays, ClipboardCheck, Download, TriangleAlert, Users } from 'lucide-react';
 import { apiClient } from '../../../lib/api';
 import { useToast } from '../../../contexts/useToast';
 import { EmptyState, LoadingState } from '../../../components/Ui';
@@ -86,12 +87,12 @@ function StatCell({ label, value, detail, attention = false }: {
     attention?: boolean;
 }) {
     return (
-        <div className="min-w-0 p-3.5 sm:p-4">
-            <p className="text-xs font-medium text-gray-600 sm:text-sm">{label}</p>
-            <p className={`mt-2 text-2xl font-semibold leading-none tabular-nums tracking-tight ${
+        <div className="min-w-0 p-4 sm:p-6">
+            <p className="min-h-8 text-xs font-medium text-gray-600 sm:min-h-0 sm:text-sm">{label}</p>
+            <p className={`mt-3 text-3xl font-semibold leading-none tabular-nums tracking-tight ${
                 attention ? 'text-amber-800' : 'text-brand'
             }`}>{value}</p>
-            <p className="mt-2 text-xs leading-4 text-gray-500">{detail}</p>
+            <p className="mt-2 hidden text-xs leading-5 text-gray-500 sm:block">{detail}</p>
         </div>
     );
 }
@@ -99,9 +100,9 @@ function StatCell({ label, value, detail, attention = false }: {
 function PlanningMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
     return (
         <div className="min-w-0 p-3.5 sm:p-4">
-            <dt className="text-xs font-medium text-gray-600">{label}</dt>
+            <dt className="min-h-12 text-xs font-medium text-gray-600 sm:min-h-0">{label}</dt>
             <dd className="mt-2 text-xl font-semibold leading-none tabular-nums text-brand">{value}</dd>
-            <p className="mt-2 text-xs leading-4 text-gray-500">{detail}</p>
+            <p className="mt-2 hidden text-xs leading-5 text-gray-500 sm:block">{detail}</p>
         </div>
     );
 }
@@ -127,7 +128,7 @@ function IssueRow({
                 <TriangleAlert size={16} className="shrink-0" aria-hidden="true" />
                 <span>
                     <span className="font-semibold">{label}</span>
-                    <span className="ml-2 text-xs opacity-75">{detail}</span>
+                    <span className="mt-1 block text-xs opacity-80 sm:ml-2 sm:mt-0 sm:inline">{detail}</span>
                 </span>
             </span>
             <span className="flex shrink-0 items-center gap-1 font-semibold tabular-nums">
@@ -210,7 +211,8 @@ function TableToggle({ showTable, onToggle }: { showTable: boolean; onToggle: ()
         <button
             type="button"
             onClick={onToggle}
-            className="shrink-0 rounded-full border border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+            aria-pressed={showTable}
+            className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
         >
             {showTable ? 'View charts' : 'View as table'}
         </button>
@@ -361,7 +363,6 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
     const [drill, setDrill] = useState<{ dimension: Dimension; value: string; rows: BreakdownRow[] } | null>(null);
     const [drilling, setDrilling] = useState(false);
     const [showTable, setShowTable] = useState(false);
-    const [showBalanceTable, setShowBalanceTable] = useState(false);
 
     const activeRange = preset === 'custom' ? { from: customFrom, to: customTo } : rangeForPreset(preset);
 
@@ -472,7 +473,18 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
     ];
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-6">
+            <header className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                    <h2 className="text-2xl font-semibold tracking-tight text-gray-950">Leave overview</h2>
+                    <p className="mt-2 text-sm text-gray-600">Today’s priorities, team availability and leave balances.</p>
+                </div>
+                <nav aria-label="Leave shortcuts" className="flex flex-wrap gap-2">
+                    <Link to="/leave/approvals" className="toolbar-button toolbar-button-primary min-h-11"><ClipboardCheck size={17} aria-hidden="true" />Review applications</Link>
+                    <Link to="/leave/employees" className="toolbar-button min-h-11"><Users size={17} aria-hidden="true" />Employees</Link>
+                    <Link to="/leave/calendar" className="toolbar-button min-h-11"><CalendarDays size={17} aria-hidden="true" />Calendar</Link>
+                </nav>
+            </header>
             {loading && !data ? (
                 <LoadingState label="Loading overview…" />
             ) : !data ? (
@@ -514,14 +526,90 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                         )}
                     </section>
 
-                    <div className="grid gap-4 lg:grid-cols-3 lg:items-start">
-                        <section className="app-panel p-5 lg:col-span-2">
+                    <section aria-labelledby="leave-planning-title" className="app-panel overflow-hidden">
+                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-200 px-4 py-4">
+                            <div>
+                                <h3 id="leave-planning-title" className="text-base font-semibold text-gray-950">Leave planning</h3>
+                                <p className="mt-1 text-sm text-gray-600">Available leave across departments and staff</p>
+                            </div>
+                            <button type="button" onClick={exportPlanningRows} disabled={!planningRows.length}
+                                className="inline-flex min-h-9 items-center justify-center gap-2 rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                                <Download size={15} aria-hidden="true" /> Export list
+                            </button>
+                        </div>
+                        <div className="flex flex-wrap items-end gap-3 border-b border-gray-200 px-4 py-3">
+                            <div className="inline-flex rounded-lg border border-gray-300 p-1" aria-label="Planning view">
+                                {(['departments', 'staff'] as const).map(view => <button key={view} type="button" aria-pressed={planningView === view}
+                                    onClick={() => { setPlanningView(view); setPlanningPage(1); setPlanningSearch(''); }}
+                                    className={`rounded-md px-3 py-1.5 text-sm font-medium ${planningView === view ? 'bg-brand text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
+                                    {view === 'departments' ? 'Departments' : 'Staff'}
+                                </button>)}
+                            </div>
+                            <label className="min-w-0 w-full text-sm font-medium text-gray-600 sm:w-auto sm:max-w-xs">Department
+                                <select value={planningDepartment} onChange={event => { setPlanningDepartment(event.target.value); setPlanningPage(1); }}
+                                    className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900">
+                                    <option value="all">All departments</option>
+                                    {departmentOptions.map(department => <option key={department} value={department}>{department}</option>)}
+                                </select>
+                            </label>
+                            <label className="min-w-0 flex-1 basis-48 text-sm font-medium text-gray-600">Search
+                                <input value={planningSearch} onChange={event => { setPlanningSearch(event.target.value); setPlanningPage(1); }}
+                                    placeholder={planningView === 'staff' ? 'Name, department or division' : 'Department'}
+                                    className="mt-2 block w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-900" />
+                            </label>
+                        </div>
+                        {balanceReportLoading ? (
+                            <div className="p-4"><LoadingState label="Loading leave balances…" /></div>
+                        ) : !planningSummary ? (
+                            <p className="px-4 py-4 text-sm text-amber-900">Leave balances could not be loaded. Try refreshing.</p>
+                        ) : (
+                            <>
+                                <dl className="grid grid-cols-3 divide-x divide-gray-200">
+                                    <PlanningMetric label="Recreation days available" value={`${recreationDays.toFixed(1)}d`} detail="After pending leave" />
+                                    <PlanningMetric label="Average recreation balance" value={recreationStaff.length ? `${(recreationDays / recreationStaff.length).toFixed(1)}d` : '—'} detail={`Across ${recreationStaff.length} staff with a recreation balance`} />
+                                    <PlanningMetric label="Staff with pending leave" value={String(departmentRows.filter(row => row.pending > 0).length)} detail={`Across ${departmentRows.length} leave-entitled staff`} />
+                                </dl>
+                                <div className="overflow-auto">
+                                    <table className="min-w-full border-separate border-spacing-0 text-sm">
+                                        <thead><tr>
+                                            <SortHeader label={planningView === 'staff' ? 'Staff member' : 'Department'} sortKey="name" sort={planningSort.sort} onSort={planningSort.toggle} defaultDirection="asc" className={PLANNING_TH} />
+                                            <SortHeader label={planningView === 'staff' ? 'Department / division' : 'Staff'} sortKey={planningView === 'staff' ? 'department' : 'staffCount'} sort={planningSort.sort} onSort={planningSort.toggle} className={PLANNING_TH} />
+                                            {(['recreation', 'medical', 'special', 'pending'] as const).map(key => <SortHeader key={key} label={key.charAt(0).toUpperCase() + key.slice(1)} sortKey={key} sort={planningSort.sort}
+                                                onSort={planningSort.toggle} align="right" className={PLANNING_TH_RIGHT} />)}
+                                        </tr></thead>
+                                        <tbody>
+                                            {visiblePlanningRows.map(row => <tr key={row.id} className="hover:bg-gray-50">
+                                                <td className="border-b border-gray-100 px-4 py-3 font-medium text-gray-900">
+                                                    {planningView === 'departments' ? <button type="button" className="text-brand hover:underline" onClick={() => { setPlanningDepartment(row.department_code || 'Unassigned'); setPlanningView('staff'); setPlanningSearch(''); setPlanningPage(1); }}>{row.display_name}</button> : row.display_name}
+                                                </td>
+                                                <td className="border-b border-gray-100 px-3 py-3 text-gray-600">{planningView === 'staff' ? `${row.department_code || '—'} / ${row.division_code || '—'}` : row.staffCount}</td>
+                                                {(['recreation', 'medical', 'special', 'pending'] as const).map(key => <td key={key} className={`border-b border-gray-100 px-3 py-3 text-right tabular-nums ${key === 'recreation' ? 'font-semibold text-brand' : 'text-gray-700'}`}>{planningDays(row[key])}</td>)}
+                                            </tr>)}
+                                            {!planningRows.length && <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No matching staff or departments.</td></tr>}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-xs text-gray-600">
+                                    <p>{planningRows.length ? `${(currentPage - 1) * 25 + 1}–${Math.min(currentPage * 25, planningRows.length)}` : '0'} of {planningRows.length} {planningView === 'staff' ? 'staff' : 'departments'}</p>
+                                    <div className="flex items-center gap-3">
+                                        <button type="button" disabled={currentPage === 1} onClick={() => setPlanningPage(currentPage - 1)} className="rounded border border-gray-300 px-3 py-1.5 disabled:opacity-40">Previous</button>
+                                        <span>Page {currentPage} of {pageCount}</span>
+                                        <button type="button" disabled={currentPage === pageCount} onClick={() => setPlanningPage(currentPage + 1)} className="rounded border border-gray-300 px-3 py-1.5 disabled:opacity-40">Next</button>
+                                    </div>
+                                </div>
+                                <p className="border-t border-gray-100 px-4 py-3 text-xs text-gray-500">Available days exclude pending leave. A dash means no current balance is recorded. Annual leave is shown as Recreation; sick leave is shown as Medical.</p>
+                            </>
+                        )}
+                    </section>
+
+                    <div className="grid gap-6 xl:grid-cols-3 xl:items-start">
+                        <section className="app-panel p-5 sm:p-6 xl:col-span-2">
                             <div className="flex flex-wrap items-start justify-between gap-3">
                                 <div>
                                     <h3 className="text-base font-semibold text-gray-950">Leave activity</h3>
                                     <p className="mt-0.5 text-xs text-gray-500">{formatDate(data.from)} – {formatDate(data.to)}</p>
                                 </div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
                                     <TableToggle showTable={showTable} onToggle={() => setShowTable((v) => !v)} />
                                     <select
                                         value={preset}
@@ -575,7 +663,9 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                     <TrendLine data={data.monthly_trend} />
                                 </ChartSection>
 
-                                <div className="grid gap-6 md:grid-cols-2">
+                                <details className="rounded-xl border border-gray-200 p-4">
+                                    <summary className="cursor-pointer font-medium text-gray-800">Breakdown by leave type and department</summary>
+                                <div className="mt-4 grid gap-6 md:grid-cols-2">
                                     <ChartSection
                                         title="By leave type"
                                         showTable={showTable}
@@ -601,6 +691,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                         />
                                     </ChartSection>
                                 </div>
+                                </details>
                             </div>
 
                             {(drilling || drill) && (
@@ -662,7 +753,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                             </p>
                         </section>
 
-                        <div className="space-y-4">
+                        <div className="space-y-6">
                             <section className="app-panel p-5">
                                 <h3 className="text-base font-semibold text-gray-950">Next 30 days</h3>
                                 {exceptions.coverage_risks.length > 0 && (
@@ -695,103 +786,11 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
                                 )}
                             </section>
 
-                            <section className="app-panel p-5">
-                                <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                        <h3 className="text-base font-semibold text-gray-950">Unused balance</h3>
-                                        <p className="mt-0.5 text-xs text-gray-500">Available days across active staff, {new Date().getFullYear()}</p>
-                                    </div>
-                                    <TableToggle showTable={showBalanceTable} onToggle={() => setShowBalanceTable((v) => !v)} />
-                                </div>
-                                <div className="mt-4">
-                                    {showBalanceTable ? (
-                                        <DataTable
-                                            headers={['Leave type', 'Available days']}
-                                            rows={data.balance_by_type.map((b) => [b.leave_type, b.available_days.toFixed(1)])}
-                                        />
-                                    ) : (
-                                        <HorizontalBars data={data.balance_by_type.map((b) => ({ label: b.leave_type, value: b.available_days }))} />
-                                    )}
-                                </div>
-                            </section>
+
                         </div>
                     </div>
 
-                    <section aria-labelledby="leave-planning-title" className="app-panel overflow-hidden">
-                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-200 px-4 py-4">
-                            <div>
-                                <h3 id="leave-planning-title" className="text-base font-semibold text-gray-950">Leave planning</h3>
-                                <p className="mt-1 text-sm text-gray-600">Available leave across departments and staff</p>
-                            </div>
-                            <button type="button" onClick={exportPlanningRows} disabled={!planningRows.length}
-                                className="inline-flex min-h-9 items-center justify-center gap-2 rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-                                <Download size={15} aria-hidden="true" /> Export list
-                            </button>
-                        </div>
-                        <div className="flex flex-wrap items-end gap-3 border-b border-gray-200 px-4 py-3">
-                            <div className="inline-flex rounded-lg border border-gray-300 p-1" aria-label="Planning view">
-                                {(['departments', 'staff'] as const).map(view => <button key={view} type="button" aria-pressed={planningView === view}
-                                    onClick={() => { setPlanningView(view); setPlanningPage(1); setPlanningSearch(''); }}
-                                    className={`rounded-md px-3 py-1.5 text-sm font-medium ${planningView === view ? 'bg-brand text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-                                    {view === 'departments' ? 'Departments' : 'Staff'}
-                                </button>)}
-                            </div>
-                            <label className="text-xs font-medium text-gray-600">Department
-                                <select value={planningDepartment} onChange={event => { setPlanningDepartment(event.target.value); setPlanningPage(1); }}
-                                    className="mt-1 block min-h-9 rounded border border-gray-300 bg-white px-2 text-sm text-gray-900">
-                                    <option value="all">All departments</option>
-                                    {departmentOptions.map(department => <option key={department} value={department}>{department}</option>)}
-                                </select>
-                            </label>
-                            <label className="min-w-0 flex-1 text-xs font-medium text-gray-600">Search
-                                <input value={planningSearch} onChange={event => { setPlanningSearch(event.target.value); setPlanningPage(1); }}
-                                    placeholder={planningView === 'staff' ? 'Name, department or division' : 'Department'}
-                                    className="mt-1 block min-h-9 w-full rounded border border-gray-300 px-3 text-sm text-gray-900" />
-                            </label>
-                        </div>
-                        {balanceReportLoading ? (
-                            <div className="p-4"><LoadingState label="Loading leave balances…" /></div>
-                        ) : !planningSummary ? (
-                            <p className="px-4 py-4 text-sm text-amber-900">Leave balances could not be loaded. Try refreshing.</p>
-                        ) : (
-                            <>
-                                <dl className="grid grid-cols-1 divide-y divide-gray-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-                                    <PlanningMetric label="Recreation days available" value={`${recreationDays.toFixed(1)}d`} detail="After pending leave" />
-                                    <PlanningMetric label="Average recreation balance" value={recreationStaff.length ? `${(recreationDays / recreationStaff.length).toFixed(1)}d` : '—'} detail={`Across ${recreationStaff.length} staff with a recreation balance`} />
-                                    <PlanningMetric label="Staff with pending leave" value={String(departmentRows.filter(row => row.pending > 0).length)} detail={`Across ${departmentRows.length} leave-entitled staff`} />
-                                </dl>
-                                <div className="overflow-auto">
-                                    <table className="min-w-full border-separate border-spacing-0 text-sm">
-                                        <thead><tr>
-                                            <SortHeader label={planningView === 'staff' ? 'Staff member' : 'Department'} sortKey="name" sort={planningSort.sort} onSort={planningSort.toggle} defaultDirection="asc" className={PLANNING_TH} />
-                                            <SortHeader label={planningView === 'staff' ? 'Department / division' : 'Staff'} sortKey={planningView === 'staff' ? 'department' : 'staffCount'} sort={planningSort.sort} onSort={planningSort.toggle} className={PLANNING_TH} />
-                                            {(['recreation', 'medical', 'special', 'pending'] as const).map(key => <SortHeader key={key} label={key.charAt(0).toUpperCase() + key.slice(1)} sortKey={key} sort={planningSort.sort}
-                                                onSort={planningSort.toggle} align="right" className={PLANNING_TH_RIGHT} />)}
-                                        </tr></thead>
-                                        <tbody>
-                                            {visiblePlanningRows.map(row => <tr key={row.id} className="hover:bg-gray-50">
-                                                <td className="border-b border-gray-100 px-4 py-3 font-medium text-gray-900">
-                                                    {planningView === 'departments' ? <button type="button" className="text-brand hover:underline" onClick={() => { setPlanningDepartment(row.department_code || 'Unassigned'); setPlanningView('staff'); setPlanningSearch(''); setPlanningPage(1); }}>{row.display_name}</button> : row.display_name}
-                                                </td>
-                                                <td className="border-b border-gray-100 px-3 py-3 text-gray-600">{planningView === 'staff' ? `${row.department_code || '—'} / ${row.division_code || '—'}` : row.staffCount}</td>
-                                                {(['recreation', 'medical', 'special', 'pending'] as const).map(key => <td key={key} className={`border-b border-gray-100 px-3 py-3 text-right tabular-nums ${key === 'recreation' ? 'font-semibold text-brand' : 'text-gray-700'}`}>{planningDays(row[key])}</td>)}
-                                            </tr>)}
-                                            {!planningRows.length && <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No matching staff or departments.</td></tr>}
-                                        </tbody>
-                                    </table>
-                                </div>
-                                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-xs text-gray-600">
-                                    <p>{planningRows.length ? `${(currentPage - 1) * 25 + 1}–${Math.min(currentPage * 25, planningRows.length)}` : '0'} of {planningRows.length} {planningView === 'staff' ? 'staff' : 'departments'}</p>
-                                    <div className="flex items-center gap-3">
-                                        <button type="button" disabled={currentPage === 1} onClick={() => setPlanningPage(currentPage - 1)} className="rounded border border-gray-300 px-3 py-1.5 disabled:opacity-40">Previous</button>
-                                        <span>Page {currentPage} of {pageCount}</span>
-                                        <button type="button" disabled={currentPage === pageCount} onClick={() => setPlanningPage(currentPage + 1)} className="rounded border border-gray-300 px-3 py-1.5 disabled:opacity-40">Next</button>
-                                    </div>
-                                </div>
-                                <p className="border-t border-gray-100 px-4 py-3 text-xs text-gray-500">Available days exclude pending leave. A dash means no current balance is recorded. Annual leave is shown as Recreation; sick leave is shown as Medical.</p>
-                            </>
-                        )}
-                    </section>
+
                 </>
             )}
         </div>

@@ -34,6 +34,8 @@ export function MyLeave() {
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [loadError, setLoadError] = useState(false);
+    const [historyError, setHistoryError] = useState('');
+    const [historyLoading, setHistoryLoading] = useState(false);
     const [statusFilter, setStatusFilter] = useState('all');
 
     const [leaveTypeId, setLeaveTypeId] = useState('');
@@ -46,16 +48,30 @@ export function MyLeave() {
     // Shown next to the form as well as in a toast, so the reason stays in view.
     const [formError, setFormError] = useState('');
 
+    const loadHistory = useCallback(async () => {
+        setHistoryLoading(true);
+        setHistoryError('');
+        try { setApplications((await apiClient.get<LeaveApplication[]>('/hr/leaves')) || []); }
+        catch (error) { setHistoryError((error as Error)?.message || 'Previous applications could not be loaded.'); }
+        finally { setHistoryLoading(false); }
+    }, []);
+
     const load = useCallback(async () => {
         setLoading(true);
         setLoadError(false);
         try {
-            const [me, leaveTypes, leaves] = await Promise.all([
-                apiClient.get<MyLeaveResponse>('/hr/me'),
+            const me = await apiClient.get<MyLeaveResponse>('/hr/me');
+            if (!me?.employee) throw new Error('Your account is not linked to an employee record. Contact the leave administrator.');
+            setSummary(me);
+            if (user?.account_type === 'employee' || me.employee.leave_policy_regime === 'government') {
+                // Previous applications are supplementary; they must not block today's leave.
+                await loadHistory();
+                return;
+            }
+            const [leaveTypes, leaves] = await Promise.all([
                 apiClient.get<LeaveType[]>('/hr/leave-types'),
                 apiClient.get<LeaveApplication[]>('/hr/leaves'),
             ]);
-            setSummary(me);
             setTypes(leaveTypes || []);
             setApplications(leaves || []);
 
@@ -77,7 +93,7 @@ export function MyLeave() {
         } finally {
             setLoading(false);
         }
-    }, [addToast]);
+    }, [addToast, user?.account_type, loadHistory]);
 
     useEffect(() => {
         load();
@@ -198,7 +214,25 @@ export function MyLeave() {
         </div>
     );
 
-    if (governmentPending && summary) return <div className="space-y-5"><GovernmentMyLeave employeeId={summary.employee.id}/><details className="app-panel space-y-3 p-5"><summary className="cursor-pointer font-semibold">Leave history before staff transfer</summary><p className="text-sm text-gray-600">These retain their original leave types, balances and decisions. Your current balances and applications are shown above. Earlier records remain available here.</p>{summary.balances.map(b=><p key={b.leave_type_id} className="text-sm">{b.leave_type_name}: {b.balance} historical days</p>)}{applications.map(a=><article key={a.id} className="space-y-1 rounded-lg border border-gray-200 p-3"><p className="text-sm">{a.leave_type_name} · {formatDate(a.start_date)} to {formatDate(a.end_date)} · {a.status}</p>{a.status==='approved'&&<button className="toolbar-button" onClick={()=>void printApprovedLeaveForm(a.id).catch((e:Error)=>addToast(e.message,'error'))}>Download historical approved PDF</button>}</article>)}</details></div>;
+    if (governmentPending && summary) return (
+        <div className="space-y-6">
+            <GovernmentMyLeave employeeId={summary.employee.id}/>
+            {(applications.length > 0 || historyError || historyLoading) && <details open={Boolean(historyError)} className="app-panel p-5 sm:p-6">
+                <summary className="cursor-pointer font-semibold">Previous applications{applications.length > 0 ? ` (${applications.length})` : ''}</summary>
+                <p className="mt-3 text-sm text-gray-600">Your earlier applications and approved forms remain available here.</p>
+                {historyError && <div className="mt-3 space-y-3"><p role="alert" className="text-sm text-red-700">{historyError}</p><button type="button" className="toolbar-button" onClick={() => void loadHistory()}>Retry previous applications</button></div>}
+                {historyLoading && <LoadingState label="Loading previous applications…"/>}
+                <div className="mt-4 space-y-3">{applications.map(application => (
+                    <article key={application.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 p-4">
+                        <div><h3 className="font-semibold">{application.leave_type_name}</h3>
+                            <p className="mt-1 text-sm text-gray-600">{formatDate(application.start_date)} to {formatDate(application.end_date)} · {application.status}</p>
+                        </div>
+                        {application.status === 'approved' && <button type="button" className="toolbar-button" onClick={() => void printForm(application)}>Download approved PDF</button>}
+                    </article>
+                ))}</div>
+            </details>}
+        </div>
+    );
 
     return (
         <div className="space-y-6">
@@ -217,12 +251,12 @@ export function MyLeave() {
                 </div>
             )}
 
-            {governmentPending && <p role="status" className="app-panel border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Your employee record is linked. The administrator is preparing your Government leave migration. Historical balances remain visible; Government requests open when your reviewed credits and nominated approval route are applied.</p>}
+            {governmentPending && <p role="status" className="app-panel border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Your employee record is linked. Contact the leave administrator to complete your balances and approval arrangements.</p>}
             {/* Balances */}
             <div className="app-panel p-5 sm:p-6">
                 <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
                     <h3 className="text-lg font-semibold text-gray-950">
-                        {governmentPending ? 'Recorded historical balances' : 'Leave balances'} {summary ? `— ${summary.year}` : ''}
+                        Leave balances {summary ? `— ${summary.year}` : ''}
                     </h3>
                     {summary?.manager && (
                         <p className="text-xs text-gray-500">Approver: {summary.manager.display_name}</p>
@@ -239,7 +273,7 @@ export function MyLeave() {
                                     </p>
                                     <p className="mt-2 text-3xl font-bold tabular-nums text-brand">{available}</p>
                                     <p className="text-xs text-gray-500">
-                                        {governmentPending ? 'historical days · certification pending' : 'days available'}
+                                        days available
                                         {Number(balance.pending) > 0 && ` · ${balance.pending} pending`}
                                     </p>
                                 </div>
@@ -248,7 +282,7 @@ export function MyLeave() {
                     </div>
                 ) : (
                     <p className="text-sm text-gray-500">
-                        {governmentPending ? 'No historical balance rows. Certified government entitlements are shown separately above.' : 'No balances yet — they are created the first time you apply for each leave type.'}
+                        No balances yet. Contact the leave administrator to check your entitlement.
                     </p>
                 )}
             </div>

@@ -611,50 +611,53 @@ router.get('/employees', requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSI
   res.json(visibleEmployees(req, rows));
 });
 
-// One-call matrix for the "balances report": every active staff member
-// against every active leave type. A type an employee has never been
-// adjusted or applied against has no hr_leave_balances row yet (it is
-// seeded lazily by ensureBalance on first touch), so it falls back to the
-// type's default_days (or zero for accruable types) here — the same number
-// that first touch would seed.
+// Current balance accounts, bounded by the caller's active employee scope.
+// Stored balances are retained for employees who still use their original rules;
+// current-policy staff use only their current entitlement ledger and live holds.
 router.get(
   '/employees/balances',
   requirePermission(PERMISSIONS.HR_BALANCE_MANAGE, PERMISSIONS.HR_ADMIN),
   [query('year').optional().isInt()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
-    const year = Number(req.query.year) || new Date().getFullYear();
-    const [{ rows: employees }, { rows: types }, { rows: balances }] = await Promise.all([
-      pool.query(
-        `SELECT id, display_name, department_code, division_code, status, reviewer_id, email, join_date
-           FROM hr_employees e
-          WHERE status = 'active' AND leave_entitled = TRUE AND ${employeeScopeSql(req.user,'hr_balance_manage')}
-          ORDER BY display_name`,[req.user.id]
-      ),
-      pool.query('SELECT id, name, default_days, is_accruable FROM hr_leave_types WHERE is_active = TRUE ORDER BY name'),
-      pool.query(`SELECT b.employee_id,b.leave_type_id,b.balance,b.pending FROM hr_leave_balances b JOIN hr_employees e ON e.id=b.employee_id WHERE b.year=$1 AND ${employeeScopeSql(req.user,'hr_balance_manage','$2')}`, [year,req.user.id]),
-    ]);
-    const balanceByKey = new Map(balances.map((b) => [`${b.employee_id}:${b.leave_type_id}`, b]));
-    const result = employees.map((e) => {
-      const byType = {};
-      for (const t of types) {
-        const b = balanceByKey.get(`${e.id}:${t.id}`);
-        byType[t.name] = {
-          balance: b ? Number(b.balance) : (t.is_accruable ? 0 : Number(t.default_days)),
-          pending: b ? Number(b.pending) : 0,
-        };
-      }
-      return { ...e, balances: byType };
-    });
-    res.json({
-      year,
-      leave_types: types.map((t) => t.name),
-      leave_type_rules: types.map((t) => ({
-        name: t.name,
-        default_days: Number(t.default_days),
-        is_accruable: t.is_accruable,
-      })),
-      employees: result,
+    const asOf = new Date(Date.now() + 12 * 3600000).toISOString().slice(0,10);
+    const year = Number(asOf.slice(0,4));
+    if (req.query.year !== undefined && Number(req.query.year) !== year) {
+      throw new ServiceError(400,'This view shows current balances only. Use the leave reports and employee history for earlier records.');
+    }
+    const { rows: employees } = await pool.query(`WITH scoped AS (
+      SELECT e.id,e.display_name,e.department_code,e.division_code,e.status,e.reviewer_id,e.email,e.join_date,
+        e.leave_policy_regime,COALESCE(r.account_type,'staff') AS account_type
+      FROM hr_employees e LEFT JOIN reviewers r ON r.id=e.reviewer_id
+      WHERE e.status='active' AND e.leave_entitled AND ${employeeScopeSql(req.user,'hr_balance_manage','$2')}
+    ), accounts AS (
+      SELECT e.id AS employee_id,t.name AS leave_type,b.balance,b.pending
+      FROM scoped e JOIN hr_leave_balances b ON b.employee_id=e.id AND b.year=$1
+      JOIN hr_leave_types t ON t.id=b.leave_type_id AND t.is_active
+      WHERE e.leave_policy_regime<>'government' AND e.account_type<>'employee'
+      UNION ALL
+      SELECT e.id,initcap(replace(a.code,'_',' ')),
+        COALESCE((SELECT sum(l.amount) FROM hr_gov_ledger l WHERE l.entitlement_id=a.id),0),
+        COALESCE((SELECT sum(h.amount) FROM hr_gov_reservations h JOIN hr_gov_reservation_requests rq ON rq.id=h.request_id WHERE h.entitlement_id=a.id AND rq.status='held'),0)
+        + COALESCE((SELECT sum(h.amount) FROM hr_gov_case_credit_holds h JOIN hr_gov_requests rq ON rq.id=h.request_id
+          WHERE h.entitlement_id=a.id AND rq.status='pending' AND h.determination_id=(SELECT cd.id FROM hr_gov_case_determinations cd WHERE cd.request_id=rq.id ORDER BY version DESC LIMIT 1)),0)
+      FROM scoped e JOIN hr_gov_entitlements a ON a.employee_id=e.id
+      WHERE (e.leave_policy_regime='government' OR e.account_type='employee')
+        AND (NOW() AT TIME ZONE 'Pacific/Nauru')::date BETWEEN GREATEST(a.as_of,a.period_start) AND a.period_end
+    ) SELECT e.id,e.display_name,e.department_code,e.division_code,e.status,e.reviewer_id,e.email,e.join_date,
+      e.leave_policy_regime<>'government' AND e.account_type<>'employee' AS can_adjust_balance,
+      COALESCE(jsonb_object_agg(a.leave_type,jsonb_build_object('balance',a.balance,'pending',a.pending)) FILTER(WHERE a.leave_type IS NOT NULL),'{}'::jsonb) AS balances
+      FROM scoped e LEFT JOIN accounts a ON a.employee_id=e.id
+      GROUP BY e.id,e.display_name,e.department_code,e.division_code,e.status,e.reviewer_id,e.email,e.join_date,e.leave_policy_regime,e.account_type
+      ORDER BY e.display_name`,[year,req.user.id]);
+    const { rows: types } = await pool.query('SELECT name,default_days,is_accruable FROM hr_leave_types WHERE is_active ORDER BY name');
+    const names = new Set(employees.flatMap(employee => Object.keys(employee.balances)));
+    if (employees.some(employee => employee.can_adjust_balance)) for (const type of types) names.add(type.name);
+    if (employees.some(employee => !employee.can_adjust_balance)) for (const name of ['Recreation','Medical','Special']) names.add(name);
+    res.json({ year, as_of: asOf,
+      leave_types: [...names].sort(),
+      leave_type_rules: types.map(type => ({ name:type.name,default_days:Number(type.default_days),is_accruable:type.is_accruable })),
+      employees,
     });
   }
 );
@@ -1175,7 +1178,13 @@ router.post(
       reason: req.body.reason,
       actorId: req.user.id,
       year: req.body.year,
-      authorize: client=>assertEmployeeScope(client,req.user,req.body.employee_id,'hr_balance_manage'),
+      authorize: async client => {
+        const employee = await assertEmployeeScope(client,req.user,req.body.employee_id,'hr_balance_manage');
+        const { rows: [account] } = employee.reviewer_id ? await client.query('SELECT account_type FROM reviewers WHERE id=$1',[employee.reviewer_id]) : { rows: [] };
+        if (employee.leave_policy_regime === 'government' || account?.account_type === 'employee') {
+          throw new ServiceError(409,'This balance requires a certified correction. Contact central HR.');
+        }
+      },
     });
     await recordAudit({
       actor: { id: req.user.id, email: req.user.email, ip: req.ip },

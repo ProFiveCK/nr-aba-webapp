@@ -7,10 +7,10 @@ import { ReviewRecordName } from './ReviewRecordName';
 import { divisionPath, orderedDivisions } from './organisationBrowse';
 import { reviewRecordLabel } from './reviewRecordNames';
 
-export const inputClass = 'w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand/30';
+export const inputClass = 'w-full min-w-0 min-h-11 rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm font-normal leading-5 text-gray-900 disabled:bg-gray-50 disabled:text-gray-500 focus:outline-none focus:ring-2 focus:ring-brand/30';
 export function Field({ label, children }: { label: string; children: ReactElement<{ id?: string }> }) {
     const id = useId();
-    return <div className="min-w-0 space-y-1 text-sm font-medium text-gray-700"><label className="block" htmlFor={id}>{label}</label>{cloneElement(children, { id })}</div>;
+    return <div className="leave-field min-w-0 space-y-2 text-sm font-medium text-gray-700"><label className="block" htmlFor={id}>{label}</label>{cloneElement(children, { id })}</div>;
 }
 export function ReasonField({defaultValue}:{defaultValue?:string}={}) { return <Field label="Verification reason"><textarea name="reason" defaultValue={defaultValue} required minLength={10} maxLength={1000} rows={3} className={inputClass} placeholder="Record the evidence or authority checked (at least 10 characters)." /></Field>; }
 export function ActionDialog({ title, description, onClose, onSave, children, defaultReason, automaticReason, saveLabel = 'Save verified change' }: { title: string; description?: string; onClose: () => void; onSave: (data: FormData) => Promise<void>; children: ReactNode; defaultReason?:string; automaticReason?:string; saveLabel?: string }) {
@@ -19,7 +19,7 @@ export function ActionDialog({ title, description, onClose, onSave, children, de
         <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (busy) return; const data = new FormData(e.currentTarget); if (automaticReason) { const note = String(data.get('setup_note') || '').trim(); data.set('reason', automaticReason + (note ? ` · ${note}` : '')); } setBusy(true); setError(''); void onSave(data).catch((err: Error) => setError(err.message || 'Unable to save the change.')).finally(() => setBusy(false)); }}>
             <fieldset disabled={busy} className="min-w-0 space-y-4">{children}<>{automaticReason ? <details><summary className="cursor-pointer text-sm text-gray-600">Add a note (optional)</summary><div className="mt-3"><Field label="Note (optional)"><textarea name="setup_note" maxLength={800} rows={3} className={inputClass} /></Field></div></details> : <ReasonField defaultValue={defaultReason} />}</></fieldset>
             {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-            <div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" disabled={busy} onClick={onClose}>Cancel</Button><Button type="submit" loading={busy}>{saveLabel}</Button></div>
+            <div className="flex flex-col-reverse gap-2 border-t border-gray-100 pt-4 sm:flex-row sm:justify-end"><Button variant="secondary" disabled={busy} onClick={onClose}>Cancel</Button><Button type="submit" loading={busy}>{saveLabel}</Button></div>
         </form>
     </Modal>;
 }

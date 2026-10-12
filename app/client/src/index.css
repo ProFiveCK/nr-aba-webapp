@@ -61,4 +61,34 @@
   .state-surface {
     @apply flex min-h-32 flex-col items-center justify-center gap-2 px-4 py-8 text-center text-sm text-gray-500;
   }
+
+  /* Leave screens share a readable rhythm, including dialogs within the app. */
+  .leave-workspace {
+    @apply text-sm leading-6;
+  }
+
+  .leave-workspace :where(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, textarea) {
+    @apply min-w-0 max-w-full font-normal;
+  }
+
+  .leave-workspace :where(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"])),
+  .leave-workspace :where(select) {
+    @apply min-h-11;
+  }
+
+  .leave-workspace :where(button:not(.icon-button)) {
+    @apply min-h-10;
+  }
+
+  .leave-workspace :where(th, td) {
+    @apply align-middle;
+  }
+
+  .leave-workspace :where(p, h2, h3, h4, dd) {
+    overflow-wrap: anywhere;
+  }
+
+  .leave-workspace :where(button, a, summary):focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand;
+  }
 }

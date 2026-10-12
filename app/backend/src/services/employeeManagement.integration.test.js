@@ -14,7 +14,7 @@ describe('central HR management screens and bounded APIs', { skip: skipWithoutDa
   });
   after(async()=>{if(server) await new Promise((resolve)=>server.close(resolve)); await pool?.end();});
   beforeEach(async()=>{
-    // These fixtures represent existing staff before Government setup adoption.
+    // Direct entry must work without any historical setup/adoption record.
     await pool.query('TRUNCATE hr_gov_initial_setups,hr_gov_initial_setup_revisions CASCADE');
     await pool.query('TRUNCATE hr_employee_import_batches,hr_work_patterns CASCADE'); await resetLeaveTables(pool);
     actor=await account({hr_admin:true});
@@ -26,10 +26,18 @@ describe('central HR management screens and bounded APIs', { skip: skipWithoutDa
   async function token(row=actor) {const s=await auth.createSession(row.id);return auth.buildTokenPayload(row,s.tokenId,s.expiresAt);}
   async function call(path='',body,method=body?'POST':'GET',row=actor) {const response=await fetch(`${base}${path}`,{method,headers:{Authorization:`Bearer ${await token(row)}`,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return {status:response.status,body:await response.json(),cache:response.headers.get('cache-control')};}
   const create=(extra={})=>management.createManagedEmployee(pool,{data:{display_name:'New Employee',external_id:'000001-A',department_id:department.id,division_id:division.id,...extra},actor,reason});
+  async function createExisting(extra={}) {
+    const employee=await create(extra);
+    await pool.query("UPDATE hr_employees SET leave_policy_regime='legacy' WHERE id=$1",[employee.id]);
+    return employee;
+  }
   const edit=(id,data,who=actor)=>management.updateManagedEmployee(pool,{employeeId:id,data,actor:who,reason});
 
   test('manual verified creation is atomic, preserves text IDs and creates no login or balance',async()=>{
     const employee=await create(); const profile=await directory.employeeProfile(pool,employee.id);
+    assert.equal(profile.employee.leave_policy_regime,'government');
+    assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_entitlements')).rows[0].n,0);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_workflow_configs')).rows[0].n,0);
     assert.equal(profile.external_ids[0].external_id,'000001-A'); assert.equal(profile.employee.reviewer_id,null);
     assert.equal((await pool.query('SELECT count(*)::int n FROM hr_leave_balances')).rows[0].n,0);
     await assert.rejects(create({display_name:'Duplicate ID'}),{status:409});
@@ -94,7 +102,7 @@ describe('central HR management screens and bounded APIs', { skip: skipWithoutDa
     assert.equal((await call(`?regime=government&status=active&department_id=${department.id}`)).body.total,1);
   });
   test('only explicitly restricted contracts are excluded from the pending migration list',async()=>{
-    const contract=await create(),paid=await create({external_id:'000002',display_name:'Paid contract'}),temp=await create({external_id:'000003',display_name:'Temporary'});
+    const contract=await createExisting(),paid=await createExisting({external_id:'000002',display_name:'Paid contract'}),temp=await createExisting({external_id:'000003',display_name:'Temporary'});
     for(const [e,category] of [[contract,'contract'],[paid,'contract'],[temp,'temporary']])await directory.addServicePeriod(pool,{employeeId:e.id,period:{start_date:'2020-01-01',employment_category:category,counts_for_service:true},actor,reason});
     await pool.query('UPDATE hr_employees SET leave_entitled=FALSE WHERE id=ANY($1::uuid[])',[[contract.id,temp.id]]);
     const query=`?department_id=${department.id}&regime=legacy`;
@@ -104,7 +112,7 @@ describe('central HR management screens and bounded APIs', { skip: skipWithoutDa
   });
   async function contractCorrectionFixture(){
     actor=(await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1 RETURNING *",[actor.id])).rows[0];
-    const employee=await create();const period=await directory.addServicePeriod(pool,{employeeId:employee.id,period:{start_date:'2020-01-01',employment_category:'permanent',counts_for_service:true},actor,reason});
+    const employee=await createExisting();const period=await directory.addServicePeriod(pool,{employeeId:employee.id,period:{start_date:'2020-01-01',employment_category:'permanent',counts_for_service:true},actor,reason});
     const module=await import('./governmentLeaveInitialContractExclusions.js');const data={employee_ids:[employee.id],no_paid_leave_confirmed:true,source_reference:'Owner confirmed initial contract terms with no leave entitlement',reason};
     return {employee,period,module,data};
   }

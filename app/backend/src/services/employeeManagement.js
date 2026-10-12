@@ -1,7 +1,6 @@
 import { withTransaction } from '../lib/transaction.js';
 import { badRequest, notFound, ServiceError } from '../lib/serviceError.js';
 import { recordAudit } from './auditService.js';
-import { newEmployeeLeaveRegime } from './governmentLeaveDefaults.js';
 
 export function managementReason(value) {
   if (typeof value !== 'string' || value.trim().length < 10 || value.length > 1000) throw badRequest('Record a verification reason of 10–1,000 characters.');
@@ -19,7 +18,9 @@ export async function listLinkableAccounts(pool, { search = '', page = 1 } = {})
 export async function createManagedEmployee(pool, { data, actor, reason }) {
   const verifiedReason = managementReason(reason);
   return withTransaction(pool, async (client) => {
-    const regime = await newEmployeeLeaveRegime(client);
+    // Direct entry always uses the current policy. Existing records and their
+    // balances remain unchanged; policy setup never grants credit or access.
+    const regime = 'government';
     const { rows: [department] } = await client.query('SELECT id,name FROM hr_departments WHERE id=$1 FOR SHARE',[data.department_id]);
     if (!department) throw badRequest('Choose a managed department.');
     let division = null;
@@ -31,7 +32,7 @@ export async function createManagedEmployee(pool, { data, actor, reason }) {
       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id,display_name,leave_policy_regime`, [data.display_name.trim(),department.id,division?.id || null,department.name,division?.name || null,regime]);
     const { rows: [identifier] } = await client.query(`INSERT INTO hr_employee_external_ids(employee_id,source,external_id,verified_by,reason)
       VALUES ($1,'techone_payroll',$2,$3,$4) ON CONFLICT(source,external_id) DO NOTHING RETURNING id`,[employee.id,data.external_id.trim(),actor.id,verifiedReason]);
-    if (!identifier) throw new ServiceError(409,'This Payroll ID already belongs to an employee. Find that record or use import reconciliation.');
+    if (!identifier) throw new ServiceError(409,'This Payroll ID already belongs to an employee. Find and update the existing employee record.');
     await recordAudit({ client,actor,action:'hr.employee.created.verified',entityType:'hr_employee',entityId:employee.id,after:{...employee,department_id:department.id,division_id:division?.id || null,payroll_id:data.external_id.trim(),reason:verifiedReason} });
     return employee;
   });

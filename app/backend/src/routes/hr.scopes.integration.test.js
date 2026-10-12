@@ -71,6 +71,69 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     assert.equal((await call(staff,'/adjustments',{employee_id:employee.id,leave_type_id:type.id,amount:1,reason,year:2026})).status,201);assert.equal((await call(staff,'/adjustments',{employee_id:outsider.id,leave_type_id:type.id,amount:1,reason,year:2026})).status,404);
     assert.equal((await call(staff,`/leaves/${approved.id}/attachments/${attachment.id}`)).status,404);await grant(staff,['hr_evidence_read']);assert.equal((await call(staff,`/leaves/${approved.id}/attachments/${attachment.id}`)).status,200);
   });
+  test('scoped balances use current entitlement credits and live holds without exposing retained or missing credit',async()=>{
+    await grant(staff,['hr_balance_manage'],null);
+    const year=new Date(Date.now()+12*3600000).getUTCFullYear();
+    const start=`${year}-01-01`,end=`${year}-12-31`;
+    await pool.query("UPDATE hr_employees SET leave_policy_regime='government',daily_rate=123.45 WHERE id=ANY($1::uuid[])",[[employee.id,peer.id,outsider.id]]);
+    await pool.query('UPDATE hr_leave_balances SET balance=999,pending=7,year=$2 WHERE employee_id=$1',[employee.id,year]);
+    const {DEFAULT_RULES}=await import('../lib/governmentLeaveRules.js');
+    const policy=(await pool.query("INSERT INTO hr_gov_policy_versions(label,effective_from,effective_to,rules,source_reference,status,reason) VALUES('Scoped policy','2020-01-01','2099-12-31',$1,'PRIVATE policy','published','PRIVATE reason') RETURNING id",[DEFAULT_RULES])).rows[0];
+    async function entitlement(person,from,to,code='recreation',amount=25){
+      const opening=(await pool.query(`INSERT INTO hr_gov_openings(employee_id,code,policy_version_id,period_start,period_end,as_of,amount,source_reference,payroll_reference,snapshot_hash,historical_snapshot,status,prepared_by,reason)
+        VALUES($1,$2,$3,$4,$5,$4,$6,'PRIVATE source','PRIVATE payroll','test','[]','certified',$7,'PRIVATE reason') RETURNING id`,[person.id,code,policy.id,from,to,amount,central.id])).rows[0];
+      const account=(await pool.query('INSERT INTO hr_gov_entitlements(employee_id,code,policy_version_id,period_start,period_end,as_of,opening_id) VALUES($1,$2,$3,$4,$5,$4,$6) RETURNING id',[person.id,code,policy.id,from,to,opening.id])).rows[0];
+      await pool.query("INSERT INTO hr_gov_ledger(entitlement_id,kind,amount,effective_date,event_key,source_reference,actor_id,reason) VALUES($1,'opening',$2,$3,$4,'PRIVATE ledger',$5,'PRIVATE reason')",[account.id,amount,from,randomUUID(),central.id]);
+      return account;
+    }
+    const balance=await entitlement(employee,start,end);
+    await entitlement(employee,`${year-1}-01-01`,`${year-1}-12-31`,'medical',99);
+    await entitlement(employee,`${year+1}-01-01`,`${year+1}-12-31`,'special',88);
+    await entitlement(outsider,start,end,'recreation',777);
+    for(const [status,amount] of [['held',3],['released',9]]){
+      const id=randomUUID();await pool.query("INSERT INTO hr_gov_reservation_requests(id,employee_id,payload_hash,evaluation_snapshot,status) VALUES($1,$2,'test','{}',$3)",[id,employee.id,status]);
+      await pool.query('INSERT INTO hr_gov_reservations(request_id,entitlement_id,amount) VALUES($1,$2,$3)',[id,balance.id,amount]);
+    }
+    const request=randomUUID();
+    await pool.query(`INSERT INTO hr_gov_requests(id,employee_id,code,start_date,end_date,reason,medical_mode,payload_hash,application_snapshot,department_id,division_id,charge,submitted_by,status)
+      VALUES($1,$2,'recreation_encashment',$3,$3,'PRIVATE request','not_applicable','test','{}',$4,$5,0,$6,'pending')`,[request,employee.id,start,department.id,division.id,central.id]);
+    for(const [version,amount] of [[1,8],[2,2]]){
+      const determination=(await pool.query("INSERT INTO hr_gov_case_determinations(request_id,version,prepared_by,source_reference,evidence_reference,reason,determination,context_hash) VALUES($1,$2,$3,'PRIVATE source','PRIVATE evidence','PRIVATE reason','{}','test') RETURNING id",[request,version,central.id])).rows[0];
+      await pool.query('INSERT INTO hr_gov_case_credit_holds(determination_id,request_id,entitlement_id,amount) VALUES($1,$2,$3,$4)',[determination.id,request,balance.id,amount]);
+    }
+    const result=await call(staff,'/employees/balances');assert.equal(result.status,200);
+    assert.deepEqual(result.body.employees.map(row=>row.id).sort(),[employee.id,peer.id].sort());
+    const current=result.body.employees.find(row=>row.id===employee.id),missing=result.body.employees.find(row=>row.id===peer.id);
+    assert.deepEqual(current.balances,{Recreation:{balance:25,pending:5}});
+    assert.equal(current.can_adjust_balance,false);assert.deepEqual(missing.balances,{});assert.equal(missing.can_adjust_balance,false);
+    assert.equal(current.daily_rate,undefined);assert.equal(current.reason,undefined);assert.ok(!JSON.stringify(result.body).includes('PRIVATE'));assert.ok(!JSON.stringify(result.body).includes('777'));
+    assert.deepEqual(result.body.leave_types,['Medical','Recreation','Special']);
+    assert.equal((await call(staff,'/adjustments',{employee_id:employee.id,leave_type_id:type.id,amount:1,reason,year})).status,409);
+    assert.equal((await call(staff,'/adjustments',{employee_id:outsider.id,leave_type_id:type.id,amount:1,reason,year})).status,404);
+    assert.equal(Number((await pool.query('SELECT balance FROM hr_leave_balances WHERE employee_id=$1',[employee.id])).rows[0].balance),999);
+    assert.equal((await call(staff,`/government/employees/${employee.id}/corrections`,{reason})).status,403);
+  });
+  test('current balance reporting rejects a different year rather than mixing account periods',async()=>{
+    await grant(staff,['hr_balance_manage']);
+    const year=new Date(Date.now()+12*3600000).getUTCFullYear();
+    const current=await call(staff,`/employees/balances?year=${year}`);
+    assert.equal(current.status,200);assert.equal(current.body.year,year);assert.equal(current.body.as_of.slice(0,4),String(year));
+    for(const requestedYear of [year-1,year+1]){
+      const result=await call(staff,`/employees/balances?year=${requestedYear}`);
+      assert.equal(result.status,400);assert.match(result.body.message,/current balances only/);assert.equal(result.body.employees,undefined);
+    }
+  });
+  test('scoped older balance corrections remain available while missing rows stay unrecorded',async()=>{
+    await grant(staff,['hr_balance_manage'],null);
+    const result=await call(staff,'/employees/balances?year=2026');
+    const current=result.body.employees.find(row=>row.id===employee.id),missing=result.body.employees.find(row=>row.id===peer.id);
+    assert.deepEqual(current.balances[type.name],{balance:10,pending:0});assert.equal(current.can_adjust_balance,true);
+    assert.deepEqual(missing.balances,{});assert.equal(missing.can_adjust_balance,true);
+    assert.equal((await call(staff,'/adjustments',{employee_id:employee.id,leave_type_id:type.id,amount:1,reason,year:2026})).status,201);
+    await pool.query("UPDATE reviewers SET account_type='employee' WHERE id=$1",[owner.id]);
+    const linked=await call(staff,'/employees/balances?year=2026');assert.deepEqual(linked.body.employees.find(row=>row.id===employee.id).balances,{});
+    assert.equal((await call(staff,'/adjustments',{employee_id:employee.id,leave_type_id:type.id,amount:1,reason,year:2026})).status,409);
+  });
   test('revocation invalidates a live session and future/expired grants confer no access',async()=>{
     const scope=await grant(staff,['hr_staff_manage']),bearer=await token(staff);assert.equal((await call(staff,'/directory',undefined,'GET',bearer)).body.total,1);
     assert.equal((await call(central,`/access-scopes/${scope.id}/revoke`,{reason})).status,200);assert.equal((await call(staff,'/directory',undefined,'GET',bearer)).status,401);

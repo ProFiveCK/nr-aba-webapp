@@ -12,4 +12,16 @@ export type WorkflowConfiguration={draft_revision?:number;discarded?:boolean;id:
 export type ConsentOffice={id:string;level:string;display_name:string;department_id:string|null;effective_from:string;effective_to:string|null;closed_office_id:string|null;source_reference:string};
 export type GovernmentJobPlan={initial_setup_review_id?:string|null;draft_revision?:number;discarded?:boolean;id:string;employee_id:string;display_name:string;code:string;status:string;prepared_by:string;method:string;first_post_end:string|null;payroll_anchor:string|null;temporary_start:string|null;reason:string;source_reference:string};
 const officeLabels:Record<string,string>={division:'Divisional approver',parent_division:'Treasury / parent unit approver',department:'Head of Department',hr_verifier:'HR verifier',relevant_secretary:'Relevant Secretary',chief_secretary:'Chief Secretary',minister:'Minister statutory decision'};
-export const governmentLabel=(value:string)=>officeLabels[value]||value.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase());
+const leaveLabels: Record<string, string> = {
+    teacher_recreation: 'Teacher recreation leave',
+    extended_medical: 'Extended medical leave',
+    extended_medical_minister: 'Extended medical leave (Minister approval)',
+    maternity: 'Maternity leave', paternity: 'Paternity leave', adoption: 'Adoption leave',
+    official: 'Official duty leave', lwop: 'Leave without pay',
+    long_service: 'Long service benefit',
+    recreation_encashment: 'Recreation leave cash-out',
+    recreation_separation: 'Recreation payout on leaving employment',
+    witness_republic: 'Witness for the Republic', witness_other: 'Other witness leave',
+    attendance: 'Attendance review', amendment: 'Change approved leave',
+};
+export const governmentLabel=(value:string)=>officeLabels[value]||leaveLabels[value]||value.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase());

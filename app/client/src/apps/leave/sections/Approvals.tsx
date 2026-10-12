@@ -80,15 +80,15 @@ export function Approvals() {
         }
     };
 
-    if (loading) return <div className="space-y-5"><GovernmentRequestList mode="queue"/><LoadingState label="Loading earlier approvals…" /></div>;
+    if (loading) return <div className="space-y-6"><GovernmentRequestList mode="queue"/><LoadingState label="Loading previous applications…" /></div>;
 
     return (
-        <div className="space-y-5">
+        <div className="space-y-6">
             <GovernmentRequestList mode="queue"/>
-            {(items.length>0||recent.length>0)&&<details open={items.length>0} className="app-panel p-4"><summary className="cursor-pointer font-semibold text-sm">{items.length?`${items.length} requests submitted before staff transfer`:'Earlier approval history'}</summary><div className="mt-4 space-y-4">
+            {(items.length>0||recent.length>0)&&<details open={items.length>0} className="app-panel p-5 sm:p-6"><summary className="cursor-pointer font-semibold text-sm">{items.length?`${items.length} previous applications awaiting a decision`:'Previous decisions'}</summary><div className="mt-4 space-y-4">
             <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#2a5ba5]">Manager queue</p>
-                <h2 className="mt-1 text-xl font-bold text-gray-950">Requests submitted before staff transfer</h2>
+                <h2 className="mt-1 text-xl font-bold text-gray-950">Previous applications</h2>
                 <p className="mt-1 text-sm text-gray-500">{items.length} request{items.length === 1 ? '' : 's'} awaiting your decision.</p>
             </div>
             {lastApproved && (

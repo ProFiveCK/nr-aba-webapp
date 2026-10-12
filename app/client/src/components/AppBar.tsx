@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, NavLink } from 'react-router-dom';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { ArrowLeft, ChevronDown, LayoutGrid } from 'lucide-react';
 import { pathForApp, type AppDef } from '../lib/apps';
 import type { AppSection } from './appChrome';
@@ -17,7 +17,19 @@ import type { AppSection } from './appChrome';
 export function AppBar({ app, apps, sections }: { app: AppDef; apps: AppDef[]; sections: AppSection[] }) {
     const [open, setOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
+    const sectionsRef = useRef<HTMLDivElement>(null);
+    const { pathname } = useLocation();
     const Icon = app.icon;
+
+    useEffect(() => {
+        const container = sectionsRef.current;
+        const active = container?.querySelector<HTMLElement>('[aria-current="page"]');
+        if (!container || !active) return;
+        const bounds = container.getBoundingClientRect();
+        const tab = active.getBoundingClientRect();
+        if (tab.left < bounds.left) container.scrollLeft += tab.left - bounds.left;
+        else if (tab.right > bounds.right) container.scrollLeft += tab.right - bounds.right;
+    }, [pathname, sections]);
 
     // A menu that stays open after you click away, or swallows Escape, is
     // worse than no menu.
@@ -99,7 +111,7 @@ export function AppBar({ app, apps, sections }: { app: AppDef; apps: AppDef[]; s
                 put while the page scrolls. */}
             {sections.length > 0 && (
                 <nav aria-label={`${app.label} sections`} className="mx-auto max-w-7xl">
-                    <div className="-mb-px flex gap-5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <div ref={sectionsRef} className="-mb-px flex gap-5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                         {sections.map((section) => (
                             <NavLink
                                 key={section.to}

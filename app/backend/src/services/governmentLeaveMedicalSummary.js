@@ -16,7 +16,7 @@ export function medicalTrackingFromRecords({ context, config, records, asOf = cu
   const issues = [];
   const candidates = context.entitlements.filter(e => e.code === 'medical' && e.period_start <= asOf && e.period_end >= asOf && e.as_of <= asOf);
   const account = candidates.length === 1 ? candidates[0] : null;
-  if (!account) issues.push(candidates.length ? 'More than one Medical opening covers this date; HR must reconcile the certified periods.' : 'No certified Government Medical opening covers this date. Retained legacy sick balances remain separate.');
+  if (!account) issues.push(candidates.length ? 'More than one Medical opening covers this date; HR must reconcile the certified periods.' : 'No certified Medical balance covers this date. Ask HR to confirm the employee’s current Medical entitlement.');
   const policy = context.policies.find(p => p.effective_from <= asOf && p.effective_to >= asOf);
   if (!policy) issues.push('No published Government policy covers this tracking date.');
   const annualDays = policy ? positiveCharge(policy.rules?.medical_annual_days) : null;
@@ -25,7 +25,7 @@ export function medicalTrackingFromRecords({ context, config, records, asOf = cu
   if (!config || config.status !== 'published') issues.push('Medical history has no published employee configuration.');
   let baselineReviewed = !!account && config?.status === 'published' && config.medical_period_start === account.period_start
     && config.medical_as_of === account.as_of && Array.isArray(config.medical_history);
-  if (config && !baselineReviewed) issues.push('Review Medical history against this opening service year and cutover date.');
+  if (config && !baselineReviewed) issues.push('Review Medical history against the service year and opening balance date.');
   const certified = zero(), uncertified = zero();
   const occasions = { approved: 0, pending: 0, baseline: 0 };
   const history = [];

@@ -82,4 +82,49 @@ describe('current leave balances and movement accounts', { skip: skipWithoutData
     assert.equal(first.accounts[0].balance, '46.000000');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_ledger WHERE entitlement_id=$1', [account.id])).rows[0].n, 53);
   });
+  test('department, division and status filters combine without exposing out-of-scope dropdown choices', async () => {
+    const division = (await pool.query("INSERT INTO hr_divisions(department_id,name) VALUES($1,'Accounts') RETURNING id", [department.id])).rows[0];
+    const otherDepartment = (await pool.query("INSERT INTO hr_departments(name) VALUES('Outside department') RETURNING id")).rows[0];
+    await pool.query('UPDATE hr_employees SET division_id=$1 WHERE id=$2', [division.id, employee.id]);
+    await pool.query('UPDATE hr_employees SET department_id=$1 WHERE id=$2', [otherDepartment.id, outside.id]);
+    const filtered = await balances.staffLeaveBalances(pool, { user: user(scoped), departmentId: department.id, divisionId: division.id, status: 'activation_required', search: 'accounts' });
+    assert.equal(filtered.total, 1); assert.equal(filtered.employees[0].id, employee.id);
+    assert.deepEqual(filtered.departments.map(d => d.id), [department.id]);
+    assert.deepEqual(filtered.divisions.map(d => d.id), [division.id]);
+    assert.equal((await balances.staffLeaveBalances(pool, { user: user(scoped), departmentId: otherDepartment.id })).total, 0);
+    assert.equal((await balances.staffLeaveBalances(pool, { user: user(scoped), divisionId: randomUUID() })).total, 0);
+    assert.deepEqual((await balances.staffLeaveBalances(pool, { user: user(scoped), status: 'setup_required' })).employees.map(e => e.id), [legacy.id]);
+    await pool.query(`INSERT INTO hr_gov_workflow_configs(employee_id,enabled_codes,medical_rule,medical_history,source_reference,legacy_resolution_reference,snapshot_hash,prepared_by,reason,status,approved_by,approved_at)
+      VALUES($1,ARRAY['recreation'],'single_calendar_date_nonadjacent_scheduled_days','[]','Verified source','Verified source','test',$2,'Verified setup','published',$2,NOW())`, [employee.id, admin.id]);
+    assert.equal((await balances.staffLeaveBalances(pool, { user: user(scoped), status: 'active' })).total, 1);
+    await pool.query(`INSERT INTO hr_gov_workflow_configs(employee_id,enabled_codes,medical_rule,medical_history,source_reference,legacy_resolution_reference,snapshot_hash,prepared_by,reason,status,approved_by,approved_at)
+      VALUES($1,'{}','single_calendar_date_nonadjacent_scheduled_days','[]','Verified pause','Verified source','pause',$2,'Verified pause','published',$2,NOW()+INTERVAL '1 second')`, [employee.id, admin.id]);
+    assert.equal((await balances.staffLeaveBalances(pool, { user: user(scoped), status: 'paused' })).total, 1);
+  });
+  test('numeric available-balance sorting covers every page and keeps uncertified balances last', async () => {
+    const ids = [];
+    for (let i = 1; i <= 55; i++) {
+      const { rows: [staff] } = await pool.query("INSERT INTO hr_employees(display_name,department_id,leave_policy_regime) VALUES($1,$2,'government') RETURNING id", [`Sort staff ${String(i).padStart(2,'0')}`, department.id]);
+      ids.push(staff.id); await entitlement(staff.id, '2026', '2026-01-01', String(i));
+    }
+    // A hold affects availability and therefore ordering; a future opening
+    // cannot replace the account currently shown or elevate it in the sort.
+    await entitlement(employee.id, '2099', '2099-01-01', '100');
+    const reservation = randomUUID();
+    await pool.query("INSERT INTO hr_gov_reservation_requests(id,employee_id,payload_hash,evaluation_snapshot,status) VALUES($1,$2,'test','{}','held')", [reservation, employee.id]);
+    await pool.query('INSERT INTO hr_gov_reservations(request_id,entitlement_id,amount) VALUES($1,$2,19.5)', [reservation, account.id]);
+    const first = await balances.staffLeaveBalances(pool, { user: user(admin), sort: 'recreation', direction: 'desc' });
+    const second = await balances.staffLeaveBalances(pool, { user: user(admin), sort: 'recreation', direction: 'desc', page: 2 });
+    assert.equal(first.total, 58); assert.equal(first.employees.length, 50);
+    assert.equal(first.employees[0].id, ids[54]); assert.equal(first.employees[0].balances[0].available, '55.000000');
+    const combined = [...first.employees, ...second.employees];
+    assert.equal(new Set(combined.map(e => e.id)).size, 58);
+    assert.deepEqual(combined.slice(-2).map(e => e.id).sort(), [outside.id, legacy.id].sort());
+    const ascending = await balances.staffLeaveBalances(pool, { user: user(admin), sort: 'recreation' });
+    assert.equal(ascending.employees[0].id, employee.id); assert.equal(ascending.employees[1].id, ids[0]);
+    assert.deepEqual((await balances.staffLeaveBalances(pool, { user: user(scoped), sort: 'medical' })).employees.map(e => e.display_name),
+      (await balances.staffLeaveBalances(pool, { user: user(scoped) })).employees.map(e => e.display_name));
+    const byName = await balances.staffLeaveBalances(pool, { user: user(admin), sort: 'name', direction: 'desc' });
+    assert.equal(byName.employees[0].id, ids[54]);
+  });
 });

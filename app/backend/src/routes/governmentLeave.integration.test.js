@@ -178,6 +178,12 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
   assert.equal((await call(path+'?page=0')).status,422);assert.equal((await call(path+'?entitlement_id=bad')).status,422);
   assert.equal((await call('/api/hr/government/balances?search='+encodeURIComponent('x'.repeat(101)))).status,422);
   assert.equal((await call('/api/hr/government/balances?page=-1')).status,422);
+  for(const query of ['department_id=bad','division_id=bad','status=unknown','sort=balance','direction=sideways','sort=name%3BDROP%20TABLE']) {
+   assert.equal((await call('/api/hr/government/balances?'+query)).status,422);
+  }
+  const filtered=await call(`/api/hr/government/balances?department_id=${department.id}&status=activation_required&sort=recreation&direction=desc`);
+  assert.equal(filtered.status,200);assert.equal(filtered.body.total,1);assert.equal(filtered.body.departments[0].id,department.id);
+  assert.equal((await call(`/api/hr/government/balances?department_id=${randomUUID()}`)).body.total,0);
   await pool.query('UPDATE reviewers SET permissions=$2 WHERE id=$1',[scoped.id,{hr_access:true,hr_balance_manage:true}]);
   await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_balance_manage'],'2020-01-01',$3,$4)",[scoped.id,department.id,central.id,reason]);
   assert.equal((await call(path,undefined,scoped)).status,200);assert.equal((await call('/api/hr/government/balances',undefined,scoped)).body.total,1);

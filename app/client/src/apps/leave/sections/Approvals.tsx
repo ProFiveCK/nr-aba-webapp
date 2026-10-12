@@ -80,16 +80,16 @@ export function Approvals() {
         }
     };
 
-    if (loading) return <div className="space-y-6"><GovernmentRequestList mode="queue"/><LoadingState label="Loading previous applications…" /></div>;
+    if (loading) return <div className="space-y-6"><GovernmentRequestList mode="queue"/><LoadingState label="Checking requests submitted before migration…" /></div>;
 
     return (
         <div className="space-y-6">
             <GovernmentRequestList mode="queue"/>
-            {(items.length>0||recent.length>0)&&<details open={items.length>0} className="app-panel p-5 sm:p-6"><summary className="cursor-pointer font-semibold text-sm">{items.length?`${items.length} previous applications awaiting a decision`:'Previous decisions'}</summary><div className="mt-4 space-y-4">
+            {(items.length>0||recent.length>0)&&<details open={items.length>0} className="app-panel p-5 sm:p-6"><summary className="cursor-pointer font-semibold text-sm">{items.length?`${items.length} requests from before migration awaiting a decision`:'Decisions before migration'}</summary><div className="mt-4 space-y-4">
             <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#2a5ba5]">Manager queue</p>
-                <h2 className="mt-1 text-xl font-bold text-gray-950">Previous applications</h2>
-                <p className="mt-1 text-sm text-gray-500">{items.length} request{items.length === 1 ? '' : 's'} awaiting your decision.</p>
+                <h2 className="mt-1 text-xl font-bold text-gray-950">Requests submitted before migration</h2>
+                <p className="mt-1 text-sm text-gray-500">Original applications from before the move to the current leave policy. {items.length} request{items.length === 1 ? '' : 's'} still awaiting a decision.</p>
             </div>
             {lastApproved && (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
@@ -112,7 +112,7 @@ export function Approvals() {
                                 <p className="mt-2 rounded-md bg-gray-50 p-2 text-sm text-gray-700">{application.reason}</p>
                             )}
                             {!application.reason && (
-                                <p className="mt-2 rounded-md bg-amber-50 p-2 text-sm text-amber-900">No explanation recorded. Ask the applicant to cancel and resubmit this request with a reason.</p>
+                                <p className="mt-2 rounded-md bg-amber-50 p-2 text-sm text-amber-900">No explanation recorded. Ask HR to review the original request before recording a decision.</p>
                             )}
                             {(application.attachments?.length ?? 0) > 0 && (
                                 <div className="mt-2">
@@ -146,8 +146,8 @@ export function Approvals() {
             {recent.length > 0 && (
                 <section className="app-panel overflow-hidden">
                     <div className="border-b border-gray-100 px-5 py-4 sm:px-6">
-                        <h3 className="text-lg font-semibold text-gray-950">Recently approved</h3>
-                        <p className="text-sm text-gray-500">Open the approved PDF for printing or the personnel file.</p>
+                        <h3 className="text-lg font-semibold text-gray-950">Latest approvals before migration</h3>
+                        <p className="text-sm text-gray-500">Original approval records and PDFs are retained for the personnel file. Current policy applications and decisions appear above.</p>
                     </div>
                     <div className="divide-y divide-gray-100">
                         {recent.map((application) => (

@@ -106,7 +106,10 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     const current=result.body.employees.find(row=>row.id===employee.id),missing=result.body.employees.find(row=>row.id===peer.id);
     assert.deepEqual(current.balances,{Recreation:{balance:25,pending:5}});
     assert.equal(current.can_adjust_balance,false);assert.deepEqual(missing.balances,{});assert.equal(missing.can_adjust_balance,false);
-    assert.equal(current.daily_rate,undefined);assert.equal(current.reason,undefined);assert.ok(!JSON.stringify(result.body).includes('PRIVATE'));assert.ok(!JSON.stringify(result.body).includes('777'));
+    assert.equal(current.daily_rate,undefined);assert.equal(current.reason,undefined);assert.ok(!JSON.stringify(result.body).includes('PRIVATE'));
+    // Check balance amounts rather than random record IDs, which can contain
+    // the same digits as the outsider's credit without exposing that credit.
+    assert.ok(result.body.employees.every(row=>Object.values(row.balances).every(balance=>Number(balance.balance)!==777)));
     assert.deepEqual(result.body.leave_types,['Medical','Recreation','Special']);
     assert.equal((await call(staff,'/adjustments',{employee_id:employee.id,leave_type_id:type.id,amount:1,reason,year})).status,409);
     assert.equal((await call(staff,'/adjustments',{employee_id:outsider.id,leave_type_id:type.id,amount:1,reason,year})).status,404);

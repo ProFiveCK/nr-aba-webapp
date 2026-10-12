@@ -7,6 +7,7 @@ import { MyLeave } from './sections/MyLeave';
 import { Approvals } from './sections/Approvals';
 import { Staff } from './sections/Staff';
 import { Calendar } from './sections/Calendar';
+import { Balances } from './sections/Balances';
 import { Report } from './sections/Report';
 
 export function LeaveApp() {
@@ -45,6 +46,8 @@ export function LeaveApp() {
                 {visible.some((s) => s.id === 'approvals') && <Route path="approvals" element={<Approvals />} />}
                 {visible.some((s) => s.id === 'calendar') && <Route path="calendar" element={<Calendar />} />}
                 {visible.some((s) => s.id === 'employees') && <><Route path="employees" element={<Staff key="employees" />} /><Route path="staff" element={<Navigate to="/leave/employees" replace />} /></>}
+                {visible.some((s) => s.id === 'balances') && <Route path="balances" element={<Balances />} />}
+                {!visible.some((s) => s.id === 'employees') && visible.some((s) => s.id === 'balances') && <Route path="employees" element={<Navigate to="/leave/balances" replace />} />}
                 {visible.some((s) => s.id === 'report') && <Route path="report" element={<Report />} />}
                 {visible.some((s) => s.id === 'settings') && <><Route path="settings" element={<Staff key="settings" workspace="settings" />} /><Route path="policies" element={<Navigate to="/leave/settings?view=policies" replace />} /></>}
                 {/* An unknown or forbidden section, including one reached from

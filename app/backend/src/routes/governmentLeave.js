@@ -15,6 +15,7 @@ import {PERMISSIONS} from '../config.js';
 import {withTransaction} from '../lib/transaction.js';
 import {CODES,COMMON_CODES,DEFAULT_RULES,SOURCE,dayNumber,serviceFacts} from '../lib/governmentLeaveRules.js';
 import * as service from '../services/governmentLeave.js';
+import { staffLeaveBalances, employeeLeaveAccount } from '../services/governmentLeaveBalances.js';
 const router=express.Router(),central=requirePermission(PERMISSIONS.HR_ADMIN),access=requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_STAFF_MANAGE,PERMISSIONS.HR_BALANCE_MANAGE,PERMISSIONS.HR_LEAVE_APPROVE);
 router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
 router.use('/report',governmentLeaveReportingRouter);
@@ -27,6 +28,13 @@ const reason=body('reason').isString().trim().isLength({min:10,max:1000}),refere
 const date=name=>body(name).isString().custom(value=>{dayNumber(value);return true;});
 const actor=req=>({id:req.user.id,email:req.user.email,ip:req.ip});
 const data=req=>({user:req.user,actor:actor(req),data:req.body,employeeId:req.params.id});
+router.get('/balances',requirePermission(PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_BALANCE_MANAGE),[
+ query('search').optional().isString().trim().isLength({max:100}),query('page').optional().isInt({min:1,max:100000})
+],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await staffLeaveBalances(pool,{user:req.user,search:req.query.search||'',page:Number(req.query.page)||1}));});
+router.get('/employees/:id/account',access,[id,query('page').optional().isInt({min:1,max:100000}),query('entitlement_id').optional().isUUID()],async(req,res)=>{
+ if(!handleValidation(req,res))return;
+ res.json(await employeeLeaveAccount(pool,{user:req.user,employeeId:req.params.id,entitlementId:req.query.entitlement_id||null,page:Number(req.query.page)||1}));
+});
 router.get('/calendar-settings',central,async(_req,res)=>res.json(await calendarSettings(pool)));
 router.put('/calendar-settings',central,[body('require_calendar_coverage').isBoolean({strict:true}),body('expected_revision').isInt({min:1,max:2147483646}).toInt()],async(req,res)=>{
  if(!handleValidation(req,res))return;

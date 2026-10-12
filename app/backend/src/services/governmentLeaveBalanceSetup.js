@@ -15,7 +15,9 @@ function input(data) {
     if (!Array.isArray(ids) || !ids.length || ids.length > 50 || ids.some(id => typeof id !== 'string' || !uuid.test(id)) || new Set(ids.map(id => id.toLowerCase())).size !== ids.length) fail('Select 1–50 distinct migrated employees.', 400);
     try { dayNumber(data.payroll_anchor); } catch { fail('Choose a valid fortnightly payroll date.', 400); }
     if (data.calculation_confirmed !== true) fail('Confirm the balance update schedule.', 400);
-    return { employee_ids: ids.map(id => id.toLowerCase()).sort(), payroll_anchor: data.payroll_anchor, calculation_confirmed: true };
+    const previousPayrollEnd=data.previous_payroll_end||null;
+    if(previousPayrollEnd){try{dayNumber(previousPayrollEnd);}catch{fail('Choose a valid last credited payroll date.',400);}if((dayNumber(data.payroll_anchor)-dayNumber(previousPayrollEnd))%14!==0)fail('The payroll date must follow the saved fourteen-day cycle.',400);}
+    return { employee_ids: ids.map(id => id.toLowerCase()).sort(), payroll_anchor: data.payroll_anchor, previous_payroll_end: previousPayrollEnd, calculation_confirmed: true };
 }
 
 async function snapshot(client, plan, actorId) {
@@ -38,7 +40,11 @@ async function snapshot(client, plan, actorId) {
                 const review = await firstAdminJobReview(client, actorId, id, code);
                 if (!review) fail(`The ${code} schedule needs individual review. Bulk setup is available to the administrator who applied the initial staff transfer.`);
                 const anchor = dayNumber(plan.payroll_anchor), first = anchor + Math.max(0, Math.ceil((dayNumber(opening.as_of) - anchor) / 14)) * 14;
-                schedules.push({ code, status: 'new', initial_setup_review_id: review, first_post_end: code === 'recreation' ? isoDay(first) : null });
+                if(code==='recreation'&&plan.previous_payroll_end){
+                    const previous=(await client.query("SELECT to_char(max(period_end),'YYYY-MM-DD') AS last_credited FROM hr_accrual_runs")).rows[0];
+                    if(previous.last_credited!==plan.previous_payroll_end||plan.previous_payroll_end>opening.as_of||first!==dayNumber(plan.previous_payroll_end)+14)fail('Review the last credited payroll and first posting before carrying accrual across the staff transfer.');
+                }
+                schedules.push({ code, status: 'new', initial_setup_review_id: review, first_post_end: code === 'recreation' ? isoDay(first) : null, previous_payroll_end: code==='recreation'?plan.previous_payroll_end:null });
             }
         } catch (error) { if (!error.status) throw error; issues.push(error.message); }
         employees.push({ employee_id: id, display_name: context.employee.display_name, schedules, issues, source_hash: fingerprint({ context, config, published }) });
@@ -69,6 +75,7 @@ export async function applyBalanceSetup(pool, { user, actor, data }) {
         for (const employee of current.employees) for (const schedule of employee.schedules.filter(s => s.status === 'new')) {
             const prepared = await prepareJobPlan(pool, { client, user, actor: verifiedActor, employeeId: employee.employee_id, data: {
                 code: schedule.code, payroll_anchor: plan.payroll_anchor, first_post_end: schedule.first_post_end,
+                previous_payroll_end: schedule.previous_payroll_end,
                 temporary_start: 'qualification', source_reference: 'Administrator review of initial staff transfer and shared payroll schedule', reason,
             } });
             await approveJobPlan(pool, { client, user, actor: verifiedActor, id: prepared.id, reason });

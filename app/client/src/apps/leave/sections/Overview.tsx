@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { AustralianDateInput } from '../../../components/AustralianDateInput';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -473,6 +474,7 @@ export function Overview({ onNavigate }: { onNavigate?: (tab: HrTab) => void }) 
 
     return (
         <div className="space-y-4">
+            <Link className="inline-flex rounded-lg border border-brand px-4 py-2 text-sm font-semibold text-brand" to="/leave/balances">Staff balances & movements →</Link>
             {loading && !data ? (
                 <LoadingState label="Loading overview…" />
             ) : !data ? (

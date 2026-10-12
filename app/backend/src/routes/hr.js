@@ -5,14 +5,12 @@ import { body, param, query, handleValidation } from '../middleware/validation.j
 import { pool } from '../db.js';
 import { requirePermission } from '../services/authService.js';
 import { recordAudit } from '../services/auditService.js';
-import { notifyLeaveDecision, notifyLeaveSubmitted } from '../services/notificationService.js';
+import { notifyLeaveDecision } from '../services/notificationService.js';
 import { runLeaveAccrual } from '../services/leaveAccrual.js';
 import {
   adjustBalance,
-  applyForLeave,
   cancelLeave,
   decideLeave,
-  leaveApprovers,
   setOpeningBalance,
 } from '../services/leaveService.js';
 import { withTransaction } from '../lib/transaction.js';
@@ -23,7 +21,6 @@ import { normalizeNameKey } from '../lib/names.js';
 import { INELIGIBLE_REASONS, resolveEligibility } from '../lib/eligibility.js';
 import { calculateWorkingDays, parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js';
-import { leaveAttachmentUpload, sha256 } from '../middleware/upload.js';
 
 import hrAccessRouter from './hrAccess.js';
 import employeeOnboardingRouter from './employeeOnboarding.js';
@@ -278,55 +275,12 @@ router.get(
   }
 );
 
-// Accepts JSON, or multipart when the leave type needs a supporting document
-// (an invitation letter, a medical certificate). `leaveAttachmentUpload` leaves
-// a JSON request untouched, so both shapes reach the same validation below.
-router.post(
-  '/leaves',
-  requirePermission(PERMISSIONS.HR_LEAVE_APPLY),
-  leaveAttachmentUpload,
-  [
-    body('leave_type_id').isUUID(),
-    body('start_date').isISO8601(),
-    body('end_date').isISO8601(),
-    body('reason').isString().trim().notEmpty().isLength({ max: 2000 }),
-  ],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const employee = await currentEmployee(req);
-    if (req.user.account_type === 'employee' || employee.leave_policy_regime==='government') {
-      throw new ServiceError(409, 'Government leave submission will open after the division, department and Chief Secretary approval workflow is enabled.');
-    }
-    const { application, leaveType } = await applyForLeave(pool, {
-      employee,
-      leaveTypeId: req.body.leave_type_id,
-      startDate: req.body.start_date,
-      endDate: req.body.end_date,
-      reason: req.body.reason,
-      attachments: (req.files || []).map((file) => ({
-        fileName: file.originalname,
-        contentType: file.mimetype,
-        buffer: file.buffer,
-        checksum: sha256(file.buffer),
-      })),
-      actorId: req.user.id,
-    });
-    res.status(201).json(application);
-
-    // After the response, and best effort: a mail failure must not fail an
-    // application the database has already accepted.
-    leaveApprovers(pool, employee)
-      .then((approvers) => notifyLeaveSubmitted({
-        application: { ...application, leave_type_name: leaveType.name },
-        employee,
-        approvers,
-      }))
-      .then((sentTo) => console.info(sentTo.length
-        ? `[leave] approval request for ${employee.display_name} (${application.id}) emailed to ${sentTo.join(', ')}`
-        : `[leave] approval request for ${employee.display_name} (${application.id}) not emailed: no approver address, SMTP not configured, or testing mode`))
-      .catch((err) => console.error('Failed to notify the approver of a leave application', err));
-  }
-);
+// Retain historical reads and decisions, but accept new applications only
+// through the current policy workflow. Older clients must not reopen a second
+// submission path for employees whose transfer is still being reviewed.
+router.post('/leaves', requirePermission(PERMISSIONS.HR_LEAVE_APPLY), async () => {
+  throw new ServiceError(409, 'Use My Leave to apply through the current policy approval workflow. If your leave setup is incomplete, ask HR to finish staff transfer and activation.');
+});
 
 router.post(
   '/leaves/:id/cancel',

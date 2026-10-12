@@ -1,5 +1,5 @@
 export type LeaveSection =
-    | 'overview' | 'my-leave' | 'approvals' | 'calendar' | 'employees' | 'settings' | 'staff' | 'report' | 'policies';
+    | 'balances' | 'overview' | 'my-leave' | 'approvals' | 'calendar' | 'employees' | 'settings' | 'staff' | 'report' | 'policies';
 
 export interface LeaveSectionDef {
     id: LeaveSection;
@@ -21,8 +21,9 @@ export const LEAVE_SECTIONS: LeaveSectionDef[] = [
     { id: 'my-leave', label: 'My Leave', capabilities: ['hr_leave_apply'] },
     { id: 'approvals', label: 'Approvals', capabilities: ['hr_leave_approve', 'hr_admin'] },
     { id: 'calendar', label: 'Calendar', capabilities: ['hr_access'] },
-    { id: 'employees', label: 'Employees', capabilities: ['hr_staff_manage', 'hr_balance_manage', 'hr_admin'] },
-    { id: 'report', label: 'Report', capabilities: ['hr_report_read', 'hr_admin'] },
+    { id: 'employees', label: 'Employees', capabilities: ['hr_staff_manage', 'hr_admin'] },
+    { id: 'balances', label: 'Staff balances', capabilities: ['hr_balance_manage', 'hr_admin'] },
+    { id: 'report', label: 'Reports', capabilities: ['hr_report_read', 'hr_admin'] },
     { id: 'settings', label: 'Settings', capabilities: ['hr_admin'] },
 ];
 

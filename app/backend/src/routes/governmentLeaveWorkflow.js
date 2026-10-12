@@ -42,6 +42,10 @@ router.get('/commissioning',central,async(req,res)=>{
 });
 router.post('/commissioning/initial-credit',central,[body('employee_id').isUUID(),body('leave_type_id').isUUID()],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await recordInitialCredit(pool,args(req)));});
 router.post('/balance-setup/preview',central,async(req,res)=>{res.json(await previewBalanceSetup(pool,args(req)));});
+router.get('/balance-setup/schedule',central,async(_req,res)=>{
+ const {rows:[saved]}=await pool.query("SELECT to_char(accrual_anchor_date,'YYYY-MM-DD') AS payroll_anchor,(SELECT to_char(max(period_end),'YYYY-MM-DD') FROM hr_accrual_runs) AS previous_payroll_end FROM reviewer_settings WHERE id=TRUE");
+ res.json(saved||{payroll_anchor:null,previous_payroll_end:null});
+});
 router.post('/balance-setup/apply',central,async(req,res)=>{res.json(await applyBalanceSetup(pool,args(req)));});
 router.post('/commissioning/foundations/preview',central,async(req,res)=>{res.json(await previewInitialFoundations(pool,args(req)));});
 router.post('/commissioning/foundations/apply',central,async(req,res)=>{res.json(await applyInitialFoundations(pool,args(req)));});
@@ -80,7 +84,7 @@ router.get('/consent-offices',central,[query('page').optional().isInt({min:1,max
 });
 router.post('/consent-offices',central,[reason,reference,body('level').isIn(['relevant_secretary','hr_verifier','minister']),body('department_id').optional({nullable:true,checkFalsy:true}).isUUID(),body('approver_employee_id').isUUID(),date('effective_from'),optionalDate('effective_to')],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await workflow.assignConsentOffice(pool,args(req)));});
 router.post('/consent-offices/:id/close',central,[id,reason,date('effective_to')],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.closeConsentOffice(pool,args(req)));});
-router.post('/employees/:id/job-plans',central,[id,reason,reference,body('code').isIn(COMMON_CODES),body('calculation_confirmed').equals('true'),optionalDate('first_post_end'),optionalDate('payroll_anchor'),body('temporary_start').optional().isIn(['appointment','qualification'])],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await jobs.prepareJobPlan(pool,args(req)));});
+router.post('/employees/:id/job-plans',central,[id,reason,reference,body('code').isIn(COMMON_CODES),body('calculation_confirmed').equals('true'),optionalDate('first_post_end'),optionalDate('payroll_anchor'),optionalDate('previous_payroll_end'),body('temporary_start').optional().isIn(['appointment','qualification'])],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await jobs.prepareJobPlan(pool,args(req)));});
 router.post('/job-plans/:id/approve',central,[id,reason],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await jobs.approveJobPlan(pool,{...args(req),reason:req.body.reason}));});
 router.post('/employees/:id/run-jobs',central,[id,optionalDate('as_of')],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await jobs.runEmployeeJobs(pool,{...args(req),asOf:req.body.as_of||workflow.today()}));});
 router.post('/preview',apply,applicationFields,async(req,res)=>{

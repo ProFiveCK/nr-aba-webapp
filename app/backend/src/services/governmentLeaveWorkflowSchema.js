@@ -106,6 +106,7 @@ export async function initGovernmentLeaveWorkflowSchema(client) {
         OR (code IN ('medical','special') AND method='service_anniversary_reset'))
     );
     ALTER TABLE hr_gov_job_plans ADD COLUMN IF NOT EXISTS initial_setup_review_id UUID REFERENCES hr_gov_commissioning_reviews(id);
+    ALTER TABLE hr_gov_job_plans ADD COLUMN IF NOT EXISTS previous_payroll_end DATE;
     CREATE TABLE IF NOT EXISTS hr_gov_job_posts (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), employee_id UUID NOT NULL REFERENCES hr_employees(id), code TEXT NOT NULL,
       event_date DATE NOT NULL, event_kind TEXT NOT NULL CHECK(event_kind IN ('accrual','renewal')),

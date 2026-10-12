@@ -168,7 +168,29 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
   await assert.rejects(s.certifyOpening(pool,{user:user(certifier),actor:{...certifier,id:randomUUID()},id:pending.id,reason}));assert.equal((await ctx()).entitlements.length,0);
   await opening();const held=await reserve();await assert.rejects(finish(held.id,'consumed',{actor:{id:randomUUID()}}));assert.equal((await ctx()).entitlements[0].held,'1.000000');assert.equal((await ctx()).entitlements[0].balance,'20.000000');
  });
+ test('balance accounts enforce scopes, owner access, input validation and no-store responses',async()=>{
+  const account=await opening();
+  const report=await call('/api/hr/government/balances');assert.equal(report.status,200);assert.equal(report.cache,'no-store');assert.equal(report.body.employees[0].balances[0].available,'20.000000');
+  const path=`/api/hr/government/employees/${employee.id}/account`;
+  const own=await call(path,undefined,owner);assert.equal(own.status,200);assert.equal(own.body.movements[0].kind,'opening');assert.equal(own.body.movements[0].running_balance,'20.000000');assert.equal(own.body.accounts[0].id,account.id);
+  assert.equal((await call('/api/hr/government/balances',undefined,owner)).status,403);
+  assert.equal((await call(path,undefined,scoped)).status,404);
+  assert.equal((await call(path+'?page=0')).status,422);assert.equal((await call(path+'?entitlement_id=bad')).status,422);
+  assert.equal((await call('/api/hr/government/balances?search='+encodeURIComponent('x'.repeat(101)))).status,422);
+  assert.equal((await call('/api/hr/government/balances?page=-1')).status,422);
+  await pool.query('UPDATE reviewers SET permissions=$2 WHERE id=$1',[scoped.id,{hr_access:true,hr_balance_manage:true}]);
+  await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_balance_manage'],'2020-01-01',$3,$4)",[scoped.id,department.id,central.id,reason]);
+  assert.equal((await call(path,undefined,scoped)).status,200);assert.equal((await call('/api/hr/government/balances',undefined,scoped)).body.total,1);
+ });
  test('legacy accrual cannot write into government historical balances',async()=>{
   const type=await upsertLeaveType(pool,{name:'Synthetic Legacy Accrual',accruable:true,perFortnight:1});await pool.query('INSERT INTO hr_leave_balances(employee_id,leave_type_id,year,balance,pending) VALUES ($1,$2,2026,12,0)',[employee.id,type.id]);const {runLeaveAccrual}=await import('../services/leaveAccrual.js');await withTransaction(pool,client=>runLeaveAccrual(client,{periodEnd:'2026-10-07',actorId:central.id}));assert.equal((await pool.query('SELECT balance FROM hr_leave_balances WHERE employee_id=$1',[employee.id])).rows[0].balance,'12.00');
+ });
+ test('earlier clients cannot submit a second leave workflow, including staff awaiting transfer',async()=>{
+  await pool.query("UPDATE hr_employees SET leave_policy_regime='legacy' WHERE id=$1",[employee.id]);
+  await pool.query("UPDATE reviewers SET account_type='staff' WHERE id=$1",[owner.id]);
+  const result=await call('/api/hr/leaves',{leave_type_id:randomUUID(),start_date:'2026-10-20',end_date:'2026-10-21',reason},owner);
+  assert.equal(result.status,409);assert.match(result.body.message,/current policy approval workflow/);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_leave_applications')).rows[0].n,0);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_leave_balances')).rows[0].n,0);
  });
 });

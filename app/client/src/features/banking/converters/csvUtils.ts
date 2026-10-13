@@ -47,29 +47,30 @@ async function readNumbersWorkbookText(file: File): Promise<string> {
 
 function escapeCsvCell(value: string): string {
     const text = String(value ?? '');
-    if (/[",\n]/.test(text)) {
+    // Quote embedded semicolon records so they remain distinct from raw bank CSV.
+    if (/[",;\r\n]/.test(text)) {
         return `"${text.replace(/"/g, '""')}"`;
     }
     return text;
 }
 
-export function parseCsvText(text: string): string[][] {
-    return String(text || '')
-        .split(/\r?\n/)
-        .map((line) => line.trimEnd())
-        .filter((line) => line.trim().length > 0)
-        .map(parseCsvLine);
-}
-
-function parseCsvLine(line: string): string[] {
-    const result: string[] = [];
+export function parseCsvText(text: string, delimiter: string = ','): string[][] {
+    const result: string[][] = [];
+    let row: string[] = [];
     let cell = '';
     let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
+    const input = String(text || '').replace(/^\uFEFF/, '');
+    const finishRow = () => {
+        row.push(cell);
+        if (row.some((value) => value.trim().length > 0)) result.push(row);
+        row = [];
+        cell = '';
+    };
+    for (let i = 0; i < input.length; i++) {
+        const ch = input[i];
         if (inQuotes) {
             if (ch === '"') {
-                if (line[i + 1] === '"') {
+                if (input[i + 1] === '"') {
                     cell += '"';
                     i++;
                 } else {
@@ -80,14 +81,17 @@ function parseCsvLine(line: string): string[] {
             }
         } else if (ch === '"') {
             inQuotes = true;
-        } else if (ch === ',') {
-            result.push(cell);
+        } else if (ch === delimiter) {
+            row.push(cell);
             cell = '';
+        } else if (ch === '\r' || ch === '\n') {
+            finishRow();
+            if (ch === '\r' && input[i + 1] === '\n') i++;
         } else {
             cell += ch;
         }
     }
-    result.push(cell);
+    finishRow();
     return result;
 }
 

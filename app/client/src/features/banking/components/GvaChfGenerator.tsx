@@ -15,7 +15,7 @@ export function GvaChfGenerator() {
     return (
         <FmisGenerator
             title="GVA-CHF Statement Generator"
-            description="Convert Geneva Mission CHF bank statement CSV exports into TechnologyOne FMIS bank-reconciliation import format."
+            description="Convert Geneva Mission CHF bank statements from CSV or Apple Numbers (.numbers) directly into TechnologyOne FMIS bank-reconciliation import format."
             accept=".csv,.numbers"
             selectButtonLabel="Select GVA-CHF Statement"
             generateButtonLabel="Generate GVA-CHF Output"

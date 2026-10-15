@@ -23,3 +23,15 @@ test('Treasury approval form selects MC and non-MC from the immutable Medical mo
  }
  const unknown=fixture(undefined);assert.equal(leaveApplicationFormKind(governmentApprovalFormSnapshot(unknown).leave_type_name),'sickUnspecified');
 });
+
+test('approved hourly PDFs retain hours and balances and use Naoero on form and continuation pages',async()=>{
+ const {generatedPdfText}=await import('../test-support/pdfText.js');
+ const data=fixture('certificate');data.input={duration_unit:'hours',hours:'3.5',medical_mode:'certificate'};
+ data.charge='0.5';data.evaluation.requested_hours=3.5;data.evaluation.scheduled_hours=7;
+ data.evaluation.segments[0]={...data.evaluation.segments[0],charge:'0.5',scheduled_hours:7,leave_hours:3.5};
+ const form=governmentApprovalFormSnapshot(data);assert.equal(form.hours,'3.5');assert.equal(form.days,'0.5');
+ const text=await generatedPdfText(await generateGovernmentLeavePdf(data));
+ assert.match(text,/REPUBLIC OF NAOERO/);assert.match(text,/NAOERO PUBLIC SERVICE/);
+ assert.match(text,/Hourly leave: 3.5 hours/);assert.match(text,/0.5 days from the leave balance/);
+ assert.match(text,/3.5 leave hours/);assert.doesNotMatch(text,/NAURU|Nauru|Acknowledgement is recorded separately/);
+});

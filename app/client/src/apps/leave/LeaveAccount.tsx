@@ -28,7 +28,7 @@ const movementLabels: Record<string, string> = {
     expiry: 'Expired leave', correction: 'Balance correction', reversal: 'Reversal / returned leave',
 };
 
-export function LeaveAccount({ employeeId, refreshVersion = 0, initiallyExpanded = false }: { employeeId: string; refreshVersion?: number; initiallyExpanded?: boolean }) {
+export function LeaveAccount({ employeeId, refreshVersion = 0, initiallyExpanded = false, compact = false }: { employeeId: string; refreshVersion?: number; initiallyExpanded?: boolean; compact?: boolean }) {
     const { user } = useAuth();
     const [expanded, setExpanded] = useState(initiallyExpanded);
     const [result, setResult] = useState<{ key: string; data: Account | null; error: string } | null>(null);
@@ -51,15 +51,15 @@ export function LeaveAccount({ employeeId, refreshVersion = 0, initiallyExpanded
     const current = currentLeaveEntitlements(data?.accounts || [], data?.as_of);
     return <section className="space-y-4" aria-label="Leave balance account">
         <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><h3 className="text-lg font-semibold">{data ? `${reviewRecordLabel(data.employee.display_name)} · Balances & movements` : 'Balances & movements'}</h3><p className="mt-1 text-sm text-gray-600">Credits minus deductions give the balance. Pending holds are then subtracted to show available days.</p></div>
-            <Button variant="secondary" disabled={loading} onClick={() => setVersion(v => v + 1)}>Refresh balances</Button>
+            <div><h3 className="text-lg font-semibold">{compact?'Leave balances':data ? `${reviewRecordLabel(data.employee.display_name)} · Balances & movements` : 'Balances & movements'}</h3>{!compact&&<p className="mt-1 text-sm text-gray-600">Credits minus deductions give the balance. Pending holds are then subtracted to show available days.</p>}</div>
+            <Button variant="secondary" disabled={loading} onClick={() => setVersion(v => v + 1)}>{compact?'Refresh':'Refresh balances'}</Button>
         </div>
         {error && <p role="alert" className="app-panel p-4 text-sm text-red-700">{error}</p>}
         {loading ? <LoadingState label="Loading leave account…" /> : data && <>
             {data.employee.leave_policy_regime !== 'government' ? <p role="status" className="app-panel p-4 text-sm text-amber-900">{data.employee.leave_entitled === false ? 'No current leave entitlement is recorded. Ask HR to review any appointment changes.' : 'This employee’s leave setup needs review before current policy balances are available.'}{user?.permissions?.hr_admin && <> <Link className="font-semibold underline" to="/leave/settings?view=rollout">Review staff setup</Link>.</>}</p> : <>
                 <p className="text-sm text-gray-500">As at {formatDate(data.as_of)} · All figures are in days.</p>
                 {!current.length && <p className="app-panel p-4 text-sm text-gray-600">No certified balance is available yet. Ask HR to complete the employee’s balance setup.</p>}
-                <div className="grid gap-4 xl:grid-cols-3">{current.map(balance => <article key={balance.id} className="app-panel space-y-3 p-4">
+                <div className={compact?'grid grid-cols-3 gap-2 sm:gap-3':'grid gap-4 xl:grid-cols-3'}>{compact?current.map(balance=><article key={balance.id} className="app-panel leave-balance-card space-y-2 p-3"><h4 className="text-xs font-semibold sm:text-sm">{governmentLabel(balance.code)}</h4><p className="text-2xl font-semibold tabular-nums text-brand">{leaveDays(balance.available)} <span className="block text-xs font-normal text-gray-600">days available</span></p><p className="text-xs text-gray-600">Pending: {leaveDays(balance.held)}</p></article>):current.map(balance => <article key={balance.id} className="app-panel space-y-3 p-4">
                     <div><h4 className="font-semibold">{governmentLabel(balance.code)}</h4><p className="text-xs text-gray-500">{formatDate(balance.period_start)} to {formatDate(balance.period_end)}</p></div>
                     <p className="text-3xl font-semibold tabular-nums text-brand">{leaveDays(balance.available)} <span className="text-sm font-normal text-gray-600">available</span></p>
                     <dl className="space-y-1 text-sm">{[['Credits (in)', balance.days_in], ['Deductions (out)', balance.days_out], ['Balance', balance.balance], ['Pending holds', balance.held]].map(([label, value]) => <div key={label} className="flex justify-between gap-3"><dt className="text-gray-600">{label}</dt><dd className="font-medium tabular-nums">{leaveDays(value)}</dd></div>)}</dl>

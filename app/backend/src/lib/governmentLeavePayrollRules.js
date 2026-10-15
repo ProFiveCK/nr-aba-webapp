@@ -23,7 +23,7 @@ export function payrollLines(requests, identities, from, to) {
         const pay = d ? d.pay_segments.find(p => p.start_date <= s.date && p.end_date >= s.date) : {salary_percent:'100.000000'};
         if (!pay) {issues.push(`Grant ${r.id} has no salary instruction for ${s.date}.`); continue;}
         candidates.push({key:`${r.id}:${s.date}:salary`,kind:r.code === 'attendance'?'attendance_instruction':'absence',date:s.date,
-          salary_percent:pay.salary_percent,scheduled_hours:String(s.scheduled_hours),policy_days:s.charge,
+          salary_percent:pay.salary_percent,scheduled_hours:String(s.leave_hours??s.scheduled_hours),policy_days:s.charge,
           annual_debit:d||grant.legacy_approval?.balance_already_deducted?'0.000000':s.charge,payable_aud:'0.00',policy_version_id:s.policy_version_id,
           service_basis_id:s.service_basis_id,source_request_id:r.id,correction_request_id:r.amendment_request_id || null});
       }

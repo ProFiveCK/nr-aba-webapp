@@ -55,3 +55,26 @@ test('optional calendar coverage uses scheduled days and preserves entered holid
  const mixed=calculateEvaluation(c,{...input('medical'),end_date:'2026-10-28',certificate_available:true});
  assert.equal(mixed.eligible_for_preview,true,mixed.issues.join(' '));assert.equal(mixed.charge,'1.000000');assert.equal(mixed.segments[0].holiday_exempt,true);assert.equal(mixed.segments[1].calendar_id,null);
 });
+
+test('hourly leave charges the requested fraction of the verified weekly or roster schedule',()=>{
+ const c=context(),hourly={...input(),duration_unit:'hours',hours:'3.5'};
+ const half=calculateEvaluation(c,hourly);
+ assert.equal(half.eligible_for_preview,true,half.issues.join(' '));
+ assert.equal(half.charge,'0.500000');assert.equal(half.allocations[0].amount,'0.500000');
+ assert.equal(half.scheduled_hours,7);assert.equal(half.requested_hours,3.5);assert.equal(half.segments[0].leave_hours,3.5);
+ c.bases[0].schedule_mode='roster';c.rosters=[{id:'shift',day:hourly.start_date,paid_hours:'12',policy_days:'1.5'}];
+ assert.equal(calculateEvaluation(c,{...hourly,hours:'6'}).charge,'0.750000');
+ assert.equal(calculateEvaluation(context(),{...hourly,hours:'1'}).charge,'0.142857');
+});
+test('hourly input cannot exceed its schedule or bypass dates, holidays, balance and policy checks',()=>{
+ const c=context(),hourly={...input(),duration_unit:'hours',hours:'3.5'};
+ for(const hours of ['0','-1','25','NaN','1.001','',null])assert.throws(()=>calculateEvaluation(c,{...hourly,hours}));
+ assert.throws(()=>calculateEvaluation(c,{...hourly,end_date:'2026-10-28'}),/one date/);
+ assert.throws(()=>calculateEvaluation(c,{...hourly,duration_unit:'minutes'}),/days or hours/);
+ assert.throws(()=>calculateEvaluation(c,{...hourly,duration_unit:'days'}),/only accepted/);
+ assert.match(calculateEvaluation(c,{...hourly,hours:'8'}).issues.join(),/exceed.*schedule/);
+ assert.equal(calculateEvaluation(c,{...hourly,start_date:'2026-10-26',end_date:'2026-10-26'}).eligible_for_preview,false);
+ assert.equal(calculateEvaluation(c,{...hourly,start_date:'2026-10-25',end_date:'2026-10-25'}).eligible_for_preview,false);
+ c.entitlements[0].available='0.4';assert.match(calculateEvaluation(c,hourly).issues.join(),/exceeds.*entitlement/);
+ assert.match(calculateEvaluation(context(),{...hourly,notice_date:'2026-10-26'}).issues.join(),/notice/);
+});

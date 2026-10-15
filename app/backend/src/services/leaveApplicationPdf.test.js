@@ -39,3 +39,11 @@ test('older approvals and unlisted leave types remain printable', async () => {
   }));
   assert.equal(pdf.getPageCount(), 1);
 });
+
+test('existing approvals use Naoero branding in newly downloaded forms',async()=>{
+  const {generatedPdfText}=await import('../test-support/pdfText.js');
+  const bytes=await generateLeaveApplicationPdf(form),pdf=await PDFDocument.load(bytes);
+  assert.match(pdf.getSubject(),/Naoero/);
+  const text=await generatedPdfText(bytes);
+  assert.match(text,/REPUBLIC OF NAOERO/);assert.match(text,/NAOERO PUBLIC SERVICE/);assert.doesNotMatch(text,/NAURU/);
+});

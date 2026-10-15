@@ -19,7 +19,6 @@ export function AustralianDateInput({ value, defaultValue, name, className, onCh
     const iso = parseAustralianDate(text);
     const visible = useRef<HTMLInputElement>(null);
     const stored = useRef<HTMLInputElement>(null);
-    const picker = useRef<HTMLInputElement>(null);
     const error = australianDateError(text, String(min ?? ''), String(max ?? ''));
     useLayoutEffect(() => { visible.current?.setCustomValidity(error); }, [error]);
 
@@ -32,7 +31,7 @@ export function AustralianDateInput({ value, defaultValue, name, className, onCh
         }
     }
 
-    return <span className="relative block min-w-0 w-full">
+    return <span className="relative block min-w-0 w-full rounded-lg focus-within:ring-2 focus-within:ring-brand/30">
         <input {...props} ref={visible} type="text" value={text} disabled={disabled}
             readOnly={readOnly} required={required} placeholder="DD/MM/YYYY" inputMode="numeric"
             className={`${className ?? ''} pr-10`} maxLength={10}
@@ -42,18 +41,13 @@ export function AustralianDateInput({ value, defaultValue, name, className, onCh
                 onBlur?.(event);
             }} />
         <input ref={stored} name={name} type="hidden" value={iso} disabled={disabled} />
-        <input ref={picker} type="date" lang="en-AU" tabIndex={-1} aria-hidden="true"
-            className="pointer-events-none absolute bottom-0 left-0 h-0 w-0 opacity-0"
+        <span className="pointer-events-none absolute inset-y-0 right-1 flex w-10 items-center justify-center rounded text-gray-600" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>
+        </span>
+        <input type="date" lang="en-AU" aria-label={`Choose date${name ? ` for ${name.replace(/_/g, ' ')}` : ''}`}
+            className="absolute inset-y-0 right-0 w-11 cursor-pointer opacity-0"
             value={iso} min={min} max={max} disabled={disabled || readOnly}
+            onClick={event => { try { event.currentTarget.showPicker?.(); } catch { /* The native date control remains available. */ } }}
             onChange={event => change(event, event.target.value ? formatDate(event.target.value) : '')} />
-        <button type="button" disabled={disabled || readOnly}
-            aria-label={`Choose date${name ? ` for ${name.replace(/_/g, ' ')}` : ''}`}
-            className="absolute inset-y-0 right-1 my-1 rounded px-2 text-gray-600 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand disabled:opacity-40"
-            onClick={() => {
-                if (picker.current?.showPicker) picker.current.showPicker();
-                else visible.current?.focus();
-            }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>
-        </button>
     </span>;
 }

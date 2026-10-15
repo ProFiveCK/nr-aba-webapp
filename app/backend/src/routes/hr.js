@@ -221,7 +221,7 @@ router.get(
       res.status(404).json({ message: 'Approved leave form not found.' });
       return;
     }
-    const bytes = await generateLeaveApplicationPdf(form);
+    const bytes = await generateLeaveApplicationPdf(form,{firstPageOnly:true});
     res.set('Cache-Control', 'no-store');
     res.set('Content-Type', 'application/pdf');
     res.set('Content-Disposition', `inline; filename="leave-application-${form.id}.pdf"`);

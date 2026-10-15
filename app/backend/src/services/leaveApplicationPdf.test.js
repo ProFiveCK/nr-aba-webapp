@@ -47,3 +47,11 @@ test('existing approvals use Naoero branding in newly downloaded forms',async()=
   const text=await generatedPdfText(bytes);
   assert.match(text,/REPUBLIC OF NAOERO/);assert.match(text,/NAOERO PUBLIC SERVICE/);assert.doesNotMatch(text,/NAURU/);
 });
+
+test('first-page downloads omit explanation appendices and refer to the retained record',async()=>{
+ const {generatedPdfText}=await import('../test-support/pdfText.js');
+ const long={...form,reason:'Supporting explanation retained with this application. '.repeat(100)};
+ const bytes=await generateLeaveApplicationPdf(long,{firstPageOnly:true}),pdf=await PDFDocument.load(bytes);
+ assert.equal(pdf.getPageCount(),1);
+ const text=await generatedPdfText(bytes);assert.match(text,/Full explanation is retained in the application record/);assert.doesNotMatch(text,/attached on page 2/);
+});

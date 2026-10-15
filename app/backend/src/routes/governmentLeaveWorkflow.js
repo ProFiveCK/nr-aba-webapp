@@ -10,7 +10,7 @@ import {PERMISSIONS} from '../config.js';
 import {withTransaction} from '../lib/transaction.js';
 import {ServiceError} from '../lib/serviceError.js';
 import {COMMON_CODES,dayNumber} from '../lib/governmentLeaveRules.js';
-import {isCentralHr,employeeReadSql,employeeScopeSql} from '../services/hrAccess.js';
+import {isCentralHr,employeeReadSql,employeeScopeSql,managerScopeSql} from '../services/hrAccess.js';
 import {linkedEmployee} from '../services/employeeDirectory.js';
 import * as workflow from '../services/governmentLeaveWorkflow.js';
 import {approvalRouteSettings,publishApprovalRoute,APPROVAL_OFFICES} from '../services/governmentLeaveApprovalRoutes.js';
@@ -108,19 +108,39 @@ router.get('/calendar',[query('from').custom(value=>{dayNumber(value);return tru
     AND ${employeeReadSql(req.user,'$3','e',true)} ORDER BY r.start_date,r.id LIMIT 201 OFFSET $4`,[req.query.from,req.query.to,req.user.id,(page-1)*200]);
   res.json({entries:rows.slice(0,200),has_more:rows.length>200,page});
 });
-router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query('mode').optional().isIn(['mine','queue','all']),query('status').optional().isIn(['pending','approved','rejected','cancelled','all']),query('employee_id').optional().isUUID()],async(req,res)=>{
+router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query('mode').optional().isIn(['mine','queue','all']),query('include_recorded').optional().isIn(['true','false']),query('status').optional().isIn(['pending','approved','rejected','cancelled','all']),query('employee_id').optional().isUUID()],async(req,res)=>{
   if(!handleValidation(req,res))return;const page=Number(req.query.page)||1,mode=req.query.mode||'queue',status=req.query.status||'pending';
   if(mode==='all'&&!isCentralHr(req.user))throw new ServiceError(403,'Central HR administration is required.');
+  const includeRecorded=mode==='queue'&&req.query.include_recorded==='true';
   const scope=mode==='all'?'($1::uuid IS NOT NULL)':mode==='mine'?'e.reviewer_id=$1':`(${employeeScopeSql(req.user,'hr_report_read','$1')} OR EXISTS(SELECT 1 FROM hr_gov_request_stages s JOIN LATERAL(SELECT reviewer_id FROM hr_gov_stage_bindings b WHERE b.stage_id=s.id ORDER BY recorded_at DESC,id DESC LIMIT 1)b ON TRUE WHERE s.request_id=r.id AND b.reviewer_id=$1 AND (e.status='active' OR r.application_snapshot->>'separation_case'='true') AND e.department_id=r.department_id AND e.division_id=r.division_id))`;
   const where=`${scope} AND ($2='all' OR r.status=$2) AND ($4::uuid IS NULL OR r.employee_id=$4)`;
-  const {rows}=await pool.query(`SELECT r.id,r.employee_id,r.application_snapshot->'employee'->>'name' AS employee_name,r.code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge,r.application_snapshot->'input'->>'duration_unit' AS duration_unit,r.application_snapshot->'input'->>'hours' AS hours,r.status,r.submitted_at,r.stage_index,s.level AS current_level,s.label AS current_label,b.approver_name AS current_approver,
+  const selection=`SELECT r.id,r.employee_id,r.application_snapshot->'employee'->>'name' AS employee_name,r.code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge,r.application_snapshot->'input'->>'duration_unit' AS duration_unit,r.application_snapshot->'input'->>'hours' AS hours,r.status,r.submitted_at,r.stage_index,s.level AS current_level,s.label AS current_label,b.approver_name AS current_approver,
     (SELECT count(*)::int FROM hr_gov_request_stages missing WHERE missing.request_id=r.id AND NOT EXISTS(SELECT 1 FROM hr_gov_stage_bindings mb WHERE mb.stage_id=missing.id)) AS unassigned_stages,
-    EXISTS(SELECT 1 FROM hr_gov_salary_acknowledgements ack WHERE ack.request_id=r.id) AS salary_acknowledged
+    EXISTS(SELECT 1 FROM hr_gov_salary_acknowledgements ack WHERE ack.request_id=r.id) AS salary_acknowledged, 'workflow'::text AS record_source,NULL::text AS leave_type_name,NULL::jsonb AS recorded_application
     FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id LEFT JOIN hr_gov_request_stages s ON s.request_id=r.id AND s.ordinal=r.stage_index
     LEFT JOIN LATERAL(SELECT approver_name FROM hr_gov_stage_bindings b WHERE b.stage_id=s.id ORDER BY recorded_at DESC,id DESC LIMIT 1)b ON TRUE
-    WHERE ${where} ORDER BY r.submitted_at DESC,r.id LIMIT 50 OFFSET $3`,[req.user.id,status,(page-1)*50,req.query.employee_id||null]);
-  const count=(await pool.query(`SELECT count(*)::int AS total FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id WHERE ${where} AND $3::int=0`,[req.user.id,status,0,req.query.employee_id||null])).rows[0].total;
-  const requests=[];for(const row of rows){if(isCentralHr(req.user)||mode==='mine'||await workflow.canReadRequest(pool,req.user,await workflow.getRequest(pool,row.id)))requests.push(row);}
+    WHERE ${where}
+    ${includeRecorded?`UNION ALL
+    SELECT a.id,a.employee_id,e.display_name,'recorded',to_char(a.start_date,'YYYY-MM-DD'),to_char(a.end_date,'YYYY-MM-DD'),a.days,NULL::text,NULL::text,a.status,a.applied_at,0,NULL::text,NULL::text,NULL::text,0,FALSE,'recorded',t.name,
+      jsonb_build_object('id',a.id,'employee_id',a.employee_id,'employee_name',e.display_name,'leave_type_name',t.name,
+        'start_date',to_char(a.start_date,'YYYY-MM-DD'),'end_date',to_char(a.end_date,'YYYY-MM-DD'),'days',a.days,'status',a.status,
+        'reason',a.reason,'applied_at',a.applied_at,'reviewer_note',a.reviewer_note,
+        'can_decide',e.reviewer_id IS DISTINCT FROM $1 AND e.leave_policy_regime<>'government' AND NOT EXISTS(SELECT 1 FROM reviewers owner WHERE owner.id=e.reviewer_id AND owner.account_type='employee'),
+        'attachments',CASE WHEN (${employeeScopeSql(req.user,'hr_evidence_read','$1')} OR ${managerScopeSql(req.user,'$1')}) THEN
+          COALESCE((SELECT jsonb_agg(jsonb_build_object('id',att.id,'file_name',att.file_name,'content_type',att.content_type,'byte_size',att.byte_size,'created_at',att.created_at) ORDER BY att.created_at) FROM hr_leave_attachments att WHERE att.application_id=a.id),'[]'::jsonb) ELSE '[]'::jsonb END)
+    FROM hr_leave_applications a JOIN hr_employees e ON e.id=a.employee_id JOIN hr_leave_types t ON t.id=a.leave_type_id
+    WHERE (${employeeScopeSql(req.user,'hr_leave_approve','$1')} OR ${managerScopeSql(req.user,'$1')})
+      AND ($2='all' OR a.status=$2) AND ($4::uuid IS NULL OR a.employee_id=$4)
+      AND NOT EXISTS(SELECT 1 FROM hr_gov_legacy_transfers transfer JOIN hr_gov_requests carried ON carried.id=transfer.request_id WHERE transfer.legacy_request_id=a.id)` : ''}`;
+  const {rows}=await pool.query(`SELECT * FROM (${selection}) applications ORDER BY submitted_at DESC,id,record_source LIMIT 50 OFFSET $3`,[req.user.id,status,(page-1)*50,req.query.employee_id||null]);
+  const count=(await pool.query(`SELECT count(*)::int AS total FROM (${selection}) applications WHERE $3::int=0`,[req.user.id,status,0,req.query.employee_id||null])).rows[0].total;
+  const requests=[];
+  for(const row of rows){
+    if(row.record_source==='recorded'||isCentralHr(req.user)||mode==='mine'||await workflow.canReadRequest(pool,req.user,await workflow.getRequest(pool,row.id))){
+      row.can_pdf=row.status==='approved'&&(row.record_source==='recorded'||await workflow.privateRead(pool,req.user,row));
+      requests.push(row);
+    }
+  }
   res.json({requests,total:count,page,page_size:50});
 });
 router.get('/requests/:id',[id],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.requestView(pool,req.user,req.params.id));});
@@ -144,6 +164,6 @@ router.get('/requests/:id/pdf',[id],async(req,res)=>{
   const request=await workflow.getRequest(pool,req.params.id);
   // Refresh presentation from the immutable grant so existing approvals use current branding.
   // The stored decision, balances and original PDF remain unchanged.
-  res.set({'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="government-leave-${request.id}.pdf"`,'X-Content-Type-Options':'nosniff'}).send(request.grant_snapshot?Buffer.from(await generateGovernmentLeavePdf(request.grant_snapshot)):request.final_pdf);
+  res.set({'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="government-leave-${request.id}.pdf"`,'X-Content-Type-Options':'nosniff'}).send(request.grant_snapshot?Buffer.from(await generateGovernmentLeavePdf(request.grant_snapshot,{firstPageOnly:true})):request.final_pdf);
 });
 export default router;

@@ -35,3 +35,16 @@ test('approved hourly PDFs retain hours and balances and use Naoero on form and 
  assert.match(text,/Hourly leave: 3.5 hours/);assert.match(text,/0.5 days from the leave balance/);
  assert.match(text,/3.5 leave hours/);assert.doesNotMatch(text,/NAURU|Nauru|Acknowledgement is recorded separately/);
 });
+
+test('downloaded approval form is one A4 page while the full retained PDF and grant remain intact',async()=>{
+ const {generatedPdfText}=await import('../test-support/pdfText.js');
+ const data=fixture('certificate');data.reason='Detailed supporting explanation. '.repeat(150);
+ data.input={duration_unit:'hours',hours:'3.5',medical_mode:'certificate'};data.charge='0.5';
+ const before=JSON.stringify(data);
+ const retained=await PDFDocument.load(await generateGovernmentLeavePdf(data));assert.ok(retained.getPageCount()>1);
+ const bytes=await generateGovernmentLeavePdf(data,{firstPageOnly:true}),download=await PDFDocument.load(bytes);
+ assert.equal(download.getPageCount(),1);assert.deepEqual(download.getPage(0).getSize(),{width:595.28,height:841.89});
+ const text=await generatedPdfText(bytes);assert.match(text,/NAOERO PUBLIC SERVICE/);assert.match(text,/Hourly leave: 3.5 hours/);
+ assert.match(text,/Full explanation is retained in the application record/);assert.doesNotMatch(text,/page 2|Daily absence charges|Calculation and policy references/);
+ assert.equal(JSON.stringify(data),before);
+});

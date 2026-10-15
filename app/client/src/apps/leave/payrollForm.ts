@@ -1,14 +1,14 @@
 import { apiClient } from '../../lib/api';
 
 /** Open the Treasury-approved application as a PDF for printing or filing. */
-export async function printApprovedLeaveForm(applicationId: string): Promise<void> {
+export async function printApprovedLeaveForm(applicationId: string, source: 'recorded' | 'workflow' = 'recorded'): Promise<void> {
     // Reserve the tab in the click handler before the authenticated fetch.
     const preview = window.open('', '_blank');
     if (!preview) throw new Error('Allow pop-ups to open the approved leave PDF.');
     preview.opener = null;
     preview.document.write('<!doctype html><title>Preparing leave application</title><p>Preparing PDF…</p>');
     try {
-        const pdf = await apiClient.getBlob(`/hr/leaves/${applicationId}/application.pdf`);
+        const pdf = await apiClient.getBlob(source === 'workflow' ? `/hr/government/workflow/requests/${applicationId}/pdf` : `/hr/leaves/${applicationId}/application.pdf`);
         if (preview.closed) return;
         const url = URL.createObjectURL(pdf);
         preview.location.replace(url);

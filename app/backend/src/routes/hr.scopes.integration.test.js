@@ -30,6 +30,28 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     attachment=(await pool.query(`INSERT INTO hr_leave_attachments(application_id,file_name,content_type,file_data,byte_size,uploaded_by,checksum) VALUES ($1,'synthetic-evidence.pdf','application/pdf',$2,5,$3,'synthetic-checksum') RETURNING *`,[approved.id,Buffer.from('%PDF-'),owner.id])).rows[0];
     await pool.query('INSERT INTO hr_leave_balances(employee_id,leave_type_id,year,balance) VALUES ($1,$2,2026,10)',[employee.id,type.id]);
   });
+  test('unified approval records keep department scope, evidence permissions and status filters',async()=>{
+    const path='/government/workflow/requests?mode=queue&include_recorded=true';
+    await grant(staff,['hr_report_read']);assert.equal((await call(staff,path+'&status=all')).body.total,0);
+    await grant(approver,['hr_leave_approve']);
+    const approvedList=await call(approver,path+'&status=approved');assert.equal(approvedList.status,200);assert.equal(approvedList.body.total,1);
+    const row=approvedList.body.requests[0];assert.equal(row.id,approved.id);assert.equal(row.record_source,'recorded');assert.equal(row.can_pdf,true);assert.deepEqual(row.recorded_application.attachments,[]);
+    assert.equal((await call(approver,path+'&status=pending')).body.requests[0].id,pending.id);
+    assert.equal((await call(approver,path+'&status=all')).body.total,2);
+    assert.equal((await call(approver,path+`&status=all&employee_id=${outsider.id}`)).body.total,0);
+    await grant(approver,['hr_evidence_read']);const evidence=await call(approver,path+'&status=approved');assert.equal(evidence.body.requests[0].recorded_application.attachments[0].id,attachment.id);
+    assert.ok(!JSON.stringify(evidence.body).includes('file_data'));
+    assert.equal((await call(owner,path+'&status=all')).body.total,0);
+    await pool.query('UPDATE hr_access_scopes SET revoked_at=NOW() WHERE reviewer_id=$1',[approver.id]);assert.equal((await call(approver,path+'&status=all')).status,403);
+  });
+  test('recorded PDF downloads contain one page and retain the complete application explanation',async()=>{
+    const {PDFDocument}=await import('pdf-lib');
+    const explanation='The full supporting explanation remains in this record. '.repeat(100);
+    await pool.query('UPDATE hr_leave_applications SET reason=$2 WHERE id=$1',[approved.id,explanation]);
+    const response=await fetch(`${base}/leaves/${approved.id}/application.pdf`,{headers:{Authorization:`Bearer ${await token(central)}`}});assert.equal(response.status,200);
+    const pdf=await PDFDocument.load(await response.arrayBuffer());assert.equal(pdf.getPageCount(),1);
+    assert.equal((await pool.query('SELECT reason FROM hr_leave_applications WHERE id=$1',[approved.id])).rows[0].reason,explanation);
+  });
   test('legacy staff capability alone no longer gives global records or exports',async()=>{
     const legacy=await account('Unscoped HR',{hr_access:true,hr_staff_manage:true});assert.deepEqual((await call(legacy,'/employees')).body,[]);assert.equal((await call(legacy,'/directory')).body.total,0);
     assert.equal((await call(legacy,`/directory/${employee.id}/profile`)).status,404);assert.equal((await call(legacy,`/employees/${employee.id}`,{position_title:'Unauthorized'},'PUT')).status,404);

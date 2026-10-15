@@ -58,6 +58,23 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   if(move)await pool.query('UPDATE hr_employees SET division_id=$2,division_code=$3 WHERE id=$1',[employee.id,child.id,child.name]);
   return {child,sibling,leafAccount};
  }
+ test('unified approval records share status filters, ordering, pagination and direct PDF availability',async()=>{
+  await customRoute();const first=await submit();await decide(first.id);
+  const second=await submit(application('recreation','2026-11-03'));await decide(second.id);
+  const type=(await pool.query("INSERT INTO hr_leave_types(name,default_days) VALUES($1,20) RETURNING id",[`Recorded Annual ${randomUUID()}`])).rows[0];
+  await pool.query(`INSERT INTO hr_leave_applications(employee_id,leave_type_id,start_date,end_date,days,reason,status,reviewed_by,reviewed_at,applied_at)
+    SELECT $1,$2,'2026-09-01','2026-09-02',2,'Recorded explanation','approved',$3,'2026-09-01','2026-08-01'::timestamp+n*interval '1 minute' FROM generate_series(1,55)n`,[employee.id,type.id,hr.id]);
+  const path='/requests?mode=queue&include_recorded=true&status=approved';
+  const page1=await call(path,null,hr),page2=await call(path+'&page=2',null,hr);
+  assert.equal(page1.status,200);assert.equal(page1.body.total,57);assert.equal(page1.body.requests.length,50);assert.equal(page2.body.requests.length,7);
+  const rows=[...page1.body.requests,...page2.body.requests];assert.equal(new Set(rows.map(r=>r.id)).size,57);
+  assert.equal(rows[0].record_source,'workflow');assert.ok(rows.every(r=>r.status==='approved'&&r.can_pdf===true));
+  const recorded=rows.find(r=>r.record_source==='recorded');assert.equal(recorded.recorded_application.reason,'Recorded explanation');assert.equal(recorded.recorded_application.can_decide,false);
+  assert.equal((await call('/requests?mode=queue&include_recorded=true&status=pending',null,hr)).body.total,0);
+  assert.equal((await call('/requests?mode=queue&include_recorded=true&status=all',null,hr)).body.total,57);
+  assert.equal((await call('/requests?mode=all&status=approved',null,hr)).body.total,2);
+  assert.equal((await call('/requests?mode=mine&include_recorded=true&status=approved')).body.total,2);
+ });
  test('hourly HTTP applications reserve and debit a schedule fraction, retain hours in views and payroll, and cancel holds',async()=>{
   await customRoute();
   const data={...application(),duration_unit:'hours',hours:'3.5'};
@@ -76,6 +93,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   assert.equal(granted.status,'approved');assert.equal(granted.grant_snapshot.input.hours,'3.5');
   const downloaded=await call(`/requests/${r.id}/pdf`);assert.equal(downloaded.status,200);
   const {generatedPdfText}=await import('../test-support/pdfText.js');
+  const {PDFDocument}=await import('pdf-lib');assert.equal((await PDFDocument.load(downloaded.body)).getPageCount(),1);assert.ok((await PDFDocument.load(granted.final_pdf)).getPageCount()>1);
   const printed=await generatedPdfText(downloaded.body);assert.match(printed,/NAOERO/);assert.match(printed,/Hourly leave: 3.5 hours/);
   assert.deepEqual((await w.getRequest(pool,r.id)).final_pdf,granted.final_pdf);
   const {payrollLines}=await import('../lib/governmentLeavePayrollRules.js');
@@ -274,6 +292,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   await pool.query('DELETE FROM hr_employee_external_ids WHERE employee_id=$1',[employee.id]);
   const legacyBefore=(await pool.query('SELECT * FROM hr_leave_applications WHERE id=$1',[legacy.id])).rows[0];
   const balancesBefore=(await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows;
+  const beforeList=await call('/requests?mode=queue&include_recorded=true&status=approved',null,hr);assert.equal(beforeList.body.requests.filter(r=>r.id===legacy.id).length,1);assert.equal(beforeList.body.requests.find(r=>r.id===legacy.id).record_source,'recorded');
   const preview=await commission.previewCommissioning(pool,{user:user(hr),data});
   assert.equal(preview.ready,1,preview.employees[0].issues.join(' '));
   assert.equal(preview.employees[0].targets.find(t=>t.code==='recreation').amount,'21.770000');
@@ -288,6 +307,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   assert.equal(carried.grant_snapshot.legacy_approval.approved_by,certifier.id);
   assert.equal(carried.grant_snapshot.legacy_approval.balance_already_deducted,true);
   assert.ok(carried.final_pdf.toString().startsWith('%PDF'));
+  const afterList=await call('/requests?mode=queue&include_recorded=true&status=approved',null,hr);assert.equal(afterList.body.total,1);assert.equal(afterList.body.requests.length,1);assert.equal(afterList.body.requests[0].id,legacy.id);assert.equal(afterList.body.requests[0].record_source,'workflow');
   assert.equal((await w.stagesFor(pool,legacy.id)).length,0);
   assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'21.770000');
   assert.deepEqual((await pool.query('SELECT * FROM hr_leave_balances ORDER BY id')).rows,balancesBefore);

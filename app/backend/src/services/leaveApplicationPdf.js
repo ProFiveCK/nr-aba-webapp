@@ -122,7 +122,7 @@ function wrap(text, font, size, maxWidth) {
   return lines;
 }
 
-export async function generateLeaveApplicationPdf(form) {
+export async function generateLeaveApplicationPdf(form,{firstPageOnly=false}={}) {
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([pageWidth, pageHeight]);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -225,7 +225,7 @@ export async function generateLeaveApplicationPdf(form) {
   if (reasonLines.length <= 1) {
     text(reasonLines[0] || '', margin + 4, explanationTop + 13, { size: 8, color: fill });
   } else {
-    text('See explanation attached on page 2.', margin + 4, explanationTop + 13, { size: 8, bold: true, color: fill });
+    text(firstPageOnly?'Full explanation is retained in the application record.':'See explanation attached on page 2.', margin + 4, explanationTop + 13, { size: 8, bold: true, color: fill });
   }
   if (!selected || selected === 'sickUnspecified') {
     const credit = form.balances?.find((balance) => balance.leave_type_name === form.leave_type_name)?.before;
@@ -388,7 +388,7 @@ export async function generateLeaveApplicationPdf(form) {
   pdf.setTitle(`Approved leave application - ${printable(form.employee_name)}`);
   pdf.setSubject('Treasury-approved Naoero Public Service leave application');
 
-  if (reasonLines.length > 1) {
+  if (reasonLines.length > 1 && !firstPageOnly) {
     let extra;
     let extraY;
     const nextPage = () => {

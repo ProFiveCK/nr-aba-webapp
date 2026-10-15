@@ -46,8 +46,9 @@ export function medicalAssessment(context,config,input,result,history=[]) {
   const used=records.filter(r=>r.uncertified&&r.period_start===account?.period_start).length;
   const policy=context.policies.find(p=>p.id===result.segments[0]?.policy_version_id);
   const shiftRule=config.medical_rule==='single_verified_shift_nonadjacent_scheduled_days';
-  const validCharge=shiftRule?singleMedicalShiftCharge(context,input.start_date,result.charge):units(result.charge)===1000000n;
-  if(exemption&&(input.start_date!==input.end_date||!validCharge||result.allocations.length!==1))issues.push(shiftRule?'The approved exemption covers one calendar date and its verified roster shift charge only. Attach a certificate or use an assisted case.':'The approved exemption covers one calendar date and exactly one policy day only. Attach a certificate or use an assisted case.');
+  const hourly=input.duration_unit==='hours'&&result.requested_hours>0&&result.requested_hours<=result.segments[0]?.scheduled_hours&&units(result.charge)>0n;
+  const validCharge=hourly?true:shiftRule?singleMedicalShiftCharge(context,input.start_date,result.charge):units(result.charge)===1000000n;
+  if(exemption&&(input.start_date!==input.end_date||!validCharge||result.allocations.length!==1))issues.push(shiftRule?'The approved exemption covers one calendar date and its verified roster shift (or an hourly part of that shift). Attach a certificate or use an assisted case.':'The approved exemption covers one calendar date and exactly one policy day (or an hourly part of that day). Attach a certificate or use an assisted case.');
   if(exemption&&used>=(policy?.rules.medical_uncertified_occasions??0))issues.push('The uncertified single-day allowance is already committed. A certificate is required.');
   for(const record of records) {
     if(!(exemption||record.uncertified))continue;

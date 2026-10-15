@@ -60,7 +60,7 @@ export function Layout() {
 
     return (
         <>
-        <div className="min-h-screen bg-[#f4f6fa]">
+        <div className={`min-h-screen bg-[#f4f6fa] ${insideApp?.id==='hr'?'leave-portal':''}`}>
             <header className="sticky top-0 z-40 shadow-sm">
             <div className="border-b border-white/10 bg-brand px-4 py-4 text-white sm:px-6 lg:px-8">
                 <div className="relative mx-auto flex max-w-7xl items-center justify-between gap-3">

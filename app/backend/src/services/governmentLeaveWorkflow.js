@@ -1,3 +1,4 @@
+import {evidenceReviewInput} from '../lib/governmentLeaveEvidence.js';
 import {divisionPlacementIssue} from './organisationHierarchy.js';
 import {calendarCoverageRequired} from '../lib/governmentLeaveCalendarRules.js';
 import {creditLimit} from './governmentLeaveCarryover.js';
@@ -13,7 +14,7 @@ import {recordAudit} from './auditService.js';
 import {reviewerSummary} from './authService.js';
 import {isCentralHr,canAccessEmployee,activeScopeSql} from './hrAccess.js';
 import * as ledger from './governmentLeave.js';
-import {COMMON_CODES,calculateEvaluation,fingerprint,dayNumber,serviceFacts,units,ENGINE_VERSION} from '../lib/governmentLeaveRules.js';
+import {COMMON_CODES,leaveDurationInput,calculateEvaluation,fingerprint,dayNumber,serviceFacts,units,ENGINE_VERSION} from '../lib/governmentLeaveRules.js';
 import {medicalAssessment,singleMedicalShiftCharge} from '../lib/governmentLeaveWorkflowRules.js';
 import * as cases from './governmentLeaveCases.js';
 import {isCase} from '../lib/governmentLeaveCaseRules.js';
@@ -198,7 +199,7 @@ export async function previewRequest(client,user,employeeId,input) {
 // Shared office locks allow unrelated employees to apply concurrently while
 // dated office changes take the exclusive lock and retain a coherent route.
 export async function submitRequest(pool,{user,actor,employeeId,data,documents=[],client:existingClient}) {
-  const reason=reasonText(data.reason),input={code:data.code,start_date:data.start_date,end_date:data.end_date,reason,medical_mode:data.code==='medical'?data.medical_mode:'not_applicable'};
+  const reason=reasonText(data.reason),input={code:data.code,start_date:data.start_date,end_date:data.end_date,reason,...leaveDurationInput(data),medical_mode:data.code==='medical'?data.medical_mode:'not_applicable'};
   const payloadHash=fingerprint({input,...(data.assisted_reference?{assisted_reference:data.assisted_reference}:{}),documents:documents.map(d=>({sha256:d.sha256,file_name:d.file_name,content_type:d.content_type}))});
   const work=async client=>{
     await client.query("SELECT pg_advisory_xact_lock_shared(hashtext('hr-approval-assignments'))");const employee=await ledger.lockEmployee(client,employeeId);
@@ -216,7 +217,7 @@ export async function submitRequest(pool,{user,actor,employeeId,data,documents=[
     const applicationSnapshot={approval_route:approvalRoute,assisted_by:data.assisted_reference?actor.id:null,assisted_reference:data.assisted_reference||null,regime:'government',engine_version:ENGINE_VERSION,employee:{id:employee.id,name:employee.display_name,department_id:employee.department_id,division_id:employee.division_id,department_name:employee.department_code,division_name:employee.division_code},config_id:config.id,input:{...input,notice_date:today()},evaluation};
     const external=(await client.query("SELECT external_id FROM hr_employee_external_ids WHERE employee_id=$1 AND source='techone_payroll'",[employeeId])).rows;
     applicationSnapshot.employee.payroll_id=external.length===1?external[0].external_id:null;
-    await ledger.reserveEvaluation(pool,{client,employeeId,input:{...input,notice_date:today(),certificate_available:input.medical_mode==='certificate',justification_available:true},requestId:data.request_id,actor,authorize:async()=>true});
+    await ledger.reserveEvaluation(pool,{client,employeeId,input:{...input,notice_date:today(),certificate_available:input.medical_mode==='certificate',verified_single_shift_exemption:config.medical_rule==='single_verified_shift_nonadjacent_scheduled_days'&&input.medical_mode==='exemption',justification_available:true},requestId:data.request_id,actor,authorize:async()=>true});
     await client.query(`INSERT INTO hr_gov_requests(id,employee_id,config_id,code,start_date,end_date,reason,medical_mode,payload_hash,application_snapshot,department_id,division_id,reservation_id,charge,submitted_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$1,$13,$14)`,[data.request_id,employeeId,config.id,input.code,input.start_date,input.end_date,reason,input.medical_mode,payloadHash,applicationSnapshot,employee.department_id,employee.division_id,evaluation.charge,actor.id]);
     const request={id:data.request_id,employee_id:employeeId,department_id:employee.department_id,division_id:employee.division_id};
@@ -262,7 +263,7 @@ export async function requestView(client,user,id) {
   const documents=privateAccess?(await client.query('SELECT id,file_name,content_type,byte_size,sha256 FROM hr_gov_request_documents WHERE request_id=$1',[id])).rows:[];
   const ack=(await client.query('SELECT reference,recorded_at FROM hr_gov_salary_acknowledgements WHERE request_id=$1',[id])).rows[0]||null;
   const caseDetails=await cases.caseView(client,user,request,privateAccess),amendment=(await client.query('SELECT request_id,effect FROM hr_gov_case_effects WHERE original_request_id=$1 ORDER BY version DESC LIMIT 1',[id])).rows[0]||null;
-  return {...caseDetails,legacy_approval:request.application_snapshot.legacy_approval?{application_id:request.application_snapshot.legacy_approval.application_id,approved_by_name:request.application_snapshot.legacy_approval.approved_by_name,approved_at:request.application_snapshot.legacy_approval.approved_at}:null,approval_route:request.application_snapshot.approval_route||null,evidence_review_required:separateEvidence,evidence_review:evidenceReview,can_verify_evidence:canVerifyEvidence,amendment:amendment?{request_id:amendment.request_id,action:amendment.effect.action,effective_end:amendment.effect.effective_end}:null,assisted_entry:!!request.application_snapshot.assisted_by,can_continue:request.status==='pending'&&isCentralHr(user),id:request.id,employee_id:request.employee_id,employee_name:request.application_snapshot.employee.name,code:request.code,start_date:request.start_date,end_date:request.end_date,charge:request.charge,status:request.status,submitted_at:request.submitted_at,completed_at:request.completed_at,stage_index:request.stage_index,stages,reason:privateAccess?request.reason:null,documents,medical_mode:request.medical_mode,private_access:privateAccess,can_cancel:request.status==='pending'&&(employee.reviewer_id===user.id||isCentralHr(user)),can_pdf:request.status==='approved'&&privateAccess,salary_acknowledgement:ack,can_ack:request.status==='approved'&&isCentralHr(user)&&!ack};
+  return {...caseDetails,legacy_approval:request.application_snapshot.legacy_approval?{application_id:request.application_snapshot.legacy_approval.application_id,approved_by_name:request.application_snapshot.legacy_approval.approved_by_name,approved_at:request.application_snapshot.legacy_approval.approved_at}:null,approval_route:request.application_snapshot.approval_route||null,evidence_review_required:separateEvidence,evidence_review:evidenceReview,can_verify_evidence:canVerifyEvidence,amendment:amendment?{request_id:amendment.request_id,action:amendment.effect.action,effective_end:amendment.effect.effective_end}:null,assisted_entry:!!request.application_snapshot.assisted_by,can_continue:request.status==='pending'&&isCentralHr(user),id:request.id,...leaveDurationInput(request.application_snapshot.input),employee_id:request.employee_id,employee_name:request.application_snapshot.employee.name,code:request.code,start_date:request.start_date,end_date:request.end_date,charge:request.charge,status:request.status,submitted_at:request.submitted_at,completed_at:request.completed_at,stage_index:request.stage_index,stages,reason:privateAccess?request.reason:null,documents,medical_mode:request.medical_mode,private_access:privateAccess,can_cancel:request.status==='pending'&&(employee.reviewer_id===user.id||isCentralHr(user)),can_pdf:request.status==='approved'&&privateAccess,salary_acknowledgement:ack,can_ack:request.status==='approved'&&isCentralHr(user)&&!ack};
 }
 async function lockedRequest(client,id) {
   const ref=await getRequest(client,id);const employee=await ledger.lockEmployee(client,ref.employee_id);
@@ -299,6 +300,7 @@ async function verifyRetainedRequest(client,request,employee) {
   return evaluation;
 }
 async function evidenceFacts(client,request,data) {
+ data=evidenceReviewInput(request,data);
  if(data.evidence_reviewed!==true||typeof data.source_reference!=='string'||data.source_reference.trim().length<5||data.source_reference.length>500)fail('HR must confirm the source and evidence review.',400);
  const documents=(await client.query('SELECT sha256 FROM hr_gov_request_documents WHERE request_id=$1 ORDER BY id',[request.id])).rows.map(d=>d.sha256);
  if(request.code==='medical'&&request.medical_mode==='certificate'){
@@ -356,6 +358,7 @@ export async function decideRequest(pool,{user,actor,id,data}) {
     if(stage.level==='relevant_secretary'&&request.code==='recreation'&&data.decision==='rejected'&&(!data.operational_refusal||!data.alternative_date||!data.consultation_reference))fail('Secretary refusal requires operational reasons, employee consultation and an alternative date.',400);
     let verification=null;
     if(stage.level==='hr_verifier'&&data.decision==='approved') {
+      data=evidenceReviewInput(request,data);
       if(!data.evidence_reviewed||!data.source_reference)fail('HR must confirm the source and evidence review.',400);
       if(request.code==='medical'&&request.medical_mode==='certificate') {
         if(!data.certificate_reviewed||!data.covers_start||!data.covers_end||data.covers_start>request.start_date||data.covers_end<request.end_date)fail('Verify a registered-practitioner certificate covering the complete absence.',400);

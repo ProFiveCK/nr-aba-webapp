@@ -4,7 +4,7 @@ const printable=value=>String(value??'').replace(/[^\x20-\x7e\n]/g,'?');
 const officeLabels={division:'Divisional approver',parent_division:'Treasury / parent unit approver',department:'Head of Department',hr_verifier:'HR verifier',relevant_secretary:'Relevant Secretary',chief_secretary:'Chief Secretary',minister:'Minister statutory decision'};
 const label=value=>officeLabels[value]||printable(value).replace(/_/g,' ').replace(/^./,s=>s.toUpperCase());
 export const governmentPdfDate=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}/.test(value)?`${value.slice(8,10)}/${value.slice(5,7)}/${value.slice(0,4)}`:String(value||'Not recorded');
-const timestamp=value=>{if(!value)return 'Not recorded';const date=new Date(value);return Number.isNaN(date.getTime())?'Not recorded':`${new Intl.DateTimeFormat('en-AU',{timeZone:'Pacific/Nauru',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(date)} Nauru`;};
+const timestamp=value=>{if(!value)return 'Not recorded';const date=new Date(value);return Number.isNaN(date.getTime())?'Not recorded':`${new Intl.DateTimeFormat('en-AU',{timeZone:'Pacific/Nauru',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(date)} Naoero`;};
 const days=value=>value==null?'Not determined':new Intl.NumberFormat('en-AU',{maximumFractionDigits:6}).format(Number(value));
 export function medicalPdfLines(grant) {
   if(grant.code!=='medical')return [];
@@ -30,7 +30,7 @@ export function governmentApprovalFormSnapshot(grant) {
  const names={recreation:'Annual',medical:mode==='certificate'?'Medical (with MC)':mode==='exemption'?'Medical (without MC)':'Medical (certificate status not recorded)',special:'Special',furlough:'Furlough',official:'Official',lwop:'Leave Without Pay',extended_medical:'Medical',extended_medical_minister:'Medical',maternity:'Maternity',paternity:'Paternity',adoption:'Adoption'};
  const leaveName=names[grant.code]||label(grant.code);
  const balances=grant.balances||[];
- return {id:grant.id,regime:'government',employee_name:grant.employee.name,department_code:grant.employee.department_name,division_code:grant.employee.division_name,leave_type_name:leaveName,start_date:grant.start_date,end_date:grant.end_date,days:grant.charge,reason:grant.reason,applied_at:grant.submitted_at,approved_at:grant.granted_at,approved_by_name:grant.stages.at(-1)?.binding?.approver_name||'Recorded final approver',approval_snapshot_available:true,balances:balances.length?[{leave_type_name:leaveName,before:balances.reduce((n,b)=>n+Number(b.before),0),after:balances.reduce((n,b)=>n+Number(b.after),0)}]:[]};
+ return {id:grant.id,regime:'government',employee_name:grant.employee.name,department_code:grant.employee.department_name,division_code:grant.employee.division_name,leave_type_name:leaveName,start_date:grant.start_date,end_date:grant.end_date,days:grant.charge,...(grant.input?.duration_unit==='hours'?{duration_unit:'hours',hours:grant.input.hours}:{}),reason:grant.reason,applied_at:grant.submitted_at,approved_at:grant.granted_at,approved_by_name:grant.stages.at(-1)?.binding?.approver_name||'Recorded final approver',approval_snapshot_available:true,balances:balances.length?[{leave_type_name:leaveName,before:balances.reduce((n,b)=>n+Number(b.before),0),after:balances.reduce((n,b)=>n+Number(b.after),0)}]:[]};
 }
 export async function generateGovernmentLeavePdf(grant) {
   const pdf=await PDFDocument.create(),font=await pdf.embedFont(StandardFonts.Helvetica),bold=await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -40,7 +40,7 @@ export async function generateGovernmentLeavePdf(grant) {
   let page,y,pageNumber=approval.getPageCount();
   function nextPage() {
     page=pdf.addPage([width,height]);pageNumber++;y=height-margin;
-    page.drawText('REPUBLIC OF NAURU - PUBLIC SERVICE',{x:margin,y,size:11,font:bold,color:rgb(0.03,0.17,0.39)});y-=20;
+    page.drawText('REPUBLIC OF NAOERO - PUBLIC SERVICE',{x:margin,y,size:11,font:bold,color:rgb(0.03,0.17,0.39)});y-=20;
     page.drawText('APPROVED GOVERNMENT LEAVE',{x:margin,y,size:14,font:bold});y-=22;
     page.drawText(`Application: ${grant.id}`,{x:margin,y,size:8,font});y-=23;
     page.drawText(`Personnel file copy | Page ${pageNumber}`,{x:margin,y:23,size:8,font,color:rgb(.4,.4,.4)});
@@ -68,6 +68,7 @@ export async function generateGovernmentLeavePdf(grant) {
   line(`Department: ${grant.employee.department_name||''} | Division: ${grant.employee.division_name||''}`);
   line(`Leave: ${label(grant.code)} | ${governmentPdfDate(grant.start_date)} to ${governmentPdfDate(grant.end_date)}`);
   line(grant.case_determination?`Event case | Scheduled hours: ${grant.evaluation.scheduled_hours} | No annual balance assigned`:`Granted charge: ${grant.charge} policy days | Scheduled hours: ${grant.evaluation.scheduled_hours}`);
+  if(grant.input?.duration_unit==='hours')line(`Hourly leave: ${grant.input.hours} hours`);
   line(`Submitted: ${timestamp(grant.submitted_at)} | Final grant: ${timestamp(grant.granted_at)}`,{size:9});
   if(grant.code==='medical'){heading('Medical leave - certificate and uncertified usage');for(const row of medicalPdfLines(grant))line(row,{size:9});}
   heading(`${grant.stages.at(-1)?.label||label(grant.stages.at(-1)?.level)} final grant and recorded approvals`);
@@ -86,8 +87,8 @@ export async function generateGovernmentLeavePdf(grant) {
   line(`Calculation: ${grant.evaluation.snapshot_hash}`,{size:8});
   for(const policy of grant.evaluation.policy_versions)line(`Policy ${policy.id}: ${policy.label} | ${policy.source_reference}`,{size:8});
   heading(grant.case_determination?'Dated schedule for payroll review (no annual balance debit)':'Daily absence charges');
-  for(const segment of grant.evaluation.segments)line(`${governmentPdfDate(segment.date)} | ${segment.charge} policy days | ${segment.scheduled_hours} scheduled hours${segment.holiday_exempt?' | Public holiday exempt':''}`,{size:8});
-  heading('Salary Unit');line('Acknowledgement is recorded separately after the final grant. This leave record does not initiate a payment.',{size:9});
+  for(const segment of grant.evaluation.segments)line(`${governmentPdfDate(segment.date)} | ${segment.charge} policy days | ${segment.scheduled_hours} scheduled hours${segment.leave_hours!=null?` | ${segment.leave_hours} leave hours`:''}${segment.holiday_exempt?' | Public holiday exempt':''}`,{size:8});
+
   pdf.setTitle(`Government leave - ${printable(grant.employee.name)}`);
   pdf.setSubject('Final leave grant; immutable personnel-file snapshot');
   return pdf.save();

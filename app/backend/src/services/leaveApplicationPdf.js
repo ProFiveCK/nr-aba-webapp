@@ -176,8 +176,8 @@ export async function generateLeaveApplicationPdf(form) {
 
   // --- Header -------------------------------------------------------------
   box(margin, 40, contentWidth, 46);
-  text('REPUBLIC OF NAURU', pageWidth / 2, 53, { size: 11, bold: true, align: 'center' });
-  text('NAURU PUBLIC SERVICE', pageWidth / 2, 66, { size: 9.5, bold: true, align: 'center' });
+  text('REPUBLIC OF NAOERO', pageWidth / 2, 53, { size: 11, bold: true, align: 'center' });
+  text('NAOERO PUBLIC SERVICE', pageWidth / 2, 66, { size: 9.5, bold: true, align: 'center' });
   const titleWidth = text('LEAVE APPLICATION', pageWidth / 2, 80, { size: 9.5, bold: true, align: 'center' });
   hLine(pageWidth / 2 - titleWidth / 2, pageWidth / 2 + titleWidth / 2, 82);
 
@@ -236,6 +236,7 @@ export async function generateLeaveApplicationPdf(form) {
       margin + 4, explanationTop + 25, { size: 7.5, maxWidth: contentWidth - 8, italic: true, color: fill });
   }
 
+  if(form.duration_unit==='hours')text(`Hourly leave: ${Number(form.hours)} hours (${Number(form.days)} days from the leave balance)`, margin + 4, explanationTop + 25, {size:7.5,color:fill});
   const sigTop = explanationTop + 36;
   hLine(margin, contentRight, sigTop);
   text('Applicant signature', 350, sigTop + 11, { size: 7.5 });
@@ -385,7 +386,7 @@ export async function generateLeaveApplicationPdf(form) {
   text(`Application ref: ${form.id}`, margin, pageHeight - margin + 10, { size: 6.5, color: rule });
 
   pdf.setTitle(`Approved leave application - ${printable(form.employee_name)}`);
-  pdf.setSubject('Treasury-approved Nauru Public Service leave application');
+  pdf.setSubject('Treasury-approved Naoero Public Service leave application');
 
   if (reasonLines.length > 1) {
     let extra;

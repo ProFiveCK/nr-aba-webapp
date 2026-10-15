@@ -76,6 +76,10 @@
     @apply min-h-11;
   }
 
+  .leave-workspace .app-button {
+    @apply min-h-11 min-w-28 max-w-full shrink-0;
+  }
+
   .leave-workspace :where(button:not(.icon-button)) {
     @apply min-h-10;
   }
@@ -91,4 +95,17 @@
   .leave-workspace :where(button, a, summary):focus-visible {
     @apply outline-2 outline-offset-2 outline-brand;
   }
+}
+
+/* Phone layouts keep the application usable alongside the portal navigation. */
+@media (max-width: 639px) {
+  .leave-portal > header > div:first-child { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+  .leave-portal > header img { width: 2.5rem; height: 2.5rem; }
+  .leave-portal > div:last-child { padding: 1rem 0.5rem; }
+  .leave-workspace .app-panel { padding: 0.875rem; }
+  .leave-workspace .leave-balance-card { padding: 0.625rem; }
+  .leave-workspace :where(input:not([type="hidden"]), select, textarea) { font-size: 1rem; }
+  .leave-workspace .app-button { min-height: 2.75rem; }
+  .leave-workspace [role="dialog"] { max-height: calc(100dvh - 1rem); }
+  .leave-workspace [role="dialog"] > div { padding-left: 1rem; padding-right: 1rem; }
 }

@@ -1,170 +1,75 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../../lib/api';
 import { useToast } from '../../../contexts/useToast';
-import { useConfirm } from '../../../contexts/useConfirm';
-import { LoadingState } from '../../../components/Ui';
+import { Button, LoadingState, Modal } from '../../../components/Ui';
 import { formatDate } from '../types';
 import { printApprovedLeaveForm } from '../payrollForm';
 import { LeaveAttachmentLinks } from '../LeaveAttachmentLinks';
 import { GovernmentRequestList } from '../GovernmentRequests';
 import type { LeaveApplication } from '../types';
+import { Field, inputClass } from '../ManagementFields';
 
 export function Approvals() {
     const { addToast } = useToast();
-    const { prompt } = useConfirm();
     const [items, setItems] = useState<LeaveApplication[]>([]);
     const [recent, setRecent] = useState<LeaveApplication[]>([]);
-    const [lastApproved, setLastApproved] = useState<LeaveApplication | null>(null);
+    const [selected, setSelected] = useState<LeaveApplication | null>(null);
     const [loading, setLoading] = useState(true);
-    const [busyId, setBusyId] = useState<string | null>(null);
-
+    const [busy, setBusy] = useState(false);
+    const [note, setNote] = useState('');
+    const [error, setError] = useState('');
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            setItems((await apiClient.get<LeaveApplication[]>('/hr/approvals')) || []);
-            try {
-                const approved = await apiClient.get<LeaveApplication[]>('/hr/approvals?status=approved');
-                setRecent((approved || []).filter((application) => application.status === 'approved'));
-            } catch {
-                // A deployment can briefly pair this client with an older API.
-                setRecent([]);
-            }
+            const [pending, approved] = await Promise.all([
+                apiClient.get<LeaveApplication[]>('/hr/approvals'),
+                apiClient.get<LeaveApplication[]>('/hr/approvals?status=approved'),
+            ]);
+            setItems(pending || []);
+            setRecent((approved || []).filter(application => application.status === 'approved'));
         } catch (err) {
-            addToast((err as Error)?.message || 'Unable to load approvals.', 'error');
-        } finally {
-            setLoading(false);
-        }
+            addToast((err as Error).message || 'Unable to load approvals.', 'error');
+        } finally { setLoading(false); }
     }, [addToast]);
-
-    useEffect(() => {
-        load();
-    }, [load]);
-
-    const decide = async (application: LeaveApplication, decision: 'approved' | 'rejected') => {
-        let note = '';
-        if (decision === 'rejected') {
-            // The server also enforces this; asking here avoids a wasted round trip.
-            const response = await prompt({
-                title: 'Reject leave request',
-                message: `Why are you rejecting ${application.employee_name}'s ${application.leave_type_name} leave?`,
-            });
-            if (response === null) return;
-            note = response.trim();
-            if (!note) {
-                addToast('A reason is required when rejecting leave.', 'error');
-                return;
-            }
-        }
-
-        setBusyId(application.id);
+    useEffect(() => { void load(); }, [load]);
+    async function decide(decision: 'approved' | 'rejected') {
+        if (!selected || busy) return;
+        if (decision === 'rejected' && !note.trim()) { setError('Enter a reason for rejecting this application.'); return; }
+        setBusy(true); setError('');
         try {
-            await apiClient.post(`/hr/leaves/${application.id}/decision`, {
-                decision,
-                reviewer_note: note || null,
-            });
-            addToast(`Leave ${decision}.`, 'success');
-            if (decision === 'approved') setLastApproved(application);
-            await load();
-        } catch (err) {
-            addToast((err as Error)?.message || 'Unable to record the decision.', 'error');
-        } finally {
-            setBusyId(null);
-        }
-    };
-
-    const printForm = async (application: LeaveApplication) => {
-        try {
-            await printApprovedLeaveForm(application.id);
-        } catch (err) {
-            addToast((err as Error)?.message || 'Unable to prepare the leave PDF.', 'error');
-        }
-    };
-
-    if (loading) return <div className="space-y-6"><GovernmentRequestList mode="queue"/><LoadingState label="Checking requests submitted before migration…" /></div>;
-
-    return (
-        <div className="space-y-6">
-            <GovernmentRequestList mode="queue"/>
-            {(items.length>0||recent.length>0)&&<details open={items.length>0} className="app-panel p-5 sm:p-6"><summary className="cursor-pointer font-semibold text-sm">{items.length?`${items.length} requests from before migration awaiting a decision`:'Decisions before migration'}</summary><div className="mt-4 space-y-4">
-            <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#2a5ba5]">Manager queue</p>
-                <h2 className="mt-1 text-xl font-bold text-gray-950">Requests submitted before migration</h2>
-                <p className="mt-1 text-sm text-gray-500">Original applications from before the move to the current leave policy. {items.length} request{items.length === 1 ? '' : 's'} still awaiting a decision.</p>
+            await apiClient.post(`/hr/leaves/${selected.id}/decision`, { decision, reviewer_note: note.trim() || null });
+            setSelected(null); addToast(`Leave ${decision}.`, 'success'); await load();
+        } catch (err) { setError((err as Error).message || 'Unable to record the decision.'); }
+        finally { setBusy(false); }
+    }
+    async function printForm(application: LeaveApplication) {
+        try { await printApprovedLeaveForm(application.id); }
+        catch (err) { addToast((err as Error).message || 'Unable to prepare the leave PDF.', 'error'); }
+    }
+    return <div className="space-y-5">
+        <GovernmentRequestList mode="queue" />
+        {loading && <LoadingState label="Loading leave records…" />}
+        {items.length > 0 && <section className="app-panel space-y-3 p-4 sm:p-6">
+            <h3 className="text-lg font-semibold">Pending applications</h3>
+            {items.map(application => <article key={application.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 p-3">
+                <div className="min-w-0"><p className="font-semibold">{application.employee_name}</p><p className="text-sm text-gray-600">{application.leave_type_name} · {formatDate(application.start_date)} to {formatDate(application.end_date)} · {application.days} days</p></div>
+                <Button variant="secondary" onClick={() => { setSelected(application); setNote(''); setError(''); }}>Review application</Button>
+            </article>)}
+        </section>}
+        {recent.length > 0 && <details className="app-panel p-4 sm:p-6"><summary className="cursor-pointer text-sm font-semibold">Approved leave records</summary><div className="mt-3 divide-y divide-gray-100">
+            {recent.map(application => <article key={application.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
+                <div className="min-w-0"><p className="font-semibold">{application.employee_name}</p><p className="text-gray-600">{application.leave_type_name} · {formatDate(application.start_date)} to {formatDate(application.end_date)} · {application.days} days</p></div>
+                <Button variant="secondary" onClick={() => void printForm(application)}>Open approved PDF</Button>
+            </article>)}
+        </div></details>}
+        {selected && <Modal title="Review leave application" size="2xl" closeDisabled={busy} onClose={() => setSelected(null)}>
+            <div className="space-y-4"><div><h3 className="font-semibold">{selected.employee_name} · {selected.leave_type_name}</h3><p className="text-sm text-gray-600">{formatDate(selected.start_date)} to {formatDate(selected.end_date)} · {selected.days} working days</p></div>
+                <p className="whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 text-sm">{selected.reason || 'No explanation recorded. Ask HR to review this application before approving.'}</p>
+                <LeaveAttachmentLinks application={selected} onError={setError} />
+                <Field label="Review comment (required for rejection)"><textarea className={inputClass} maxLength={2000} rows={3} value={note} onChange={event => setNote(event.target.value)} disabled={busy} /></Field>
+                {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+                <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4"><Button variant="secondary" disabled={busy} onClick={() => setSelected(null)}>Close</Button><Button variant="danger" loading={busy} onClick={() => void decide('rejected')}>Reject application</Button><Button loading={busy} disabled={!selected.reason?.trim()} onClick={() => void decide('approved')}>Approve leave</Button></div>
             </div>
-            {lastApproved && (
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                    <p className="text-sm font-medium text-emerald-950">{lastApproved.employee_name}'s leave is approved by Treasury. The leave PDF is ready to print and file.</p>
-                    <button type="button" onClick={() => void printForm(lastApproved)} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-hover">
-                        Open approved leave PDF
-                    </button>
-                </div>
-            )}
-            {items.map((application) => (
-                <div key={application.id} className="app-panel p-5 sm:p-6">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                            <p className="text-lg font-semibold text-gray-950">{application.employee_name}</p>
-                            <p className="text-sm text-gray-600">
-                                {application.leave_type_name} · {formatDate(application.start_date)} – {formatDate(application.end_date)} ·{' '}
-                                <span className="font-medium">{application.days} working days</span>
-                            </p>
-                            {application.reason && (
-                                <p className="mt-2 rounded-md bg-gray-50 p-2 text-sm text-gray-700">{application.reason}</p>
-                            )}
-                            {!application.reason && (
-                                <p className="mt-2 rounded-md bg-amber-50 p-2 text-sm text-amber-900">No explanation recorded. Ask HR to review the original request before recording a decision.</p>
-                            )}
-                            {(application.attachments?.length ?? 0) > 0 && (
-                                <div className="mt-2">
-                                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Supporting documents</p>
-                                    <LeaveAttachmentLinks application={application} onError={(message) => addToast(message, 'error')} />
-                                </div>
-                            )}
-                            <p className="mt-2 text-xs text-gray-400">Applied {formatDate(application.applied_at)}</p>
-                        </div>
-                        <div className="flex w-full gap-2 sm:w-auto">
-                            <button
-                                type="button"
-                                disabled={busyId === application.id || !application.reason?.trim()}
-                                onClick={() => decide(application, 'approved')}
-                                className="flex-1 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-hover disabled:opacity-50 sm:flex-none"
-                            >
-                                Approve
-                            </button>
-                            <button
-                                type="button"
-                                disabled={busyId === application.id}
-                                onClick={() => decide(application, 'rejected')}
-                                className="flex-1 rounded-lg border border-red-300 px-4 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50 sm:flex-none"
-                            >
-                                Reject
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            ))}
-            {recent.length > 0 && (
-                <section className="app-panel overflow-hidden">
-                    <div className="border-b border-gray-100 px-5 py-4 sm:px-6">
-                        <h3 className="text-lg font-semibold text-gray-950">Latest approvals before migration</h3>
-                        <p className="text-sm text-gray-500">Original approval records and PDFs are retained for the personnel file. Current policy applications and decisions appear above.</p>
-                    </div>
-                    <div className="divide-y divide-gray-100">
-                        {recent.map((application) => (
-                            <div key={application.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm sm:px-6">
-                                <div>
-                                    <p className="font-semibold text-gray-950">{application.employee_name}</p>
-                                    <p className="text-gray-600">{application.leave_type_name} · {formatDate(application.start_date)} – {formatDate(application.end_date)} · {application.days} days</p>
-                                </div>
-                                <button type="button" onClick={() => void printForm(application)} className="rounded-lg border border-brand px-3 py-2 text-sm font-semibold text-brand hover:bg-blue-50">
-                                    Open approved leave PDF
-                                </button>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-            )}
-            </div></details>}
-        </div>
-    );
+        </Modal>}
+    </div>;
 }

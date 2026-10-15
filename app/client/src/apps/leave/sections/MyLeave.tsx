@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiClient } from '../../../lib/api';
-import { LoadingState } from '../../../components/Ui';
+import { Button, LoadingState } from '../../../components/Ui';
 import { GovernmentMyLeave } from '../GovernmentRequests';
 import { formatDate } from '../types';
 import type { MyLeaveResponse, LeaveApplication } from '../types';
@@ -26,9 +26,9 @@ export function MyLeave() {
         {summary && <>
             {summary.employee.leave_policy_regime === 'government' ? <GovernmentMyLeave employeeId={summary.employee.id} /> : <div className="app-panel space-y-2 p-5"><h2 className="text-xl font-semibold">My leave</h2><p role="status" className="text-sm text-gray-700">Your leave setup needs review. Ask HR to complete your leave setup and activation so you can apply under the current policy.</p></div>}
             <details className="app-panel p-4" onToggle={event => { if (event.currentTarget.open && history === null) void loadHistory(); }}>
-                <summary className="cursor-pointer text-sm font-semibold">Leave records before migration</summary>
-                <div className="mt-3 space-y-3"><p className="text-sm text-gray-600">Applications submitted before the move to the current leave policy. Their original decisions and approved PDFs are kept for your records. New applications appear in My applications above.</p>
-                    {history === null ? <LoadingState label="Loading records before migration…" /> : !history.length ? <p className="text-sm text-gray-500">No leave records before migration.</p> : history.map(application => <article key={application.id} className="rounded-lg border border-gray-200 p-3 text-sm"><p>{application.leave_type_name} · {formatDate(application.start_date)} to {formatDate(application.end_date)} · {application.status}</p>{application.status === 'pending' && <p className="mt-1 text-gray-600">This original request remains unresolved. Ask HR to review it.</p>}{application.status === 'approved' && <button type="button" className="mt-2 font-semibold text-brand underline" onClick={() => void printApprovedLeaveForm(application.id).catch((err: Error) => setError(err.message))}>Open approved PDF</button>}</article>)}
+                <summary className="cursor-pointer text-sm font-semibold">Leave history</summary>
+                <div className="mt-3 space-y-3"><p className="text-sm text-gray-600">View your recorded applications, decisions and approved PDFs.</p>
+                    {history === null ? <LoadingState label="Loading leave history…" /> : !history.length ? <p className="text-sm text-gray-500">No additional leave records.</p> : history.map(application => <article key={application.id} className="rounded-lg border border-gray-200 p-3 text-sm"><p>{application.leave_type_name} · {formatDate(application.start_date)} to {formatDate(application.end_date)} · {application.status}</p>{application.status === 'pending' && <p className="mt-1 text-gray-600">This original request remains unresolved. Ask HR to review it.</p>}{application.status === 'approved' && <Button variant="secondary" className="mt-2" onClick={() => void printApprovedLeaveForm(application.id).catch((err: Error) => setError(err.message))}>Open approved PDF</Button>}</article>)}
                 </div>
             </details>
         </>}

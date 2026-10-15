@@ -1,3 +1,4 @@
+import {generateGovernmentLeavePdf} from '../services/governmentLeavePdf.js';
 import express from 'express';
 import {decorateDrafts} from '../services/governmentLeaveDrafts.js';
 import caseRouter from './governmentLeaveCases.js';
@@ -29,8 +30,8 @@ const date=name=>body(name).isString().custom(value=>{dayNumber(value);return tr
 const optionalDate=name=>body(name).optional({nullable:true,checkFalsy:true}).custom(value=>{dayNumber(value);return true;});
 const actor=req=>({id:req.user.id,email:req.user.email,ip:req.ip});
 const args=req=>({user:req.user,actor:actor(req),employeeId:req.params.id,id:req.params.id,data:req.body});
-const input=req=>({code:req.body.code,start_date:req.body.start_date,end_date:req.body.end_date,reason:req.body.reason,medical_mode:req.body.medical_mode});
-const applicationFields=[body('code').isIn(COMMON_CODES),date('start_date'),date('end_date'),body('reason').isString().trim().isLength({min:10,max:4000}),body('medical_mode').custom((value,{req})=>req.body.code==='medical'?['certificate','exemption'].includes(value):value==null||value==='not_applicable').withMessage('Choose certificate or exemption for Medical leave.')];
+const input=req=>({code:req.body.code,start_date:req.body.start_date,end_date:req.body.end_date,reason:req.body.reason,medical_mode:req.body.medical_mode,duration_unit:req.body.duration_unit,hours:req.body.hours});
+const applicationFields=[body('duration_unit').optional().isIn(['days','hours']),body('hours').optional().isDecimal({decimal_digits:'0,2'}),body('code').isIn(COMMON_CODES),date('start_date'),date('end_date'),body('reason').isString().trim().isLength({min:10,max:4000}),body('medical_mode').custom((value,{req})=>req.body.code==='medical'?['certificate','exemption'].includes(value):value==null||value==='not_applicable').withMessage('Choose certificate or exemption for Medical leave.')];
 router.get('/me',async(req,res)=>{
   const employee=await linkedEmployee(pool,req.user.id),config=await workflow.configurationFor(pool,employee.id);
   const policy=(await pool.query(`SELECT p.id,p.label,p.rules FROM hr_gov_policy_versions p LEFT JOIN hr_gov_policy_transitions t ON t.predecessor_id=p.id WHERE p.status='published' AND p.effective_from<=$1 AND LEAST(p.effective_to,COALESCE(t.effective_from-1,p.effective_to))>=$1`,[workflow.today()])).rows[0];
@@ -58,7 +59,7 @@ router.get('/approval-route',central,[query('department_id').optional().isUUID()
 router.post('/approval-route',central,[reason,reference,body('department_id').optional({nullable:true}).isUUID(),body('expected_latest_id').optional({nullable:true}).isUUID(),body('stages').isArray({min:1,max:5}),body('stages.*.level').isIn(APPROVAL_OFFICES),body('stages.*.label').isString().trim().isLength({min:3,max:100})],async(req,res)=>{
  if(!handleValidation(req,res))return;res.status(201).json(await publishApprovalRoute(pool,args(req)));
 });
-router.post('/requests/:id/evidence-review',central,[id,reason,reference,body('evidence_reviewed').isBoolean(),body('certificate_reviewed').optional().isBoolean(),body('justification_accepted').optional().isBoolean(),optionalDate('covers_start'),optionalDate('covers_end')],async(req,res)=>{
+router.post('/requests/:id/evidence-review',central,[id,reason,body('verification_comment').optional().isString().trim().isLength({min:10,max:500}),body('source_reference').optional().isString().trim().isLength({min:5,max:500}),body('evidence_reviewed').optional().isBoolean(),body('certificate_reviewed').optional().isBoolean(),body('justification_accepted').optional().isBoolean(),optionalDate('covers_start'),optionalDate('covers_end')],async(req,res)=>{
  if(!handleValidation(req,res))return;res.json(await workflow.verifyRequestEvidence(pool,args(req)));
 });
 router.get('/administration',central,[query('employee_id').optional().isUUID()],async(req,res)=>{
@@ -112,7 +113,7 @@ router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query
   if(mode==='all'&&!isCentralHr(req.user))throw new ServiceError(403,'Central HR administration is required.');
   const scope=mode==='all'?'($1::uuid IS NOT NULL)':mode==='mine'?'e.reviewer_id=$1':`(${employeeScopeSql(req.user,'hr_report_read','$1')} OR EXISTS(SELECT 1 FROM hr_gov_request_stages s JOIN LATERAL(SELECT reviewer_id FROM hr_gov_stage_bindings b WHERE b.stage_id=s.id ORDER BY recorded_at DESC,id DESC LIMIT 1)b ON TRUE WHERE s.request_id=r.id AND b.reviewer_id=$1 AND (e.status='active' OR r.application_snapshot->>'separation_case'='true') AND e.department_id=r.department_id AND e.division_id=r.division_id))`;
   const where=`${scope} AND ($2='all' OR r.status=$2) AND ($4::uuid IS NULL OR r.employee_id=$4)`;
-  const {rows}=await pool.query(`SELECT r.id,r.employee_id,r.application_snapshot->'employee'->>'name' AS employee_name,r.code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge,r.status,r.submitted_at,r.stage_index,s.level AS current_level,s.label AS current_label,b.approver_name AS current_approver,
+  const {rows}=await pool.query(`SELECT r.id,r.employee_id,r.application_snapshot->'employee'->>'name' AS employee_name,r.code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge,r.application_snapshot->'input'->>'duration_unit' AS duration_unit,r.application_snapshot->'input'->>'hours' AS hours,r.status,r.submitted_at,r.stage_index,s.level AS current_level,s.label AS current_label,b.approver_name AS current_approver,
     (SELECT count(*)::int FROM hr_gov_request_stages missing WHERE missing.request_id=r.id AND NOT EXISTS(SELECT 1 FROM hr_gov_stage_bindings mb WHERE mb.stage_id=missing.id)) AS unassigned_stages,
     EXISTS(SELECT 1 FROM hr_gov_salary_acknowledgements ack WHERE ack.request_id=r.id) AS salary_acknowledged
     FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id LEFT JOIN hr_gov_request_stages s ON s.request_id=r.id AND s.ordinal=r.stage_index
@@ -124,7 +125,7 @@ router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query
 });
 router.get('/requests/:id',[id],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.requestView(pool,req.user,req.params.id));});
 router.post('/requests/:id/decisions',[
-  id,body('stage_id').isUUID(),body('binding_id').isUUID(),body('event_key').isUUID(),body('decision').isIn(['approved','rejected']),body('note').isString().trim().isLength({min:10,max:4000}),
+  id,body('verification_comment').optional().isString().trim().isLength({min:10,max:500}),body('stage_id').isUUID(),body('binding_id').isUUID(),body('event_key').isUUID(),body('decision').isIn(['approved','rejected']),body('note').isString().trim().isLength({min:10,max:4000}),
   body('source_reference').optional().isString().trim().isLength({min:5,max:500}),optionalDate('covers_start'),optionalDate('covers_end'),optionalDate('alternative_date'),body('consultation_reference').optional().isString().trim().isLength({min:5,max:500}),
   ...['evidence_reviewed','certificate_reviewed','justification_accepted','operational_refusal','discretion_confirmed'].map(name=>body(name).optional().isBoolean())
 ],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.decideRequest(pool,args(req)));});
@@ -141,6 +142,8 @@ router.get('/requests/:id/pdf',[id],async(req,res)=>{
   if(!handleValidation(req,res))return;const view=await workflow.requestView(pool,req.user,req.params.id);
   if(!view.can_pdf)throw new ServiceError(404,'Granted personnel-file PDF not available.');
   const request=await workflow.getRequest(pool,req.params.id);
-  res.set({'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="government-leave-${request.id}.pdf"`,'X-Content-Type-Options':'nosniff'}).send(request.final_pdf);
+  // Refresh presentation from the immutable grant so existing approvals use current branding.
+  // The stored decision, balances and original PDF remain unchanged.
+  res.set({'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="government-leave-${request.id}.pdf"`,'X-Content-Type-Options':'nosniff'}).send(request.grant_snapshot?Buffer.from(await generateGovernmentLeavePdf(request.grant_snapshot)):request.final_pdf);
 });
 export default router;

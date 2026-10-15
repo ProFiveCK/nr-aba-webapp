@@ -58,6 +58,62 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   if(move)await pool.query('UPDATE hr_employees SET division_id=$2,division_code=$3 WHERE id=$1',[employee.id,child.id,child.name]);
   return {child,sibling,leafAccount};
  }
+ test('hourly HTTP applications reserve and debit a schedule fraction, retain hours in views and payroll, and cancel holds',async()=>{
+  await customRoute();
+  const data={...application(),duration_unit:'hours',hours:'3.5'};
+  const preview=await call('/preview',data);assert.equal(preview.status,200);assert.equal(preview.body.charge,'0.500000');assert.equal(preview.body.requested_hours,3.5);
+  for(const invalid of [{hours:'0'},{hours:'25'},{hours:'2.001'},{end_date:'2026-11-03'},{duration_unit:'minutes'}])assert.ok([400,422].includes((await call('/preview',{...data,...invalid})).status));
+  assert.equal((await call('/preview',{...data,hours:'8'})).body.eligible_for_preview,false);
+  const form=new FormData();for(const [key,value] of Object.entries(data))form.set(key,value);
+  const session=await auth.createSession(owner.id),token=auth.buildTokenPayload(owner,session.tokenId,session.expiresAt);
+  const response=await fetch(base+'/api/hr/government/workflow/requests',{method:'POST',headers:{Authorization:`Bearer ${token}`},body:form});assert.equal(response.status,201);
+  const r=await response.json();
+  assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').held,'0.500000');
+  const list=await call('/requests?mode=mine&status=all');assert.equal(list.body.requests[0].hours,'3.5');assert.equal(list.body.requests[0].duration_unit,'hours');
+  const view=await call(`/requests/${r.id}`);assert.equal(view.body.hours,'3.5');
+  await assert.rejects(submit({...data,request_id:data.request_id,hours:'2'}),/different application/);
+  await decide(r.id);const granted=await w.getRequest(pool,r.id);
+  assert.equal(granted.status,'approved');assert.equal(granted.grant_snapshot.input.hours,'3.5');
+  const downloaded=await call(`/requests/${r.id}/pdf`);assert.equal(downloaded.status,200);
+  const {generatedPdfText}=await import('../test-support/pdfText.js');
+  const printed=await generatedPdfText(downloaded.body);assert.match(printed,/NAOERO/);assert.match(printed,/Hourly leave: 3.5 hours/);
+  assert.deepEqual((await w.getRequest(pool,r.id)).final_pdf,granted.final_pdf);
+  const {payrollLines}=await import('../lib/governmentLeavePayrollRules.js');
+  const payroll=payrollLines([granted],{[employee.id]:{payroll_id:'0007',name:employee.display_name}},data.start_date,data.end_date);
+  assert.equal(payroll.lines[0].scheduled_hours,'3.5');assert.equal(payroll.lines[0].annual_debit,'0.500000');
+  assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'19.500000');
+  const second=await submit({...application('recreation','2026-11-04'),duration_unit:'hours',hours:'1.75'});
+  await w.cancelRequest(pool,{user:user(owner),actor:owner,id:second.id,reason});
+  const balance=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation');assert.equal(Number(balance.held),0);assert.equal(balance.balance,'19.500000');
+ });
+ test('one HR verification comment covers required evidence with independent authority and documents still enforced',async()=>{
+  await customRoute();
+  const special=await submit(application('special'));
+  const comment='I have reviewed the evidence and confirmed it';
+  assert.equal((await call(`/requests/${special.id}/evidence-review`,{reason:comment,verification_comment:comment},owner)).status,403);
+  const verified=await call(`/requests/${special.id}/evidence-review`,{reason:comment,verification_comment:comment},hr);assert.equal(verified.status,200);
+  await decide(special.id);assert.equal((await w.getRequest(pool,special.id)).status,'approved');
+  const medical=await submit({...application('medical','2026-11-06'),duration_unit:'hours',hours:'1.75'});
+  assert.equal((await call(`/requests/${medical.id}/evidence-review`,{reason:comment,verification_comment:comment},hr)).status,200);
+  await decide(medical.id);const grant=(await w.getRequest(pool,medical.id)).grant_snapshot;
+  assert.equal(grant.medical_uncertified.committed_including_this_request,1);assert.equal(grant.charge,'0.250000');
+  const certifiedData={...application('medical','2026-11-10'),medical_mode:'certificate'};
+  await assert.rejects(submit(certifiedData),/Attach the medical certificate/);
+  const document={file_name:'certificate.pdf',content_type:'application/pdf',byte_size:18,sha256:'a'.repeat(64),file_data:Buffer.from('%PDF-test evidence')};
+  const certified=await submit(certifiedData,[document]);
+  assert.equal((await call(`/requests/${certified.id}/evidence-review`,{reason:comment,verification_comment:comment},hr)).status,200);
+  const reviewed=(await pool.query('SELECT evidence_verification FROM hr_gov_evidence_reviews WHERE request_id=$1',[certified.id])).rows[0].evidence_verification;
+  assert.equal(reviewed.certificate_reviewed,true);assert.equal(reviewed.covers_start,certifiedData.start_date);assert.equal(reviewed.document_hashes[0],document.sha256);
+ });
+ test('one comment also verifies the retained assigned HR stage',async()=>{
+  const special=await submit(application('special'));
+  await decide(special.id);await decide(special.id);
+  const view=await w.requestView(pool,user(hr),special.id),stage=view.stages[view.stage_index];assert.equal(stage.level,'hr_verifier');
+  const comment='I have reviewed the evidence and confirmed it';
+  const response=await call(`/requests/${special.id}/decisions`,{stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:comment,verification_comment:comment},officers.hr_verifier.account);
+  assert.equal(response.status,200);
+  const saved=(await pool.query('SELECT evidence_verification FROM hr_gov_decisions WHERE stage_id=$1',[stage.id])).rows[0];assert.equal(saved.evidence_verification.justification_accepted,true);
+ });
  test('nested one-level approval stops at the actual division and retains older parent-unit applications',async()=>{
   await customRoute([{level:'division',label:'Divisional Chief'}]);
   const old=await submit();

@@ -74,6 +74,36 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   assert.equal((await call('/requests?mode=queue&include_recorded=true&status=all',null,hr)).body.total,57);
   assert.equal((await call('/requests?mode=all&status=approved',null,hr)).body.total,2);
   assert.equal((await call('/requests?mode=mine&include_recorded=true&status=approved')).body.total,2);
+  const byReference=await call(path+'&search='+recorded.id,null,hr);
+  assert.equal(byReference.body.total,1);assert.equal(byReference.body.requests[0].id,recorded.id);
+  assert.equal((await call(path+'&search='+first.id,null,hr)).body.requests[0].id,first.id);
+  assert.equal((await call(path+'&search=2026-09-01&page=2',null,hr)).body.requests.length,5);
+  assert.equal((await call(path+'&search=01%2F09%2F2026',null,hr)).body.total,55);
+  assert.equal((await call(path+'&search=RECORDED%20ANNUAL',null,hr)).body.total,55);
+  assert.equal((await call(path+'&search=Recreation%20leave',null,hr)).body.total,2);
+  assert.equal((await call(path+'&search=Recorded%20explanation',null,hr)).body.total,0);
+  assert.equal((await call(path+'&search=%25',null,hr)).body.total,0);
+  assert.equal((await call('/requests?mode=mine&status=all&search='+recorded.id)).body.total,0);
+  const outsider=await account({hr_access:true,hr_leave_approve:true});
+  assert.equal((await call('/requests?mode=mine&status=all&search='+first.id,null,outsider)).body.total,0);
+  assert.equal((await call(path+'&search='+first.id,null,outsider)).body.total,0);
+  assert.equal((await call(path+'&search='+('x'.repeat(101)),null,hr)).status,422);
+ });
+ test('an applicant can submit without a separate preview and retry without reserving twice',async()=>{
+  await customRoute();const data=application();
+  const send=async()=>{
+   const form=new FormData();for(const [key,value] of Object.entries(data))form.set(key,value);
+   const session=await auth.createSession(owner.id),token=auth.buildTokenPayload(owner,session.tokenId,session.expiresAt);
+   const response=await fetch(base+'/api/hr/government/workflow/requests',{method:'POST',headers:{Authorization:`Bearer ${token}`},body:form});
+   return {status:response.status,body:await response.json()};
+  };
+  const first=await send(),retry=await send();
+  assert.equal(first.status,201);assert.equal(retry.status,201);assert.equal(first.body.id,retry.body.id);
+  const balance=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation');
+  assert.equal(balance.held,'1.000000');
+  assert.equal((await call('/requests?mode=mine&status=all')).body.total,1);
+  const overlapping=await submit({...data,request_id:randomUUID()}).then(()=>null,error=>error);
+  assert.match(overlapping.message,/overlap/);
  });
  test('hourly HTTP applications reserve and debit a schedule fraction, retain hours in views and payroll, and cancel holds',async()=>{
   await customRoute();
@@ -122,6 +152,67 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   assert.equal((await call(`/requests/${certified.id}/evidence-review`,{reason:comment,verification_comment:comment},hr)).status,200);
   const reviewed=(await pool.query('SELECT evidence_verification FROM hr_gov_evidence_reviews WHERE request_id=$1',[certified.id])).rows[0].evidence_verification;
   assert.equal(reviewed.certificate_reviewed,true);assert.equal(reviewed.covers_start,certifiedData.start_date);assert.equal(reviewed.document_hashes[0],document.sha256);
+ });
+ test('an authorised approver certifies, verifies and grants in one retry-safe transaction',async()=>{
+  await customRoute();
+  const approver=officers.department.account;
+  await pool.query('UPDATE reviewers SET permissions=permissions || $2::jsonb WHERE id=$1',[approver.id,JSON.stringify({hr_admin:true,hr_evidence_read:true})]);
+  const r=await submit(application('special')),view=await call(`/requests/${r.id}`,null,approver),stage=view.body.stages[0];
+  assert.equal(view.body.can_verify_evidence,true);
+  const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason,certification_confirmed:true,verify_evidence:true,verification_comment:reason};
+  assert.equal((await call(`/requests/${r.id}/decisions`,{...data,certification_confirmed:false},approver)).status,400);
+  assert.equal((await call(`/requests/${r.id}/decisions`,{...data,verification_comment:'short'},approver)).status,422);
+  assert.equal((await call(`/requests/${r.id}/decisions`,data,approver)).status,200);
+  assert.equal((await call(`/requests/${r.id}/decisions`,data,approver)).status,200);
+  const granted=await w.getRequest(pool,r.id);
+  assert.equal(granted.status,'approved');assert.equal(granted.grant_snapshot.evidence_review.actor_id,approver.id);assert.ok(granted.final_pdf.length>100);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_evidence_reviews WHERE request_id=$1',[r.id])).rows[0].n,1);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_decisions WHERE request_id=$1',[r.id])).rows[0].n,1);
+  const balance=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='special');assert.equal(balance.balance,'2.000000');assert.equal(Number(balance.held),0);
+ });
+ test('combined verification requires current HR authority and retains the certificate facts',async()=>{
+  await customRoute();const approver=officers.department.account;
+  const document={file_name:'certificate.pdf',content_type:'application/pdf',byte_size:18,sha256:'b'.repeat(64),file_data:Buffer.from('%PDF-test evidence')};
+  const r=await submit({...application('medical'),medical_mode:'certificate'},[document]);
+  const view=await w.requestView(pool,user(hr),r.id),stage=view.stages[0];
+  const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason,certification_confirmed:true,verify_evidence:true,verification_comment:reason};
+  assert.equal((await call(`/requests/${r.id}/decisions`,data,approver)).status,403);
+  await pool.query('UPDATE reviewers SET permissions=permissions || $2::jsonb WHERE id=$1',[approver.id,JSON.stringify({hr_admin:true,hr_evidence_read:true})]);
+  assert.equal((await call(`/requests/${r.id}`,null,approver)).body.can_verify_evidence,true);
+  await pool.query('UPDATE reviewers SET permissions=permissions || $2::jsonb WHERE id=$1',[approver.id,JSON.stringify({hr_admin:false})]);
+  assert.equal((await call(`/requests/${r.id}/decisions`,data,approver)).status,403);
+  await pool.query('UPDATE reviewers SET permissions=permissions || $2::jsonb WHERE id=$1',[approver.id,JSON.stringify({hr_admin:true})]);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_evidence_reviews WHERE request_id=$1',[r.id])).rows[0].n,0);
+  assert.equal((await w.getRequest(pool,r.id)).status,'pending');
+  assert.equal((await call(`/requests/${r.id}/decisions`,data,approver)).status,200);
+  const saved=(await w.getRequest(pool,r.id)).grant_snapshot.evidence_review.evidence_verification;
+  assert.equal(saved.certificate_reviewed,true);assert.equal(saved.covers_start,'2026-11-02');assert.deepEqual(saved.document_hashes,[document.sha256]);
+ });
+ test('combined approval retains a valid HR review completed while the application was open',async()=>{
+  await customRoute();const approver=officers.department.account;
+  await pool.query('UPDATE reviewers SET permissions=permissions || $2::jsonb WHERE id=$1',[approver.id,JSON.stringify({hr_admin:true,hr_evidence_read:true})]);
+  const r=await submit(application('special')),stage=(await w.requestView(pool,user(hr),r.id)).stages[0];
+  await evidence(r.id);
+  const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason,certification_confirmed:true,verify_evidence:true,verification_comment:reason};
+  assert.equal((await call(`/requests/${r.id}/decisions`,data,approver)).status,200);
+  assert.equal((await w.getRequest(pool,r.id)).grant_snapshot.evidence_review.actor_id,hr.id);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_evidence_reviews WHERE request_id=$1',[r.id])).rows[0].n,1);
+ });
+ test('a failed final grant rolls back the combined evidence review and preserves the balance hold',async()=>{
+  await customRoute([{level:'division',label:'Division approver'},{level:'department',label:'Head of Department'}]);
+  const approver=officers.department.account;
+  await pool.query('UPDATE reviewers SET permissions=permissions || $2::jsonb WHERE id=$1',[approver.id,JSON.stringify({hr_admin:true,hr_evidence_read:true})]);
+  const r=await submit(application('special'));await decide(r.id);
+  await pool.query("UPDATE reviewers SET status='inactive' WHERE id=$1",[officers.division.account.id]);
+  const stage=(await w.requestView(pool,user(hr),r.id)).stages[1];
+  const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason,certification_confirmed:true,verify_evidence:true,verification_comment:reason};
+  assert.equal((await call(`/requests/${r.id}/decisions`,data,approver)).status,409);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_evidence_reviews WHERE request_id=$1',[r.id])).rows[0].n,0);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_decisions WHERE request_id=$1',[r.id])).rows[0].n,1);
+  const balance=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='special');assert.equal(balance.balance,'3.000000');assert.equal(balance.held,'1.000000');
+  await pool.query("UPDATE reviewers SET status='active' WHERE id=$1",[officers.division.account.id]);
+  assert.equal((await call(`/requests/${r.id}/decisions`,data,approver)).status,200);
+  assert.equal((await w.getRequest(pool,r.id)).status,'approved');
  });
  test('one comment also verifies the retained assigned HR stage',async()=>{
   const special=await submit(application('special'));

@@ -108,7 +108,7 @@ router.get('/calendar',[query('from').custom(value=>{dayNumber(value);return tru
     AND ${employeeReadSql(req.user,'$3','e',true)} ORDER BY r.start_date,r.id LIMIT 201 OFFSET $4`,[req.query.from,req.query.to,req.user.id,(page-1)*200]);
   res.json({entries:rows.slice(0,200),has_more:rows.length>200,page});
 });
-router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query('mode').optional().isIn(['mine','queue','all']),query('include_recorded').optional().isIn(['true','false']),query('status').optional().isIn(['pending','approved','rejected','cancelled','all']),query('employee_id').optional().isUUID()],async(req,res)=>{
+router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query('mode').optional().isIn(['mine','queue','all']),query('include_recorded').optional().isIn(['true','false']),query('status').optional().isIn(['pending','approved','rejected','cancelled','all']),query('employee_id').optional().isUUID(),query('search').optional().isString().trim().isLength({max:100})],async(req,res)=>{
   if(!handleValidation(req,res))return;const page=Number(req.query.page)||1,mode=req.query.mode||'queue',status=req.query.status||'pending';
   if(mode==='all'&&!isCentralHr(req.user))throw new ServiceError(403,'Central HR administration is required.');
   const includeRecorded=mode==='queue'&&req.query.include_recorded==='true';
@@ -132,8 +132,12 @@ router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query
     WHERE (${employeeScopeSql(req.user,'hr_leave_approve','$1')} OR ${managerScopeSql(req.user,'$1')})
       AND ($2='all' OR a.status=$2) AND ($4::uuid IS NULL OR a.employee_id=$4)
       AND NOT EXISTS(SELECT 1 FROM hr_gov_legacy_transfers transfer JOIN hr_gov_requests carried ON carried.id=transfer.request_id WHERE transfer.legacy_request_id=a.id)` : ''}`;
-  const {rows}=await pool.query(`SELECT * FROM (${selection}) applications ORDER BY submitted_at DESC,id,record_source LIMIT 50 OFFSET $3`,[req.user.id,status,(page-1)*50,req.query.employee_id||null]);
-  const count=(await pool.query(`SELECT count(*)::int AS total FROM (${selection}) applications WHERE $3::int=0`,[req.user.id,status,0,req.query.employee_id||null])).rows[0].total;
+  // Search the entire authorised result before pagination. Personnel reasons
+  // and evidence are deliberately absent from this list's search fields.
+  const searchWhere="($5='' OR position(lower($5) in lower(concat_ws(' ',id::text,employee_name,replace(code,'_',' ') || ' leave',leave_type_name,start_date,end_date,to_char(start_date::date,'DD/MM/YYYY'),to_char(end_date::date,'DD/MM/YYYY'))))>0)";
+  const filters=[req.user.id,status,(page-1)*50,req.query.employee_id||null,req.query.search||''];
+  const {rows}=await pool.query(`SELECT * FROM (${selection}) applications WHERE ${searchWhere} ORDER BY submitted_at DESC,id,record_source LIMIT 50 OFFSET $3`,filters);
+  const count=(await pool.query(`SELECT count(*)::int AS total FROM (${selection}) applications WHERE $3::int=0 AND ${searchWhere}`,[...filters.slice(0,2),0,...filters.slice(3)])).rows[0].total;
   const requests=[];
   for(const row of rows){
     if(row.record_source==='recorded'||isCentralHr(req.user)||mode==='mine'||await workflow.canReadRequest(pool,req.user,await workflow.getRequest(pool,row.id))){
@@ -147,7 +151,7 @@ router.get('/requests/:id',[id],async(req,res)=>{if(!handleValidation(req,res))r
 router.post('/requests/:id/decisions',[
   id,body('verification_comment').optional().isString().trim().isLength({min:10,max:500}),body('stage_id').isUUID(),body('binding_id').isUUID(),body('event_key').isUUID(),body('decision').isIn(['approved','rejected']),body('note').isString().trim().isLength({min:10,max:4000}),
   body('source_reference').optional().isString().trim().isLength({min:5,max:500}),optionalDate('covers_start'),optionalDate('covers_end'),optionalDate('alternative_date'),body('consultation_reference').optional().isString().trim().isLength({min:5,max:500}),
-  ...['evidence_reviewed','certificate_reviewed','justification_accepted','operational_refusal','discretion_confirmed'].map(name=>body(name).optional().isBoolean())
+  ...['evidence_reviewed','certificate_reviewed','justification_accepted','operational_refusal','discretion_confirmed','certification_confirmed','verify_evidence'].map(name=>body(name).optional().isBoolean())
 ],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.decideRequest(pool,args(req)));});
 router.post('/requests/:id/cancel',[id,reason],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.cancelRequest(pool,{...args(req),reason:req.body.reason}));});
 router.post('/requests/:id/stages/:stageId/rebind',central,[id,param('stageId').isUUID(),reason,reference,body('substitute_employee_id').optional({nullable:true,checkFalsy:true}).isUUID()],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.rebindStage(pool,{...args(req),stageId:req.params.stageId}));});

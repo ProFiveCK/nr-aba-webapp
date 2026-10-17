@@ -311,9 +311,9 @@ async function evidenceFacts(client,request,data) {
  if(request.code==='special'&&data.justification_accepted!==true)fail('HR must record sufficient-cause justification review.',400);
  return {source_reference:data.source_reference.trim(),certificate_reviewed:data.certificate_reviewed===true,covers_start:data.covers_start||null,covers_end:data.covers_end||null,justification_accepted:data.justification_accepted===true,document_hashes:documents,snapshot_hash:fingerprint(request.application_snapshot)};
 }
-export async function verifyRequestEvidence(pool,{user,actor,id,data}) {
+export async function verifyRequestEvidence(pool,{user,actor,id,data,client:existingClient}) {
  const reason=reasonText(data.reason);
- return withTransaction(pool,async client=>{
+ const work=async client=>{
   await assertCentral(client,user);const {request,employee}=await lockedRequest(client,id);
   if(!await privateRead(client,user,request))fail('Personnel evidence access is required.',403);
   const stages=await stagesFor(client,id);
@@ -325,7 +325,7 @@ export async function verifyRequestEvidence(pool,{user,actor,id,data}) {
   await verifyRetainedRequest(client,request,employee);
   const {rows:[review]}=await client.query('INSERT INTO hr_gov_evidence_reviews(request_id,actor_id,evidence_verification,reason) VALUES($1,$2,$3,$4) RETURNING *',[id,user.id,verification,reason]);
   await audit(client,actor,'hr.gov.evidence.verified',id,{actor_id:user.id,source_reference:verification.source_reference});return {request_id:id,recorded_at:review.recorded_at};
- });
+ };return existingClient?work(existingClient):withTransaction(pool,work);
 }
 async function requiredEvidenceReview(client,request,stages) {
  if(stages.some(s=>s.level==='hr_verifier')){
@@ -353,6 +353,14 @@ export async function decideRequest(pool,{user,actor,id,data}) {
     if(!stage||stage.id!==data.stage_id||stage.binding?.id!==data.binding_id)fail('The current approval stage changed. Reload the request.');
     if(stage.binding.reviewer_id!==user.id)fail('Only the assigned officer can decide this stage.',403);
     const issue=await bindingIssue(client,request,stage);if(issue)fail(issue,403);
+    if(data.decision==='approved'&&data.certification_confirmed!==undefined&&data.certification_confirmed!==true)fail('Certify that you have verified the application before approving.',400);
+    if(data.verify_evidence!==undefined&&data.verify_evidence!==false){
+      if(data.verify_evidence!==true||data.decision!=='approved'||data.certification_confirmed!==true||!data.verification_comment)fail('Confirm certification and evidence verification together with approval.',400);
+      // Another HR officer may have verified while this application was open.
+      // Retain that review; the grant below rechecks its authority and snapshot.
+      const reviewed=(await client.query('SELECT 1 FROM hr_gov_evidence_reviews WHERE request_id=$1',[id])).rowCount;
+      if(!reviewed)await verifyRequestEvidence(pool,{client,user:state.user,actor,id,data:{...data,reason:note}});
+    }
     let currentEvaluation=null;
     if(data.decision==='approved'){const correctionIssue=await serviceCorrectionIssue(client,request.employee_id,request.submitted_at);if(correctionIssue)fail(correctionIssue);if(isCase(request.code))await cases.verifyCase(client,request,employee,{hrActor:stage.level==='hr_verifier'?user.id:null,final:stage.level==='chief_secretary',discretionConfirmed:data.discretion_confirmed===true});else currentEvaluation=await verifyRetainedRequest(client,request,employee);}
     if(stage.level==='relevant_secretary'&&request.code==='recreation'&&data.decision==='rejected'&&(!data.operational_refusal||!data.alternative_date||!data.consultation_reference))fail('Secretary refusal requires operational reasons, employee consultation and an alternative date.',400);
@@ -396,7 +404,7 @@ export async function decideRequest(pool,{user,actor,id,data}) {
       const bytes=await generateGovernmentLeavePdf(grant);
       await client.query("UPDATE hr_gov_requests SET status='approved',completed_at=NOW(),grant_snapshot=$2,final_pdf=$3 WHERE id=$1",[id,grant,Buffer.from(bytes)]);
     }else await client.query('UPDATE hr_gov_requests SET stage_index=stage_index+1 WHERE id=$1',[id]);
-    await audit(client,actor,'hr.gov.stage.decided',id,{stage_id:stage.id,binding_id:stage.binding.id,level:stage.level,decision:data.decision});
+    await audit(client,actor,'hr.gov.stage.decided',id,{stage_id:stage.id,binding_id:stage.binding.id,level:stage.level,decision:data.decision,...(data.certification_confirmed===true?{certification_confirmed:true}:{}),...(data.verify_evidence===true?{evidence_review_requested:true}:{})});
     return {id,status:(await getRequest(client,id)).status};
   });
 }

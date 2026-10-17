@@ -391,6 +391,7 @@ router.post(
         decision,
         note,
         decidedBy: req.user.display_name || req.user.email,
+        approver: { email: req.user.email },
       })
         .then((sentTo) => console.info(sentTo.length
           ? `[leave] ${decision} notice for ${applicant.display_name} (${application.id}) emailed to ${sentTo.join(', ')}`

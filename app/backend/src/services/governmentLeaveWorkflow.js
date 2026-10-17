@@ -20,6 +20,7 @@ import * as cases from './governmentLeaveCases.js';
 import {isCase} from '../lib/governmentLeaveCaseRules.js';
 import {generateGovernmentLeavePdf} from './governmentLeavePdf.js';
 import {approvalRouteFor,legacyRoute} from './governmentLeaveApprovalRoutes.js';
+import {queueCurrentLeaveApprover,queueLeaveDecision} from './governmentLeaveNotifications.js';
 
 export const today=()=>new Date(Date.now()+12*3600000).toISOString().slice(0,10);
 const fail=(message,status=409)=>{throw new ServiceError(status,message);};
@@ -226,6 +227,7 @@ export async function submitRequest(pool,{user,actor,employeeId,data,documents=[
       const offices=await effectiveOffices(client,request,level);if(offices.length===1)await bindOffice(client,stage,offices[0],actor,null,'Dated route snapshot at employee submission');
     }
     for(const document of documents)await client.query('INSERT INTO hr_gov_request_documents(request_id,file_name,content_type,byte_size,sha256,file_data) VALUES($1,$2,$3,$4,$5,$6)',[request.id,document.file_name,document.content_type,document.byte_size,document.sha256,document.file_data]);
+    await queueCurrentLeaveApprover(client,request.id);
     await audit(client,actor,'hr.gov.request.submitted',request.id,{employee_id:employeeId,code:input.code,charge:evaluation.charge,config_id:config.id});return {id:request.id,status:'pending'};
   };return existingClient?work(existingClient):withTransaction(pool,work);
 }
@@ -286,6 +288,7 @@ export async function rebindStage(pool,{user,actor,id,stageId,data}) {
     const candidate={...stage,binding:{...office,assignment_id:office.id}};
     const issue=await bindingIssue(client,request,candidate);if(issue)fail(issue);
     const binding=await bindOffice(client,stage,office,actor,data.source_reference,reasonText(data.reason));
+    await queueCurrentLeaveApprover(client,id);
     await audit(client,actor,'hr.gov.stage.rebound',id,{stage_id:stageId,previous_binding:stage.binding?.id||null,binding});return binding;
   });
 }
@@ -405,7 +408,10 @@ export async function decideRequest(pool,{user,actor,id,data}) {
       await client.query("UPDATE hr_gov_requests SET status='approved',completed_at=NOW(),grant_snapshot=$2,final_pdf=$3 WHERE id=$1",[id,grant,Buffer.from(bytes)]);
     }else await client.query('UPDATE hr_gov_requests SET stage_index=stage_index+1 WHERE id=$1',[id]);
     await audit(client,actor,'hr.gov.stage.decided',id,{stage_id:stage.id,binding_id:stage.binding.id,level:stage.level,decision:data.decision,...(data.certification_confirmed===true?{certification_confirmed:true}:{}),...(data.verify_evidence===true?{evidence_review_requested:true}:{})});
-    return {id,status:(await getRequest(client,id)).status};
+    const status=(await getRequest(client,id)).status;
+    await queueLeaveDecision(client,{requestId:id,eventKey:data.event_key,actorId:actor.id,stage,decision:data.decision,status});
+    await queueCurrentLeaveApprover(client,id);
+    return {id,status};
   });
 }
 export async function cancelRequest(pool,{user,actor,id,reason,client:existingClient}) {

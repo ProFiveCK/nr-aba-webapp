@@ -1,10 +1,8 @@
 /**
  * Mail for the ABA, signup and account flows, moved out of server.js unchanged.
  *
- * This keeps its own transport and testing-mode state, separate from
- * services/notificationService.js (which the FOREX TT and HR routers use). Only
- * this copy is reloaded from the smtp_settings table and follows the admin
- * testing-mode switch, exactly as before the move.
+ * Shared by the FOREX TT and HR notifications as well, so all mail follows
+ * the SMTP settings and testing-mode switch saved in Admin.
  */
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
@@ -95,7 +93,7 @@ async function refreshTestingModeSetting() {
 }
 
 async function sendMail(options = {}) {
-  if (localProductionReview) return;
+  if (localProductionReview) return { skipped: true, reason: 'local_review' };
   const subject = options.subject || '(no subject)';
   if (testingModeEnabled) {
     console.info(
@@ -103,11 +101,11 @@ async function sendMail(options = {}) {
       subject,
       options.to
     );
-    return;
+    return { skipped: true, reason: 'testing_mode' };
   }
   if (!mailTransport) {
     console.warn('SMTP not configured; skipping email send for subject "%s".', subject);
-    return;
+    return { skipped: true, reason: 'smtp_not_configured' };
   }
   
   // Get from/reply-to from database settings if available
@@ -126,7 +124,7 @@ async function sendMail(options = {}) {
   const payload = { from: fromEmail, ...options };
   if (!payload.replyTo && replyToEmail) payload.replyTo = replyToEmail;
   try {
-    await mailTransport.sendMail(payload);
+    return await mailTransport.sendMail(payload);
   } catch (err) {
     console.error(
       'Email send failed (subject="%s", to=%o, cc=%o, bcc=%o): %s',

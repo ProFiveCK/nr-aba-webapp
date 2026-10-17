@@ -1,4 +1,5 @@
 import {benefitBasisFor} from './governmentLeaveBenefitReconciliation.js';
+import {queueCurrentLeaveApprover} from './governmentLeaveNotifications.js';
 import {legacyTransferFor} from './governmentLeaveCutover.js';
 import {withTransaction} from '../lib/transaction.js';
 import {ServiceError} from '../lib/serviceError.js';
@@ -48,7 +49,7 @@ export async function submitCase(pool,{user,actor,employeeId,data,documents=[],c
   if(input.related_request_id)await client.query('INSERT INTO hr_gov_case_links(request_id,original_request_id,kind,recorded_by,reference) VALUES($1,$2,$3,$4,$5)',[data.request_id,input.related_request_id,input.code==='amendment'?'amendment':'medical_escalation',actor.id,input.event_reference]);
   const request={id:data.request_id,employee_id:employeeId,department_id:employee.department_id,division_id:employee.division_id};
   for(const [ordinal,level] of caseLevels(input.code).entries()){const stage=(await client.query('INSERT INTO hr_gov_request_stages(request_id,ordinal,level) VALUES($1,$2,$3) RETURNING *',[request.id,ordinal,level])).rows[0],offices=await workflow.effectiveOffices(client,request,level);if(offices.length===1)await workflow.bindOffice(client,stage,offices[0],actor,null,'Dated assisted-case route at submission');}
-  await insertDocuments(client,request.id,documents);await audit(client,actor,'hr.gov.case.submitted',request.id,{employee_id:employeeId,code:input.code,assisted_reference:input.assisted_reference});return {id:request.id,status:'pending'};
+  await insertDocuments(client,request.id,documents);await queueCurrentLeaveApprover(client,request.id);await audit(client,actor,'hr.gov.case.submitted',request.id,{employee_id:employeeId,code:input.code,assisted_reference:input.assisted_reference});return {id:request.id,status:'pending'};
  };return existingClient?work(existingClient):withTransaction(pool,work);
 }
 async function insertDocuments(client,id,documents){for(const d of documents)await client.query('INSERT INTO hr_gov_request_documents(request_id,file_name,content_type,byte_size,sha256,file_data) VALUES($1,$2,$3,$4,$5,$6)',[id,d.file_name,d.content_type,d.byte_size,d.sha256,d.file_data]);}

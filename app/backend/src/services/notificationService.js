@@ -170,10 +170,11 @@ Review it here: ${link}
 }
 
 /** Tells the applicant what was decided. Rejections always carry the reason. */
-export async function notifyLeaveDecision({ application, employee, decision, note, decidedBy }) {
+export async function notifyLeaveDecision({ application, employee, decision, note, decidedBy, approver }) {
   if (!mailTransport || testingModeEnabled) return [];
   const to = lowerEmail(employee?.email || '');
-  if (!to) return [];
+  const approverEmail = lowerEmail(approver?.email || '');
+  const sentTo = [];
 
   const outcome = decision === 'approved' ? 'approved' : 'not approved';
   const text = `Hello ${employee.display_name},
@@ -182,6 +183,14 @@ Your ${application.leave_type_name} leave request for ${leaveDates(application)}
 ${note ? `\nReason: ${note}\n` : ''}
 You can see your leave at ${appUrl('leave/my-leave')}
 `;
-  await sendMail({ to, subject: `Your leave request was ${outcome}`, text });
-  return [to];
+  if (to) {
+    await sendMail({ to, subject: `Your leave request was ${outcome}`, text });
+    sentTo.push(to);
+  }
+  if (approverEmail && approverEmail !== to) {
+    await sendMail({ to: approverEmail, subject: `Leave decision recorded — ${employee.display_name}`,
+      text: `Your decision was recorded: ${employee.display_name}'s ${application.leave_type_name} leave request for ${leaveDates(application)} was ${outcome}.\n\nView the decision: ${appUrl('leave/approvals')}\n` });
+    sentTo.push(approverEmail);
+  }
+  return sentTo;
 }

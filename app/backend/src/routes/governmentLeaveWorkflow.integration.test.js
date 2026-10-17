@@ -5,6 +5,11 @@ import {writeFile} from 'node:fs/promises';
 import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase} from '../test-support/database.js';
 import {DEFAULT_RULES} from '../lib/governmentLeaveRules.js';
 
+// Only a local, deliberately unreachable SMTP server; notification tests
+// capture sends through an injected delivery function below.
+process.env.SMTP_HOST='127.0.0.1';
+process.env.SMTP_PORT='1';
+
 describe('government common leave workflow and reviewed jobs',{skip:skipWithoutDatabase},()=>{
  let pool,w,l,jobs,routes,commission,auth,server,base,hr,certifier,owner,employee,department,division,officers,policy;
  const reason='Synthetic verified authority and evidence for local tests.';
@@ -58,6 +63,103 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   if(move)await pool.query('UPDATE hr_employees SET division_id=$2,division_code=$3 WHERE id=$1',[employee.id,child.id,child.name]);
   return {child,sibling,leafAccount};
  }
+ async function notificationQueue(id){return(await pool.query('SELECT * FROM hr_gov_notifications WHERE request_id=$1 ORDER BY created_at,id',[id])).rows;}
+ async function notificationDelivery(options={}){
+  const notifications=await import('../services/governmentLeaveNotifications.js');
+  const messages=[];
+  const result=await notifications.deliverLeaveNotifications(pool,{deliver:async message=>{messages.push(message);return {accepted:[message.to],messageId:message.messageId};},...options});
+  return {result,messages};
+ }
+ test('submission queues only the current assigned approver and SMTP acceptance is recorded once',async()=>{
+  const data=application(),r=await submit(data);await submit(data);
+  const queued=await notificationQueue(r.id);assert.equal(queued.length,1);
+  assert.equal(queued[0].recipient_id,officers.division.account.id);
+  const {messages,result}=await notificationDelivery();assert.equal(result.sent,1);
+  assert.equal(messages[0].to,officers.division.account.email);
+  assert.match(messages[0].text,/leave\/approvals/);assert.ok(!messages[0].text.includes(reason));
+  const [sent]=await notificationQueue(r.id);assert.equal(sent.status,'sent');assert.ok(sent.sent_at);assert.equal(sent.recipient_email,messages[0].to);
+  assert.equal((await notificationDelivery()).messages.length,0);
+  assert.equal((await call(`/requests/${r.id}/notifications`,null,owner)).status,403);
+  assert.equal((await call(`/requests/${r.id}/notifications`,null,hr)).body.notifications[0].status,'sent');
+ });
+ test('each intermediate approval confirms the decision to its actor and notifies the next officer',async()=>{
+  const r=await submit();await notificationDelivery();
+  const view=await w.requestView(pool,user(hr),r.id),stage=view.stages[0];
+  const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason};
+  const args={user:user(officers.division.account),actor:officers.division.account,id:r.id,data};
+  await w.decideRequest(pool,args);await w.decideRequest(pool,args);
+  const {messages,result}=await notificationDelivery();assert.equal(result.sent,2);
+  assert.deepEqual(new Set(messages.map(m=>m.to)),new Set([officers.division.account.email,officers.department.account.email]));
+  assert.match(messages.find(m=>m.to===officers.division.account.email).text,/still pending further approval/);
+  assert.equal((await notificationQueue(r.id)).length,3);
+ });
+ test('final approval emails the applicant and all deciding approvers without claiming an intermediate grant',async()=>{
+  await customRoute();const r=await submit();await notificationDelivery();await decide(r.id);
+  const {messages,result}=await notificationDelivery();assert.equal(result.sent,2);
+  assert.deepEqual(new Set(messages.map(m=>m.to)),new Set([owner.email,officers.department.account.email]));
+  assert.ok(messages.every(m=>m.subject.includes('Leave approved')));
+  assert.match(messages.find(m=>m.to===owner.email).text,/leave\/my-leave/);
+ });
+ test('rejection emails the applicant and the deciding approver and never notifies a later stage',async()=>{
+  const r=await submit();await notificationDelivery();await decide(r.id,{decision:'rejected'});
+  const {messages}=await notificationDelivery();assert.equal(messages.length,2);
+  assert.deepEqual(new Set(messages.map(m=>m.to)),new Set([owner.email,officers.division.account.email]));
+  assert.ok(messages.every(m=>m.subject.includes('Leave rejected')));
+ });
+ test('final outcome reaches previous approvers after all stages complete',async()=>{
+  const r=await submit();await grant(r.id);
+  const {messages}=await notificationDelivery();
+  const final=messages.filter(message=>message.subject.startsWith('Leave approved'));
+  assert.deepEqual(new Set(final.map(message=>message.to)),new Set([owner.email,...Object.values(officers).map(officer=>officer.account.email)]));
+  assert.ok(messages.filter(message=>message.subject.startsWith('Leave decision recorded')).every(message=>message.to!==owner.email));
+  assert.ok(messages.filter(message=>message.subject.startsWith('Leave decision recorded')).every(message=>message.text.includes('now approved')));
+  assert.ok(!messages.some(message=>message.subject.startsWith('Leave approval needed')));
+ });
+ test('SMTP failures and nonacceptance retain a pending notification for retry without changing the application',async()=>{
+  const r=await submit();
+  let delivery=await notificationDelivery({deliver:async()=>{throw new Error('Synthetic SMTP unavailable');}});
+  assert.equal(delivery.result.failed,1);let [row]=await notificationQueue(r.id);
+  assert.equal(row.status,'pending');assert.equal(row.attempts,1);assert.match(row.last_error,/SMTP unavailable/);
+  assert.equal((await w.getRequest(pool,r.id)).status,'pending');
+  assert.equal((await notificationDelivery()).messages.length,0);
+  await pool.query('UPDATE hr_gov_notifications SET next_attempt_at=NOW() WHERE request_id=$1',[r.id]);
+  delivery=await notificationDelivery({deliver:async()=>({accepted:[],rejected:['recipient']})});assert.equal(delivery.result.failed,1);
+  await pool.query('UPDATE hr_gov_notifications SET next_attempt_at=NOW() WHERE request_id=$1',[r.id]);
+  assert.equal((await notificationDelivery()).result.sent,1);
+  [row]=await notificationQueue(r.id);assert.equal(row.attempts,3);assert.equal(row.last_error,null);
+ });
+ test('testing mode preserves queued notifications until sending is enabled',async()=>{
+  const r=await submit(),mail=await import('../services/mailService.js');
+  try{
+   await pool.query('UPDATE reviewer_settings SET testing_mode=TRUE WHERE id=TRUE');await mail.refreshTestingModeSetting();
+   assert.equal((await notificationDelivery()).result.paused,true);assert.equal((await notificationQueue(r.id))[0].attempts,0);
+  }finally{await pool.query('UPDATE reviewer_settings SET testing_mode=FALSE WHERE id=TRUE');await mail.refreshTestingModeSetting();}
+  assert.equal((await notificationDelivery()).result.sent,1);
+ });
+ test('cancelled applications and replaced approvers do not receive stale approval requests',async()=>{
+  const cancelled=await submit();await w.cancelRequest(pool,{user:user(owner),actor:owner,id:cancelled.id,reason});
+  assert.equal((await notificationDelivery()).result.skipped,1);
+  const r=await submit(),view=await w.requestView(pool,user(hr),r.id);
+  await w.rebindStage(pool,{user:user(hr),actor:hr,id:r.id,stageId:view.stages[0].id,data:{substitute_employee_id:officers.department.employee.id,source_reference:'Synthetic authorised substitute notification',reason}});
+  const delivery=await notificationDelivery();assert.equal(delivery.result.skipped,1);assert.equal(delivery.result.sent,1);
+  assert.equal(delivery.messages[0].to,officers.department.account.email);
+ });
+ test('revoked approval authority suppresses an unsent approval request',async()=>{
+  const r=await submit();await pool.query("UPDATE reviewers SET permissions=permissions||'{\"hr_leave_approve\":false}'::jsonb WHERE id=$1",[officers.division.account.id]);
+  const delivery=await notificationDelivery();assert.equal(delivery.messages.length,0);assert.equal(delivery.result.skipped,1);
+  assert.match((await notificationQueue(r.id))[0].last_error,/capability/);
+ });
+ test('queue entries roll back with an application transaction and concurrent workers do not send twice',async()=>{
+  const data=application(),client=await pool.connect();
+  try{await client.query('BEGIN');await w.submitRequest(pool,{client,user:user(owner),actor:owner,employeeId:employee.id,data});await client.query('ROLLBACK');}
+  finally{client.release();}
+  assert.equal((await notificationQueue(data.request_id)).length,0);
+  await submit(data);
+  const notifications=await import('../services/governmentLeaveNotifications.js'),messages=[];
+  const deliver=async message=>{messages.push(message);return {accepted:[message.to]};};
+  await Promise.all([notifications.deliverLeaveNotifications(pool,{deliver}),notifications.deliverLeaveNotifications(pool,{deliver})]);
+  assert.equal(messages.length,1);
+ });
  test('unified approval records share status filters, ordering, pagination and direct PDF availability',async()=>{
   await customRoute();const first=await submit();await decide(first.id);
   const second=await submit(application('recreation','2026-11-03'));await decide(second.id);

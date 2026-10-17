@@ -148,6 +148,16 @@ router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query
   res.json({requests,total:count,page,page_size:50});
 });
 router.get('/requests/:id',[id],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.requestView(pool,req.user,req.params.id));});
+router.get('/requests/:id/notifications',central,[id],async(req,res)=>{
+  if(!handleValidation(req,res))return;
+  await workflow.assertCentral(pool,req.user);
+  await workflow.getRequest(pool,req.params.id);
+  const {rows}=await pool.query(`SELECT n.id,n.kind,n.status,n.attempts,COALESCE(n.recipient_email,r.email) AS recipient_email,
+    r.display_name,n.last_error,n.created_at,n.sent_at,n.next_attempt_at
+    FROM hr_gov_notifications n JOIN reviewers r ON r.id=n.recipient_id
+    WHERE n.request_id=$1 ORDER BY n.created_at,n.id`,[req.params.id]);
+  res.json({notifications:rows});
+});
 router.post('/requests/:id/decisions',[
   id,body('verification_comment').optional().isString().trim().isLength({min:10,max:500}),body('stage_id').isUUID(),body('binding_id').isUUID(),body('event_key').isUUID(),body('decision').isIn(['approved','rejected']),body('note').isString().trim().isLength({min:10,max:4000}),
   body('source_reference').optional().isString().trim().isLength({min:5,max:500}),optionalDate('covers_start'),optionalDate('covers_end'),optionalDate('alternative_date'),body('consultation_reference').optional().isString().trim().isLength({min:5,max:500}),

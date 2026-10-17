@@ -6,6 +6,7 @@ import { pool, initSchema } from './db.js';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
 import { startGovernmentLeaveScheduler } from './services/governmentLeaveJobs.js';
+import { startLeaveNotificationDelivery } from './services/governmentLeaveNotifications.js';
 import { runDueLeaveAccruals } from './services/leaveAccrual.js';
 import { LOCK_KEYS, withAdvisoryLock } from './lib/advisoryLock.js';
 import { buildCookieParser, csrfGuard } from './services/authService.js';
@@ -234,6 +235,7 @@ initSchema()
 
     if (GOVERNMENT_LEAVE_SCHEDULER_ENABLED) startGovernmentLeaveScheduler(pool);
     else console.log('[government-leave-jobs] Disabled; independently approved plans can be run by central HR.');
+    startLeaveNotificationDelivery(pool);
 
     // Fortnightly leave accrual. Runs any due periods on startup (catching up
     // after downtime) and then checks hourly.

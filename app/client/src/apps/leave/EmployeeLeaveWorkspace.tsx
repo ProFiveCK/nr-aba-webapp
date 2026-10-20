@@ -1,3 +1,4 @@
+import {policyEndLabel} from './policyDates';
 import { LeaveAccount } from './LeaveAccount';
 import { useAuth } from '../../contexts/useAuth';
 import { MedicalTracking } from './MedicalTracking';
@@ -65,7 +66,7 @@ export function EmployeeLeaveWorkspace({profile,departments,patterns,central,sec
         {section==='arrangements'&&summary&&<>
             <div className="app-panel space-y-3 p-5"><div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">Leave summary</h3><Button variant="secondary" onClick={()=>void refresh()}>Refresh</Button></div>
                 {summary.regime === 'government' && government?.activation.status !== 'active' && <p className="text-sm text-gray-600">Review this employee’s appointment, certified balances and leave access before they apply.</p>}
-                {government?.policy && summary.regime === 'government' && <p className="text-sm text-gray-600">Policy: <strong>{reviewRecordLabel(policyVersionLabel(government.policy.label,'published'))}</strong> · {formatDate(government.policy.effective_from)} to {formatDate(government.policy.effective_to)}.</p>}
+                {government?.policy && summary.regime === 'government' && <p className="text-sm text-gray-600">Policy: <strong>{reviewRecordLabel(policyVersionLabel(government.policy.label,'published'))}</strong> · {formatDate(government.policy.effective_from)} to {policyEndLabel(government.policy.effective_to)}.</p>}
                 {summary.regime !== 'government' && <p className="text-sm text-gray-600">Reporting manager: <strong>{reviewRecordLabel(summary.reporting_manager.name || 'Not assigned')}</strong>.</p>}
             </div>
 

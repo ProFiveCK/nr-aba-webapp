@@ -1,3 +1,4 @@
+import {policyEndLabel} from './policyDates';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, CalendarDays, Users, ShieldCheck, Settings2 } from 'lucide-react';
 import { Button } from '../../components/Ui';
@@ -24,7 +25,7 @@ export function LeaveSetupStatus({ usage, onOpen }: { usage: LeavePolicyUsage; o
             <dl className="grid gap-3 sm:grid-cols-3">
                 {[[usage.counts.active_employees, 'Active employees'], [needsReview, 'Access needs review'], [usage.counts.government_missing_job_plans, 'Balance schedules to review']].map(([count, label]) => <div key={label} className="rounded-xl bg-gray-50 p-4"><dt className="text-sm text-gray-600">{label}</dt><dd className="mt-2 text-3xl font-semibold tabular-nums text-gray-950">{count}</dd></div>)}
             </dl>
-            {usage.current_policy ? <p className="text-sm text-gray-600">Current policy: <strong className="text-gray-900">{reviewRecordLabel(usage.current_policy.label)}</strong> · {formatDate(usage.current_policy.effective_from)} to {formatDate(usage.current_policy.effective_to)}.</p> : <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">No published policy covers today. Review Policy &amp; calendars before enabling leave applications.</p>}
+            {usage.current_policy ? <p className="text-sm text-gray-600">Current policy: <strong className="text-gray-900">{reviewRecordLabel(usage.current_policy.label)}</strong> · {formatDate(usage.current_policy.effective_from)} to {policyEndLabel(usage.current_policy.effective_to)}.</p> : <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">No published policy covers today. Review Policy &amp; calendars before enabling leave applications.</p>}
             <p className="text-sm text-gray-600">Automatic balance updates: <strong className={usage.schedulers.government ? 'text-green-800' : 'text-amber-800'}>{usage.schedulers.government ? 'Enabled' : 'Not enabled'}</strong>. {usage.schedulers.government ? 'Approved schedules update balances when they are due.' : 'Review schedules and contact the system administrator to enable automatic updates.'}</p>
             {needsReview > 0 && <p className="text-sm text-gray-600">Review the appointment, balance and access settings in each affected <Link className="font-medium text-brand underline" to="/leave/employees">employee record</Link>.</p>}
         </div>

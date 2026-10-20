@@ -950,7 +950,26 @@ assert.equal((await call(`/requests/${r.id}/pdf`,null,officers.chief_secretary.a
   await jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id,asOf:'2026-10-28',clockDate:'2026-10-28'});
   assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'61.000000');
   const backdated=await l.createPolicy(pool,{user:user(hr),actor:hr,data:{label:'Backdated further replacement',effective_from:'2026-10-10',effective_to:'2027-12-31',rules:DEFAULT_RULES,source_reference:'Backdated signed replacement schedule',supersedes_policy_id:replacement.id,authority_reference:'Signed backdated replacement decision',reason}});
-  await assert.rejects(l.publishPolicy(pool,{user:user(certifier),actor:certifier,id:backdated.id,reason,expected_revision:1}),/Posted jobs/);
+  await assert.rejects(l.publishPolicy(pool,{user:user(certifier),actor:certifier,id:backdated.id,reason,expected_revision:1}),/Balances or approved leave/);
+ });
+ test('extending policy coverage preserves completed leave and posted balances while pending leave can still finish',async()=>{
+  const approved=await submit(application());await grant(approved.id);
+  await plan();await jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id,asOf:'2026-10-28',clockDate:'2026-10-28'});
+  const pending=await submit(application('recreation','2026-11-09'));
+  const before=(await pool.query('SELECT grant_snapshot,encode(final_pdf,\'hex\') AS pdf FROM hr_gov_requests WHERE id=$1',[approved.id])).rows[0];
+  const posts=(await pool.query('SELECT * FROM hr_gov_job_posts ORDER BY id')).rows,ledger=(await pool.query('SELECT * FROM hr_gov_ledger ORDER BY id')).rows;
+  await l.extendPolicy(pool,{user:user(hr),actor:hr,id:policy.id,data:{effective_to:'9999-12-31',expected_effective_to:'2027-12-31'}});
+  assert.deepEqual((await pool.query('SELECT grant_snapshot,encode(final_pdf,\'hex\') AS pdf FROM hr_gov_requests WHERE id=$1',[approved.id])).rows[0],before);
+  assert.deepEqual((await pool.query('SELECT * FROM hr_gov_job_posts ORDER BY id')).rows,posts);assert.deepEqual((await pool.query('SELECT * FROM hr_gov_ledger ORDER BY id')).rows,ledger);
+  await grant(pending.id);assert.equal((await w.getRequest(pool,pending.id)).status,'approved');
+ });
+ test('employee policy summary recognises extended coverage beyond the original published end',async()=>{
+  await pool.query('TRUNCATE hr_gov_policy_versions CASCADE');
+  const expired=await l.createPolicy(pool,{user:user(hr),actor:hr,data:{label:'Original dated leave settings',effective_from:'2020-01-01',effective_to:'2020-12-31',rules:DEFAULT_RULES,reason}});
+  await l.publishPolicy(pool,{user:user(hr),actor:hr,id:expired.id,reason});
+  assert.equal((await call('/me')).body.policy,null);
+  await l.extendPolicy(pool,{user:user(hr),actor:hr,id:expired.id,data:{expected_effective_to:'2020-12-31',effective_to:'9999-12-31'}});
+  const summary=await call('/me');assert.equal(summary.status,200);assert.equal(summary.body.policy.id,expired.id);assert.equal(summary.body.policy.recreation_notice_days,14);
  });
  test('annual Medical/Special reset expires unused balances, grants once, resets exemption baseline and retains holds until resolved',async()=>{
   await plan('medical');await plan('special');const pending=await submit(application('medical','2026-11-02'));

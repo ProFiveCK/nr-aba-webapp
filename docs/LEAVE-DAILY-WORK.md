@@ -48,6 +48,12 @@ In Administration → User Management, edit the account and choose its **Leave s
 
 Settings contains **Policy and calendars**, **Organisation and approvers**, **Administration access**, and **Advanced maintenance**.
 
+In Policy and calendars → Rules, use **Extend dates** when the same allowances should continue. The current dates are shown automatically. Enter a later Effective through date or select **No end date**, then **Save changes**. This applies immediately and records the administrator and old/new dates in history. Existing approved leave, balance postings and original policy facts stay unchanged; no replacement or separate approval is needed.
+
+Use **Change allowances** only when the leave rules themselves change. The form copies the current values and suggests a start after existing approved leave and balance updates. System administrators save and apply the change together with **Save changes**; other policy managers can save a draft for an authorised reviewer. Previously saved drafts have an **Apply changes** action without another verification-reason dialog. Signed replacement references and mandatory source fields have been removed from routine policy editing. Qualifying periods and an optional source are under Advanced settings; a note is optional. Previous policies remain available under Previous policies.
+
+No end date extends future coverage. It does not add coverage before the original policy start date. Application errors now identify the first date missing published policy coverage.
+
 Advanced maintenance contains leave activation and balance schedules, bulk account lifecycle tools, and payroll reconciliation. For one employee's service, initial balances, account lifecycle or activation, open Details and access → **Advanced employee maintenance**. Ordinary active employees open at their leave list; a missing setup item has a separate next-action notice.
 
 Staff balance browsing is under Employees → **Staff balances**. Accounts with only balance permission open that view directly and do not gain employee editing access. The primary navigation only shows destinations allowed by the account's permissions.

@@ -22,6 +22,12 @@ export async function initGovernmentLeaveSchema(client) {
     ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS supersedes_policy_id UUID REFERENCES hr_gov_policy_versions(id);
     ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS authority_reference TEXT;
     ALTER TABLE hr_gov_policy_versions ADD COLUMN IF NOT EXISTS last_prepared_by UUID REFERENCES reviewers(id);
+    CREATE TABLE IF NOT EXISTS hr_gov_policy_extensions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(), policy_version_id UUID NOT NULL REFERENCES hr_gov_policy_versions(id),
+      previous_effective_to DATE NOT NULL, effective_to DATE NOT NULL CHECK(effective_to>previous_effective_to),
+      recorded_by UUID NOT NULL REFERENCES reviewers(id), reason TEXT NOT NULL, recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(policy_version_id,effective_to)
+    );
     CREATE TABLE IF NOT EXISTS hr_gov_policy_transitions (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), predecessor_id UUID NOT NULL UNIQUE REFERENCES hr_gov_policy_versions(id),
       successor_id UUID NOT NULL UNIQUE REFERENCES hr_gov_policy_versions(id), effective_from DATE NOT NULL,
@@ -178,7 +184,7 @@ export async function initGovernmentLeaveSchema(client) {
   await initGovernmentLeavePayrollSchema(client);
   await initGovernmentLeaveRolloutSchema(client);
   await initGovernmentLeaveInitialSetupSchema(client);
-  for(const table of ['hr_gov_service_bases','hr_gov_service_exclusions','hr_gov_exclusion_withdrawals','hr_gov_roster_days','hr_gov_pattern_approvals','hr_gov_entitlements','hr_gov_reservations','hr_gov_reservation_events']) {
+  for(const table of ['hr_gov_policy_extensions','hr_gov_service_bases','hr_gov_service_exclusions','hr_gov_exclusion_withdrawals','hr_gov_roster_days','hr_gov_pattern_approvals','hr_gov_entitlements','hr_gov_reservations','hr_gov_reservation_events']) {
     await client.query(`DROP TRIGGER IF EXISTS ${table}_immutable ON ${table}`);
     await client.query(`CREATE TRIGGER ${table}_immutable BEFORE UPDATE OR DELETE ON ${table} FOR EACH ROW EXECUTE FUNCTION hr_gov_immutable()`);
   }

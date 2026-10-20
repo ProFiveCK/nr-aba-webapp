@@ -1,3 +1,4 @@
+import {policyEndLabel} from './policyDates';
 import { policyVersionLabel } from './policyVersionLabel';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -84,7 +85,7 @@ export function GovernmentInitialSetup({ onAdopted }: { onAdopted: () => Promise
                     <Field label="Target Government policy"><select aria-label="Target Government policy" className={inputClass} disabled={adopted || busy} value={plan.policy_id || ''} onChange={e => change({ ...plan, policy_id: e.target.value || null })}><option value="">Choose a published policy</option>{state.policies.map(p => <option key={p.id} value={p.id}>{policyVersionLabel(p.label,'published')}</option>)}</select></Field>
                     <Field label="Intended start date"><AustralianDateInput aria-label="Intended start date" name="start_date" className={inputClass} value={plan.start_date} required disabled={adopted || busy} onChange={e => change({ ...plan, start_date: e.target.value })} /></Field>
                 </div>
-                {policy && <p className="break-words text-xs text-gray-600">Policy covers {formatDate(policy.effective_from)} to {formatDate(policy.effective_to)}. Source: {policy.source_reference}</p>}
+                {policy && <p className="break-words text-xs text-gray-600">Policy covers {formatDate(policy.effective_from)} to {policyEndLabel(policy.effective_to)}. Source: {policy.source_reference}</p>}
                 <p className="text-xs text-gray-600">Choose the published corrected policy from Policies. If none is listed, prepare and publish it there first. The start date is a planning date; it does not enrol staff or backdate their balances.</p>
             </div>
             <div className="app-panel overflow-hidden">

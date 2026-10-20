@@ -1,5 +1,5 @@
 import {calendarCoverageRequired} from './governmentLeaveCalendarRules.js';
-import {dayNumber,isoDay,monthBoundary,serviceFacts,units,decimal,fingerprint} from './governmentLeaveRules.js';
+import {ENGINE_VERSION,dayNumber,isoDay,monthBoundary,serviceFacts,units,decimal,fingerprint} from './governmentLeaveRules.js';
 export const CASE_CODES=['teacher_recreation','extended_medical','extended_medical_minister','maternity','paternity','adoption','official','lwop','long_service','furlough','recreation_encashment','recreation_separation','witness_republic','witness_other','attendance','amendment'];
 export const FINANCIAL_CODES=['long_service','furlough','recreation_encashment','recreation_separation'];
 export const NON_ABSENCE_CODES=['long_service','recreation_encashment','recreation_separation','attendance','amendment'];
@@ -16,7 +16,8 @@ export function caseFoundation(context,input){
  const segments=[];
  for(let n=start;n<=end;n++){
   const date=isoDay(n),policy=context.policies.find(p=>p.status==='published'&&p.effective_from<=date&&p.effective_to>=date),period=context.periods.find(p=>p.start_date<=date&&(!p.end_date||p.end_date>=date)),service=serviceFacts(context,date),calendar=context.calendars.find(c=>c.effective_from<=date&&c.effective_to>=date);
-  requireFact(policy&&policy.evaluator_version==='gov-foundation-1','Published supported policy must cover every case date.');
+  requireFact(policy,`No published leave policy covers ${date}. Ask the leave administrator to check policy dates in Settings.`);
+  requireFact(policy.evaluator_version===ENGINE_VERSION,`The policy covering ${date} uses an unsupported version. Contact the system administrator.`);
   const serviceIssues=service.issues.filter(issue=>issue!=='An anniversary crosses unverified future service.');requireFact(period&&!serviceIssues.length,serviceIssues.join(' ')||'Verified appointment must cover every case date.');
   requireFact(!['unknown','casual','probationary'].includes(period.employment_category),'Resolve the legal employment category before an assisted application.');
   if(['maternity','paternity','adoption'].includes(input.code))requireFact(period.employment_category!=='temporary','Temporary parental applications are excluded by the September confirmation.');

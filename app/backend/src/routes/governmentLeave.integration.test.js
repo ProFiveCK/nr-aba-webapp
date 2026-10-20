@@ -36,7 +36,7 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
   await assert.rejects(pool.query("UPDATE hr_gov_policy_versions SET rules='{}' WHERE id=$1",[policy.id]),/immutable/);
   await assert.rejects(s.createPolicy(pool,{user:user(central),actor:central,data:{rules:{...DEFAULT_RULES,formula:'eval'},reason}}),e=>e.status===400);
  });
- test('within-period replacement needs a signed independent revision and retains immutable original policy facts',async()=>{
+ test('within-period replacement needs a current authorised revision and retains immutable original policy facts',async()=>{
   const replacement=await s.createPolicy(pool,{user:user(central),actor:central,data:{label:'Signed policy replacement',effective_from:'2026-10-08',effective_to:'2027-12-31',rules:{...DEFAULT_RULES,recreation_annual_days:'26'},source_reference:'Corrected typed authority schedule',supersedes_policy_id:policy.id,authority_reference:'Signed Cabinet decision reference 2026/42',reason}});
   await assert.rejects(s.publishPolicy(pool,{user:user(central),actor:central,id:replacement.id,reason,expected_revision:1}),/different central/);
   await assert.rejects(s.publishPolicy(pool,{user:user(certifier),actor:certifier,id:replacement.id,reason,expected_revision:2}),/changed/);
@@ -58,6 +58,51 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
   assert.equal((await ctx()).policies.find(p=>p.id===policy.id).original_effective_to,'2027-12-31');
  });
  const draftData=()=>({label:'Government review draft',effective_from:'2028-01-01',effective_to:'2028-12-31',rules:DEFAULT_RULES,source_reference:'HR corrected policy reference',reason});
+ test('administrator saves and applies settings in one request without signed references or a verification reason',async()=>{
+  await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[central.id]);central.role='admin';
+  const data={label:'Leave allowances',effective_from:'2026-11-01',effective_to:'9999-12-31',rules:{...DEFAULT_RULES,special_annual_days:'4'},supersedes_policy_id:policy.id};
+  const result=await call('/api/hr/government/policies/save',data);assert.equal(result.status,200);assert.equal(result.body.status,'published');assert.equal(result.body.authority_reference,null);
+  const current=(await ctx()).policies.find(p=>p.id===result.body.id);assert.equal(current.effective_to,'9999-12-31');assert.equal(current.rules.special_annual_days,'4');
+  const transition=(await pool.query('SELECT * FROM hr_gov_policy_transitions WHERE successor_id=$1',[current.id])).rows[0];assert.equal(transition.review_mode,'administrator');assert.equal(transition.prepared_by,central.id);assert.equal(transition.approved_by,central.id);
+  const audit=(await pool.query("SELECT after FROM audit_log WHERE action='hr.gov.policy.published' AND entity_id=$1",[current.id])).rows[0];assert.equal(audit.after.publication_reason,'Saved leave policy settings.');
+ });
+ test('direct settings save enforces current administrator authority and rolls the draft back if publication fails',async()=>{
+  const data={...draftData(),effective_from:'2026-01-01',effective_to:'9999-12-31'};
+  assert.equal((await call('/api/hr/government/policies/save',data)).status,403);
+  await pool.query("UPDATE reviewers SET role='admin' WHERE id=$1",[central.id]);central.role='admin';
+  const count=()=>pool.query('SELECT count(*)::int AS n FROM hr_gov_policy_versions');const before=(await count()).rows[0].n;
+  assert.equal((await call('/api/hr/government/policies/save',data)).status,409);assert.equal((await count()).rows[0].n,before);
+  const draft=await call('/api/hr/government/policies',draftData());
+  assert.equal((await call('/api/hr/government/policies/save',{...data,policy_id:draft.body.id,expected_revision:1})).status,409);
+  let saved=(await pool.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1',[draft.body.id])).rows[0];assert.equal(saved.revision,1);assert.equal(saved.status,'draft');assert.equal(saved.label,draft.body.label);
+  assert.equal((await call('/api/hr/government/policies/save',{...draftData(),policy_id:draft.body.id,expected_revision:2})).status,409);
+  const result=await call('/api/hr/government/policies/save',{...draftData(),policy_id:draft.body.id,expected_revision:1,source_reference:undefined,note:'Extended the settings period.'});assert.equal(result.status,200);assert.equal(result.body.status,'published');assert.equal(result.body.source_reference,draft.body.source_reference);
+  await pool.query("UPDATE reviewers SET role='user' WHERE id=$1",[central.id]);
+  await assert.rejects(s.savePolicy(pool,{user:{...user(central),role:'admin'},actor:central,data}),e=>e.status===403);
+ });
+ test('coverage extends immediately to no end date, retaining original published facts and an immutable audited extension',async()=>{
+  const path=`/api/hr/government/policies/${policy.id}/coverage`,data={effective_to:'9999-12-31',expected_effective_to:'2027-12-31'};
+  assert.equal((await call(path,data,scoped)).status,403);assert.equal((await call(path,data,owner)).status,403);
+  assert.equal((await call(path,{...data,effective_to:'2027-12-30'})).status,400);
+  assert.equal((await call(path,{...data,effective_to:'2030-02-30'})).status,422);
+  const result=await call(path,data);assert.equal(result.status,200);assert.equal(result.body.id,policy.id);assert.equal(result.body.effective_to,'9999-12-31');
+  const original=(await pool.query("SELECT *,to_char(effective_to,'YYYY-MM-DD') AS original_end FROM hr_gov_policy_versions WHERE id=$1",[policy.id])).rows[0];assert.equal(original.original_end,'2027-12-31');assert.deepEqual(original.rules,DEFAULT_RULES);
+  const active=(await ctx()).policies.find(p=>p.id===policy.id);assert.equal(active.effective_to,'9999-12-31');assert.equal(active.original_effective_to,'2027-12-31');
+  const config=await call('/api/hr/government/configuration');assert.equal(config.body.policies.find(p=>p.id===policy.id).effective_to,'9999-12-31');
+  assert.equal((await call(path,data)).status,409);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_policy_extensions')).rows[0].n,1);
+  await assert.rejects(pool.query("UPDATE hr_gov_policy_extensions SET reason='changed' WHERE policy_version_id=$1",[policy.id]),/immutable/);
+  const audit=(await pool.query("SELECT before,after FROM audit_log WHERE action='hr.gov.policy.coverage_extended' AND entity_id=$1",[policy.id])).rows[0];assert.equal(audit.before.effective_to,'2027-12-31');assert.equal(audit.after.effective_to,'9999-12-31');
+ });
+ test('extensions reject overlap, replaced policies and stale concurrent edits; later replacements use the extended end',async()=>{
+  const next=await s.createPolicy(pool,{user:user(central),actor:central,data:draftData()});await s.publishPolicy(pool,{user:user(central),actor:central,id:next.id,reason});
+  await assert.rejects(s.extendPolicy(pool,{user:user(central),actor:central,id:policy.id,data:{effective_to:'2028-12-31',expected_effective_to:'2027-12-31'}}),/overlap/);
+  const args={user:user(central),actor:central,id:next.id,data:{effective_to:'2030-12-31',expected_effective_to:'2028-12-31'}};
+  const results=await Promise.allSettled([s.extendPolicy(pool,args),s.extendPolicy(pool,args)]);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  const replacement=await s.createPolicy(pool,{user:user(central),actor:central,data:{...draftData(),effective_from:'2029-01-01',effective_to:'2030-12-31',supersedes_policy_id:next.id,source_reference:undefined}});
+  await s.publishPolicy(pool,{user:user(certifier),actor:certifier,id:replacement.id,reason,expected_revision:1});
+  await assert.rejects(s.extendPolicy(pool,{...args,data:{effective_to:'9999-12-31',expected_effective_to:'2030-12-31'}}),/replaced/);
+  assert.equal((await ctx()).policies.find(p=>p.id===next.id).effective_to,'2028-12-31');
+ });
  test('central HR can edit draft dates and rules with a before/after audit; protected publication and ownership fields are ignored',async()=>{
   const created=await call('/api/hr/government/policies',draftData());assert.equal(created.status,201);assert.equal(created.body.revision,1);
   const data={...draftData(),label:'Corrected draft',effective_from:'2028-02-01',effective_to:'2029-01-31',rules:{...DEFAULT_RULES,special_annual_days:'4'},source_reference:'Corrected signed reference',reason:'Corrected dates and Special after local review.',expected_revision:1,status:'published',prepared_by:owner.id,published_by:owner.id,revision:99};

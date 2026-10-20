@@ -5,6 +5,12 @@ import {DEFAULT_RULES,isoDay,dayNumber} from './governmentLeaveRules.js';
 const context=(start='2010-01-01')=>({employee:{id:'e',status:'active',leave_policy_regime:'government'},policies:[{id:'p',status:'published',evaluator_version:'gov-foundation-1',effective_from:'2026-01-01',effective_to:'2027-12-31',rules:DEFAULT_RULES}],calendars:[{id:'c',effective_from:'2026-01-01',effective_to:'2027-12-31',holidays:[{date:'2026-11-02'}]}],periods:[{id:'s',start_date:start,end_date:null,employment_category:'permanent',counts_for_service:true,work_pattern_id:'w'}],bases:[{id:'b',effective_from:start,continuity_start:start,anniversary_method:'pause_exclusions',leap_day_method:'feb28',schedule_mode:'weekly'}],exclusions:[],rosters:[],patterns:[{id:'w',working_weekdays:[1,2,3,4,5],hours_per_day:7}],pattern_approvals:[{work_pattern_id:'w'}],entitlements:[]});
 const input=(code,start='2026-11-01',days=1)=>({code,start_date:start,end_date:isoDay(dayNumber(start)+days-1),notice_date:'2026-10-07'});
 const data=(i,facts,rate='100')=>({source_reference:'Synthetic signed case authority',evidence_reference:'Synthetic retained document verification',facts:{eligibility_confirmed:true,...facts},pay_segments:[{start_date:i.start_date,end_date:i.end_date,salary_percent:rate}]});
+test('LWOP identifies the first uncovered date and distinguishes unsupported policy versions',()=>{
+ const c=context(),i=input('lwop','2026-12-30',4);c.policies[0].effective_to='2026-12-31';
+ assert.throws(()=>caseFoundation(c,i),/No published leave policy covers 2027-01-01/);
+ c.policies[0].effective_to='9999-12-31';assert.equal(caseFoundation(c,i).segments.length,4);
+ c.policies[0].evaluator_version='unsupported';assert.throws(()=>caseFoundation(c,i),/2026-12-30 uses an unsupported version/);
+});
 test('pay segmentation rejects uncovered dates, overlaps, unordered dates and out-of-range rates',()=>{
  const i=input('official','2026-11-01',5);for(const segments of [[],[{start_date:'2026-11-02',end_date:'2026-11-05',salary_percent:'100'}],[{start_date:'2026-11-01',end_date:'2026-11-04',salary_percent:'100'}],[{start_date:'2026-11-01',end_date:'2026-11-05',salary_percent:'100.01'}]])assert.throws(()=>validatePaySegments(i,segments));
  assert.equal(validatePaySegments(i,[{start_date:'2026-11-01',end_date:'2026-11-02',salary_percent:'50'},{start_date:'2026-11-03',end_date:'2026-11-05',salary_percent:'100'}]).length,2);

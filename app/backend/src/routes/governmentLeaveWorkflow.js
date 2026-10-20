@@ -1,4 +1,5 @@
 import {generateGovernmentLeavePdf} from '../services/governmentLeavePdf.js';
+import {resolvedPublishedPoliciesSql} from '../services/governmentLeavePolicyTransitions.js';
 import express from 'express';
 import {decorateDrafts} from '../services/governmentLeaveDrafts.js';
 import caseRouter from './governmentLeaveCases.js';
@@ -34,7 +35,7 @@ const input=req=>({code:req.body.code,start_date:req.body.start_date,end_date:re
 const applicationFields=[body('duration_unit').optional().isIn(['days','hours']),body('hours').optional().isDecimal({decimal_digits:'0,2'}),body('code').isIn(COMMON_CODES),date('start_date'),date('end_date'),body('reason').isString().trim().isLength({min:10,max:4000}),body('medical_mode').custom((value,{req})=>req.body.code==='medical'?['certificate','exemption'].includes(value):value==null||value==='not_applicable').withMessage('Choose certificate or exemption for Medical leave.')];
 router.get('/me',async(req,res)=>{
   const employee=await linkedEmployee(pool,req.user.id),config=await workflow.configurationFor(pool,employee.id);
-  const policy=(await pool.query(`SELECT p.id,p.label,p.rules FROM hr_gov_policy_versions p LEFT JOIN hr_gov_policy_transitions t ON t.predecessor_id=p.id WHERE p.status='published' AND p.effective_from<=$1 AND LEAST(p.effective_to,COALESCE(t.effective_from-1,p.effective_to))>=$1`,[workflow.today()])).rows[0];
+  const policy=(await pool.query(resolvedPublishedPoliciesSql)).rows.find(p=>p.effective_from<=workflow.today()&&p.effective_to>=workflow.today());
   res.json({employee_id:employee.id,enabled_codes:config?.enabled_codes||[],medical_rule:config?.medical_rule||null,regime:employee.leave_policy_regime,policy:policy?{id:policy.id,label:policy.label,recreation_notice_days:policy.rules.recreation_notice_days}:null});
 });
 const commissioningFields=[reason,reference,date('cutover_date'),body('initial_admin_setup').optional().isBoolean({strict:true}),body('employees').isArray({min:1,max:50}),body('employees.*.employee_id').isUUID(),body('employees.*.medical_history').isArray({max:50}),body('employees.*.medical_history.*.start_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.end_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.uncertified').isBoolean(),body('history_confirmed').equals('true'),...['payroll_reference','transition_reference','history_reference'].map(name=>body(name).isString().trim().isLength({min:5,max:500}))];

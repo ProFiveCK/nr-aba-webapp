@@ -49,23 +49,25 @@ function validatePolicy(data){
  validateReplacementFields(data);
  try{validateRules(data.rules||DEFAULT_RULES);if(dayNumber(data.effective_to)<dayNumber(data.effective_from))fail('The policy end date must be on or after its start date.',400);}catch(err){fail(err.message,400);}
  if(typeof data.label!=='string'||data.label.trim().length<3||data.label.trim().length>120)fail('Use a policy name of 3–120 characters.',400);
- if(typeof data.source_reference!=='string'||data.source_reference.trim().length<5||data.source_reference.trim().length>500)fail('Record a source reference of 5–500 characters.',400);
+ if(data.source_reference!=null&&(typeof data.source_reference!=='string'||data.source_reference.trim().length<5||data.source_reference.trim().length>500))fail('Use a source of 5–500 characters when supplied.',400);
 }
-export async function createPolicy(pool,{user,actor,data}){
+export async function createPolicy(pool,{user,actor,data,client:existingClient}){
  central(user);const reason=managementReason(data.reason);validatePolicy(data);
- return withTransaction(pool,async client=>{const {rows:[row]}=await client.query('INSERT INTO hr_gov_policy_versions(label,effective_from,effective_to,rules,source_reference,prepared_by,reason,supersedes_policy_id,authority_reference,last_prepared_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$6) RETURNING *',[data.label,data.effective_from,data.effective_to,data.rules||DEFAULT_RULES,data.source_reference,actor.id,reason,data.supersedes_policy_id||null,data.authority_reference?.trim()||null]);await audit(client,actor,'hr.gov.policy.prepared',row.id,row);return row;});
+ const work=async client=>{const {rows:[row]}=await client.query('INSERT INTO hr_gov_policy_versions(label,effective_from,effective_to,rules,source_reference,prepared_by,reason,supersedes_policy_id,authority_reference,last_prepared_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$6) RETURNING *',[data.label,data.effective_from,data.effective_to,data.rules||DEFAULT_RULES,data.source_reference?.trim()||'Leave settings',actor.id,reason,data.supersedes_policy_id||null,data.authority_reference?.trim()||null]);await audit(client,actor,'hr.gov.policy.prepared',row.id,row);return row;};
+ return existingClient?work(existingClient):withTransaction(pool,work);
 }
-export async function updatePolicy(pool,{user,actor,id,data}){
+export async function updatePolicy(pool,{user,actor,id,data,client:existingClient}){
  central(user);const reason=managementReason(data.reason);validatePolicy(data);
  if(!data.rules||!Number.isInteger(data.expected_revision)||data.expected_revision<1)fail('Reload the policy before editing it.',400);
- return withTransaction(pool,async client=>{
+ const work=async client=>{
   const {rows:[before]}=await client.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1 FOR UPDATE',[id]);if(!before)fail('Policy not found.',404);
   if(before.status!=='draft')fail('Published policies cannot be edited. Prepare a successor version.');
   if(before.deleted_at)fail('This draft was deleted. Restore it before editing.');
   if(before.revision!==data.expected_revision)fail('This draft changed since you opened it. Cancel, refresh the page and review the latest draft before saving.');
-  const {rows:[after]}=await client.query('UPDATE hr_gov_policy_versions SET label=$2,effective_from=$3,effective_to=$4,rules=$5,source_reference=$6,reason=$7,supersedes_policy_id=$8,authority_reference=$9,last_prepared_by=$10,revision=revision+1 WHERE id=$1 RETURNING *',[id,data.label.trim(),data.effective_from,data.effective_to,data.rules,data.source_reference.trim(),reason,data.supersedes_policy_id||null,data.authority_reference?.trim()||null,actor.id]);
+  const {rows:[after]}=await client.query('UPDATE hr_gov_policy_versions SET label=$2,effective_from=$3,effective_to=$4,rules=$5,source_reference=$6,reason=$7,supersedes_policy_id=$8,authority_reference=$9,last_prepared_by=$10,revision=revision+1 WHERE id=$1 RETURNING *',[id,data.label.trim(),data.effective_from,data.effective_to,data.rules,data.source_reference?.trim()||before.source_reference,reason,data.supersedes_policy_id||null,data.authority_reference===undefined?before.authority_reference:data.authority_reference?.trim()||null,actor.id]);
   await recordAudit({client,actor,action:'hr.gov.policy.updated',entityType:'hr_government_leave',entityId:id,before,after});return after;
- });
+ };
+ return existingClient?work(existingClient):withTransaction(pool,work);
 }
 export async function setPolicyDraftDeleted(pool,{user,actor,id,reason,expected_revision,deleted}){
  central(user);reason=managementReason(reason);
@@ -79,15 +81,54 @@ export async function setPolicyDraftDeleted(pool,{user,actor,id,reason,expected_
   await recordAudit({client,actor,action:deleted?'hr.gov.policy.draft_deleted':'hr.gov.policy.draft_restored',entityType:'hr_government_leave',entityId:id,before,after,metadata:{reason}});return after;
  });
 }
-export async function publishPolicy(pool,{user,actor,id,reason,expected_revision}){
+export async function publishPolicy(pool,{user,actor,id,reason,expected_revision,client:existingClient}){
  central(user);reason=managementReason(reason);
  if(expected_revision!==undefined&&(!Number.isInteger(expected_revision)||expected_revision<1))fail('Reload the policy before publishing it.',400);
- return withTransaction(pool,async client=>{await assertCentral(client,user);await client.query("SELECT pg_advisory_xact_lock(hashtext('hr-gov-policies'))");const {rows:[row]}=await client.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1 FOR UPDATE',[id]);if(!row)fail('Policy not found.',404);
+ const work=async client=>{await assertCentral(client,user);await client.query("SELECT pg_advisory_xact_lock(hashtext('hr-gov-policies'))");const {rows:[row]}=await client.query('SELECT * FROM hr_gov_policy_versions WHERE id=$1 FOR UPDATE',[id]);if(!row)fail('Policy not found.',404);
   if(expected_revision!==undefined&&row.revision!==expected_revision)fail('This draft changed since you reviewed it. Cancel, refresh the page and review the latest draft before publishing.');
   if(row.deleted_at)fail('This draft was deleted. Restore and review it before publishing.');
   if(row.status==='published')return row;
   await approvePolicyReplacement(client,{row,user,actor,reason,expected_revision});
   const {rows:[after]}=await client.query("UPDATE hr_gov_policy_versions SET status='published',published_by=$2,published_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id]);await audit(client,actor,'hr.gov.policy.published',id,{...after,publication_reason:reason});return after;
+ };
+ return existingClient?work(existingClient):withTransaction(pool,work);
+}
+export async function savePolicy(pool,{user,actor,data}){
+ central(user);
+ if(actor.id!==user.id)fail('The policy editor must match the signed-in account.',403);
+ return withTransaction(pool,async client=>{
+  await assertCentral(client,user);
+  const {rows:[account]}=await client.query('SELECT role,status,onboarding_state FROM reviewers WHERE id=$1 FOR SHARE',[user.id]);
+  if(account?.role!=='admin'||account.status!=='active'||account.onboarding_state!=='ready')fail('An active system administrator is required to apply policy changes directly.',403);
+  // Acquire the publication lock before editing a draft to keep lock order
+  // consistent with ordinary publication and serialize competing replacements.
+  await client.query("SELECT pg_advisory_xact_lock(hashtext('hr-gov-policies'))");
+  if(data.note!=null&&(typeof data.note!=='string'||data.note.length>800))fail('Use a note of at most 800 characters.',400);
+  const note=data.note?.trim();
+  const reason=`Saved leave policy settings.${note?` ${note}`:''}`,input={...data,reason};
+  const row=data.policy_id?await updatePolicy(pool,{user,actor,id:data.policy_id,data:input,client}):await createPolicy(pool,{user,actor,data:input,client});
+  return publishPolicy(pool,{user,actor,id:row.id,reason,expected_revision:row.revision,client});
+ });
+}
+export async function extendPolicy(pool,{user,actor,id,data}){
+ central(user);
+ if(actor.id!==user.id)fail('The policy editor must match the signed-in account.',403);
+ try{dayNumber(data.effective_to);dayNumber(data.expected_effective_to);}catch(err){fail(err.message,400);}
+ if(data.note!=null&&(typeof data.note!=='string'||data.note.length>800))fail('Use a note of at most 800 characters.',400);
+ return withTransaction(pool,async client=>{
+  await assertCentral(client,user);
+  await client.query("SELECT pg_advisory_xact_lock(hashtext('hr-gov-policies'))");
+  const {rows:policies}=await client.query(resolvedPublishedPoliciesSql),before=policies.find(p=>p.id===id);
+  if(!before)fail('Published policy not found.',404);
+  if(before.replaced_by_policy_id)fail('This policy has been replaced. Extend the current policy instead.');
+  if(before.effective_to!==data.expected_effective_to)fail('The policy dates changed. Refresh and review the current dates.');
+  if(data.effective_to<=before.effective_to)fail('Choose an end date after the current policy end date.',400);
+  if(policies.some(p=>p.id!==id&&p.effective_from<=data.effective_to&&p.effective_to>before.effective_to))fail('The extension would overlap another published policy. Review the policy dates.');
+  const reason=`Extended leave policy coverage from ${before.effective_to} through ${data.effective_to}.${data.note?.trim()?` ${data.note.trim()}`:''}`;
+  const {rows:[extension]}=await client.query('INSERT INTO hr_gov_policy_extensions(policy_version_id,previous_effective_to,effective_to,recorded_by,reason) VALUES($1,$2,$3,$4,$5) RETURNING *',[id,before.effective_to,data.effective_to,actor.id,reason]);
+  const after={...before,effective_to:data.effective_to};
+  await recordAudit({client,actor,action:'hr.gov.policy.coverage_extended',entityType:'hr_government_leave',entityId:id,before,after,metadata:{extension_id:extension.id}});
+  return after;
  });
 }
 export async function createCalendar(pool,{user,actor,data}){

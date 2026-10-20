@@ -14,6 +14,7 @@ interface CalendarEntry {
     start_date: string;
     end_date: string | null;
     days: string | null;
+    status: 'pending' | 'approved';
     kind?: 'leave' | 'study_leave';
 }
 
@@ -67,40 +68,11 @@ export function Calendar() {
     }, [load]);
 
     const monthLabel = bounds.start.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-    const daysInMonth = bounds.end.getDate();
-
-    // One row per person, with the days they are away shaded.
-    const byPerson = useMemo(() => {
-        const map = new Map<string, { id: string; name: string; days: Set<number>; studyDays: Set<number>; types: Set<string> }>();
-        for (const entry of entries) {
-            const record = map.get(entry.employee_id || entry.employee_name) ?? {
-                id: entry.employee_id || entry.employee_name,
-                name: entry.employee_name,
-                days: new Set<number>(),
-                studyDays: new Set<number>(),
-                types: new Set<string>(),
-            };
-            record.types.add(entry.leave_type_name);
-            const studying = entry.kind === 'study_leave';
-            const target = studying ? record.studyDays : record.days;
-            const from = new Date(`${entry.start_date.slice(0, 10)}T00:00:00`);
-            const to = entry.end_date ? new Date(`${entry.end_date.slice(0, 10)}T00:00:00`) : new Date(bounds.end);
-            if (from < bounds.start) from.setTime(bounds.start.getTime());
-            if (to > bounds.end) to.setTime(bounds.end.getTime());
-            for (const cursor = new Date(from); cursor <= to; cursor.setDate(cursor.getDate() + 1)) {
-                if (cursor.getMonth() === bounds.start.getMonth() && cursor.getFullYear() === bounds.start.getFullYear()) {
-                    target.add(cursor.getDate());
-                }
-            }
-            map.set(entry.employee_id || entry.employee_name, record);
-        }
-        return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-    }, [entries, bounds.start, bounds.end]);
 
     return (
         <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-4 app-panel p-5 sm:p-6">
-                <h2 className="text-lg font-semibold text-gray-900">Who is away — {monthLabel}</h2>
+                <h2 className="text-lg font-semibold text-gray-900">Leave calendar — {monthLabel}</h2>
                 <div className="flex flex-wrap gap-2">
                     <button type="button" onClick={() => setOffset(offset - 1)} className="rounded-lg border border-gray-300 px-3 py-2.5 text-sm font-medium hover:bg-gray-50">
                         ← Previous
@@ -118,18 +90,62 @@ export function Calendar() {
                 <LoadingState label="Loading calendar…" />
             ) : error ? (
                 <div className="app-panel p-5"><p role="alert" className="text-sm text-red-700">{error}</p><button type="button" className="toolbar-button mt-3" onClick={() => void load()}>Try again</button></div>
-            ) : !byPerson.length ? (
+            ) : (
+                <CalendarMonth entries={entries} start={bounds.start} end={bounds.end} />
+            )}
+        </div>
+    );
+}
+
+const pendingDayClass = 'border border-dashed border-violet-600 bg-violet-100';
+
+export function CalendarMonth({ entries, start, end }: { entries: CalendarEntry[]; start: Date; end: Date }) {
+    const monthLabel = start.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    const daysInMonth = end.getDate();
+
+    // Keep each status separate so overlapping entries remain visible.
+    const byPerson = useMemo(() => {
+        const map = new Map<string, { id: string; name: string; days: Set<number>; pendingDays: Set<number>; studyDays: Set<number>; types: Set<string> }>();
+        for (const entry of entries) {
+            const record = map.get(entry.employee_id || entry.employee_name) ?? {
+                id: entry.employee_id || entry.employee_name,
+                name: entry.employee_name,
+                days: new Set<number>(),
+                pendingDays: new Set<number>(),
+                studyDays: new Set<number>(),
+                types: new Set<string>(),
+            };
+            record.types.add(entry.leave_type_name);
+            const studying = entry.kind === 'study_leave';
+            const target = studying ? record.studyDays : entry.status === 'pending' ? record.pendingDays : record.days;
+            const from = new Date(`${entry.start_date.slice(0, 10)}T00:00:00`);
+            const to = entry.end_date ? new Date(`${entry.end_date.slice(0, 10)}T00:00:00`) : new Date(end);
+            if (from < start) from.setTime(start.getTime());
+            if (to > end) to.setTime(end.getTime());
+            for (const cursor = new Date(from); cursor <= to; cursor.setDate(cursor.getDate() + 1)) {
+                if (cursor.getMonth() === start.getMonth() && cursor.getFullYear() === start.getFullYear()) {
+                    target.add(cursor.getDate());
+                }
+            }
+            map.set(entry.employee_id || entry.employee_name, record);
+        }
+        return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+    }, [entries, start, end]);
+
+    return (
+        <div className="space-y-5">
+            {!byPerson.length ? (
                 <div className="app-panel p-4">
-                    <EmptyState title="Nobody is away this month" />
+                    <EmptyState title="No approved or submitted leave this month" />
                 </div>
             ) : (
                 <div className="hidden overflow-x-auto app-panel md:block">
-                    <table className="min-w-[1100px] text-sm"><caption className="sr-only">Approved leave and study leave for {monthLabel}</caption>
+                    <table className="min-w-[1100px] text-sm"><caption className="sr-only">Approved leave, submitted leave awaiting approval and study leave for {monthLabel}</caption>
                         <thead className="bg-gray-50 text-xs text-gray-500">
                             <tr>
                                 <th className="sticky left-0 bg-gray-50 px-3 py-2 text-left font-medium">Person</th>
                                 {Array.from({ length: daysInMonth }, (_, i) => {
-                                    const date = new Date(bounds.start.getFullYear(), bounds.start.getMonth(), i + 1);
+                                    const date = new Date(start.getFullYear(), start.getMonth(), i + 1);
                                     const weekend = date.getDay() === 0 || date.getDay() === 6;
                                     return (
                                         <th key={i} className={`w-7 py-2 text-center font-normal ${weekend ? 'text-gray-300' : ''}`}>
@@ -150,18 +166,24 @@ export function Calendar() {
                                     </td>
                                     {Array.from({ length: daysInMonth }, (_, i) => {
                                         const day = i + 1;
-                                        const date = new Date(bounds.start.getFullYear(), bounds.start.getMonth(), day);
+                                        const date = new Date(start.getFullYear(), start.getMonth(), day);
                                         const weekend = date.getDay() === 0 || date.getDay() === 6;
                                         const away = person.days.has(day);
+                                        const pending = person.pendingDays.has(day);
                                         const studying = person.studyDays.has(day);
+                                        const statuses = [away && 'Approved leave', pending && 'Submitted — awaiting approval', studying && 'Study leave'].filter(Boolean);
                                         return (
                                             <td key={i} className="p-0.5">
                                                 <div
-                                                    className={`h-5 rounded-sm ${
-                                                        away ? 'bg-brand' : studying ? 'bg-amber-500' : weekend ? 'bg-gray-100' : 'bg-gray-50'
-                                                    }`}
-                                                    title={away || studying ? `${person.name} ${studying && !away ? 'on study leave' : 'away'} on ${day} ${monthLabel}` : undefined}
-                                                />
+                                                    className={`flex h-5 flex-col gap-px overflow-hidden rounded-sm ${statuses.length ? '' : weekend ? 'bg-gray-100' : 'bg-gray-50'}`}
+                                                    role={statuses.length ? 'img' : undefined}
+                                                    aria-label={statuses.length ? `${person.name}: ${statuses.join('; ')} on ${day} ${monthLabel}` : undefined}
+                                                    title={statuses.length ? `${person.name}: ${statuses.join('; ')} on ${day} ${monthLabel}` : undefined}
+                                                >
+                                                    {away && <span className="min-h-0 flex-1 bg-brand" />}
+                                                    {pending && <span className={`min-h-0 flex-1 ${pendingDayClass}`} />}
+                                                    {studying && <span className="min-h-0 flex-1 bg-amber-500" />}
+                                                </div>
                                             </td>
                                         );
                                     })}
@@ -172,23 +194,29 @@ export function Calendar() {
                 </div>
             )}
 
-            {!loading && byPerson.length > 0 && (
+            {byPerson.length > 0 && (
                 <p className="flex flex-wrap items-center gap-4 px-1 text-xs text-gray-600">
                     <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-brand" aria-hidden="true" />Approved leave</span>
+                    <span className="inline-flex items-center gap-1.5"><span className={`h-3 w-3 rounded-sm ${pendingDayClass}`} aria-hidden="true" />Submitted — awaiting approval</span>
                     <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-amber-500" aria-hidden="true" />Study leave</span>
                 </p>
             )}
 
-            {!loading && entries.length > 0 && (
+            {entries.length > 0 && (
                 <div className="app-panel p-5 text-sm sm:p-6">
-                    <h3 className="mb-4 text-lg font-semibold text-gray-900">Absences this month</h3>
+                    <h3 className="mb-4 text-lg font-semibold text-gray-900">Leave this month</h3>
                     <ul className="divide-y divide-gray-100 text-gray-600">
                         {entries.map((entry) => (
                             <li key={`${entry.kind || 'leave'}-${entry.id}`} className="py-3 first:pt-0 last:pb-0">
-                                <span className="font-medium text-gray-900">{entry.employee_name}</span> —{' '}
+                                <div className="mb-1 flex flex-wrap items-center gap-2">
+                                    <span className="font-medium text-gray-900">{entry.employee_name}</span>
+                                    <span className={`rounded px-2 py-0.5 text-xs font-medium ${entry.kind === 'study_leave' ? 'bg-amber-100 text-amber-900' : entry.status === 'pending' ? 'border border-dashed border-violet-600 bg-violet-100 text-violet-900' : 'bg-brand/10 text-brand'}`}>
+                                        {entry.kind === 'study_leave' ? 'Study leave' : entry.status === 'pending' ? 'Submitted — awaiting approval' : 'Approved leave'}
+                                    </span>
+                                </div>
                                 {entry.kind === 'study_leave'
                                     ? `Study leave from ${formatDate(entry.start_date)}${entry.end_date ? ` to ${formatDate(entry.end_date)}` : ', return date not set'}`
-                                    : `${entry.leave_type_name}, ${formatDate(entry.start_date)} to ${formatDate(entry.end_date as string)} (${entry.days} days)`}
+                                    : `${entry.leave_type_name}, ${formatDate(entry.start_date)} to ${formatDate(entry.end_date as string)}${Number(entry.days) > 0 ? ` (${entry.days} days)` : ''}`}
                             </li>
                         ))}
                     </ul>

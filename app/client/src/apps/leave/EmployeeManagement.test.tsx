@@ -48,6 +48,7 @@ it('reports incomplete leave access without presenting a migration workflow', ()
     const html = renderToStaticMarkup(<MemoryRouter><LeaveSetupStatus usage={usage} onOpen={() => {}}/></MemoryRouter>);
     expect(html).toContain('Access needs review');
     expect(html).toContain('No published policy covers today');
-    expect(html).toContain('Employee accounts');
+    expect(html).toContain('Advanced maintenance');
+    expect(html).toContain('bulk employee accounts');
     expect(html).not.toMatch(/migration|transfer|second system|Finance administration/i);
 });

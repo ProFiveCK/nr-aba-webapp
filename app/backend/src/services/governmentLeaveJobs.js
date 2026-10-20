@@ -2,7 +2,7 @@ import {serviceCorrectionIssue} from './employeeServiceCorrections.js';
 import {assertDraftUsable} from './governmentLeaveDrafts.js';
 import {firstAdminJobReview} from './governmentLeaveInitialAdmin.js';
 import {configurationReviewMode} from './governmentLeaveAdministration.js';
-import {transitionFortnightAmount} from '../lib/governmentLeaveAccrual.js';
+import {recreationPeriodCredit} from '../lib/governmentLeaveAccrual.js';
 import {assertCutoverResolved} from './governmentLeaveCutover.js';
 import {LOCK_KEYS,withAdvisoryLock} from '../lib/advisoryLock.js';
 import {withTransaction} from '../lib/transaction.js';
@@ -115,33 +115,15 @@ async function executeEmployeeJobs(pool,{user,actor,employeeId,asOf,clockDate,or
           const endDate=isoDay(end);
           if((await client.query("SELECT 1 FROM hr_gov_job_posts WHERE employee_id=$1 AND code='recreation' AND event_date=$2 AND event_kind='accrual'",[employeeId,endDate])).rowCount)continue;
           if(posts.length>=52){limited=true;break;}
-          let credited=0,targetId=null;const policySegments=new Map();
-          for(let n=end-13;n<=end;n++) {
-            const date=isoDay(n),dateFacts=serviceFacts(context,date),period=context.periods.find(p=>p.start_date<=date&&(!p.end_date||p.end_date>=date));
-            const firstAccount=context.entitlements.filter(e=>e.code==='recreation').at(0);
-            const creditFrom=plan.previous_payroll_end?isoDay(dayNumber(plan.previous_payroll_end)+1):firstAccount.as_of;
-            if(date<creditFrom)continue;
-            // A reviewed payroll bridge preserves uncredited service across
-            // the administrative transfer, at the agreed opening-policy rate.
-            // It does not backdate policy publication or application rights.
-            const bridge=!!plan.previous_payroll_end&&date<firstAccount.as_of;
-            const policy=governingPolicy(context,bridge?firstAccount.as_of:date);
-            if(!policySegments.has(policy.id))policySegments.set(policy.id,{policy_version_id:policy.id,annual_days:policy.rules.recreation_annual_days,credited_calendar_days:0});
-            if(dateFacts.issues.length||dateFacts.basis.id!==plan.service_basis_id||!period||period.counts_for_service==null)fail('Payroll service/credit history is unresolved.');
-            if(!['permanent','contract','temporary'].includes(period.employment_category)||period.is_teacher)fail('Appointment terms need assisted accrual handling.');
-            if(period.counts_for_service===false||context.exclusions.some(x=>x.start_date<=date&&x.end_date>=date))continue;
-            if(period.employment_category==='temporary'&&plan.temporary_start==='qualification'&&date<(dateFacts.milestone(policy.rules.temporary_recreation_months)||'9999-12-31'))continue;
-            credited++;policySegments.get(policy.id).credited_calendar_days++;
-          }
-          if(!policySegments.size)fail('The first payroll period does not reach the cutover.');
+          let credit;try{credit=recreationPeriodCredit(context,plan,index,endDate);}catch(error){fail(error.message);}
           const renewed=await renewTo(client,context,plan,endDate,actor);context=renewed.context;
-          const account=context.entitlements.find(e=>e.code==='recreation'&&e.period_start<=endDate&&e.period_end>=endDate);targetId=account?.id;
+          const account=context.entitlements.find(e=>e.code==='recreation'&&e.period_start<=endDate&&e.period_end>=endDate),targetId=account?.id;
           if(!targetId)fail('Payroll period has no governing entitlement.');
-          const cap=units(governingPolicy(context,endDate).rules.recreation_cap_days),requested=units(transitionFortnightAmount([...policySegments.values()],index)),room=cap-units(account.balance);
+          const requested=units(credit.requested),room=units(credit.cap)-units(account.balance);
           const amount=decimal(room<=0n?0n:requested>room?room:requested),capped=room<=requested;
           if(units(amount)>0n)await ledger.postMovement(client,{entitlementId:targetId,kind:'accrual',amount,effectiveDate:endDate,eventKey:`payroll:${employeeId}:${endDate}`,sourceReference:`approved-plan:${plan.id}`,actor,reason:plan.previous_payroll_end&&index===0?`Approved payroll-cycle recreation accrual with calendar-day proration; continuous from last credited payroll ${plan.previous_payroll_end}`:'Approved payroll-cycle recreation accrual with calendar-day proration'});
           await client.query("INSERT INTO hr_gov_job_posts(employee_id,code,event_date,event_kind,plan_id,amount,capped) VALUES($1,'recreation',$2,'accrual',$3,$4,$5)",[employeeId,endDate,plan.id,amount,capped]);
-          posts.push({date:endDate,amount,credited_calendar_days:credited,previous_payroll_end:plan.previous_payroll_end||null,policy_segments:[...policySegments.values()],capped,renewals:renewed.renewals});context=await ledger.loadContext(client,employeeId);
+          posts.push({date:endDate,amount,credited_calendar_days:credit.credited_calendar_days,previous_payroll_end:plan.previous_payroll_end||null,policy_segments:credit.policy_segments,capped,renewals:renewed.renewals});context=await ledger.loadContext(client,employeeId);
         }
       }
       // With no further payroll catch-up pending, renew an anniversary that falls between payroll dates.

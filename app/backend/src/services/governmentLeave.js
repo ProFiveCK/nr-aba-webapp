@@ -1,5 +1,6 @@
 import {assertDraftUsable} from './governmentLeaveDrafts.js';
 import {calendarSettings} from './governmentLeaveCalendarSettings.js';
+import {applyRecreationForecast} from './governmentLeaveForecast.js';
 import {initialAdminReview} from './governmentLeaveInitialAdmin.js';
 import {resolvedPublishedPoliciesSql,validateReplacementFields,approvePolicyReplacement} from './governmentLeavePolicyTransitions.js';
 import {randomUUID} from 'node:crypto';
@@ -36,9 +37,11 @@ export async function loadContext(client,employeeId){
    FROM hr_gov_entitlements e WHERE e.employee_id=$1 ORDER BY e.period_start,e.id`,[employeeId])];for(const query of queries)results.push(await query());
  const keys=['policies','calendars','periods','bases','exclusions','patterns','pattern_approvals','rosters','entitlements'];return Object.fromEntries([['employee',employee],['calendar_settings',await calendarSettings(client)],...keys.map((key,i)=>[key,results[i].rows])]);
 }
-export async function evaluate(client,employeeId,input){
+export async function evaluate(client,employeeId,input,options={}){
  const context=await loadContext(client,employeeId);if(context.employee.leave_policy_regime!=='government')fail('Enroll this employee in the government regime before evaluation.');
- let result;try{result=calculateEvaluation(context,input);}catch(err){fail(err.message,400);}if(context.employee.status!=='active'){result.issues.push('The employee is inactive.');result.eligible_for_preview=false;}
+ let result;try{result=calculateEvaluation(context,input);}catch(err){fail(err.message,400);}
+ result=await applyRecreationForecast(client,context,result,options);
+ if(context.employee.status!=='active'){result.issues.push('The employee is inactive.');result.eligible_for_preview=false;}
  // No employee clinical reasons or exclusion references go to routine preview callers.
  return {...result,service_bases:result.service_bases.map(({id,continuity_start,effective_from,anniversary_method,leap_day_method,schedule_mode})=>({id,continuity_start,effective_from,anniversary_method,leap_day_method,schedule_mode}))};
 }
@@ -151,7 +154,7 @@ export async function certifyOpening(pool,{client:existingClient=null,user,actor
  };
  return existingClient?work(existingClient):withTransaction(pool,work);
 }
-export async function postMovement(client,{entitlementId,kind,amount,effectiveDate,eventKey,sourceReference,actor,reason,reversesId=null,excludeCaseRequestId=null}){
+export async function postMovement(client,{entitlementId,kind,amount,effectiveDate,eventKey,sourceReference,actor,reason,reversesId=null,excludeCaseRequestId=null,forecastReservationId=null}){
  const value=units(amount);const {rows:[account]}=await client.query('SELECT *,to_char(as_of,\'YYYY-MM-DD\') AS as_of,to_char(period_end,\'YYYY-MM-DD\') AS period_end FROM hr_gov_entitlements WHERE id=$1 FOR UPDATE',[entitlementId]);if(!account)fail('Entitlement not found.',404);
  if(effectiveDate<account.as_of||effectiveDate>account.period_end)fail('A movement must be within the certified period and on/after its opening date.');
  const payload={entitlement_id:entitlementId,kind,amount:decimal(value),effective_date:effectiveDate,source_reference:sourceReference,reverses_id:reversesId};
@@ -159,7 +162,13 @@ export async function postMovement(client,{entitlementId,kind,amount,effectiveDa
  if(existing){if(fingerprint(Object.fromEntries(Object.keys(payload).map(k=>[k,existing[k]])))!==fingerprint(payload))fail('The event key was already used for a different posting.');return existing;}
  const {rows:[totals]}=await client.query(`SELECT COALESCE((SELECT sum(amount) FROM hr_gov_ledger WHERE entitlement_id=$1),0)::text AS balance,
   (COALESCE((SELECT sum(h.amount) FROM hr_gov_reservations h JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE h.entitlement_id=$1 AND r.status='held'),0)+COALESCE((SELECT sum(h.amount) FROM hr_gov_case_credit_holds h JOIN hr_gov_requests cr ON cr.id=h.request_id WHERE h.entitlement_id=$1 AND cr.status='pending' AND ($2::uuid IS NULL OR cr.id<>$2) AND h.determination_id=(SELECT id FROM hr_gov_case_determinations cd WHERE cd.request_id=cr.id ORDER BY version DESC LIMIT 1)),0))::text AS held`,[entitlementId,excludeCaseRequestId]);
- if(units(totals.balance)+value<units(totals.held))fail('The movement would spend entitlement already held or make the balance negative.');
+ let forecastUse=false;
+ if(forecastReservationId&&kind==='use'&&account.code==='recreation'&&eventKey===`use:${forecastReservationId}:${entitlementId}`) {
+  forecastUse=!!(await client.query("SELECT 1 FROM hr_gov_reservation_requests r JOIN hr_gov_reservations h ON h.request_id=r.id WHERE r.id=$1 AND r.status='consumed' AND r.evaluation_snapshot->>'code'='recreation' AND h.entitlement_id=$2 AND h.amount=$3",[forecastReservationId,entitlementId,decimal(-value)])).rowCount;
+ }
+ // Positive payroll credits must still post while future leave is held or
+ // deducted. Only a checked Recreation reservation may use projected credit.
+ if(value<0n&&units(totals.balance)+value<units(totals.held)&&!forecastUse)fail('The movement would spend entitlement already held or make the balance negative.');
  if(kind==='accrual'&&account.code==='recreation'){
   const {rows:policies}=await client.query(resolvedPublishedPoliciesSql);const policy=policies.find(p=>p.effective_from<=effectiveDate&&p.effective_to>=effectiveDate);if(!policy)fail('Publish a governing policy for this accrual date.');if(units(totals.balance)+value>units(policy.rules.recreation_cap_days))fail('Recreation accrual must stop at the governing cap.');
  }
@@ -194,12 +203,12 @@ export async function finishReservation(pool,{employeeId,requestId,action,actor,
   if(action==='consumed'){
    const snapshot=request.evaluation_snapshot;
    // The authority callback must recheck evidence and stage completion. Calculation inputs are retained below.
-   const checked=await evaluate(client,employeeId,snapshot.input);
+   const checked=await evaluate(client,employeeId,snapshot.input,{excludeReservationId:requestId});
    const oldSegments=snapshot.segments.map(s=>({...s,entitlement_id:s.entitlement_id}));
    if(checked.engine_version!==snapshot.engine_version||fingerprint(checked.segments)!==fingerprint(oldSegments)||checked.issues.some(issue=>!issue.includes('exceeds a certified entitlement')))fail('Policy, service or calendar changed; refresh and review before final grant.');
   }
   await client.query('UPDATE hr_gov_reservation_requests SET status=$2,completed_at=NOW() WHERE id=$1',[requestId,action]);
-  if(action==='consumed')for(const hold of holds)await postMovement(client,{entitlementId:hold.entitlement_id,kind:'use',amount:decimal(-units(hold.amount)),effectiveDate:request.evaluation_snapshot.segments.find(s=>s.entitlement_id===hold.entitlement_id&&units(s.charge)>0n).date,eventKey:`use:${requestId}:${hold.entitlement_id}`,sourceReference:`request:${requestId}`,actor,reason});
+  if(action==='consumed')for(const hold of holds)await postMovement(client,{entitlementId:hold.entitlement_id,kind:'use',amount:decimal(-units(hold.amount)),effectiveDate:request.evaluation_snapshot.segments.find(s=>s.entitlement_id===hold.entitlement_id&&units(s.charge)>0n).date,eventKey:`use:${requestId}:${hold.entitlement_id}`,sourceReference:`request:${requestId}`,actor,reason,forecastReservationId:request.evaluation_snapshot.code==='recreation'?requestId:null});
   await client.query('INSERT INTO hr_gov_reservation_events(request_id,action,actor_id,reason) VALUES ($1,$2,$3,$4)',[requestId,action,actor.id,reason]);await audit(client,actor,`hr.gov.reservation.${action}`,requestId,{reason});return {...request,status:action};
  };return existingClient?work(existingClient):withTransaction(pool,work);
 }

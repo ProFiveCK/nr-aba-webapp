@@ -2,7 +2,7 @@ import {generateGovernmentLeavePdf} from '../services/governmentLeavePdf.js';
 import express from 'express';
 import {decorateDrafts} from '../services/governmentLeaveDrafts.js';
 import caseRouter from './governmentLeaveCases.js';
-import {effectiveAbsenceSql,effectiveEndSql} from '../services/governmentLeaveCases.js';
+import {effectiveAbsenceSql,effectiveEndSql,isAbsenceSql,effectiveStatusSql} from '../services/governmentLeaveCases.js';
 import {pool} from '../db.js';
 import {body,param,query,handleValidation} from '../middleware/validation.js';
 import {requirePermission} from '../services/authService.js';
@@ -103,25 +103,25 @@ router.get('/calendar',[query('from').custom(value=>{dayNumber(value);return tru
   if(req.query.to<req.query.from||dayNumber(req.query.to)-dayNumber(req.query.from)>62)throw new ServiceError(400,'Choose a calendar window of up to 63 days.');
   const page=Number(req.query.page)||1;
   const {rows}=await pool.query(`SELECT r.id,e.id AS employee_id,e.display_name AS employee_name,e.department_code,
-    'Approved government leave' AS leave_type_name,'leave' AS kind,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(${effectiveEndSql()},'YYYY-MM-DD') AS end_date,r.charge AS days
-    FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id WHERE r.status='approved' AND ${effectiveAbsenceSql()} AND r.code NOT IN ('amendment','attendance','long_service','recreation_encashment','recreation_separation') AND (r.code<>'furlough' OR r.grant_snapshot->'case_determination'->'facts'->>'action'='take_leave') AND r.start_date<=$2 AND ${effectiveEndSql()}>=$1
+    CASE WHEN r.status='pending' THEN 'Submitted government leave' ELSE 'Approved government leave' END AS leave_type_name,r.status,'leave' AS kind,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(${effectiveEndSql()},'YYYY-MM-DD') AS end_date,r.charge AS days
+    FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id WHERE r.status IN ('pending','approved') AND ${effectiveAbsenceSql()} AND ${isAbsenceSql()} AND (r.status='pending' OR r.code<>'furlough' OR r.grant_snapshot->'case_determination'->'facts'->>'action'='take_leave') AND r.start_date<=$2 AND ${effectiveEndSql()}>=$1
     AND ${employeeReadSql(req.user,'$3','e',true)} ORDER BY r.start_date,r.id LIMIT 201 OFFSET $4`,[req.query.from,req.query.to,req.user.id,(page-1)*200]);
   res.json({entries:rows.slice(0,200),has_more:rows.length>200,page});
 });
 router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query('mode').optional().isIn(['mine','queue','all']),query('include_recorded').optional().isIn(['true','false']),query('status').optional().isIn(['pending','approved','rejected','cancelled','all']),query('employee_id').optional().isUUID(),query('search').optional().isString().trim().isLength({max:100})],async(req,res)=>{
   if(!handleValidation(req,res))return;const page=Number(req.query.page)||1,mode=req.query.mode||'queue',status=req.query.status||'pending';
   if(mode==='all'&&!isCentralHr(req.user))throw new ServiceError(403,'Central HR administration is required.');
-  const includeRecorded=mode==='queue'&&req.query.include_recorded==='true';
+  const includeRecorded=['queue','all'].includes(mode)&&req.query.include_recorded==='true';
   const scope=mode==='all'?'($1::uuid IS NOT NULL)':mode==='mine'?'e.reviewer_id=$1':`(${employeeScopeSql(req.user,'hr_report_read','$1')} OR EXISTS(SELECT 1 FROM hr_gov_request_stages s JOIN LATERAL(SELECT reviewer_id FROM hr_gov_stage_bindings b WHERE b.stage_id=s.id ORDER BY recorded_at DESC,id DESC LIMIT 1)b ON TRUE WHERE s.request_id=r.id AND b.reviewer_id=$1 AND (e.status='active' OR r.application_snapshot->>'separation_case'='true') AND e.department_id=r.department_id AND e.division_id=r.division_id))`;
-  const where=`${scope} AND ($2='all' OR r.status=$2) AND ($4::uuid IS NULL OR r.employee_id=$4)`;
-  const selection=`SELECT r.id,r.employee_id,r.application_snapshot->'employee'->>'name' AS employee_name,r.code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge,r.application_snapshot->'input'->>'duration_unit' AS duration_unit,r.application_snapshot->'input'->>'hours' AS hours,r.status,r.submitted_at,r.stage_index,s.level AS current_level,s.label AS current_label,b.approver_name AS current_approver,
+  const where=`${scope} AND ($2='all' OR ${effectiveStatusSql()}=$2) AND ($4::uuid IS NULL OR r.employee_id=$4)`;
+  const selection=`SELECT r.id,r.employee_id,r.application_snapshot->'employee'->>'name' AS employee_name,r.code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge,r.application_snapshot->'input'->>'duration_unit' AS duration_unit,r.application_snapshot->'input'->>'hours' AS hours,r.status,(SELECT jsonb_build_object('request_id',ce.request_id,'action',ce.effect->>'action','effective_end',ce.effect->>'effective_end') FROM hr_gov_case_effects ce WHERE ce.original_request_id=r.id ORDER BY ce.version DESC LIMIT 1) AS amendment,r.submitted_at,r.stage_index,s.level AS current_level,s.label AS current_label,b.approver_name AS current_approver,
     (SELECT count(*)::int FROM hr_gov_request_stages missing WHERE missing.request_id=r.id AND NOT EXISTS(SELECT 1 FROM hr_gov_stage_bindings mb WHERE mb.stage_id=missing.id)) AS unassigned_stages,
     EXISTS(SELECT 1 FROM hr_gov_salary_acknowledgements ack WHERE ack.request_id=r.id) AS salary_acknowledged, 'workflow'::text AS record_source,NULL::text AS leave_type_name,NULL::jsonb AS recorded_application
     FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id LEFT JOIN hr_gov_request_stages s ON s.request_id=r.id AND s.ordinal=r.stage_index
     LEFT JOIN LATERAL(SELECT approver_name FROM hr_gov_stage_bindings b WHERE b.stage_id=s.id ORDER BY recorded_at DESC,id DESC LIMIT 1)b ON TRUE
     WHERE ${where}
     ${includeRecorded?`UNION ALL
-    SELECT a.id,a.employee_id,e.display_name,'recorded',to_char(a.start_date,'YYYY-MM-DD'),to_char(a.end_date,'YYYY-MM-DD'),a.days,NULL::text,NULL::text,a.status,a.applied_at,0,NULL::text,NULL::text,NULL::text,0,FALSE,'recorded',t.name,
+    SELECT a.id,a.employee_id,e.display_name,'recorded',to_char(a.start_date,'YYYY-MM-DD'),to_char(a.end_date,'YYYY-MM-DD'),a.days,NULL::text,NULL::text,a.status,NULL::jsonb,a.applied_at,0,NULL::text,NULL::text,NULL::text,0,FALSE,'recorded',t.name,
       jsonb_build_object('id',a.id,'employee_id',a.employee_id,'employee_name',e.display_name,'leave_type_name',t.name,
         'start_date',to_char(a.start_date,'YYYY-MM-DD'),'end_date',to_char(a.end_date,'YYYY-MM-DD'),'days',a.days,'status',a.status,
         'reason',a.reason,'applied_at',a.applied_at,'reviewer_note',a.reviewer_note,

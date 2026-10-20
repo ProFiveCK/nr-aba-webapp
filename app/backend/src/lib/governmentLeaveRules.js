@@ -115,7 +115,7 @@ export function calculateEvaluation(context,input){
    }
    charge+=amount;hours+=paidHours;
    const entitlement=context.entitlements.find(e=>e.code===input.code&&e.period_start===service.period_start&&e.period_end===service.period_end&&e.period_start<=date&&e.period_end>=date&&e.as_of<=date);
-   if(amount>0n&&!entitlement)issues.push('Certified opening entitlement is missing for a charged date; forecast accrual is not spendable.');
+   if(amount>0n&&!entitlement)issues.push('Certified opening entitlement is missing for a charged date. HR must complete the service-year account.');
    if(amount>0n&&entitlement){const old=allocations.get(entitlement.id)||{entitlement_id:entitlement.id,amount:0n};old.amount+=amount;allocations.set(entitlement.id,old);}
    segments.push({date,charge:decimal(amount),scheduled_hours:paidHours,...(hourly?{leave_hours:Number(duration.hours)}:{}),holiday_exempt:exempt,policy_version_id:policy.id,calendar_id:calendar?.id||null,service_basis_id:service.basis?.id||null,service_period_id:period.id,employment_category:period.employment_category,is_teacher:period.is_teacher===true,is_intern:period.is_intern===true,work_pattern_id:patternId,roster_id:rosterId,entitlement_id:entitlement?.id||null,service_period_start:service.period_start,service_period_end:service.period_end});
  }

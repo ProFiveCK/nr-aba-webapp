@@ -87,6 +87,12 @@ export async function generateGovernmentLeavePdf(grant,{firstPageOnly=false}={})
   if(grant.case_determination){heading('Reviewed case and pay determination');line(`Authority: ${grant.case_determination.source_reference}`,{size:9});line(`Evidence: ${grant.case_determination.evidence_reference}`,{size:9});for(const segment of grant.case_determination.pay_segments)line(`${governmentPdfDate(segment.start_date)} to ${governmentPdfDate(segment.end_date)}: ${segment.salary_percent}% salary`,{size:9});if(grant.case_determination.facts.payable_amount!==undefined)line(`Reviewed valuation: ${grant.case_determination.facts.payable_amount} AUD | ${grant.case_determination.facts.salary_valuation_reference}`,{size:9});if(grant.case_determination.facts.allowance_amount!==undefined)line(`Approved official allowance: ${grant.case_determination.facts.allowance_amount} AUD | ${grant.case_determination.facts.allowance_reference}`,{size:9});if(grant.case_determination.benefit)line(`Committed benefit: ${grant.case_determination.benefit.requested} ${grant.case_determination.benefit.unit} | Action: ${label(grant.case_determination.benefit.action)} | Prior history: ${grant.case_determination.benefit.prior}`,{size:9});if(grant.effect?.action)line(`Amendment: ${label(grant.effect.action)} | Original application: ${grant.case_determination.facts.original_request_id}`,{size:9});for(const task of grant.case_determination.tasks)line(`Follow-up: ${task.description} | Due: ${task.due_date?governmentPdfDate(task.due_date):'As soon as practicable / reviewed reference'}`,{size:9});}
   if(grant.balances.length)heading('Balance reconciliation');
   for(const balance of grant.balances)line(`Credit before: ${balance.before} | Used: ${balance.used} | Credit after: ${balance.after} policy days`,{size:9});
+  if(grant.evaluation.forecast){
+    const forecast=grant.evaluation.forecast;
+    heading('Projected Recreation accrual at approval');
+    line(`Forecast through ${forecast.through_date}: ${forecast.projected_accrual} days of scheduled credit; ${forecast.forecast_used} projected days used by this request.`,{size:9});
+    line('Payroll credits post only when due. A posted balance may be negative while approved future leave is covered by projected accrual.',{size:9});
+  }
   heading('Calculation and policy references');
   line(`Evaluator: ${grant.engine_version} | Regime: ${grant.regime}`,{size:9});
   line(`Calculation: ${grant.evaluation.snapshot_hash}`,{size:8});

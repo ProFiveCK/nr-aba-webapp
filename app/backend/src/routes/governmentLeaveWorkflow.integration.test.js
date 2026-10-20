@@ -27,6 +27,9 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  async function decide(id,changes={},actor=null){const view=await w.requestView(pool,user(hr),id),stage=view.stages[view.stage_index];const by=actor||officers[stage.level].account;return w.decideRequest(pool,{user:user(by),actor:by,id,data:{stage_id:stage.id,binding_id:stage.binding?.id||randomUUID(),event_key:randomUUID(),decision:'approved',note:reason,evidence_reviewed:true,certificate_reviewed:true,justification_accepted:true,source_reference:'Synthetic registered-practitioner and HR verified source',covers_start:'2026-01-01',covers_end:'2026-12-31',...changes}});}
  async function grant(id){let result;for(let i=0;i<5;i++){const r=await w.getRequest(pool,id);if(r.status!=='pending')return r;result=await decide(id);}return result;}
  async function call(path,data,by=owner,method=data?'POST':'GET'){const session=await auth.createSession(by.id),token=auth.buildTokenPayload(by,session.tokenId,session.expiresAt);const response=await fetch(base+'/api/hr/government/workflow'+path,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});return {status:response.status,body:response.headers.get('content-type')?.includes('json')?await response.json():await response.arrayBuffer(),cache:response.headers.get('cache-control')};}
+ // These dated fixtures exercise workflow, routing and accounting. Notice is
+ // tested explicitly below and in the rules suite, rather than depending on
+ // how far away November 2026 happens to be when the suite is executed.
  beforeEach(async()=>{
   await pool.query('UPDATE hr_gov_calendar_settings SET require_calendar_coverage=FALSE WHERE id=TRUE');
   await resetLeaveTables(pool);await pool.query('TRUNCATE hr_gov_policy_versions,hr_gov_calendars,hr_gov_pattern_approvals CASCADE');
@@ -37,7 +40,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   await pool.query("INSERT INTO hr_employee_service_periods(employee_id,start_date,employment_category,counts_for_service,work_pattern_id,reason) VALUES($1,'2026-01-01','permanent',TRUE,$2,$3)",[employee.id,pattern.id,reason]);
   await l.addFoundationRecord(pool,{user:user(hr),actor:hr,kind:'pattern',data:{work_pattern_id:pattern.id,source_reference:'Synthetic one policy day per standard scheduled day',reason}});
   await l.addFoundationRecord(pool,{user:user(hr),actor:hr,employeeId:employee.id,kind:'basis',data:{effective_from:'2026-01-01',continuity_start:'2026-01-01',anniversary_method:'calendar',leap_day_method:'feb28',schedule_mode:'weekly',source_reference:'Synthetic signed continuous service',reason}});
-  policy=await l.createPolicy(pool,{user:user(hr),actor:hr,data:{label:'Synthetic common workflow policy',effective_from:'2026-01-01',effective_to:'2027-12-31',rules:DEFAULT_RULES,source_reference:'Synthetic typed policy authority',reason}});await l.publishPolicy(pool,{user:user(hr),actor:hr,id:policy.id,reason});
+  policy=await l.createPolicy(pool,{user:user(hr),actor:hr,data:{label:'Synthetic common workflow policy',effective_from:'2026-01-01',effective_to:'2027-12-31',rules:{...DEFAULT_RULES,recreation_notice_days:0},source_reference:'Synthetic typed policy authority',reason}});await l.publishPolicy(pool,{user:user(hr),actor:hr,id:policy.id,reason});
   await l.createCalendar(pool,{user:user(hr),actor:hr,data:{label:'Synthetic workflow calendar',effective_from:'2026-01-01',effective_to:'2027-12-31',holidays:[],source_reference:'Synthetic holiday Gazette reference',reason}});
   for(const [code,amount] of [['recreation','20'],['medical','10'],['special','3']])await opening(code,amount);
   officers={};
@@ -70,6 +73,14 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   const result=await notifications.deliverLeaveNotifications(pool,{deliver:async message=>{messages.push(message);return {accepted:[message.to],messageId:message.messageId};},...options});
   return {result,messages};
  }
+ test('HTTP submission uses the server date and cannot forge the Recreation notice period',async()=>{
+  const successor=await l.createPolicy(pool,{user:user(hr),actor:hr,data:{label:'Synthetic fourteen-day notice policy',effective_from:w.today(),effective_to:'2027-12-31',rules:DEFAULT_RULES,source_reference:reason,supersedes_policy_id:policy.id,authority_reference:reason,reason}});
+  await l.publishPolicy(pool,{user:user(certifier),actor:certifier,id:successor.id,reason,expected_revision:1});await configure();
+  const day=new Date(`${w.today()}T12:00:00Z`);day.setUTCDate(day.getUTCDate()+1);while([0,6].includes(day.getUTCDay()))day.setUTCDate(day.getUTCDate()+1);
+  const input={...application('recreation',day.toISOString().slice(0,10)),notice_date:'2000-01-01'};
+  const preview=await call('/preview',input);assert.equal(preview.status,200);assert.ok(preview.body.issues.some(issue=>issue.includes('14 calendar')));
+  const result=await call('/requests',input);assert.equal(result.status,409);assert.match(result.body.message,/14 calendar days/);
+ });
  test('submission queues only the current assigned approver and SMTP acceptance is recorded once',async()=>{
   const data=application(),r=await submit(data);await submit(data);
   const queued=await notificationQueue(r.id);assert.equal(queued.length,1);
@@ -828,12 +839,96 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
 assert.equal((await call(`/requests/${r.id}/pdf`,null,officers.chief_secretary.account)).status,404);assert.equal((await call(`/requests/${r.id}/pdf`)).status,200);
   assert.equal((await call(`/requests/${r.id}/salary-acknowledgement`,{reference:'Synthetic Salary Unit register',reason},owner)).status,403);assert.equal((await call(`/requests/${r.id}/salary-acknowledgement`,{reference:'Synthetic Salary Unit register',reason},hr)).status,200);
  });
+ test('calendar shows submitted leave with status, preserves scope and removes rejected or cancelled applications',async()=>{
+  const r=await submit();
+  const outside=await account({hr_access:true});
+  const path='/calendar?from=2026-11-01&to=2026-11-30';
+  let response=await call(path);
+  assert.equal(response.status,200);assert.equal(response.body.entries.length,1);
+  const entry=response.body.entries[0];
+  assert.equal(entry.id,r.id);assert.equal(entry.status,'pending');assert.equal(entry.leave_type_name,'Submitted government leave');
+  for(const field of ['reason','documents','medical_mode','code','application_snapshot'])assert.equal(entry[field],undefined);
+  assert.equal((await call(path,null,outside)).body.entries.length,0);
+  assert.equal((await call(path,null,hr)).body.entries[0].id,r.id);
+  assert.equal((await call('/calendar?from=2026-12-01&to=2026-12-31')).body.entries.length,0);
+  await grant(r.id);
+  response=await call(path);assert.equal(response.body.entries[0].status,'approved');assert.equal(response.body.entries[0].leave_type_name,'Approved government leave');
+  const cancelled=await submit(application('recreation','2026-11-05'));
+  await w.cancelRequest(pool,{user:user(owner),actor:owner,id:cancelled.id,reason});
+  const rejected=await submit(application('recreation','2026-11-06'));
+  await decide(rejected.id,{decision:'rejected'});
+  assert.deepEqual((await call(path)).body.entries.map(e=>e.id),[r.id]);
+ });
  test('audit failure rolls back final grant, postings, PDF and decision together',async()=>{
   const r=await submit();for(let i=0;i<4;i++)await decide(r.id);await pool.query(`CREATE FUNCTION synthetic_gov_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.stage.decided' THEN RAISE EXCEPTION 'synthetic audit failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER synthetic_gov_audit_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION synthetic_gov_audit_failure()`);
   try{await assert.rejects(decide(r.id),/synthetic audit failure/);assert.equal((await w.getRequest(pool,r.id)).status,'pending');assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'20.000000');}finally{await pool.query('DROP TRIGGER synthetic_gov_audit_failure ON audit_log; DROP FUNCTION synthetic_gov_audit_failure()');}
   await decide(r.id);assert.equal((await w.getRequest(pool,r.id)).status,'approved');
  });
  async function plan(code='recreation'){const data={code,first_post_end:'2026-10-14',payroll_anchor:'2026-10-14',temporary_start:'appointment',source_reference:'Signed synthetic 26-period cumulative-floor and calendar proration approval',reason};const p=await jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data});await jobs.approveJobPlan(pool,{user:user(certifier),actor:certifier,id:p.id,reason});return p;}
+ async function zeroRecreation(){const account=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation');await l.correctLedger(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{entitlement_id:account.id,amount:'-20',effective_date:'2026-10-01',event_key:randomUUID(),source_reference:'Synthetic zero posted Recreation balance',reason}});return account;}
+ test('forecast funds leave through its end date, grants before payroll, and later payroll posts once',async()=>{
+  const account=await zeroRecreation();await plan();
+  const before=await call('/preview',application('recreation','2026-11-09','2026-11-10'));assert.equal(before.body.eligible_for_preview,false);
+  const data=application('recreation','2026-11-10','2026-11-11');
+  const preview=await call('/preview',data);assert.equal(preview.status,200);assert.equal(preview.body.eligible_for_preview,true,preview.body.issues.join(' '));
+  assert.equal(preview.body.forecast.through_date,'2026-11-11');assert.equal(preview.body.forecast.projected_accrual,'2.307692');assert.equal(preview.body.forecast.forecast_used,'2.000000');
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_job_posts')).rows[0].n,0);
+  const r=await submit(data);await grant(r.id);
+  assert.equal((await w.getRequest(pool,r.id)).status,'approved');assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.id===account.id).balance,'-2.000000');
+  assert.equal((await w.requestView(pool,user(owner),r.id)).forecast.forecast_used,'2.000000');
+  const run=()=>jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id,asOf:'2026-11-11',clockDate:'2026-11-11'});await run();await run();
+  assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.id===account.id).balance,'0.307692');
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM hr_gov_job_posts WHERE code='recreation' AND event_kind='accrual'")).rows[0].n,3);
+ });
+ test('forecast preserves earlier and later reservations when the earlier request is approved first',async()=>{
+  await zeroRecreation();await plan();const early=await submit(application('recreation','2026-11-02'));
+  await assert.rejects(submit(application('recreation','2026-11-03')),/forecast Recreation/);
+  const late=await submit(application('recreation','2026-11-11'));await grant(early.id);await grant(late.id);
+  assert.equal((await w.getRequest(pool,early.id)).status,'approved');assert.equal((await w.getRequest(pool,late.id)).status,'approved');
+  await assert.rejects(submit(application('recreation','2026-11-12')),/forecast Recreation/);
+ });
+ test('forecast permits the later grant first and payroll can credit an account with larger future holds',async()=>{
+  await zeroRecreation();await plan();const early=await submit(application('recreation','2026-11-02')),late=await submit(application('recreation','2026-11-11'));
+  await jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id,asOf:'2026-10-14',clockDate:'2026-10-14'});
+  let account=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation');assert.equal(account.balance,'0.769230');assert.equal(account.held,'2.000000');
+  await grant(late.id);await grant(early.id);
+  account=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation');assert.equal(account.balance,'-1.230770');assert.equal(account.held,'0');
+ });
+ test('forecast records the funding actually needed at grant when an earlier booking uses posted credit',async()=>{
+  await plan();const late=await submit(application('recreation','2026-11-09','2026-12-04'));
+  assert.equal((await w.getRequest(pool,late.id)).application_snapshot.evaluation.forecast.forecast_used,'0.000000');
+  const early=await submit(application('recreation','2026-11-02'));await grant(early.id);await grant(late.id);
+  const approved=await w.getRequest(pool,late.id);
+  assert.equal(approved.grant_snapshot.evaluation.forecast.forecast_used,'1.000000');
+  assert.equal(approved.application_snapshot.evaluation.forecast.forecast_used,'0.000000');
+ });
+ test('forecast reservations serialize competing requests and cancellation releases capacity',async()=>{
+  await zeroRecreation();await plan();
+  const attempts=await Promise.allSettled([submit(application('recreation','2026-11-02')),submit(application('recreation','2026-11-03'))]);
+  assert.equal(attempts.filter(r=>r.status==='fulfilled').length,1);
+  const accepted=attempts.find(r=>r.status==='fulfilled').value;
+  await w.cancelRequest(pool,{user:user(owner),actor:owner,id:accepted.id,reason});
+  assert.ok(await submit(application('recreation','2026-11-04')));
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_job_posts')).rows[0].n,0);
+ });
+ test('forecast cannot use unapproved schedules and rechecks changed accrual before a decision',async()=>{
+  await zeroRecreation();let preview=await call('/preview',application());assert.equal(preview.body.eligible_for_preview,false);
+  await plan();const r=await submit(application('recreation','2026-11-10','2026-11-11'));
+  await l.addFoundationRecord(pool,{user:user(hr),actor:hr,employeeId:employee.id,kind:'exclusion',data:{start_date:'2026-10-15',end_date:'2026-11-11',kind:'other_excluded',source_reference:'Synthetic later certified uncredited service',reason}});
+  await assert.rejects(decide(r.id),/forecast Recreation/);assert.equal((await w.getRequest(pool,r.id)).status,'pending');
+  preview=await call('/preview',application('recreation','2026-11-12'));assert.equal(preview.body.eligible_for_preview,false);
+ });
+ test('forecast balance endpoint is read only, scoped and excludes already posted payroll dates',async()=>{
+  await zeroRecreation();await plan();
+  const session=await auth.createSession(owner.id),token=auth.buildTokenPayload(owner,session.tokenId,session.expiresAt);
+  async function accountView(query){const response=await fetch(`${base}/api/hr/government/employees/${employee.id}/account?${query}`,{headers:{Authorization:`Bearer ${token}`}});return {status:response.status,body:await response.json()};}
+  let result=await accountView('forecast_to=2026-11-11');assert.equal(result.status,200);assert.equal(result.body.accounts.find(a=>a.code==='recreation').forecast.projected_accrual,'2.307692');
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_job_posts')).rows[0].n,0);
+  await jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id,asOf:'2026-10-28',clockDate:'2026-10-28'});
+  result=await accountView('forecast_to=2026-11-11');const account=result.body.accounts.find(a=>a.code==='recreation');assert.equal(account.forecast.projected_accrual,'0.769231');assert.equal(account.forecast.available,'2.307692');
+  assert.equal((await accountView('forecast_to=not-a-date')).status,422);
+  assert.equal((await accountView('forecast_to=2099-01-01')).status,400);
+ });
  test('reviewed jobs require independent approval, do not forecast, preserve proration, cap-stop and retries',async()=>{
   assert.equal((await jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id})).results.length,0);
   const p=await jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{code:'recreation',first_post_end:'2026-10-14',payroll_anchor:'2026-10-14',temporary_start:'appointment',source_reference:'Signed synthetic payroll configuration',reason}});await assert.rejects(jobs.approveJobPlan(pool,{user:user(hr),actor:hr,id:p.id,reason}),/different central/);await jobs.approveJobPlan(pool,{user:user(certifier),actor:certifier,id:p.id,reason});

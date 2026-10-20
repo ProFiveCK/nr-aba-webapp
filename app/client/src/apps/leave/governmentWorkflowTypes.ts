@@ -1,10 +1,12 @@
 import type { LeaveApplication } from './types';
-export type GovernmentRequestSummary={record_source?:'workflow'|'recorded';leave_type_name?:string|null;can_pdf?:boolean;recorded_application?:(LeaveApplication&{can_decide?:boolean})|null;id:string;employee_id:string;employee_name:string;code:string;duration_unit?:'days'|'hours'|null;hours?:string|null;start_date:string;end_date:string;charge:string;status:string;submitted_at:string;stage_index:number;current_level:string|null;current_label?:string|null;current_approver:string|null;unassigned_stages:number;salary_acknowledged:boolean};
+import type { RecreationForecast } from './RecreationForecast';
+export type GovernmentRequestSummary={amendment?:{request_id:string;action:string;effective_end:string}|null;record_source?:'workflow'|'recorded';leave_type_name?:string|null;can_pdf?:boolean;recorded_application?:(LeaveApplication&{can_decide?:boolean})|null;id:string;employee_id:string;employee_name:string;code:string;duration_unit?:'days'|'hours'|null;hours?:string|null;start_date:string;end_date:string;charge:string;status:string;submitted_at:string;stage_index:number;current_level:string|null;current_label?:string|null;current_approver:string|null;unassigned_stages:number;salary_acknowledged:boolean};
 export type GovernmentStage={id:string;ordinal:number;level:string;label?:string|null;binding:{id:string;approver_name:string;reviewer_id:string}|null;decision:{decision:string;decided_at:string;note?:string}|null;issue:string|null;can_decide:boolean};
 export type GovernmentRequest=GovernmentRequestSummary&{
+ forecast?:RecreationForecast|null;
  legacy_approval?:{application_id:string;approved_by_name:string|null;approved_at:string}|null;
  approval_route?:{id:string|null;configured:boolean;stages:{level:string;label:string}[]}|null;evidence_review_required?:boolean;evidence_review?:{actor_id:string;recorded_at:string}|null;can_verify_evidence?:boolean;
- case?:boolean;event_reference?:string;related_request_id?:string;assisted_entry?:boolean;can_prepare?:boolean;can_continue?:boolean;
+ case?:boolean;amendment_action?:'cancel_grant'|'shorten_grant'|null;event_reference?:string;related_request_id?:string;assisted_entry?:boolean;can_prepare?:boolean;can_continue?:boolean;can_amend?:boolean;
  amendment?:{request_id:string;action:string;effective_end:string}|null;
  determination?:{id:string;prepared_by:string;version:number;source_reference:string;evidence_reference?:string;reason?:string;facts?:Record<string,unknown>;pay_segments:{start_date:string;end_date:string;salary_percent:string}[];discretion:string[];benefit:{requested:string;unit:string;action:string;service_years:number;prior:string}|null}|null;
  tasks?:{id:string;kind:string;due_date:string|null;description:string;status:string;reference:string|null}[];can_manage_tasks?:boolean;
@@ -13,6 +15,7 @@ export type WorkflowConfiguration={draft_revision?:number;discarded?:boolean;id:
 export type ConsentOffice={id:string;level:string;display_name:string;department_id:string|null;effective_from:string;effective_to:string|null;closed_office_id:string|null;source_reference:string};
 export type GovernmentJobPlan={initial_setup_review_id?:string|null;draft_revision?:number;discarded?:boolean;id:string;employee_id:string;display_name:string;code:string;status:string;prepared_by:string;method:string;first_post_end:string|null;payroll_anchor:string|null;temporary_start:string|null;reason:string;source_reference:string};
 const officeLabels:Record<string,string>={division:'Divisional approver',parent_division:'Treasury / parent unit approver',department:'Head of Department',hr_verifier:'HR verifier',relevant_secretary:'Relevant Secretary',chief_secretary:'Chief Secretary',minister:'Minister statutory decision'};
+export const staffCaseCodes = ['teacher_recreation', 'extended_medical', 'extended_medical_minister', 'maternity', 'paternity', 'adoption', 'official', 'lwop', 'furlough', 'witness_republic', 'witness_other'];
 const leaveLabels: Record<string, string> = {
     teacher_recreation: 'Teacher recreation leave',
     extended_medical: 'Extended medical leave',

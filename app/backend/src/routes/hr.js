@@ -1522,7 +1522,7 @@ router.get('/overview/breakdown',requirePermission(PERMISSIONS.HR_ADMIN),
 
 // ===== Calendar and reporting =====
 
-// Approved leave across the people the caller can see, for the roster view.
+// Approved and submitted leave across the people the caller can see.
 router.get(
   '/calendar',
   requirePermission(PERMISSIONS.HR_ACCESS),
@@ -1536,7 +1536,7 @@ router.get(
          FROM hr_leave_applications a
          JOIN hr_leave_types t ON t.id = a.leave_type_id
          JOIN hr_employees e ON e.id = a.employee_id
-        WHERE a.status = 'approved'
+        WHERE a.status IN ('pending', 'approved')
           AND NOT EXISTS(SELECT 1 FROM hr_gov_legacy_transfers tr JOIN hr_gov_requests gr ON gr.id=tr.request_id WHERE tr.legacy_request_id=a.id AND gr.status='approved')
           AND a.start_date <= $2 AND a.end_date >= $1
           AND ${employeeReadSql(req.user,'$3','e',true)}

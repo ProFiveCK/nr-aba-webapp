@@ -1,18 +1,16 @@
-import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/useAuth';
 import { useAppSections } from '../../components/appChrome';
-import { defaultLeaveSection, visibleLeaveSections, type LeaveSection } from './sections';
-import { Overview } from './sections/Overview';
+import { defaultLeaveSection, visibleLeaveSections } from './sections';
+import { WorkQueue } from './sections/WorkQueue';
+import { Employees } from './sections/Employees';
 import { MyLeave } from './sections/MyLeave';
-import { Approvals } from './sections/Approvals';
 import { Staff } from './sections/Staff';
 import { Calendar } from './sections/Calendar';
-import { Balances } from './sections/Balances';
 import { Report } from './sections/Report';
 
 export function LeaveApp() {
     const { user } = useAuth();
-    const navigate = useNavigate();
     const visible = visibleLeaveSections(user?.permissions);
     const fallback = defaultLeaveSection(user?.permissions);
     // Drawn by the portal's sticky bar, so a long staff list does not scroll
@@ -33,21 +31,16 @@ export function LeaveApp() {
         );
     }
 
-    // Overview's exception rows jump to the section that answers them.
-    const goToSection = (section: LeaveSection) => navigate(`/leave/${section}`);
-
     return (
         <div className="leave-workspace min-w-0 space-y-6">
             {import.meta.env.VITE_LOCAL_REVIEW_KIND === 'production-copy' && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">Local production copy · Changes stay on this computer. Email, external connections and automatic accrual are disabled.</p>}
             <Routes>
                 <Route index element={<Navigate to={fallback} replace />} />
-                {visible.some((s) => s.id === 'overview') && <Route path="overview" element={<Overview onNavigate={goToSection} />} />}
+                {visible.some((s) => s.id === 'work-queue') && <><Route path="work-queue" element={<WorkQueue />} /><Route path="approvals" element={<LeaveRedirect to="/leave/work-queue" />} />{user?.permissions?.hr_admin && <Route path="overview" element={<LeaveRedirect to="/leave/work-queue?view=overview" />} />}</>}
                 {visible.some((s) => s.id === 'my-leave') && <Route path="my-leave" element={<MyLeave />} />}
-                {visible.some((s) => s.id === 'approvals') && <Route path="approvals" element={<Approvals />} />}
                 {visible.some((s) => s.id === 'calendar') && <Route path="calendar" element={<Calendar />} />}
-                {visible.some((s) => s.id === 'employees') && <><Route path="employees" element={<Staff key="employees" />} /><Route path="staff" element={<Navigate to="/leave/employees" replace />} /></>}
-                {visible.some((s) => s.id === 'balances') && <Route path="balances" element={<Balances />} />}
-                {!visible.some((s) => s.id === 'employees') && visible.some((s) => s.id === 'balances') && <Route path="employees" element={<Navigate to="/leave/balances" replace />} />}
+                {visible.some((s) => s.id === 'employees') && <><Route path="employees" element={<Employees />} /><Route path="staff" element={<LeaveRedirect to="/leave/employees" />} /></>}
+                {(user?.permissions?.hr_admin || user?.permissions?.hr_balance_manage) && <Route path="balances" element={<LeaveRedirect to="/leave/employees?view=balances" />} />}
                 {visible.some((s) => s.id === 'report') && <Route path="report" element={<Report />} />}
                 {visible.some((s) => s.id === 'settings') && <><Route path="settings" element={<Staff key="settings" workspace="settings" />} /><Route path="policies" element={<Navigate to="/leave/settings?view=policies" replace />} /></>}
                 {/* An unknown or forbidden section, including one reached from
@@ -56,4 +49,13 @@ export function LeaveApp() {
             </Routes>
         </div>
     );
+}
+
+// Keep old bookmarks and employee filters while normalising the destination.
+function LeaveRedirect({ to }: { to: string }) {
+    const location = useLocation();
+    const [path, search] = to.split('?');
+    const params = new URLSearchParams(location.search);
+    new URLSearchParams(search).forEach((value, key) => params.set(key, value));
+    return <Navigate to={{ pathname: path, search: params.toString() }} replace />;
 }

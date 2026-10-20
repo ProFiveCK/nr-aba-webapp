@@ -65,7 +65,22 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     for(const person of [peer,outsider])assert.equal((await call(staff,`/directory/${person.id}/profile`)).status,404);
     const profile=await call(staff,`/directory/${employee.id}/profile`);assert.equal(profile.body.employee.manager_id,outsider.id);assert.match(profile.body.employee.manager_name,/Outside your assigned scope/);assert.equal(profile.body.employee.daily_rate,undefined);
     const org=await call(staff,'/org-units');assert.equal(org.body.length,1);assert.deepEqual(org.body[0].divisions.map(v=>v.id),[division.id]);
-    assert.deepEqual((await call(staff,'/calendar?from=2026-10-01&to=2026-10-31')).body.map(a=>a.employee_name),['Treasury Person']);
+    const calendar=(await call(staff,'/calendar?from=2026-10-01&to=2026-10-31')).body;
+    assert.deepEqual(calendar.map(a=>a.employee_name),['Treasury Person','Treasury Person']);
+    assert.deepEqual(calendar.map(a=>a.status).sort(),['approved','pending']);
+  });
+  test('calendar includes only approved and submitted leave overlapping the month, within the caller scope',async()=>{
+    await grant(staff,['hr_staff_manage']);
+    await application(employee,'rejected');await application(employee,'cancelled');
+    await application(peer,'pending');await application(outsider,'pending');
+    const crossing=await application(employee,'pending');
+    await pool.query("UPDATE hr_leave_applications SET start_date='2026-09-30',end_date='2026-10-01' WHERE id=$1",[crossing.id]);
+    const nextMonth=await application(employee,'pending');
+    await pool.query("UPDATE hr_leave_applications SET start_date='2026-11-01',end_date='2026-11-02' WHERE id=$1",[nextMonth.id]);
+    const response=await call(staff,'/calendar?from=2026-10-01&to=2026-10-31');
+    assert.equal(response.status,200);
+    assert.deepEqual(response.body.map(a=>a.id).sort(),[approved.id,pending.id,crossing.id].sort());
+    for(const row of response.body){assert.equal(row.employee_id,employee.id);assert.equal(row.reason,undefined);assert.equal(row.attachments,undefined);}
   });
   test('whole-department scope includes siblings, excludes unverified placement and other departments',async()=>{
     await grant(staff,['hr_staff_manage'],null);assert.equal((await call(staff,'/directory')).body.total,2);assert.equal((await call(staff,'/org-units')).body[0].divisions.length,2);

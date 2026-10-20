@@ -34,9 +34,9 @@ router.get('/balances',requirePermission(PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_BAL
  query('status').optional().isIn(BALANCE_STATUSES),query('sort').optional().isIn(BALANCE_SORTS),query('direction').optional().isIn(['asc','desc'])
 ],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await staffLeaveBalances(pool,{user:req.user,search:req.query.search||'',page:Number(req.query.page)||1,
  departmentId:req.query.department_id||null,divisionId:req.query.division_id||null,status:req.query.status||'',sort:req.query.sort||'name',direction:req.query.direction||'asc'}));});
-router.get('/employees/:id/account',access,[id,query('page').optional().isInt({min:1,max:100000}),query('entitlement_id').optional().isUUID()],async(req,res)=>{
+router.get('/employees/:id/account',access,[id,query('page').optional().isInt({min:1,max:100000}),query('entitlement_id').optional().isUUID(),query('forecast_to').optional().custom(value=>{dayNumber(value);return true;})],async(req,res)=>{
  if(!handleValidation(req,res))return;
- res.json(await employeeLeaveAccount(pool,{user:req.user,employeeId:req.params.id,entitlementId:req.query.entitlement_id||null,page:Number(req.query.page)||1}));
+ res.json(await employeeLeaveAccount(pool,{user:req.user,employeeId:req.params.id,entitlementId:req.query.entitlement_id||null,page:Number(req.query.page)||1,forecastTo:req.query.forecast_to||null}));
 });
 router.get('/calendar-settings',central,async(_req,res)=>res.json(await calendarSettings(pool)));
 router.put('/calendar-settings',central,[body('require_calendar_coverage').isBoolean({strict:true}),body('expected_revision').isInt({min:1,max:2147483646}).toInt()],async(req,res)=>{

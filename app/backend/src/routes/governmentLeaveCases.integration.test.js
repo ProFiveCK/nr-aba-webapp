@@ -62,6 +62,19 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   const saved=await w.getRequest(pool,r.id);assert.equal(saved.charge,'0.000000');assert.equal(saved.reservation_id,null);assert.deepEqual((await l.loadContext(pool,employee.id)).entitlements.map(e=>e.balance),before);assert.equal(saved.grant_snapshot.case_determination.pay_segments[0].salary_percent,'100.000000');assert.ok(saved.final_pdf.subarray(0,5).toString()==='%PDF-');
   await writeFile('/tmp/government-leave-package-4-approved.pdf',saved.final_pdf);await assert.rejects(pool.query('UPDATE hr_gov_case_determinations SET reason=$2 WHERE request_id=$1',[r.id,'attempt rewrite']),/immutable/);await assert.rejects(c.prepareDetermination(pool,{user:user(hr),actor:hr,id:r.id,data:{}}),/pending/);
  });
+ test('calendar includes submitted absences across month boundaries and excludes financial events',async()=>{
+  await oldService();
+  const officialRequest=await caseSubmit(event('official','2026-10-30','2026-11-02'));
+  await caseSubmit(event('furlough','2026-11-05'));
+  await caseSubmit(event('recreation_encashment','2026-11-06'));
+  const furlough=await caseSubmit(event('furlough','2026-11-09','2026-11-10'));
+  const singleDay=await caseSubmit(event('furlough','2026-11-12'));
+  await determine(singleDay.id,financial('1','take_leave'));
+  const response=await call('/calendar?from=2026-11-01&to=2026-11-30');
+  assert.equal(response.status,200);
+  assert.deepEqual(response.body.entries.map(e=>e.id).sort(),[officialRequest.id,furlough.id,singleDay.id].sort());
+  for(const entry of response.body.entries){assert.equal(entry.status,'pending');assert.equal(entry.leave_type_name,'Submitted government leave');}
+ });
  test('an unrelated future published policy leaves a reviewed current assisted case approvable',async()=>{
   const r=await caseSubmit();await determine(r.id,official);
   const future=await l.createPolicy(pool,{user:user(hr),actor:hr,data:{label:'Synthetic unrelated future policy',effective_from:'2028-01-01',effective_to:'2028-12-31',rules:DEFAULT_RULES,source_reference:reason,reason}});await l.publishPolicy(pool,{user:user(hr),actor:hr,id:future.id,reason});
@@ -114,13 +127,39 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   await determine(r.id,facts);assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').held,'19.000000');await assert.rejects(submit(application('recreation','2026-11-02','2026-11-03')),/exceeds/);await grant(r.id);assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'1.000000');
  });
  test('controlled common amendment refunds only released dated units, retains original PDF and removes amended absence dates',async()=>{
-  const r=await submit(application('recreation','2026-11-02','2026-11-04'));await grant(r.id);const original=await w.getRequest(pool,r.id),bytes=Buffer.from(original.final_pdf);
-  const amendment=await caseSubmit({...event('amendment',original.start_date,'2026-11-02'),related_request_id:r.id,assisted_reference:'Synthetic signed early-return request'},hr,[]);const facts={...generic,original_request_id:r.id,action:'shorten_grant',salary_correction_reference:'Synthetic Salary Unit correction instruction'};await determine(amendment.id,facts);assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'17.000000');await grant(amendment.id);assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'19.000000');assert.deepEqual((await w.getRequest(pool,r.id)).final_pdf,bytes);assert.equal((await w.getRequest(pool,r.id)).status,'approved');
-  const calendar=await call('/calendar?from=2026-11-01&to=2026-11-10',null,owner);assert.equal(calendar.body.entries.find(e=>e.id===r.id).end_date,'2026-11-02');assert.ok(await submit(application('recreation','2026-11-03')));
-  const cancel=await caseSubmit({...event('amendment',original.start_date,'2026-11-02'),related_request_id:r.id,assisted_reference:'Synthetic repeat approved cancellation'},hr,[]);await determine(cancel.id,{...facts,action:'cancel_grant'});await grant(cancel.id);
+  const r=await submit(application('recreation','2026-11-16','2026-11-18'));await grant(r.id);const original=await w.getRequest(pool,r.id),bytes=Buffer.from(original.final_pdf);
+  const amendment=await caseSubmit({...event('amendment',original.start_date,'2026-11-16'),related_request_id:r.id,assisted_reference:'Synthetic signed early-return request'},hr,[]);const facts={...generic,original_request_id:r.id,action:'shorten_grant',salary_correction_reference:'Synthetic Salary Unit correction instruction'};await determine(amendment.id,facts);assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'17.000000');await grant(amendment.id);assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'19.000000');assert.deepEqual((await w.getRequest(pool,r.id)).final_pdf,bytes);assert.equal((await w.getRequest(pool,r.id)).status,'approved');
+  const calendar=await call('/calendar?from=2026-11-15&to=2026-11-24',null,owner);assert.equal(calendar.body.entries.find(e=>e.id===r.id).end_date,'2026-11-16');assert.ok(await submit(application('recreation','2026-11-17')));
+  const cancel=await caseSubmit({...event('amendment',original.start_date,'2026-11-16'),related_request_id:r.id,assisted_reference:'Synthetic repeat approved cancellation'},hr,[]);await determine(cancel.id,{...facts,action:'cancel_grant'});await grant(cancel.id);
   assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'20.000000');
   assert.deepEqual((await w.getRequest(pool,r.id)).final_pdf,bytes);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_case_effects WHERE original_request_id=$1',[r.id])).rows[0].n,2);
-  const duplicate=await caseSubmit({...event('amendment',original.start_date,'2026-11-02'),related_request_id:r.id,assisted_reference:'Synthetic already cancelled'},hr,[]);await assert.rejects(determine(duplicate.id,{...facts,action:'cancel_grant'}),/already cancelled/);
+  const duplicate=await caseSubmit({...event('amendment',original.start_date,'2026-11-16'),related_request_id:r.id,assisted_reference:'Synthetic already cancelled'},hr,[]);await assert.rejects(determine(duplicate.id,{...facts,action:'cancel_grant'}),/already cancelled/);
+ });
+ test('explicit cancellation intent survives submission and cannot become an early return at determination',async()=>{
+  const r=await submit(application('recreation','2026-11-16','2026-11-18'));await grant(r.id);assert.equal((await w.requestView(pool,user(hr),r.id)).can_amend,true);
+  const a=await caseSubmit({...event('amendment','2026-11-16','2026-11-18'),related_request_id:r.id,amendment_action:'cancel_grant',assisted_reference:reason},hr,[]);
+  const view=await w.requestView(pool,user(hr),a.id);assert.equal(view.amendment_action,'cancel_grant');
+  const facts={...generic,original_request_id:r.id,salary_correction_reference:reason};
+  await assert.rejects(determine(a.id,{...facts,action:'shorten_grant'}),/must match the requested/);
+  await determine(a.id,{...facts,action:'cancel_grant'});
+  assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'17.000000');
+  await grant(a.id);assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'20.000000');
+  assert.equal((await w.requestView(pool,user(hr),r.id)).can_amend,false);
+  const cancelled=await call('/requests?mode=all&status=cancelled',null,hr);assert.equal(cancelled.status,200);assert.ok(cancelled.body.requests.some(row=>row.id===r.id&&row.amendment.action==='cancel_grant'));
+  const approved=await call('/requests?mode=all&status=approved',null,hr);assert.equal(approved.body.requests.some(row=>row.id===r.id),false);
+  const calendar=await call('/calendar?from=2026-11-15&to=2026-11-24');assert.equal(calendar.body.entries.some(e=>e.id===r.id),false);
+ });
+ test('the employee application list includes retained records only when requested and authorised',async()=>{
+  const type=(await pool.query("INSERT INTO hr_leave_types(name,default_days) VALUES($1,0) RETURNING id",[`Synthetic retained list ${randomUUID()}`])).rows[0];
+  let record;
+  try {
+   record=(await pool.query("INSERT INTO hr_leave_applications(employee_id,leave_type_id,start_date,end_date,days,status,reason) VALUES($1,$2,'2026-11-16','2026-11-16',1,'approved',$3) RETURNING id",[employee.id,type.id,reason])).rows[0];
+   const list=await call(`/requests?mode=all&status=all&include_recorded=true&employee_id=${employee.id}`,null,hr);
+   assert.equal(list.status,200);assert.equal(list.body.total,1);assert.equal(list.body.requests[0].id,record.id);assert.equal(list.body.requests[0].record_source,'recorded');assert.equal(list.body.requests[0].recorded_application.can_decide,false);
+   assert.equal((await call('/requests?mode=all&status=all',null,hr)).body.total,0);
+   assert.equal((await call('/requests?mode=all&status=all&include_recorded=true',null,owner)).status,403);
+   assert.equal((await call('/requests?mode=queue&status=all&include_recorded=true',null,owner)).body.requests.length,0);
+  } finally {if(record)await pool.query('DELETE FROM hr_leave_applications WHERE id=$1',[record.id]);await pool.query('DELETE FROM hr_leave_types WHERE id=$1',[type.id]);}
  });
  test('official non-completion creates five-working-day recovery, financial follow-up requires actual receipt and idempotent events',async()=>{
   const r=await caseSubmit();await determine(r.id,official);await grant(r.id);const view=await w.requestView(pool,user(hr),r.id),task=view.tasks[0],data={event_key:randomUUID(),action:'noncompletion',reference:'Synthetic actual trip cancellation',reason,facts:{paid_amount:'250.00',payment_reference:'Synthetic actual allowance payment reference',trigger_date:'2026-10-07',recovery_amount:'125.50',recovery_determination_reference:'Synthetic signed pro-rata allowance recovery'}};
@@ -132,7 +171,7 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   await assert.rejects(caseSubmit(event('attendance')),e=>e.status===403);const attendance=await caseSubmit({...event('attendance','2026-10-07'),assisted_reference:'Synthetic reviewed employee attendance response'},hr,[]);await determine(attendance.id,{...generic,outcome:'reviewed_unpaid',due_process_reference:'Synthetic evidence and employee response determination'},'0');await grant(attendance.id);assert.equal((await w.requestView(pool,user(hr),attendance.id)).tasks.length,0);
  });
  test('assisted continuation atomically releases old hold, preserves decisions and reroutes with every approval required again',async()=>{
-  const r=await submit();await decide(r.id);const continued=await c.continueRequest(pool,{user:user(hr),actor:hr,id:r.id,data:{request_id:randomUUID(),source_reference:'Synthetic employee-authorised route correction',reason}});assert.equal((await w.getRequest(pool,r.id)).status,'cancelled');const next=await w.requestView(pool,user(hr),continued.id);assert.equal(next.stage_index,0);assert.ok(next.stages.every(s=>!s.decision));assert.equal(next.assisted_entry,true);assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').held,'1.000000');await grant(continued.id);
+  const r=await submit(application('recreation','2026-11-16'));await decide(r.id);const continued=await c.continueRequest(pool,{user:user(hr),actor:hr,id:r.id,data:{request_id:randomUUID(),source_reference:'Synthetic employee-authorised route correction',reason}});assert.equal((await w.getRequest(pool,r.id)).status,'cancelled');const next=await w.requestView(pool,user(hr),continued.id);assert.equal(next.stage_index,0);assert.ok(next.stages.every(s=>!s.decision));assert.equal(next.assisted_entry,true);assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').held,'1.000000');await grant(continued.id);
  });
  test('case privacy, route authority revocation, evidence changes and transaction audit failure fail closed',async()=>{
   const r=await caseSubmit();await determine(r.id,official);const divisionView=await w.requestView(pool,user(officers.division.account),r.id);assert.equal(divisionView.reason,null);assert.equal(divisionView.determination.facts,undefined);assert.deepEqual(divisionView.documents,[]);assert.equal((await call(`/requests/${r.id}/pdf`,null,officers.division.account)).status,404);

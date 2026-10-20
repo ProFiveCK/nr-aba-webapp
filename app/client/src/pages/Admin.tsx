@@ -67,6 +67,7 @@ interface AdminAccount {
     email: string;
     display_name: string | null;
     role: 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll' | 'public_health';
+    account_type?: 'staff' | 'employee';
     status: 'active' | 'inactive';
     must_change_password: boolean;
     department_code: string | null;
@@ -134,12 +135,15 @@ interface AccountFormState {
     email: string;
     display_name: string;
     role: AdminAccount['role'];
+    account_type?: AdminAccount['account_type'];
     department_code: string;
     division_code: string;
     notify_on_submission: boolean;
     permissions: Record<string, boolean>;
     capabilities: string[];
     hr_employee_id: string;
+    original_hr_employee_id: string;
+    link_reason: string;
 }
 
 interface CapabilityGroup {
@@ -166,6 +170,8 @@ const EMPTY_FORM: AccountFormState = {
     permissions: {},
     capabilities: [],
     hr_employee_id: '',
+    original_hr_employee_id: '',
+    link_reason: '',
 };
 
 const ADMIN_ARCHIVE_LIMIT = 200;
@@ -557,6 +563,7 @@ function UserManagementPanel() {
     const [capabilityGroups, setCapabilityGroups] = useState<CapabilityGroup[]>([]);
     const [roleCapabilities, setRoleCapabilities] = useState<Record<string, string[]>>({});
     const [hrEmployees, setHrEmployees] = useState<HrEmployeeOption[]>([]);
+    const canLinkStaff = authUser?.permissions?.hr_admin === true;
     const { addToast } = useToast();
     const { confirm } = useConfirm();
 
@@ -592,16 +599,16 @@ function UserManagementPanel() {
 
     // Staff records HR created ahead of a login existing, so this account can
     // be linked to one instead of always waiting on its own first Leave visit.
-    const loadHrEmployees = useCallback(() => {
-        apiClient
-            .get<HrEmployeeOption[]>('/hr/employees')
-            .then((data) => setHrEmployees(Array.isArray(data) ? data : []))
-            .catch(() => setHrEmployees([]));
+    const loadHrEmployees = useCallback(async () => {
+        const data = await apiClient.get<HrEmployeeOption[]>('/hr/employees');
+        const employees = Array.isArray(data) ? data : [];
+        setHrEmployees(employees);
+        return employees;
     }, []);
 
     useEffect(() => {
-        loadHrEmployees();
-    }, [loadHrEmployees]);
+        if (canLinkStaff) void loadHrEmployees().catch(() => setError('Unable to load staff login assignments.'));
+    }, [loadHrEmployees, canLinkStaff]);
 
     const toggleCapability = (key: string, checked: boolean) => {
         setForm((prev) => ({
@@ -647,23 +654,31 @@ function UserManagementPanel() {
         resetForm();
     };
 
-    const startEdit = (account: AdminAccount) => {
+    const startEdit = async (account: AdminAccount) => {
+        let employees = hrEmployees;
+        if (canLinkStaff) {
+            try { employees = await loadHrEmployees(); }
+            catch (err) { addToast((err as Error).message || 'Unable to load staff assignments.', 'error'); return; }
+        }
+        const linkedId = employees.find((e) => e.reviewer_id === account.id)?.id || '';
         setForm({
             id: account.id,
             email: account.email,
             display_name: account.display_name || '',
             role: account.role,
+            account_type: account.account_type,
             department_code: account.department_code || '',
             division_code: account.division_code || '00',
             notify_on_submission: account.notify_on_submission ?? (account.role === 'reviewer'),
             permissions: account.permissions || {},
             capabilities: account.capabilities || [],
-            hr_employee_id: hrEmployees.find((e) => e.reviewer_id === account.id)?.id || '',
+            hr_employee_id: linkedId,
+            original_hr_employee_id: linkedId,
+            link_reason: '',
         });
         setIsEditing(true);
         setFormError('');
         setIsFormOpen(true);
-        loadHrEmployees();
     };
 
     const handleStatusToggle = async (account: AdminAccount) => {
@@ -718,7 +733,7 @@ function UserManagementPanel() {
         }
         const trimmedDept = (form.department_code || '').trim();
         const trimmedDiv = (form.division_code || '').trim() || '00';
-        if (form.role === 'user') {
+        if (form.role === 'user' && form.account_type !== 'employee') {
             if (!/^\d{2}$/.test(trimmedDept)) {
                 setFormError('Users must have a two-digit Department Head code.');
                 return;
@@ -760,7 +775,7 @@ function UserManagementPanel() {
             let accountId = form.id;
             if (isEditing && form.id) {
                 await apiClient.put(`/reviewers/${form.id}`, body);
-                addToast('Account updated.', 'success');
+
                 if (authUser && String(authUser.id) === form.id) {
                     updateUser({
                         display_name: (body.display_name as string | null) || undefined,
@@ -776,20 +791,29 @@ function UserManagementPanel() {
                     send_email: false,
                 });
                 accountId = created.reviewer.id;
-                addToast('Account created.', 'success');
+                // Keep a newly created account editable if its separate staff
+                // assignment fails, so retrying cannot create another account.
+                setForm(prev => ({ ...prev, id: accountId }));
+                setIsEditing(true);
             }
 
-            // Link this login to a pre-created HR/Leave staff record, if one
-            // was picked — lets HR set someone up (department, manager,
-            // opening balance) before their account exists.
-            if (form.hr_employee_id && accountId) {
+            if (canLinkStaff && accountId && form.hr_employee_id !== form.original_hr_employee_id) {
                 try {
-                    await apiClient.put(`/hr/employees/${form.hr_employee_id}`, { reviewer_id: accountId });
-                    loadHrEmployees();
-                } catch (linkErr) {
-                    addToast((linkErr as Error)?.message || 'Account saved, but linking the staff record failed.', 'error');
+                    await apiClient.put(`/hr/directory/accounts/${accountId}/employee-link`, {
+                        employee_id: form.hr_employee_id || null,
+                        expected_employee_id: form.original_hr_employee_id || null,
+                        expected_reviewer_id: hrEmployees.find(e => e.id === form.hr_employee_id)?.reviewer_id || null,
+                        reason: form.link_reason.trim(),
+                    });
+                } catch (err) {
+                    throw new Error(`Account details saved, but staff assignment was not changed. ${(err as Error).message}`);
                 }
+                setForm(prev => ({ ...prev, original_hr_employee_id: form.hr_employee_id }));
+                // The mapping is already committed; a refresh failure must not
+                // tell the administrator that the assignment failed.
+                await loadHrEmployees().catch(() => setError('Staff assignment saved. Refresh to reload staff records.'));
             }
+            addToast('Account and staff assignment saved.', 'success');
 
             await refresh();
             closeForm();
@@ -801,10 +825,9 @@ function UserManagementPanel() {
     };
 
     const canReceiveNotifications = form.role === 'reviewer' || form.role === 'admin';
-    // Employees with no login yet, plus whichever one is already linked to
-    // this account (if editing) — never someone else's linked record, so
-    // picking one here can't accidentally steal another person's leave data.
-    const linkableEmployees = hrEmployees.filter((e) => !e.reviewer_id || e.id === form.hr_employee_id);
+    const selectedEmployee = hrEmployees.find(e => e.id === form.hr_employee_id);
+    const displacedAccount = accounts.find(a => a.id === selectedEmployee?.reviewer_id);
+    const linkChanged = form.hr_employee_id !== form.original_hr_employee_id;
     const [passwordCopied, setPasswordCopied] = useState(false);
 
     const copyTempPassword = async () => {
@@ -1062,7 +1085,7 @@ function UserManagementPanel() {
                             </select>
                         </label>
                         <label className="text-sm font-medium text-gray-700">
-                            Department head code {form.role === 'user' ? '(required)' : '(optional)'}
+                            Department head code {form.role === 'user' && form.account_type !== 'employee' ? '(required)' : '(optional)'}
                             <input
                                 type="text"
                                 value={form.department_code || ''}
@@ -1172,25 +1195,32 @@ function UserManagementPanel() {
                         )}
                     </div>
 
-                    <label className="block text-sm font-medium text-gray-700">
+                    {canLinkStaff && <><label className="block text-sm font-medium text-gray-700">
                         Leave staff record (optional)
                         <select
                             value={form.hr_employee_id}
                             onChange={(e) => setForm({ ...form, hr_employee_id: e.target.value })}
                             className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                         >
-                            <option value="">— none / create automatically on first login —</option>
-                            {linkableEmployees.map((employee) => (
+                            <option value="">— No staff record linked —</option>
+                            {hrEmployees.map((employee) => (
                                 <option key={employee.id} value={employee.id}>
-                                    {employee.display_name}{employee.department_code ? ` (Dept ${employee.department_code})` : ''}
+                                    {employee.display_name}{employee.department_code ? ` (Dept ${employee.department_code})` : ''}{employee.reviewer_id && employee.reviewer_id !== form.id ? ' · Linked to another login' : ''}
                                 </option>
                             ))}
                         </select>
                         <p className="mt-1 text-xs text-gray-500">
-                            Link this login to an existing staff record (department, manager, balance) in
-                            Leave &rarr; Staff. Leave unset and one is created the first time they open the Leave app themselves.
+                            Link this login to a verified employee. Choosing no staff record removes its current link.
+                            Leave history and balances stay with the employee. Affected users must sign in again.
                         </p>
                     </label>
+                    {linkChanged && <>
+                        <p className="text-sm text-amber-900">{selectedEmployee?.reviewer_id && selectedEmployee.reviewer_id !== form.id ? `This will replace ${displacedAccount?.email || 'the current login'} on ${selectedEmployee.display_name}. ` : ''}{form.original_hr_employee_id ? 'The login will be removed from its previous employee record. ' : ''}Verify the person and login before saving.</p>
+                        <label className="block text-sm font-medium text-gray-700">Reason for staff login change
+                            <textarea required minLength={10} maxLength={1000} value={form.link_reason} onChange={e => setForm({ ...form, link_reason: e.target.value })} className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"/>
+                        </label>
+                    </>}</>}
+                    {!canLinkStaff && <p className="text-sm text-gray-500">Central HR permission is required to change staff login assignments.</p>}
 
                     {formError && <p role="alert" className="text-sm text-red-600">{formError}</p>}
 

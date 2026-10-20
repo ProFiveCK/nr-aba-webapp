@@ -12,6 +12,7 @@ export type LeaveAccountBalance = {
     id: string; code: string; period_start: string; period_end: string; as_of: string;
     days_in: string; days_out: string; balance: string; held: string; available: string;
     policy_label: string; rules: Record<string, string | number>;
+    forecast?: { through_date: string; projected_accrual: string; available: string; schedule_issue: string | null };
 };
 type Movement = {
     id: string; entitlement_id: string; code: string; kind: string; amount: string;
@@ -28,14 +29,14 @@ const movementLabels: Record<string, string> = {
     expiry: 'Expired leave', correction: 'Balance correction', reversal: 'Reversal / returned leave',
 };
 
-export function LeaveAccount({ employeeId, refreshVersion = 0, initiallyExpanded = false, compact = false }: { employeeId: string; refreshVersion?: number; initiallyExpanded?: boolean; compact?: boolean }) {
+export function LeaveAccount({ employeeId, refreshVersion = 0, initiallyExpanded = false, compact = false, forecastTo = '' }: { employeeId: string; refreshVersion?: number; initiallyExpanded?: boolean; compact?: boolean; forecastTo?: string }) {
     const { user } = useAuth();
     const [expanded, setExpanded] = useState(initiallyExpanded);
     const [result, setResult] = useState<{ key: string; data: Account | null; error: string } | null>(null);
     const [accountId, setAccountId] = useState('');
     const [page, setPage] = useState(0);
     const [version, setVersion] = useState(0);
-    const requestKey = `${employeeId}|${accountId}|${page}|${version}|${refreshVersion}`;
+    const requestKey = `${employeeId}|${accountId}|${page}|${version}|${refreshVersion}|${forecastTo}`;
     const loading = result?.key !== requestKey;
     const data = result?.data || null;
     const error = loading ? '' : result?.error;
@@ -43,11 +44,12 @@ export function LeaveAccount({ employeeId, refreshVersion = 0, initiallyExpanded
         let live = true;
         const query = new URLSearchParams({ page: String(page + 1) });
         if (accountId) query.set('entitlement_id', accountId);
+        if (forecastTo) query.set('forecast_to', forecastTo);
         void apiClient.get<Account>(`/hr/government/employees/${employeeId}/account?${query}`).then(result => {
             if (live) setResult({ key: requestKey, data: result, error: '' });
         }).catch((err: Error) => { if (live) setResult({ key: requestKey, data: null, error: err.message }); });
         return () => { live = false; };
-    }, [employeeId, accountId, page, requestKey]);
+    }, [employeeId, accountId, page, requestKey, forecastTo]);
     const current = currentLeaveEntitlements(data?.accounts || [], data?.as_of);
     return <section className="space-y-4" aria-label="Leave balance account">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -59,10 +61,11 @@ export function LeaveAccount({ employeeId, refreshVersion = 0, initiallyExpanded
             {data.employee.leave_policy_regime !== 'government' ? <p role="status" className="app-panel p-4 text-sm text-amber-900">{data.employee.leave_entitled === false ? 'No current leave entitlement is recorded. Ask HR to review any appointment changes.' : 'This employee’s leave setup needs review before current policy balances are available.'}{user?.permissions?.hr_admin && <> <Link className="font-semibold underline" to="/leave/settings?view=rollout">Review staff setup</Link>.</>}</p> : <>
                 <p className="text-sm text-gray-500">As at {formatDate(data.as_of)} · All figures are in days.</p>
                 {!current.length && <p className="app-panel p-4 text-sm text-gray-600">No certified balance is available yet. Ask HR to complete the employee’s balance setup.</p>}
-                <div className={compact?'grid grid-cols-3 gap-2 sm:gap-3':'grid gap-4 xl:grid-cols-3'}>{compact?current.map(balance=><article key={balance.id} className="app-panel leave-balance-card space-y-2 p-3"><h4 className="text-xs font-semibold sm:text-sm">{governmentLabel(balance.code)}</h4><p className="text-2xl font-semibold tabular-nums text-brand">{leaveDays(balance.available)} <span className="block text-xs font-normal text-gray-600">days available</span></p><p className="text-xs text-gray-600">Pending: {leaveDays(balance.held)}</p></article>):current.map(balance => <article key={balance.id} className="app-panel space-y-3 p-4">
+                <div className={compact?'grid grid-cols-3 gap-2 sm:gap-3':'grid gap-4 xl:grid-cols-3'}>{compact?current.map(balance=><article key={balance.id} className="app-panel leave-balance-card space-y-2 p-3"><h4 className="text-xs font-semibold sm:text-sm">{governmentLabel(balance.code)}</h4><p className="text-2xl font-semibold tabular-nums text-brand">{leaveDays(balance.available)} <span className="block text-xs font-normal text-gray-600">{balance.forecast?'posted days available':'days available'}</span></p><p className="text-xs text-gray-600">Pending: {leaveDays(balance.held)}</p>{balance.forecast&&<p className="border-t border-gray-100 pt-2 text-xs text-gray-600"><strong className="block text-brand">{leaveDays(balance.forecast.available)} days by {formatDate(balance.forecast.through_date)}</strong>Includes {leaveDays(balance.forecast.projected_accrual)} projected days</p>}</article>):current.map(balance => <article key={balance.id} className="app-panel space-y-3 p-4">
                     <div><h4 className="font-semibold">{governmentLabel(balance.code)}</h4><p className="text-xs text-gray-500">{formatDate(balance.period_start)} to {formatDate(balance.period_end)}</p></div>
                     <p className="text-3xl font-semibold tabular-nums text-brand">{leaveDays(balance.available)} <span className="text-sm font-normal text-gray-600">available</span></p>
                     <dl className="space-y-1 text-sm">{[['Credits (in)', balance.days_in], ['Deductions (out)', balance.days_out], ['Balance', balance.balance], ['Pending holds', balance.held]].map(([label, value]) => <div key={label} className="flex justify-between gap-3"><dt className="text-gray-600">{label}</dt><dd className="font-medium tabular-nums">{leaveDays(value)}</dd></div>)}</dl>
+                    {balance.forecast&&<div className="rounded-lg bg-blue-50 p-3 text-sm"><p className="font-semibold">{leaveDays(balance.forecast.available)} days available by {formatDate(balance.forecast.through_date)}</p><p>Includes {leaveDays(balance.forecast.projected_accrual)} days of scheduled accrual and allows for existing applications.</p>{balance.forecast.schedule_issue&&<p>{balance.forecast.schedule_issue}</p>}</div>}
                     {balance.period_end < data.as_of && <p role="status" className="text-sm text-amber-800">Previous service year. HR must review renewal before these days can be used for new dates.</p>}
                     <Button variant="secondary" onClick={() => { setAccountId(balance.id); setPage(0); setExpanded(true); }}>View {governmentLabel(balance.code).toLowerCase()} movements</Button>
                 </article>)}</div>
@@ -92,7 +95,7 @@ export function LeaveAccount({ employeeId, refreshVersion = 0, initiallyExpanded
                 <p>The opening is the certified starting balance, including agreed credits carried forward at transfer. Later credits, earned leave, deductions, expiry and corrections are recorded above with their reference. Previous service years remain separate accounts.</p>
                 <p>Leave charges follow the policy effective on the requested dates, verified service and work schedule, and the approved holiday calendar. The date check on each application shows its calculated charge.</p>
                 {current.map(account => <p key={account.id}><strong>{governmentLabel(account.code)}</strong> · Opening policy: {reviewRecordLabel(account.policy_label)}. Annual policy amount: {leaveDays(account.rules[`${account.code}_annual_days`])} days.{account.code === 'recreation' && <> Balance cap: {leaveDays(account.rules.recreation_cap_days)} days. Earned leave is posted through the approved accrual schedule, including any proration and cap.</>}</p>)}
-                <p>Policy amounts describe the rules; available balances come from certified entries and pending holds. HR can review service, renewal and accrual setup when a balance needs attention.</p>
+                <p>Posted availability comes from certified entries, approved deductions and pending holds. Recreation applications may also use projected accrual through the requested leave end date, based on the approved payroll schedule. Credits are posted only when due; a posted balance may be negative while future approved leave is covered by projected accrual.</p>
             </div></details>
         </>}
     </section>;

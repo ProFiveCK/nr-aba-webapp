@@ -12,7 +12,7 @@ import payrollEmployeeImportRouter from './payrollEmployeeImport.js';
 import { createManagedEmployee, createWorkPattern, listLinkableAccounts, updateManagedEmployee } from '../services/employeeManagement.js';
 import {
   NOMINATION_LEVELS, EMPLOYMENT_CATEGORIES, addEmployeeExternalId, addServicePeriod, assignLeaveApprover, closeApprovalAssignment, closeServicePeriod,
-  employeeProfile, listEmployeeDirectory, previewApprovalChain, provisionEmployeeAccount, setEmployeeAccount, setEmployeeOrganisation,
+  assignAccountEmployee, employeeProfile, listEmployeeDirectory, previewApprovalChain, provisionEmployeeAccount, setEmployeeAccount, setEmployeeOrganisation,
 } from '../services/employeeDirectory.js';
 
 const router = express.Router();
@@ -49,6 +49,16 @@ router.get('/', staffHr, [
 router.get('/accounts', centralHr, [query('page').optional().isInt({min:1,max:100000}),query('search').optional().isString().isLength({max:100})], async (req,res) => {
   if (!handleValidation(req,res)) return;
   res.json(await listLinkableAccounts(pool,{page:Number(req.query.page)||1,search:req.query.search||''}));
+});
+
+router.put('/accounts/:accountId/employee-link', centralHr, [param('accountId').isUUID(), reason,
+  ...['employee_id','expected_employee_id','expected_reviewer_id'].flatMap(field => [
+    body(field).exists({ values: 'undefined' }), body(field).optional({ nullable: true }).isUUID(),
+  ])], async (req,res) => {
+  if (!handleValidation(req,res)) return;
+  res.json(await assignAccountEmployee(pool, { reviewerId:req.params.accountId, employeeId:req.body.employee_id,
+    expectedEmployeeId:req.body.expected_employee_id, expectedReviewerId:req.body.expected_reviewer_id,
+    actor:actor(req), reason:req.body.reason }));
 });
 
 router.post('/', centralHr, [reason,body('display_name').isString().trim().isLength({min:1,max:200}),body('external_id').isString().trim().isLength({min:1,max:100}).not().matches(/[\u0000-\u001f\u007f]/),

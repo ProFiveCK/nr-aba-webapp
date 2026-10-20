@@ -7,27 +7,34 @@ const assert=require('node:assert/strict');
  const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
  try{
  const page=await browser.newPage({viewport:{width:390,height:844}});
- const errors=[],uploads=[],decisions=[],queries=[];page.on('pageerror',e=>errors.push(e.message));
+ const errors=[],uploads=[],decisions=[],queries=[],accountQueries=[];page.on('pageerror',e=>errors.push(e.message));
  const permissions={hr_access:true,hr_admin:true,hr_report_read:true,hr_evidence_read:true,hr_leave_apply:true,hr_leave_approve:true};
  const reviewer={id:'reviewer',email:'test@example.test',display_name:'Applicant Example',role:'admin',account_type:'staff',permissions};
  const employee={id:'employee',display_name:'Applicant Example',leave_policy_regime:'government'};
  const accounts=['recreation','medical','special'].map(code=>({id:code,code,period_start:'2026-01-01',period_end:'2026-12-31',as_of:'2026-10-01',days_in:'20',days_out:'0',balance:'20',held:'0',available:'20',policy_label:'Leave policy',rules:{[code+'_annual_days']:20}}));
  let submitted=false,uploadFailure='',decisionFailure='',decisionCount=0,blocked=false,previews=0,pdfs=0;
+ let enabledCodes=['recreation','medical','special'],caseFailure='',staffOnly=false;const caseUploads=[];
  let recordedMode=false,recordedDecisions=[];
  let leaveCode='recreation',levels=['department','chief_secretary'],canVerify=false,evidenceRequired=false,evidenceVerified=false,canDecide=true,evidenceReviews=0;
  const certification='I certify that I have verified the application details and supporting information.';
  const summary=()=>({id:'application-123',employee_id:'employee',employee_name:'Applicant Example',code:leaveCode,start_date:'2026-11-16',end_date:'2026-11-16',charge:'0.5',duration_unit:'hours',hours:'3.5',status:decisionCount===levels.length?'approved':'pending',submitted_at:'2026-10-15T01:00:00Z',current_level:decisionCount?'chief_secretary':'department',current_label:decisionCount?'Chief Secretary':'Head of Department',current_approver:decisionCount?'Final Approver':'Department Approver',unassigned_stages:0,stage_index:Math.min(decisionCount,levels.length-1),can_pdf:decisionCount===levels.length});
  await page.route('**/api/**',async route=>{
   const request=route.request(),url=new URL(request.url()),path=url.pathname;let body={};
-  if(path==='/api/auth/me')body={reviewer,permissions};
+  if(path==='/api/auth/me')body=staffOnly?{reviewer:{...reviewer,role:'user',account_type:'employee',permissions:{hr_access:true,hr_leave_apply:true}},permissions:{hr_access:true,hr_leave_apply:true}}:{reviewer,permissions};
   else if(path==='/api/hr/me')body={employee,balances:[],year:2026};
-  else if(path==='/api/hr/government/workflow/me')body={enabled_codes:['recreation','medical','special'],medical_rule:'single_calendar_date_nonadjacent_scheduled_days',policy:{label:'Leave policy',recreation_notice_days:14}};
-  else if(path==='/api/hr/government/employees/employee/account')body={employee,accounts,movements:[],total:0,page_size:50,as_of:'2026-10-15'};
-  else if(path.endsWith('/preview')){previews++;body={eligible_for_preview:true,charge:'0.5',requested_hours:3.5,scheduled_hours:7,issues:[],requirements:[]};}
+  else if(path==='/api/hr/government/workflow/me')body={enabled_codes:enabledCodes,medical_rule:'single_calendar_date_nonadjacent_scheduled_days',policy:{label:'Leave policy',recreation_notice_days:14}};
+  else if(path==='/api/hr/government/employees/employee/account'){
+   accountQueries.push(url.searchParams.toString());const through=url.searchParams.get('forecast_to')||'2026-10-31';
+   body={employee,accounts:accounts.map(a=>a.code==='recreation'?{...a,forecast:{through_date:through,projected_accrual:'1.538461',available:'21.538461',schedule_issue:null}}:a),movements:[],total:0,page_size:50,as_of:'2026-10-15'};
+  }else if(path.endsWith('/preview')){previews++;body={eligible_for_preview:true,charge:'0.5',requested_hours:3.5,scheduled_hours:7,issues:[],requirements:[],forecast:{through_date:'2026-11-17',projected_accrual:'2.307692',available:'2.307692',forecast_used:'0.5'}};}
   else if(path==='/api/hr/government/workflow/requests'&&request.method()==='POST'){
    uploads.push(request.postData());await new Promise(resolve=>setTimeout(resolve,100));
    if(uploadFailure)return route.fulfill({status:409,json:{message:uploadFailure}});
    submitted=true;body={id:'application-123'};
+  }else if(path==='/api/hr/government/workflow/cases'&&request.method()==='POST'){
+   caseUploads.push(request.postData());await new Promise(resolve=>setTimeout(resolve,100));
+   if(caseFailure)return route.fulfill({status:409,json:{message:caseFailure}});
+   body={id:'case-123'};
   }else if(path==='/api/hr/government/workflow/requests'){
    queries.push(url.searchParams.toString());const search=url.searchParams.get('search'),status=url.searchParams.get('status');
    const rows=(url.searchParams.get('mode')!=='mine'||submitted)&&(!search||search==='application-123')&&(status==='all'||status===summary().status)?[recordedMode?{...summary(),id:'recorded-123',record_source:'recorded',recorded_application:{id:'recorded-123',employee_name:'Applicant Example',leave_type_name:'Annual',start_date:'2026-11-16',end_date:'2026-11-16',days:1,status:'pending',can_decide:true,reason:'Recorded family appointment.'}}:summary()]:[];body={requests:rows,total:rows.length};
@@ -39,6 +46,7 @@ const assert=require('node:assert/strict');
   }else if(path.endsWith('/pdf')){pdfs++;return route.fulfill({contentType:'application/pdf',body:'%PDF-1.4\n%%EOF'});}
   else if(path==='/api/hr/leaves/recorded-123/decision'){recordedDecisions.push(JSON.parse(request.postData()));return route.fulfill({json:{status:'approved'}});}
   else if(path==='/api/hr/leaves')body=[];
+  else if(path.endsWith('/notifications'))body={notifications:[]};
   else throw new Error(`Unexpected API request: ${request.method()} ${path}`);
   await route.fulfill({json:body});
  });
@@ -61,8 +69,57 @@ const assert=require('node:assert/strict');
  await page.getByRole('dialog',{name:'Leave application',exact:true}).getByText(/Awaiting Head of Department/).waitFor();await page.keyboard.press('Escape');
  await page.locator('input[type="date"]').first().fill('2026-11-17');await page.getByLabel('Hours requested',{exact:true}).fill('2');await reason.fill('Another appointment during working hours.');
  await page.getByRole('button',{name:'Check dates & balance (optional)',exact:true}).click();await page.getByRole('status').filter({hasText:'Ready for submission'}).waitFor();
+ await page.getByText('Recreation forecast through 17/11/2026',{exact:true}).waitFor();
+ assert.ok(accountQueries.some(q=>q.includes('forecast_to=2026-11-17')));
+ assert.ok(await page.getByText('This application uses 0.5 days of projected accrual.',{exact:true}).isVisible());
  await reason.fill('Updated reason after checking balance.');assert.equal(await submit().isEnabled(),true);assert.equal(await page.getByText('Ready for submission',{exact:false}).count(),0);
  await page.getByLabel('Leave type',{exact:true}).first().selectOption('medical');const before=uploads.length;await submit().click();await page.getByRole('alert').filter({hasText:'Attach your medical certificate'}).waitFor();assert.equal(uploads.length,before);
+ // All staff leave types share one form, while keeping their distinct payloads.
+ staffOnly=true;await page.reload();await page.getByRole('heading',{name:'Apply for leave',exact:true}).waitFor();
+ await page.getByLabel('Apply in',{exact:true}).selectOption('hours');
+ const leaveType=page.getByLabel('Leave type',{exact:true});assert.equal(await leaveType.count(),1);
+ const options=await leaveType.locator('option').evaluateAll(options=>options.map(o=>o.value));
+ for(const code of ['recreation','medical','special','lwop','maternity','paternity','adoption','official','furlough','extended_medical','extended_medical_minister','teacher_recreation','witness_republic','witness_other'])assert.ok(options.includes(code),`Missing staff leave type: ${code}`);
+ for(const code of ['attendance','amendment','long_service','recreation_encashment','recreation_separation'])assert.ok(!options.includes(code),`HR-only option shown: ${code}`);
+ assert.equal(await page.getByText('Parental, official and other leave',{exact:true}).count(),0);
+ await leaveType.selectOption('lwop');
+ await page.getByText(/Leave without pay requires a permanent appointment/).waitFor();
+ assert.equal(await leaveType.inputValue(),'lwop');
+ assert.equal(await page.getByLabel('Apply in',{exact:true}).count(),0);assert.equal(await page.getByLabel('Hours requested',{exact:true}).count(),0);
+ assert.equal(await page.getByRole('button',{name:'Check dates & balance (optional)',exact:true}).count(),0);
+ await page.getByLabel('Leave starts',{exact:true}).fill('16/11/2026');await page.getByLabel('Leave ends',{exact:true}).fill('20/11/2026');
+ await reason.fill('Personal circumstances requiring unpaid leave.');
+ await submit().click();assert.equal(caseUploads.length,0,'A required event reference must be supplied.');
+ await page.getByLabel('Event or personnel-file reference',{exact:true}).fill('Personal unpaid leave request 2026');
+ await page.getByLabel('Supporting documents',{exact:true}).setInputFiles({name:'supporting.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-1.4\n%%EOF')});
+ if(process.env.LEAVE_APPLICATION_SCREENSHOT)await page.locator('form').filter({has:page.getByRole('heading',{name:'Apply for leave',exact:true})}).screenshot({path:process.env.LEAVE_APPLICATION_SCREENSHOT});
+ caseFailure='Please review the requested leave dates.';
+ await submit().evaluate(button=>{button.click();button.click();});
+ await page.getByRole('alert').filter({hasText:caseFailure}).waitFor();assert.equal(caseUploads.length,1);
+ assert.equal(await reason.inputValue(),'Personal circumstances requiring unpaid leave.');
+ caseFailure='';await submit().click();await page.getByRole('status').filter({hasText:'Application submitted successfully'}).waitFor();
+ assert.equal(caseUploads.length,2);assert.equal(requestId(caseUploads[0]),requestId(caseUploads[1]));
+ assert.match(caseUploads[1],/name="code"\r\n\r\nlwop/);assert.match(caseUploads[1],/name="end_date"\r\n\r\n2026-11-20/);
+ assert.match(caseUploads[1],/name="event_reference"\r\n\r\nPersonal unpaid leave request 2026/);assert.match(caseUploads[1],/filename="supporting.pdf"/);
+ assert.doesNotMatch(caseUploads[1],/name="(hours|duration_unit|medical_mode)"/);assert.equal(uploads.length,before);
+ assert.equal(await leaveType.inputValue(),'lwop','Refreshing balances must retain the selected case type.');
+ assert.equal(await reason.inputValue(),'');assert.equal(await page.getByLabel('Event or personnel-file reference',{exact:true}).inputValue(),'');
+ await leaveType.selectOption('extended_medical_minister');assert.ok(await page.getByLabel('Prior approved three-month medical application',{exact:true}).isVisible());
+ await leaveType.selectOption('maternity');assert.equal(await page.getByLabel('Prior approved three-month medical application',{exact:true}).count(),0);
+ await page.getByText(/Parental leave uses calendar weeks/).waitFor();
+ await leaveType.selectOption('recreation');assert.equal(await page.getByLabel('Event or personnel-file reference',{exact:true}).count(),0);
+ assert.ok(await page.getByLabel('Apply in',{exact:true}).isVisible());assert.ok(await page.getByRole('button',{name:'Check dates & balance (optional)',exact:true}).isVisible());
+ await page.getByLabel('Leave date',{exact:true}).fill('17/11/2026');
+ await page.getByLabel('Apply in',{exact:true}).selectOption('days');await page.getByLabel('Leave ends',{exact:true}).fill('20/11/2026');
+ const singleDateForecast=page.waitForRequest(request=>new URL(request.url()).searchParams.get('forecast_to')==='2026-11-17');
+ await page.getByLabel('Apply in',{exact:true}).selectOption('hours');await singleDateForecast;
+ // Common leave activation must not hide the other application options.
+ enabledCodes=['medical','special'];await page.reload();await page.getByRole('heading',{name:'Apply for leave',exact:true}).waitFor();
+ assert.equal(await leaveType.locator('option[value="recreation"]').count(),0);assert.equal(await leaveType.locator('option[value="lwop"]').count(),1);
+ enabledCodes=[];await page.reload();await page.getByRole('heading',{name:'Apply for leave',exact:true}).waitFor();
+ assert.equal(await leaveType.inputValue(),'official');await leaveType.selectOption('lwop');assert.ok(await submit().isEnabled());
+ for(const code of ['recreation','medical','special'])assert.equal(await leaveType.locator(`option[value="${code}"]`).count(),0);
+ enabledCodes=['recreation','medical','special'];staffOnly=false;
  for(const width of [320,390,1280]){await page.setViewportSize({width,height:900});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`Applicant overflow at ${width}`);}
  await page.goto(base+'/leave/approvals');await page.getByRole('button',{name:'Review application',exact:true}).click();
  let review=page.getByRole('dialog',{name:'Review leave application',exact:true});await review.waitFor();
@@ -83,7 +140,7 @@ const assert=require('node:assert/strict');
  assert.equal(await review.getByRole('alert').evaluate(el=>el===document.activeElement),true);assert.equal(await page.getByRole('dialog').count(),1);
  decisionFailure='';await review.getByRole('button',{name:'Approve leave',exact:true}).click();
  review=page.getByRole('dialog',{name:'Leave application',exact:true});await review.getByRole('status').filter({hasText:'Leave approved.'}).waitFor();assert.equal(decisions[1].event_key,decisions[2].event_key);
- const pdfResponse=page.waitForResponse(r=>r.url().endsWith('/pdf'));await review.getByRole('button',{name:'Download approved PDF',exact:true}).click();await pdfResponse;assert.equal(pdfs,1);await page.keyboard.press('Escape');
+ const pdfResponse=page.waitForResponse(r=>r.url().endsWith('/pdf'));await review.getByRole('button',{name:'Application actions',exact:true}).click();await review.getByRole('button',{name:'Download approved PDF',exact:true}).click();await pdfResponse;assert.equal(pdfs,1);await page.keyboard.press('Escape');
  await page.getByLabel('Application status',{exact:true}).selectOption('approved');await page.getByLabel('Find an application',{exact:true}).fill('application-123');await page.getByRole('button',{name:'Search applications',exact:true}).click();
  await page.getByRole('button',{name:'View application',exact:true}).waitFor();assert.ok(queries.some(q=>q.includes('search=application-123')&&q.includes('status=approved')&&q.includes('page=1')));
  await page.getByRole('button',{name:'View application',exact:true}).click();

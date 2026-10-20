@@ -9,7 +9,7 @@ describe('visibleLeaveSections', () => {
         expect(idsFor({
             hr_access: true, hr_admin: true, hr_leave_apply: true,
             hr_leave_approve: true, hr_staff_manage: true,
-        })).toEqual(['overview', 'my-leave', 'approvals', 'calendar', 'employees', 'balances', 'report', 'settings']);
+        })).toEqual(['work-queue', 'my-leave', 'calendar', 'employees', 'report', 'settings']);
     });
 
     it('gives an ordinary member of staff their own leave and the calendar', () => {
@@ -18,23 +18,23 @@ describe('visibleLeaveSections', () => {
 
     // Any-of, not all-of: approving is one capability, administering another.
     it('opens approvals for an approver who is not an administrator', () => {
-        expect(idsFor({ hr_access: true, hr_leave_approve: true })).toEqual(['approvals', 'calendar']);
+        expect(idsFor({ hr_access: true, hr_leave_approve: true })).toEqual(['work-queue', 'calendar']);
     });
 
     it('opens approvals for an administrator who approves nobody directly', () => {
-        expect(idsFor({ hr_admin: true })).toContain('approvals');
+        expect(idsFor({ hr_admin: true })).toContain('work-queue');
     });
 
     it('staff management does not grant reports or balance tools', () => {
         expect(idsFor({hr_staff_manage:true})).toEqual(['employees']);
         expect(idsFor({hr_report_read:true})).toEqual(['report']);
-        expect(idsFor({hr_balance_manage:true})).toEqual(['balances']);
+        expect(idsFor({hr_balance_manage:true})).toEqual(['employees']);
     });
 
-    it('provides a distinct balance destination without granting staff editing', () => {
-        expect(idsFor({ hr_balance_manage: true })).toEqual(['balances']);
-        expect(idsFor({ hr_staff_manage: true, hr_balance_manage: true })).toEqual(['employees', 'balances']);
-        expect(defaultLeaveSection({ hr_balance_manage: true })).toBe('balances');
+    it('groups balance access under Employees without granting staff editing', () => {
+        expect(idsFor({ hr_balance_manage: true })).toEqual(['employees']);
+        expect(idsFor({ hr_staff_manage: true, hr_balance_manage: true })).toEqual(['employees']);
+        expect(defaultLeaveSection({ hr_balance_manage: true })).toBe('employees');
     });
 
     it('withholds settings from everyone but an administrator', () => {
@@ -55,8 +55,8 @@ describe('visibleLeaveSections', () => {
 });
 
 describe('defaultLeaveSection', () => {
-    it('lands an administrator on the overview', () => {
-        expect(defaultLeaveSection({ hr_admin: true })).toBe('overview');
+    it('lands an administrator on the work queue', () => {
+        expect(defaultLeaveSection({ hr_admin: true })).toBe('work-queue');
     });
 
     it('lands an ordinary member of staff on their own leave', () => {

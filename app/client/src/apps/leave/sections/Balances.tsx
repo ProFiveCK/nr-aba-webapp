@@ -50,7 +50,7 @@ export function Balances() {
         setParams(next);
     }
     function setPage(page: number) { const next = new URLSearchParams(params); next.set('page', String(page + 1)); setParams(next); }
-    function accountLink(id: string) { const next = new URLSearchParams(params); next.set('employee', id); return `/leave/balances?${next}`; }
+    function accountLink(id: string) { const next = new URLSearchParams(params); next.set('view', 'balances'); next.set('employee', id); return `/leave/employees?${next}`; }
     function sortBy(column: string) { updateFilters({ sort: column, direction: sort === column && direction === 'asc' ? 'desc' : 'asc' }); }
     const filterClass = 'mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2';
     if (employeeId) return <div className="space-y-4"><Button variant="ghost" onClick={() => { const next = new URLSearchParams(params); next.delete('employee'); setParams(next); }}>← Staff balances</Button><LeaveAccount key={employeeId} employeeId={employeeId} initiallyExpanded />{(user?.permissions?.hr_admin || user?.permissions?.hr_staff_manage) && <Link className="text-sm font-semibold text-brand underline" to={`/leave/employees?employee=${employeeId}&section=arrangements`}>Open employee details & approvers</Link>}</div>;
@@ -65,7 +65,7 @@ export function Balances() {
                 <option value="name:asc">Name · A to Z</option><option value="name:desc">Name · Z to A</option><option value="department:asc">Department · A to Z</option><option value="department:desc">Department · Z to A</option>
                 {['recreation', 'medical', 'special'].map(code => <optgroup key={code} label={code[0].toUpperCase() + code.slice(1)}><option value={`${code}:desc`}>{code[0].toUpperCase() + code.slice(1)} · Highest first</option><option value={`${code}:asc`}>{code[0].toUpperCase() + code.slice(1)} · Lowest first</option></optgroup>)}
             </select></label>
-            <div className="flex flex-wrap gap-2"><Button type="submit">Search</Button><Button variant="secondary" onClick={event => { event.currentTarget.closest('form')?.reset(); setParams(new URLSearchParams()); }}>Clear filters</Button><Button variant="secondary" disabled={loading} onClick={() => setVersion(v => v + 1)}>Refresh</Button></div>
+            <div className="flex flex-wrap gap-2"><Button type="submit">Search</Button><Button variant="secondary" onClick={event => { event.currentTarget.closest('form')?.reset(); setParams(new URLSearchParams({ view: 'balances' })); }}>Clear filters</Button><Button variant="secondary" disabled={loading} onClick={() => setVersion(v => v + 1)}>Refresh</Button></div>
         </form>
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         {loading ? <LoadingState label="Loading staff balances…" /> : data && <>

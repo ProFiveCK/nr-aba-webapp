@@ -1,12 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { Policies } from './sections/Policies';
 import { LeaveSetupStatus } from './LeaveSetupStatus';
 import type { LeavePolicyUsage } from './leaveSetup';
 import { useAuth } from '../../contexts/useAuth';
-import { GovernmentWorkflowManagement } from './GovernmentWorkflowManagement';
-import { GovernmentPayroll } from './GovernmentPayroll';
-import { EmployeeOnboarding } from './EmployeeOnboarding';
+import { AdvancedMaintenance } from './AdvancedMaintenance';
 import { HrAccessManagement } from './HrAccessManagement';
 import { apiClient } from '../../lib/api';
 import { Button, LoadingState, Pager } from '../../components/Ui';
@@ -31,13 +29,14 @@ export function EmployeeManagement({ workspace='employees' }: { workspace?:'empl
     const [scopeSummary,setScopeSummary] = useState('Checking assigned access…');
     useEffect(() => { void apiClient.get<{central:boolean;scopes:{department_name:string;division_name:string|null}[]}>('/hr/access-scopes/context').then(context=>setScopeSummary(context.central ? 'Central HR · Government-wide records' : context.scopes.length ? `Assigned access: ${context.scopes.map(scope=>`${scope.department_name} / ${scope.division_name || 'All divisions'}`).join('; ')}` : 'No active department or division assignment. Contact central HR.')).catch(()=>setScopeSummary('Unable to confirm assigned access.')); }, []);
     const choices = workspace === 'settings'
-        ? [['summary', 'Settings'], ['policies', 'Policy & calendars'], ['organisation', 'Organisation & approvers'], ['accrual', 'Balance schedules'], ['access', 'HR access'], ['accounts', 'Employee accounts'], ['payroll', 'Payroll instructions'], ['workflow', 'Applications & follow-ups']]
+        ? [['summary', 'Settings'], ['policies', 'Policy & calendars'], ['organisation', 'Organisation & approvers'], ['access', 'Administration access'], ['advanced', 'Advanced maintenance']]
         : [['directory', 'Employees']];
     // Retired setup URLs return to the current workspace; they must not revive import or transfer tools.
-    const alias = requested === 'foundations' ? 'directory' : requested;
+    const maintenanceTool = ['accrual', 'accounts', 'payroll'].includes(requested || '') ? requested : params.get('tool');
+    const alias = ['accrual', 'accounts', 'payroll'].includes(requested || '') ? 'advanced' : requested === 'foundations' ? 'directory' : requested;
     const tab = choices.some(([id]) => id === alias) ? alias! : choices[0][0];
     const employeeId=workspace==='employees'?params.get('employee')||'':'';
-    const section=(['arrangements','details','applications','prepare'].includes(params.get('section')||'')?params.get('section'):'arrangements') as EmployeeSection;
+    const section=(['arrangements','details','applications','prepare'].includes(params.get('section')||'')?params.get('section'):'applications') as EmployeeSection;
     const step=(['identity','login','balances','activation'].includes(params.get('step')||'')?params.get('step'):'balances') as PreparationStep;
     function changeView(view:string){if(workspace==='settings'&&view==='summary')setUsageLoading(true);const next=new URLSearchParams(params);next.set('view',view);next.delete('employee');next.delete('section');next.delete('step');setParams(next);}
     const [creating, setCreating] = useState(false);
@@ -55,10 +54,10 @@ export function EmployeeManagement({ workspace='employees' }: { workspace?:'empl
         void apiClient.get<typeof list>(`/hr/directory?${params}`).then((data) => { if (live) { setList(data); if (page > 0 && page * 50 >= data.total) setPage(Math.max(0, Math.ceil(data.total / 50) - 1)); } }).catch((err: Error) => { if (live) setError(err.message); }).finally(() => { if (live) setLoading(false); });
         return () => { live = false; };
     }, [tab, page, search, department, status, readiness, version]);
-    async function open(id: string, initialSection: EmployeeSection = 'arrangements') { setProfile(null);setError('');const next=new URLSearchParams(params);next.set('view','directory');next.set('employee',id);next.set('section',initialSection);next.delete('step');setParams(next); }
+    async function open(id: string, initialSection: EmployeeSection = 'applications') { setProfile(null);setError('');const next=new URLSearchParams(params);next.set('view','directory');next.set('employee',id);next.set('section',initialSection);next.delete('step');setParams(next); }
     useEffect(()=>{if(!employeeId)return;let live=true;void apiClient.get<EmployeeProfile>(`/hr/directory/${employeeId}/profile`).then(data=>{if(live){setProfile(data);setError('');}}).catch((err:Error)=>{if(live)setError(err.message);}).finally(()=>{if(live)setOpening(false);});return()=>{live=false;};},[employeeId]);
     function closeEmployee(){const next=new URLSearchParams(params);next.delete('employee');next.delete('section');next.delete('step');setParams(next);}
-    if(workspace==='employees'&&(['balances','legacy'].includes(requested||'')||params.get('operation')==='legacy')) return <Navigate to="/leave/balances" replace/>;
+    if(workspace==='settings' && requested==='workflow') return <Navigate to="/leave/work-queue?view=followups" replace/>;
     if(employeeId) return <div className="space-y-4">{error&&<><p role="alert" className="text-sm text-red-700">{error}</p><Button variant="secondary" onClick={closeEmployee}>Back to employees</Button></>}{(!profile||profile.employee.id!==employeeId)&&!error&&<LoadingState label="Opening employee…"/>}{profile?.employee.id===employeeId&&<EmployeeLeaveWorkspace key={profile.employee.id} central={central} profile={profile} departments={departments} patterns={patterns} section={section} step={step} onClose={closeEmployee} onNavigate={(section,step)=>{const next=new URLSearchParams(params);next.set('section',section);if(step)next.set('step',step);setParams(next);}} onChanged={async()=>{setProfile(await apiClient.get<EmployeeProfile>(`/hr/directory/${employeeId}/profile`));setVersion(v=>v+1);}}/>}</div>;
     return <div className="space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -70,7 +69,6 @@ export function EmployeeManagement({ workspace='employees' }: { workspace?:'empl
             {workspace === 'employees' && central && <Button onClick={() => setCreating(true)}>Add employee</Button>}
         </div>
         <p className="text-xs text-gray-500">{scopeSummary}</p>
-        {workspace==='employees'&&(central||user?.permissions?.hr_balance_manage)&&<Link className="text-sm font-semibold text-brand underline" to="/leave/balances">View staff balances & movements</Link>}
         {choices.length > 1 && workspace === 'employees' && <nav aria-label="Employee views" className="flex flex-wrap gap-2">{choices.map(([id, label]) => <Button key={id} variant={tab === id ? 'primary' : 'secondary'} aria-current={tab === id ? 'page' : undefined} onClick={() => changeView(id)}>{label}</Button>)}</nav>}
         {workspace === 'settings' && tab === 'summary' && (usageLoading ? <LoadingState label="Loading settings…"/> : usage ? <LeaveSetupStatus usage={usage} onOpen={changeView}/> : <div role="status" className="app-panel space-y-3 p-5"><p className="text-sm">Unable to load the settings summary.</p><Button variant="secondary" onClick={() => {setUsageLoading(true);void apiClient.get<LeavePolicyUsage>('/hr/directory/leave-policy-usage').then(setUsage).catch((e: Error) => setError(e.message)).finally(() => setUsageLoading(false));}}>Try again</Button></div>)}
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
@@ -95,10 +93,7 @@ export function EmployeeManagement({ workspace='employees' }: { workspace?:'empl
         {tab === 'policies' && central && <Policies />}
         {tab === 'organisation' && central && <OrganisationManagement departments={departments} patterns={patterns} onChanged={loadReferences} />}
         {tab === 'access' && central && <HrAccessManagement departments={departments} />}
-        {tab === 'accounts' && central && <EmployeeOnboarding departments={departments} />}
-        {tab === 'workflow' && central && <GovernmentWorkflowManagement view="applications" />}
-        {tab === 'accrual' && central && <GovernmentWorkflowManagement view="activation" />}
-        {tab === 'payroll' && central && <GovernmentPayroll />}
+        {tab === 'advanced' && central && <AdvancedMaintenance tool={maintenanceTool} departments={departments} />}
         {creating && <ActionDialog title="Add employee" onClose={() => setCreating(false)} saveLabel="Create & continue" onSave={async (data) => {
             const created = await apiClient.post<{ id: string }>('/hr/directory', { display_name: value(data,'display_name'), external_id: value(data,'external_id'), department_id: value(data,'department_id'), division_id: value(data,'division_id') || null, reason: value(data,'reason') });
             setCreating(false); setVersion((current) => current + 1); await open(created.id, 'details');

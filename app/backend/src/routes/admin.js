@@ -548,7 +548,7 @@ router.put(
     const finalDept = Object.prototype.hasOwnProperty.call(patch, 'department_code')
       ? patch.department_code
       : existing.department_code;
-    if (finalRole === 'user' && !finalDept) {
+    if (existing.account_type !== 'employee' && finalRole === 'user' && !finalDept) {
       res.status(400).json({ message: 'Department Head is required for user accounts.' });
       return;
     }

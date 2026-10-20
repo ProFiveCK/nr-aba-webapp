@@ -202,6 +202,31 @@ export async function setEmployeeAccount(client, { employeeId, reviewerId, actor
   return updated;
 }
 
+// Account administration changes both sides together, including an explicit
+// replacement of another login. Expected links prevent a stale form from
+// overwriting a newer identity verification.
+export async function assignAccountEmployee(pool, { reviewerId, employeeId, expectedEmployeeId, expectedReviewerId, actor, reason }) {
+  requireReason(reason);
+  return withTransaction(pool, async client => {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('hr-account-assignment'))");
+    const { rows } = await client.query(
+      'SELECT * FROM hr_employees WHERE reviewer_id=$1 OR id=$2 ORDER BY id FOR UPDATE', [reviewerId, employeeId]);
+    const current = rows.find(row => row.reviewer_id === reviewerId);
+    const target = rows.find(row => row.id === employeeId);
+    if ((current?.id || null) !== expectedEmployeeId || (target?.reviewer_id || null) !== expectedReviewerId) {
+      throw new ServiceError(409, 'The staff login assignment changed. Reopen the account and review the current links.');
+    }
+    if (employeeId && !target) throw notFound('Employee not found.');
+    const { rows: [account] } = await client.query('SELECT id FROM reviewers WHERE id=$1 FOR UPDATE', [reviewerId]);
+    if (!account) throw notFound('Account not found.');
+    if (current && current.id !== employeeId) {
+      await setEmployeeAccount(client, { employeeId: current.id, reviewerId: null, actor, reason });
+    }
+    if (target) await setEmployeeAccount(client, { employeeId, reviewerId, actor, reason });
+    return { employee_id: employeeId, reviewer_id: reviewerId };
+  });
+}
+
 export async function provisionEmployeeAccount(pool, { employeeId, email, actor, reason }) {
   const temporaryPassword = generateTempPassword();
   const passwordHash = await hashPassphrase(temporaryPassword);

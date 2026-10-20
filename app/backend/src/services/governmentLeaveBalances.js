@@ -1,6 +1,9 @@
 import { withTransaction } from '../lib/transaction.js';
 import { employeeScopeSql } from './hrAccess.js';
-import { ledgerReadable } from './governmentLeave.js';
+import { ledgerReadable, loadContext } from './governmentLeave.js';
+import { applyRecreationForecast } from './governmentLeaveForecast.js';
+import { dayNumber } from '../lib/governmentLeaveRules.js';
+import { ServiceError } from '../lib/serviceError.js';
 
 // Use the same committed ledger and holds as application evaluation. Never
 // substitute retained balances or policy defaults for a certified account.
@@ -72,7 +75,7 @@ export async function staffLeaveBalances(pool, { user, search = '', page = 1, de
   });
 }
 
-export async function employeeLeaveAccount(pool, { user, employeeId, entitlementId = null, page = 1 }) {
+export async function employeeLeaveAccount(pool, { user, employeeId, entitlementId = null, page = 1, forecastTo = null }) {
   return withTransaction(pool, async client => {
     await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
     await ledgerReadable(client, user, employeeId);
@@ -91,6 +94,14 @@ export async function employeeLeaveAccount(pool, { user, employeeId, entitlement
     const { rows: [count] } = await client.query(`SELECT count(*)::int AS total FROM hr_gov_ledger l
       JOIN hr_gov_entitlements a ON a.id=l.entitlement_id WHERE a.employee_id=$1 AND ($2::uuid IS NULL OR a.id=$2)`, [employeeId, entitlementId]);
     const { rows: [date] } = await client.query("SELECT to_char((NOW() AT TIME ZONE 'Pacific/Nauru')::date,'YYYY-MM-DD') AS as_of");
+    const [year,month]=date.as_of.split('-').map(Number);
+    const through=forecastTo||new Date(Date.UTC(year,month,0)).toISOString().slice(0,10);
+    if(dayNumber(through)-dayNumber(date.as_of)>731)throw new ServiceError(400,'Choose a forecast date within two years.');
+    const account=accounts.find(a=>a.code==='recreation'&&a.period_start<=date.as_of&&a.as_of<=date.as_of&&a.period_end>=date.as_of);
+    if(employee.leave_policy_regime==='government'&&account) {
+      const evaluation=await applyRecreationForecast(client,await loadContext(client,employeeId),{code:'recreation',input:{end_date:through},allocations:[{entitlement_id:account.id,amount:'0.000000'}],issues:[],warnings:[],snapshot_hash:'balance-forecast'},{asOf:date.as_of});
+      account.forecast=evaluation.forecast.accounts[0];
+    }
     return { employee, accounts, movements, as_of: date.as_of, total: count.total, page, page_size: 50 };
   });
 }

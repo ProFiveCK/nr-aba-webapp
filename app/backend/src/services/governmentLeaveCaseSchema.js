@@ -36,6 +36,11 @@ export async function initGovernmentLeaveCaseSchema(client){
    prepared_by UUID NOT NULL REFERENCES reviewers(id),source_reference TEXT NOT NULL,evidence_reference TEXT NOT NULL,reason TEXT NOT NULL,
    determination JSONB NOT NULL,context_hash TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(request_id,version)
   );
+  CREATE TABLE IF NOT EXISTS hr_gov_request_route_corrections(
+   request_id UUID PRIMARY KEY REFERENCES hr_gov_requests(id),approval_route JSONB NOT NULL,
+   stage_ids UUID[] NOT NULL CHECK(cardinality(stage_ids)>0),standard_lwop BOOLEAN NOT NULL DEFAULT TRUE,
+   reason TEXT NOT NULL,recorded_by UUID REFERENCES reviewers(id),recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
   CREATE TABLE IF NOT EXISTS hr_gov_continuations(
    original_request_id UUID PRIMARY KEY REFERENCES hr_gov_requests(id),request_id UUID NOT NULL UNIQUE REFERENCES hr_gov_requests(id),
    actor_id UUID NOT NULL REFERENCES reviewers(id),source_reference TEXT NOT NULL,reason TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -82,7 +87,7 @@ export async function initGovernmentLeaveCaseSchema(client){
   );
   CREATE INDEX IF NOT EXISTS idx_hr_gov_task_events_latest ON hr_gov_task_events(task_id,recorded_at DESC,id DESC);
  `);
- for(const table of ['hr_gov_case_determinations','hr_gov_continuations','hr_gov_case_links','hr_gov_case_effects','hr_gov_benefit_bases','hr_gov_benefit_reconciliations','hr_gov_benefit_reconciliation_approvals','hr_gov_benefit_commitments','hr_gov_case_credit_holds','hr_gov_case_tasks','hr_gov_task_events']){
+ for(const table of ['hr_gov_request_route_corrections','hr_gov_case_determinations','hr_gov_continuations','hr_gov_case_links','hr_gov_case_effects','hr_gov_benefit_bases','hr_gov_benefit_reconciliations','hr_gov_benefit_reconciliation_approvals','hr_gov_benefit_commitments','hr_gov_case_credit_holds','hr_gov_case_tasks','hr_gov_task_events']){
   await client.query(`DROP TRIGGER IF EXISTS ${table}_immutable ON ${table}`);
   await client.query(`CREATE TRIGGER ${table}_immutable BEFORE UPDATE OR DELETE ON ${table} FOR EACH ROW EXECUTE FUNCTION hr_gov_immutable()`);
  }

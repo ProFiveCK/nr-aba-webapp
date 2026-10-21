@@ -55,6 +55,60 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   await l.addFoundationRecord(pool,{user:user(hr),actor:hr,employeeId:employee.id,kind:'basis',data:{effective_from:start,continuity_start:start,anniversary_method:'pause_exclusions',leap_day_method:'feb28',schedule_mode:'weekly',source_reference:'Synthetic verified long continuity register',reason}});
  }
  const financial=(amount='20',action='encashment')=>({...generic,requested_units:amount,action,duration_unit:'working_days',duration_unit_reference:'Synthetic signed benefit working-day determination',prior_consumed:'0',prior_history_reference:'Synthetic certified pre-portal usage and payout history',prior_history_reconciled:true,transition_resolution_reference:'Synthetic signed LSL to furlough prior-payment treatment',salary_valuation_reference:'Synthetic Salary Unit signed valuation',payable_amount:'1200.00',currency:'AUD'});
+ async function simpleRoute(stages=[{level:'division',label:'Supervisor'}]){return (await import('../services/governmentLeaveApprovalRoutes.js')).publishApprovalRoute(pool,{user:user(hr),actor:hr,data:{department_id:department.id,stages,source_reference:'Synthetic configured leave approvals',reason}});}
+ test('ordinary LWOP follows the configured Supervisor with automatic zero pay and no HR determination',async()=>{
+  const route=await simpleRoute(),input={...event('lwop','2026-11-02','2026-11-06'),event_reference:undefined};
+  const r=await caseSubmit(input,owner,[doc]),view=await w.requestView(pool,user(hr),r.id);
+  assert.equal(view.standard_lwop,true);assert.equal(view.can_prepare,false);assert.equal(view.approval_route.id,route.id);assert.equal(view.stages.length,1);assert.equal(view.stages[0].label,'Supervisor');assert.equal(view.stages[0].binding.reviewer_id,officers.division.account.id);
+  const supervisor=await w.requestView(pool,user(officers.division.account),r.id);assert.equal(supervisor.private_access,true);assert.equal(supervisor.reason,reason);assert.equal(supervisor.documents.length,1);
+  await assert.rejects(decide(r.id),/Confirm the application details/);
+  await assert.rejects(decide(r.id,{certification_confirmed:true},owner),e=>e.status===403);
+  await assert.rejects(determine(r.id,{...generic,genuine_purpose:true,no_other_leave_accessible:true},'0'),/calculated automatically/);
+  const balances=(await pool.query('SELECT * FROM hr_gov_ledger ORDER BY id')).rows;
+  assert.equal((await l.loadContext(pool,employee.id)).exclusions.length,0);
+  await decide(r.id,{certification_confirmed:true});
+  const granted=await w.getRequest(pool,r.id);assert.equal(granted.status,'approved');assert.equal(granted.grant_snapshot.case_determination.pay_segments[0].salary_percent,'0.000000');assert.equal(granted.grant_snapshot.case_determination_id,null);assert.ok(granted.final_pdf.subarray(0,5).toString()==='%PDF-');
+  assert.deepEqual((await pool.query('SELECT * FROM hr_gov_ledger ORDER BY id')).rows,balances);assert.equal((await l.loadContext(pool,employee.id)).exclusions[0].kind,'lwop');assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_case_determinations WHERE request_id=$1',[r.id])).rows[0].n,0);
+ });
+ test('LWOP retains every configured approval level and checks the submitted route and employment facts',async()=>{
+  await simpleRoute([{level:'division',label:'Supervisor'},{level:'department',label:'Final approver'}]);
+  const r=await caseSubmit(event('lwop','2026-11-02','2026-11-06'),owner,[]);await decide(r.id,{certification_confirmed:true});assert.equal((await w.getRequest(pool,r.id)).status,'pending');assert.equal((await l.loadContext(pool,employee.id)).exclusions.length,0);
+  await pool.query("UPDATE hr_employee_service_periods SET employment_category='temporary' WHERE employee_id=$1",[employee.id]);await assert.rejects(decide(r.id,{certification_confirmed:true}),/permanent/);
+  await pool.query("UPDATE hr_employee_service_periods SET employment_category='permanent' WHERE employee_id=$1",[employee.id]);await decide(r.id,{certification_confirmed:true});assert.equal((await w.getRequest(pool,r.id)).status,'approved');
+ });
+ test('longer-than-twelve-month LWOP keeps its exceptional review rather than silently using the short route',async()=>{
+  await simpleRoute();const r=await caseSubmit(event('lwop','2026-11-02','2027-11-02'),owner,[]),view=await w.requestView(pool,user(hr),r.id);
+  assert.equal(view.standard_lwop,false);assert.equal(view.stages.length,5);assert.equal(view.can_prepare,true);
+ });
+ test('maintenance repairs the exact stuck LWOP pattern using existing certified approvals without rewriting history',async()=>{
+  const repair=(await import('../services/governmentLeaveRouteRepair.js')).repairApprovedLwopRoute;
+  const r=await caseSubmit(event('lwop','2026-11-02','2026-11-06'),owner,[]);await decide(r.id,{certification_confirmed:true});const route=await simpleRoute();
+  const originals=(await pool.query('SELECT * FROM hr_gov_request_stages WHERE request_id=$1 ORDER BY ordinal',[r.id])).rows,decisions=(await pool.query('SELECT * FROM hr_gov_decisions WHERE request_id=$1',[r.id])).rows,snapshot=(await w.getRequest(pool,r.id)).application_snapshot;
+  const preview=await repair(pool,{id:r.id,expectedRouteId:route.id});assert.equal(preview.result,'approved');assert.equal(preview.new_approval_decisions,0);assert.equal((await w.getRequest(pool,r.id)).status,'pending');
+  await repair(pool,{id:r.id,expectedRouteId:route.id,apply:true});const saved=await w.getRequest(pool,r.id);assert.equal(saved.status,'approved');assert.equal(saved.stage_index,0);assert.deepEqual(saved.application_snapshot,snapshot);
+  assert.deepEqual((await pool.query('SELECT * FROM hr_gov_request_stages WHERE request_id=$1 ORDER BY ordinal',[r.id])).rows,originals);assert.deepEqual((await pool.query('SELECT * FROM hr_gov_decisions WHERE request_id=$1',[r.id])).rows,decisions);
+  const view=await w.requestView(pool,user(hr),r.id);assert.equal(view.stages.length,1);assert.equal(view.stages[0].label,'Supervisor');assert.equal(view.standard_lwop,true);assert.equal(view.approval_route.id,route.id);
+  assert.equal((await repair(pool,{id:r.id,expectedRouteId:route.id,apply:true})).already_repaired,true);assert.equal((await l.loadContext(pool,employee.id)).exclusions.length,1);
+  const list=await call('/requests?mode=all&status=approved',null,hr);assert.equal(list.status,200);assert.equal(list.body.requests.find(item=>item.id===r.id).unassigned_stages,0);
+  await assert.rejects(pool.query("UPDATE hr_gov_request_route_corrections SET reason='changed' WHERE request_id=$1",[r.id]),/immutable/);
+ });
+ test('route repair refuses missing certification, incomplete approvals and mismatched routes',async()=>{
+  const repair=(await import('../services/governmentLeaveRouteRepair.js')).repairApprovedLwopRoute;
+  const r=await caseSubmit(event('lwop','2026-11-02','2026-11-06'),owner,[]),route=await simpleRoute();
+  await assert.rejects(repair(pool,{id:r.id,expectedRouteId:route.id,apply:true}),/recorded approvals/);
+  await decide(r.id);await assert.rejects(repair(pool,{id:r.id,expectedRouteId:route.id,apply:true}),/certification/);
+  await assert.rejects(repair(pool,{id:r.id,expectedRouteId:randomUUID(),apply:true}),/route changed/);
+  assert.equal((await w.getRequest(pool,r.id)).status,'pending');assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_request_route_corrections')).rows[0].n,0);
+ });
+ test('repair rejects changed employment and audit failure rolls back the correction, grant and service effects',async()=>{
+  const repair=(await import('../services/governmentLeaveRouteRepair.js')).repairApprovedLwopRoute;
+  const r=await caseSubmit(event('lwop','2026-11-02','2026-11-06'),owner,[]);await decide(r.id,{certification_confirmed:true});const route=await simpleRoute();
+  await pool.query("UPDATE hr_employee_service_periods SET employment_category='temporary' WHERE employee_id=$1",[employee.id]);await assert.rejects(repair(pool,{id:r.id,expectedRouteId:route.id,apply:true}),/permanent/);
+  await pool.query("UPDATE hr_employee_service_periods SET employment_category='permanent' WHERE employee_id=$1",[employee.id]);
+  await pool.query("CREATE FUNCTION reject_route_repair_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.request.route_corrected' THEN RAISE EXCEPTION 'synthetic repair audit failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER reject_route_repair_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_route_repair_audit()");
+  try{await assert.rejects(repair(pool,{id:r.id,expectedRouteId:route.id,apply:true}),/synthetic repair audit failure/);}finally{await pool.query('DROP TRIGGER reject_route_repair_audit ON audit_log; DROP FUNCTION reject_route_repair_audit()');}
+  const saved=await w.getRequest(pool,r.id);assert.equal(saved.status,'pending');assert.equal(saved.final_pdf,null);assert.equal((await w.stagesFor(pool,r.id)).length,5);assert.equal((await l.loadContext(pool,employee.id)).exclusions.length,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_request_route_corrections')).rows[0].n,0);
+ });
  test('event application has no fake balance; evidence and independent determination are mandatory; final PDF is immutable',async()=>{
   const data=event('official','2026-11-02','2026-11-06'),r=await caseSubmit(data);assert.equal((await caseSubmit(data)).id,r.id);const before=(await l.loadContext(pool,employee.id)).entitlements.map(e=>e.balance);
   await decide(r.id);await decide(r.id);await assert.rejects(decide(r.id),/Prepare a sourced/);

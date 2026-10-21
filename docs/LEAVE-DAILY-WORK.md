@@ -13,6 +13,14 @@ The employee stays selected while you switch between **Leave**, **Balances**, an
 
 To submit a new request for an employee, select **Apply on behalf**. The form opens only when requested and closes after successful submission. The application remains in that employee's list for tracking.
 
+## Leave without pay
+
+For ordinary LWOP of up to twelve months, the employee enters dates, a reason and any supporting documents. A personnel-file reference is not required. Where a shared approval route is configured, LWOP uses that route and its assigned officers, just like other routine applications. It does not add Head of Department, HR, Secretary or Chief Secretary stages to a route that only requires the supervisor.
+
+Pay is automatically zero. The assigned approver can read the LWOP reason and attachments, certify the application and approve it in the normal application screen. There is no separate HR factual/pay determination or mandatory decision-reason form. The final approval records the service pause and produces the approval PDF without deducting paid leave days. This access does not open private Medical records. LWOP beyond twelve months retains the extended-leave review.
+
+The maintenance repair for older LWOP applications preserves their original facts, stages and decisions. It can complete an incorrectly routed application only when existing certified approvals already satisfy the current configured route; it adds an immutable correction and audit record rather than rewriting or creating approval decisions.
+
 ## Cancel approved Government leave
 
 Open the approved application, select Application actions → **Cancel or shorten approved leave**, and choose the intended change.

@@ -1,4 +1,4 @@
-import { cloneElement, useCallback, useEffect, useId, useState } from 'react';
+import { cloneElement, useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { Button, Modal, Pager } from '../../components/Ui';
 import { apiClient } from '../../lib/api';
@@ -15,11 +15,26 @@ export function Field({ label, children }: { label: string; children: ReactEleme
 export function ReasonField({defaultValue,label="Verification reason",maxLength=1000}:{defaultValue?:string;label?:string;maxLength?:number}={}) { return <Field label={label}><textarea name="reason" defaultValue={defaultValue} required minLength={10} maxLength={maxLength} rows={3} className={inputClass} placeholder="Record the evidence or authority checked (at least 10 characters)." /></Field>; }
 export function ActionDialog({ title, description, onClose, onSave, children, defaultReason, reasonLabel, reasonMaxLength, automaticReason, saveLabel = 'Save verified change' }: { title: string; description?: string; onClose: () => void; onSave: (data: FormData) => Promise<void>; children: ReactNode; defaultReason?:string; reasonLabel?:string; reasonMaxLength?:number; automaticReason?:string; saveLabel?: string }) {
     const [busy, setBusy] = useState(false), [error, setError] = useState('');
+    const saving = useRef(false), feedback = useRef<HTMLParagraphElement>(null);
+    async function save(form: HTMLFormElement) {
+        if (saving.current) return;
+        const data = new FormData(form);
+        if (automaticReason) {
+            const note = String(data.get('setup_note') || '').trim();
+            data.set('reason', automaticReason + (note ? ` · ${note}` : ''));
+        }
+        saving.current = true; setBusy(true); setError('');
+        try { await onSave(data); }
+        catch (err) {
+            setError((err as Error).message || 'Unable to save the change.');
+            requestAnimationFrame(() => feedback.current?.focus());
+        } finally { saving.current = false; setBusy(false); }
+    }
     return <Modal title={title} description={description} onClose={onClose} closeDisabled={busy} size="xl">
-        <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (busy) return; const data = new FormData(e.currentTarget); if (automaticReason) { const note = String(data.get('setup_note') || '').trim(); data.set('reason', automaticReason + (note ? ` · ${note}` : '')); } setBusy(true); setError(''); void onSave(data).catch((err: Error) => setError(err.message || 'Unable to save the change.')).finally(() => setBusy(false)); }}>
+        <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); void save(e.currentTarget); }}>
             <fieldset disabled={busy} className="min-w-0 space-y-4">{children}<>{automaticReason ? <details><summary className="cursor-pointer text-sm text-gray-600">Add a note (optional)</summary><div className="mt-3"><Field label="Note (optional)"><textarea name="setup_note" maxLength={800} rows={3} className={inputClass} /></Field></div></details> : <ReasonField defaultValue={defaultReason} label={reasonLabel} maxLength={reasonMaxLength} />}</></fieldset>
-            {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-            <div className="flex flex-col-reverse gap-2 border-t border-gray-100 pt-4 sm:flex-row sm:justify-end"><Button variant="secondary" disabled={busy} onClick={onClose}>Cancel</Button><Button type="submit" loading={busy}>{saveLabel}</Button></div>
+            {error && <p ref={feedback} tabIndex={-1} role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+            <div className="flex flex-col-reverse gap-2 border-t border-gray-100 pt-4 sm:flex-row sm:justify-end"><Button variant="secondary" disabled={busy} onClick={onClose}>Cancel</Button><Button type="submit" loading={busy}>{busy ? 'Saving…' : saveLabel}</Button></div>
         </form>
     </Modal>;
 }

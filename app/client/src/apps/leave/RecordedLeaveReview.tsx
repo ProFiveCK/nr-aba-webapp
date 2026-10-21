@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { apiClient } from '../../lib/api';
 import { useToast } from '../../contexts/useToast';
-import { Button, Modal } from '../../components/Ui';
+import { AsyncButton, Button, Modal } from '../../components/Ui';
 import { formatDate } from './types';
 import { printApprovedLeaveForm } from './payrollForm';
 import { LeaveAttachmentLinks } from './LeaveAttachmentLinks';
@@ -33,7 +33,7 @@ export function RecordedLeaveReview({selected,onClose,onChanged}:{selected:Leave
                 {selected.status==='pending'&&selected.can_decide!==false&&<label className="flex cursor-pointer items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm"><input className="mt-0.5 h-5 w-5 shrink-0" type="checkbox" checked={certified} onChange={event=>setCertified(event.target.checked)} disabled={busy}/><span>{approvalCertification}</span></label>}
                 {selected.status==='pending'&&selected.can_decide===false&&<p className="text-sm text-gray-600">HR must review this application’s setup before a decision can be recorded.</p>}
                 {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-                <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4"><Button variant="secondary" disabled={busy} onClick={() => onClose()}>Close</Button>{selected.status==='pending'&&selected.can_decide!==false&&<><Button variant="danger" loading={busy} onClick={() => void decide('rejected')}>Reject application</Button><Button loading={busy} disabled={!certified||!selected.reason?.trim()} onClick={() => void decide('approved')}>Approve leave</Button></>}{selected.status==='approved'&&<Button onClick={()=>void printApprovedLeaveForm(selected.id).catch((err:Error)=>setError(err.message))}>Open approved PDF</Button>}</div>
+                <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4"><Button variant="secondary" disabled={busy} onClick={() => onClose()}>Close</Button>{selected.status==='pending'&&selected.can_decide!==false&&<><Button variant="danger" loading={busy} onClick={() => void decide('rejected')}>Reject application</Button><Button loading={busy} disabled={!certified||!selected.reason?.trim()} onClick={() => void decide('approved')}>Approve leave</Button></>}{selected.status==='approved'&&<AsyncButton loadingLabel="Preparing PDF…" onClick={()=>{setError('');return printApprovedLeaveForm(selected.id);}} onError={err=>setError(err.message)}>Open approved PDF</AsyncButton>}</div>
             </div>
         </Modal>;
 }

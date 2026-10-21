@@ -95,7 +95,7 @@ router.post('/preview',apply,applicationFields,async(req,res)=>{
 });
 router.post('/requests',apply,governmentEvidenceUpload,[...applicationFields,body('request_id').isUUID()],async(req,res)=>{
   if(!handleValidation(req,res))return;const employee=await linkedEmployee(pool,req.user.id);
-  res.status(201).json(await workflow.submitRequest(pool,{...args(req),employeeId:employee.id,documents:req.governmentDocuments||[]}));
+  res.status(201).json(await workflow.submitRequest(pool,{...args(req),simpleApproval:true,employeeId:employee.id,documents:req.governmentDocuments||[]}));
 });
 // Calendar exposes absence dates only; personnel reasons, files and medical
 // evidence stay behind the separate request/evidence checks.

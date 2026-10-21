@@ -8,17 +8,17 @@ export const OFFICE_LABELS={division:'Divisional approver',parent_division:'Trea
 const fail=(message,status=409)=>{throw new ServiceError(status,message);};
 export function legacyRoute(code){return ['division','department','hr_verifier',...(['recreation','medical'].includes(code)?['relevant_secretary']:[]),'chief_secretary'].map(level=>({level,label:OFFICE_LABELS[level]}));}
 
-// A published revision changes future common-leave applications only. Stages
+// A published revision changes future leave applications only. Stages
 // and the selected revision are retained on the application at submission.
-export async function approvalRouteFor(client,departmentId,code){
+export async function approvalRouteFor(client,departmentId,code,{simple=false}={}){
  const {rows:[route]}=await client.query(`SELECT * FROM hr_gov_approval_routes WHERE department_id=$1 OR department_id IS NULL
    ORDER BY (department_id IS NOT NULL) DESC,recorded_at DESC,id DESC LIMIT 1`,[departmentId||null]);
- return route?{id:route.id,department_id:route.department_id,stages:route.stages,source_reference:route.source_reference,configured:true}:{id:null,department_id:null,stages:legacyRoute(code),configured:false};
+ return route?{id:route.id,department_id:route.department_id,stages:route.stages,source_reference:route.source_reference,configured:true}:{id:null,department_id:null,stages:simple?[{level:'division',label:'Supervisor'}]:legacyRoute(code),configured:false};
 }
 export async function approvalRouteSettings(client,departmentId){
  const {rows:history}=await client.query(`SELECT r.*,a.display_name AS recorded_by_name FROM hr_gov_approval_routes r JOIN reviewers a ON a.id=r.recorded_by
    WHERE department_id IS NOT DISTINCT FROM $1::uuid ORDER BY recorded_at DESC,id DESC LIMIT 10`,[departmentId||null]);
- return {latest:history[0]||null,effective:await approvalRouteFor(client,departmentId,'recreation'),history};
+ return {latest:history[0]||null,effective:await approvalRouteFor(client,departmentId,'recreation',{simple:true}),history};
 }
 export async function publishApprovalRoute(pool,{user,actor,data}){
  const stages=data.stages;

@@ -1,3 +1,4 @@
+import {isStandardLwop} from '../lib/governmentLeaveStandardLwop.js';
 import {evidenceReviewInput} from '../lib/governmentLeaveEvidence.js';
 import {divisionPlacementIssue} from './organisationHierarchy.js';
 import {calendarCoverageRequired} from '../lib/governmentLeaveCalendarRules.js';
@@ -149,10 +150,11 @@ export async function bindOffice(client,stage,office,actor,reference,reason) {
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[stage.id,office.assignment_kind,office.id,office.approver_employee_id,office.reviewer_id,office.approver_name,reference||office.source_reference||'Verified dated enterprise office',actor.id,reason]);
   return binding;
 }
+export const activeStageSql=(stage='s',request='r')=>`(NOT EXISTS(SELECT 1 FROM hr_gov_request_route_corrections rc WHERE rc.request_id=${request}.id) OR ${stage}.id=ANY(SELECT unnest(rc.stage_ids) FROM hr_gov_request_route_corrections rc WHERE rc.request_id=${request}.id))`;
 export async function stagesFor(client,id) {
-  const {rows}=await client.query(`SELECT s.*,to_jsonb(b) AS binding,to_jsonb(d)-'evidence_verification'-'note' AS decision FROM hr_gov_request_stages s
+  const {rows}=await client.query(`SELECT s.*,COALESCE((SELECT rc.approval_route->'stages'->s.ordinal->>'label' FROM hr_gov_request_route_corrections rc WHERE rc.request_id=s.request_id),s.label) AS label,to_jsonb(b) AS binding,to_jsonb(d)-'evidence_verification'-'note' AS decision FROM hr_gov_request_stages s
     LEFT JOIN LATERAL(SELECT * FROM hr_gov_stage_bindings b WHERE b.stage_id=s.id ORDER BY recorded_at DESC,id DESC LIMIT 1)b ON TRUE
-    LEFT JOIN hr_gov_decisions d ON d.stage_id=s.id WHERE s.request_id=$1 ORDER BY s.ordinal`,[id]);return rows;
+    LEFT JOIN hr_gov_decisions d ON d.stage_id=s.id WHERE s.request_id=$1 AND (NOT EXISTS(SELECT 1 FROM hr_gov_request_route_corrections rc WHERE rc.request_id=$1) OR s.id=ANY(SELECT unnest(rc.stage_ids) FROM hr_gov_request_route_corrections rc WHERE rc.request_id=$1)) ORDER BY s.ordinal`,[id]);return rows;
 }
 export async function bindingIssue(client,request,stage) {
   const binding=stage.binding;if(!binding)return 'HR must assign the missing officeholder.';
@@ -232,7 +234,7 @@ export async function submitRequest(pool,{user,actor,employeeId,data,documents=[
   };return existingClient?work(existingClient):withTransaction(pool,work);
 }
 export async function getRequest(client,id) {
-  const {rows:[request]}=await client.query(`SELECT ${normalizedDates} FROM hr_gov_requests WHERE id=$1`,[id]);if(!request)fail('Request not found.',404);return request;
+  const {rows:[request]}=await client.query(`SELECT ${normalizedDates},(SELECT to_jsonb(rc) FROM hr_gov_request_route_corrections rc WHERE rc.request_id=r.id) AS route_correction FROM hr_gov_requests r WHERE r.id=$1`,[id]);if(!request)fail('Request not found.',404);return request;
 }
 export async function canReadRequest(client,user,request) {
   if(await canAccessEmployee(client,user,request.employee_id,'hr_report_read',{owner:true}))return true;
@@ -243,7 +245,15 @@ export async function canReadRequest(client,user,request) {
   return false;
 }
 export async function privateRead(client,user,request) {
-  return canAccessEmployee(client,user,request.employee_id,'hr_evidence_read',{owner:true});
+  if(await canAccessEmployee(client,user,request.employee_id,'hr_evidence_read',{owner:true}))return true;
+  // An assigned LWOP approver must see the request they are approving. This
+  // grants no access to private Medical evidence or other employee records.
+  if(request.code==='lwop'&&!request.application_snapshot)request=await getRequest(client,request.id);
+  if(!isStandardLwop(request))return false;
+  const {rows:[employee]}=await client.query('SELECT status,department_id,division_id FROM hr_employees WHERE id=$1',[request.employee_id]);
+  if(employee?.status!=='active'||employee.department_id!==request.department_id||employee.division_id!==request.division_id)return false;
+  for(const stage of await stagesFor(client,request.id))if(stage.binding?.reviewer_id===user.id&&!await bindingIssue(client,request,stage))return true;
+  return false;
 }
 export async function requestView(client,user,id) {
   const request=await getRequest(client,id);if(!await canReadRequest(client,user,request))fail('Request not found.',404);
@@ -267,11 +277,11 @@ export async function requestView(client,user,id) {
   const caseDetails=await cases.caseView(client,user,request,privateAccess),amendment=(await client.query('SELECT request_id,effect FROM hr_gov_case_effects WHERE original_request_id=$1 ORDER BY version DESC LIMIT 1',[id])).rows[0]||null;
   const forecast=request.application_snapshot.evaluation?.forecast;
   if(forecast)caseDetails.forecast={through_date:forecast.through_date,projected_accrual:forecast.projected_accrual,available:forecast.available,forecast_used:forecast.forecast_used};
-  return {...caseDetails,legacy_approval:request.application_snapshot.legacy_approval?{application_id:request.application_snapshot.legacy_approval.application_id,approved_by_name:request.application_snapshot.legacy_approval.approved_by_name,approved_at:request.application_snapshot.legacy_approval.approved_at}:null,approval_route:request.application_snapshot.approval_route||null,evidence_review_required:separateEvidence,evidence_review:evidenceReview,can_verify_evidence:canVerifyEvidence,amendment:amendment?{request_id:amendment.request_id,action:amendment.effect.action,effective_end:amendment.effect.effective_end}:null,assisted_entry:!!request.application_snapshot.assisted_by,can_amend:request.status==='approved'&&request.code!=='amendment'&&amendment?.effect.action!=='cancel_grant'&&employee.status==='active'&&isCentralHr(user),can_continue:request.status==='pending'&&isCentralHr(user),id:request.id,...leaveDurationInput(request.application_snapshot.input),employee_id:request.employee_id,employee_name:request.application_snapshot.employee.name,code:request.code,start_date:request.start_date,end_date:request.end_date,charge:request.charge,status:request.status,submitted_at:request.submitted_at,completed_at:request.completed_at,stage_index:request.stage_index,stages,reason:privateAccess?request.reason:null,documents,medical_mode:request.medical_mode,private_access:privateAccess,can_cancel:request.status==='pending'&&(employee.reviewer_id===user.id||isCentralHr(user)),can_pdf:request.status==='approved'&&privateAccess,salary_acknowledgement:ack,can_ack:request.status==='approved'&&isCentralHr(user)&&!ack};
+  return {...caseDetails,legacy_approval:request.application_snapshot.legacy_approval?{application_id:request.application_snapshot.legacy_approval.application_id,approved_by_name:request.application_snapshot.legacy_approval.approved_by_name,approved_at:request.application_snapshot.legacy_approval.approved_at}:null,approval_route:request.route_correction?.approval_route||request.application_snapshot.approval_route||null,evidence_review_required:separateEvidence,evidence_review:evidenceReview,can_verify_evidence:canVerifyEvidence,amendment:amendment?{request_id:amendment.request_id,action:amendment.effect.action,effective_end:amendment.effect.effective_end}:null,assisted_entry:!!request.application_snapshot.assisted_by,can_amend:request.status==='approved'&&request.code!=='amendment'&&amendment?.effect.action!=='cancel_grant'&&employee.status==='active'&&isCentralHr(user),can_continue:request.status==='pending'&&isCentralHr(user),id:request.id,...leaveDurationInput(request.application_snapshot.input),employee_id:request.employee_id,employee_name:request.application_snapshot.employee.name,code:request.code,start_date:request.start_date,end_date:request.end_date,charge:request.charge,status:request.status,submitted_at:request.submitted_at,completed_at:request.completed_at,stage_index:request.stage_index,stages,reason:privateAccess?request.reason:null,documents,medical_mode:request.medical_mode,private_access:privateAccess,can_cancel:request.status==='pending'&&(employee.reviewer_id===user.id||isCentralHr(user)),can_pdf:request.status==='approved'&&privateAccess,salary_acknowledgement:ack,can_ack:request.status==='approved'&&isCentralHr(user)&&!ack};
 }
 async function lockedRequest(client,id) {
   const ref=await getRequest(client,id);const employee=await ledger.lockEmployee(client,ref.employee_id);
-  const {rows:[request]}=await client.query(`SELECT ${normalizedDates} FROM hr_gov_requests WHERE id=$1 FOR UPDATE`,[id]);return {request,employee};
+  await client.query('SELECT id FROM hr_gov_requests WHERE id=$1 FOR UPDATE',[id]);return {request:await getRequest(client,id),employee};
 }
 export async function rebindStage(pool,{user,actor,id,stageId,data}) {
   ledger.central(user);
@@ -333,6 +343,7 @@ export async function verifyRequestEvidence(pool,{user,actor,id,data,client:exis
  };return existingClient?work(existingClient):withTransaction(pool,work);
 }
 async function requiredEvidenceReview(client,request,stages) {
+ if(isStandardLwop(request))return null;
  if(stages.some(s=>s.level==='hr_verifier')){
   if(!(await client.query("SELECT 1 FROM hr_gov_decisions d JOIN hr_gov_request_stages s ON s.id=d.stage_id WHERE d.request_id=$1 AND s.level='hr_verifier' AND d.evidence_verification IS NOT NULL",[request.id])).rowCount)fail('HR evidence verification is missing.');
   return null;
@@ -359,6 +370,7 @@ export async function decideRequest(pool,{user,actor,id,data}) {
     if(stage.binding.reviewer_id!==user.id)fail('Only the assigned officer can decide this stage.',403);
     const issue=await bindingIssue(client,request,stage);if(issue)fail(issue,403);
     if(data.decision==='approved'&&data.certification_confirmed!==undefined&&data.certification_confirmed!==true)fail('Certify that you have verified the application before approving.',400);
+    if(data.decision==='approved'&&isStandardLwop(request)&&data.certification_confirmed!==true)fail('Confirm the application details before approving leave without pay.',400);
     if(data.verify_evidence!==undefined&&data.verify_evidence!==false){
       if(data.verify_evidence!==true||data.decision!=='approved'||data.certification_confirmed!==true||!data.verification_comment)fail('Confirm certification and evidence verification together with approval.',400);
       // Another HR officer may have verified while this application was open.
@@ -367,7 +379,7 @@ export async function decideRequest(pool,{user,actor,id,data}) {
       if(!reviewed)await verifyRequestEvidence(pool,{client,user:state.user,actor,id,data:{...data,reason:note}});
     }
     let currentEvaluation=null;
-    if(data.decision==='approved'){const correctionIssue=await serviceCorrectionIssue(client,request.employee_id,request.submitted_at);if(correctionIssue)fail(correctionIssue);if(isCase(request.code))await cases.verifyCase(client,request,employee,{hrActor:stage.level==='hr_verifier'?user.id:null,final:stage.level==='chief_secretary',discretionConfirmed:data.discretion_confirmed===true});else currentEvaluation=await verifyRetainedRequest(client,request,employee);}
+    if(data.decision==='approved'){const correctionIssue=await serviceCorrectionIssue(client,request.employee_id,request.submitted_at);if(correctionIssue)fail(correctionIssue);if(isCase(request.code))await cases.verifyCase(client,request,employee,{hrActor:stage.level==='hr_verifier'?user.id:null,final:stage.ordinal===stages.length-1,discretionConfirmed:data.discretion_confirmed===true});else currentEvaluation=await verifyRetainedRequest(client,request,employee);}
     if(stage.level==='relevant_secretary'&&request.code==='recreation'&&data.decision==='rejected'&&(!data.operational_refusal||!data.alternative_date||!data.consultation_reference))fail('Secretary refusal requires operational reasons, employee consultation and an alternative date.',400);
     let verification=null;
     if(stage.level==='hr_verifier'&&data.decision==='approved') {
@@ -386,17 +398,32 @@ export async function decideRequest(pool,{user,actor,id,data}) {
       if(request.reservation_id)await ledger.finishReservation(pool,{client,employeeId:request.employee_id,requestId:request.reservation_id,action:'released',actor,reason:note,authorize:async()=>true});
       await client.query("UPDATE hr_gov_requests SET status='rejected',completed_at=NOW() WHERE id=$1",[id]);
     }else if(stage.ordinal===stages.length-1) {
+      await finalizeApprovedRequest(pool,client,request,employee,actor,{note,currentEvaluation,discretionConfirmed:data.discretion_confirmed===true});
+    }else await client.query('UPDATE hr_gov_requests SET stage_index=stage_index+1 WHERE id=$1',[id]);
+    await audit(client,actor,'hr.gov.stage.decided',id,{stage_id:stage.id,binding_id:stage.binding.id,level:stage.level,decision:data.decision,...(data.certification_confirmed===true?{certification_confirmed:true}:{}),...(data.verify_evidence===true?{evidence_review_requested:true}:{})});
+    const status=(await getRequest(client,id)).status;
+    await queueLeaveDecision(client,{requestId:id,eventKey:data.event_key,actorId:actor.id,stage,decision:data.decision,status});
+    await queueCurrentLeaveApprover(client,id);
+    return {id,status};
+  });
+}
+// Shared by normal final approval and the maintenance repair that executes an
+// already recorded approval. This function never creates an approval decision.
+export async function finalizeApprovedRequest(pool,client,request,employee,actor,{note,currentEvaluation=null,discretionConfirmed=false}) {
+ const id=request.id;
+ if(request.status!=='pending')fail('This request already completed.');
+ const correctionIssue=await serviceCorrectionIssue(client,request.employee_id,request.submitted_at);if(correctionIssue)fail(correctionIssue);
       const completed=await stagesFor(client,id);
-      if(completed.some(s=>s.decision?.decision!=='approved'))fail('Every required stage must approve before the final grant.');
+      if(!completed.length||completed.some(s=>s.decision?.decision!=='approved'))fail('Every required stage must approve before the final grant.');
       for(const prior of completed){const problem=await bindingIssue(client,request,prior);if(problem)fail(problem);}
       const evidenceReview=await requiredEvidenceReview(client,request,completed);
-      const caseRow=isCase(request.code)?await cases.determinationFor(client,id):null;
+      const caseRow=isCase(request.code)?await cases.verifyCase(client,request,employee,{final:true,discretionConfirmed}):null;
       const before=(await ledger.loadContext(client,request.employee_id)).entitlements;
       if(request.reservation_id)await ledger.finishReservation(pool,{client,employeeId:request.employee_id,requestId:request.reservation_id,action:'consumed',actor,reason:note,authorize:async()=>true});
       const effect=caseRow?await cases.grantCaseEffects(client,request,caseRow,actor):null;
       const after=(await ledger.loadContext(client,request.employee_id)).entitlements;
       const allocations=caseRow&&['recreation_encashment','recreation_separation'].includes(request.code)?[{entitlement_id:caseRow.determination.facts.entitlement_id,amount:caseRow.determination.benefit.requested}]:request.application_snapshot.evaluation.allocations;
-      const grant={...request.application_snapshot,evidence_review:evidenceReview,...(caseRow?{case_determination:caseRow.determination,case_determination_id:caseRow.id,evaluation:caseRow.determination.evaluation,effect}:{}),id,code:request.code,start_date:request.start_date,end_date:request.end_date,reason:request.reason,charge:request.charge,submitted_at:request.submitted_at,granted_at:new Date().toISOString(),stages:completed,balances:allocations.map(a=>({entitlement_id:a.entitlement_id,before:before.find(e=>e.id===a.entitlement_id)?.balance,used:a.amount,after:after.find(e=>e.id===a.entitlement_id)?.balance}))};
+      const grant={...request.application_snapshot,...(request.route_correction?{standard_lwop:isStandardLwop(request),approval_route:request.route_correction.approval_route,route_correction:request.route_correction}:{}),evidence_review:evidenceReview,...(caseRow?{case_determination:caseRow.determination,case_determination_id:caseRow.id,evaluation:caseRow.determination.evaluation,effect}:{}),id,code:request.code,start_date:request.start_date,end_date:request.end_date,reason:request.reason,charge:request.charge,submitted_at:request.submitted_at,granted_at:new Date().toISOString(),stages:completed,balances:allocations.map(a=>({entitlement_id:a.entitlement_id,before:before.find(e=>e.id===a.entitlement_id)?.balance,used:a.amount,after:after.find(e=>e.id===a.entitlement_id)?.balance}))};
       if(request.code==='recreation'&&currentEvaluation?.forecast)grant.evaluation={...grant.evaluation,forecast:currentEvaluation.forecast};
       if(request.code==='medical') {
         grant.medical_mode=request.medical_mode;
@@ -408,14 +435,7 @@ export async function decideRequest(pool,{user,actor,id,data}) {
           committed_including_this_request:currentEvaluation.medical_exemptions_used+(request.medical_mode==='exemption'?1:0)};
       }
       const bytes=await generateGovernmentLeavePdf(grant);
-      await client.query("UPDATE hr_gov_requests SET status='approved',completed_at=NOW(),grant_snapshot=$2,final_pdf=$3 WHERE id=$1",[id,grant,Buffer.from(bytes)]);
-    }else await client.query('UPDATE hr_gov_requests SET stage_index=stage_index+1 WHERE id=$1',[id]);
-    await audit(client,actor,'hr.gov.stage.decided',id,{stage_id:stage.id,binding_id:stage.binding.id,level:stage.level,decision:data.decision,...(data.certification_confirmed===true?{certification_confirmed:true}:{}),...(data.verify_evidence===true?{evidence_review_requested:true}:{})});
-    const status=(await getRequest(client,id)).status;
-    await queueLeaveDecision(client,{requestId:id,eventKey:data.event_key,actorId:actor.id,stage,decision:data.decision,status});
-    await queueCurrentLeaveApprover(client,id);
-    return {id,status};
-  });
+      await client.query("UPDATE hr_gov_requests SET status='approved',completed_at=NOW(),grant_snapshot=$2,final_pdf=$3,stage_index=$4 WHERE id=$1",[id,grant,Buffer.from(bytes),completed.at(-1).ordinal]);
 }
 export async function cancelRequest(pool,{user,actor,id,reason,client:existingClient}) {
   reason=reasonText(reason);

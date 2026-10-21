@@ -6,7 +6,7 @@ export type GovernmentRequest=GovernmentRequestSummary&{
  forecast?:RecreationForecast|null;
  legacy_approval?:{application_id:string;approved_by_name:string|null;approved_at:string}|null;
  approval_route?:{id:string|null;configured:boolean;stages:{level:string;label:string}[]}|null;evidence_review_required?:boolean;evidence_review?:{actor_id:string;recorded_at:string}|null;can_verify_evidence?:boolean;
- case?:boolean;amendment_action?:'cancel_grant'|'shorten_grant'|null;event_reference?:string;related_request_id?:string;assisted_entry?:boolean;can_prepare?:boolean;can_continue?:boolean;can_amend?:boolean;
+ standard_lwop?:boolean;case?:boolean;amendment_action?:'cancel_grant'|'shorten_grant'|null;event_reference?:string;related_request_id?:string;assisted_entry?:boolean;can_prepare?:boolean;can_continue?:boolean;can_amend?:boolean;
  amendment?:{request_id:string;action:string;effective_end:string}|null;
  determination?:{id:string;prepared_by:string;version:number;source_reference:string;evidence_reference?:string;reason?:string;facts?:Record<string,unknown>;pay_segments:{start_date:string;end_date:string;salary_percent:string}[];discretion:string[];benefit:{requested:string;unit:string;action:string;service_years:number;prior:string}|null}|null;
  tasks?:{id:string;kind:string;due_date:string|null;description:string;status:string;reference:string|null}[];can_manage_tasks?:boolean;

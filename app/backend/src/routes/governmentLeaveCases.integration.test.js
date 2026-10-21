@@ -56,6 +56,113 @@ describe('government event cases, financial commitments and amendments',{skip:sk
  }
  const financial=(amount='20',action='encashment')=>({...generic,requested_units:amount,action,duration_unit:'working_days',duration_unit_reference:'Synthetic signed benefit working-day determination',prior_consumed:'0',prior_history_reference:'Synthetic certified pre-portal usage and payout history',prior_history_reconciled:true,transition_resolution_reference:'Synthetic signed LSL to furlough prior-payment treatment',salary_valuation_reference:'Synthetic Salary Unit signed valuation',payable_amount:'1200.00',currency:'AUD'});
  async function simpleRoute(stages=[{level:'division',label:'Supervisor'}]){return (await import('../services/governmentLeaveApprovalRoutes.js')).publishApprovalRoute(pool,{user:user(hr),actor:hr,data:{department_id:department.id,stages,source_reference:'Synthetic configured leave approvals',reason}});}
+ // Legacy fixtures below retain coverage for historical workflow snapshots.
+ for(const code of ['teacher_recreation','extended_medical','maternity','paternity','adoption','official','lwop','long_service','furlough','recreation_encashment','recreation_separation','witness_republic','witness_other','attendance'])test(`simple ${code}: assigned Supervisor completes review without HR stages`,async()=>{
+  await simpleRoute();
+  if(code==='teacher_recreation')await pool.query('UPDATE hr_employee_service_periods SET is_teacher=TRUE WHERE employee_id=$1',[employee.id]);
+  if(['long_service','furlough'].includes(code))await oldService(code==='long_service'?'2019-01-01':'2010-01-01');
+  const end=code==='maternity'?'2027-01-24':code==='paternity'?'2026-11-15':'2026-11-02',by=code==='attendance'?hr:owner;
+  const r=await c.submitCase(pool,{user:user(by),actor:by,employeeId:employee.id,data:{...event(code,'2026-11-02',end),event_reference:undefined,...(code==='attendance'?{assisted_reference:reason}:{})},documents:[doc],simpleApproval:true});
+  const view=await w.requestView(pool,user(officers.division.account),r.id);
+  assert.equal(view.simple_approval,true);assert.equal(view.stages.length,1);assert.equal(view.stages[0].label,'Supervisor');assert.equal(view.can_prepare,false);assert.equal(view.evidence_review_required,false);assert.equal(view.private_access,true);assert.equal(view.documents.length,1);
+  await assert.rejects(decide(r.id),/Confirm the application details/);
+  const details={...financial('1',code==='recreation_separation'?'resignation':code==='furlough'?'take_leave':'encashment'),...parental,child_birth_date:'2026-09-01',spouse_or_stepchild:false,event_kind:'birth',outcome:'excused_paid'};
+  delete details.transition_resolution_reference;
+  if(code==='paternity')details.sex_eligibility='male';
+  assert.equal((await decide(r.id,{certification_confirmed:true,case_details:details})).status,'approved');
+  const saved=await w.getRequest(pool,r.id);assert.ok(saved.final_pdf.length>100);assert.ok(saved.grant_snapshot.case_determination_id);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_decisions WHERE request_id=$1',[r.id])).rows[0].n,1);
+  if(['lwop','witness_other'].includes(code))assert.equal(saved.grant_snapshot.case_determination.pay_segments[0].salary_percent,'0.000000');
+ });
+ test('simple common leave verifies evidence in the assigned approval with request-scoped clinical access',async()=>{
+  await simpleRoute();
+  for(const [code,date] of [['recreation','2026-11-16'],['medical','2026-11-04'],['special','2026-11-06']]){
+   const r=await w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:{...application(code,date),medical_mode:code==='medical'?'certificate':'not_applicable'},documents:[doc],simpleApproval:true});
+   const view=await w.requestView(pool,user(officers.division.account),r.id);assert.equal(view.private_access,true);assert.equal(view.evidence_review_required,false);assert.equal(view.can_verify_evidence,false);assert.equal(view.documents.length,1);
+   assert.equal(await w.privateRead(pool,user(officers.department.account),await w.getRequest(pool,r.id)),false);
+   await assert.rejects(decide(r.id),/Confirm the application details/);assert.equal((await decide(r.id,{certification_confirmed:true})).status,'approved');
+   assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_evidence_reviews WHERE request_id=$1',[r.id])).rows[0].n,0);
+   assert.equal((await w.getRequest(pool,r.id)).grant_snapshot.evidence_review.assigned_approval,true);
+  }
+ });
+ test('simple default is Supervisor and explicitly configured stages are retained for every type',async()=>{
+  for(const code of ['medical','official','lwop','paternity']){
+   const r=await (code==='medical'?w.submitRequest:c.submitCase)(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:code==='medical'?application(code):event(code),documents:[doc],simpleApproval:true});
+   assert.deepEqual((await w.requestView(pool,user(hr),r.id)).stages.map(s=>s.level),['division']);await w.cancelRequest(pool,{user:user(owner),actor:owner,id:r.id,reason});
+  }
+  await simpleRoute([{level:'division',label:'Supervisor'},{level:'department',label:'Second approver'}]);
+  const r=await c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:event('official'),documents:[doc],simpleApproval:true});
+  await decide(r.id,{certification_confirmed:true});assert.equal((await w.getRequest(pool,r.id)).status,'pending');assert.equal(await c.determinationFor(pool,r.id),null);
+  await decide(r.id,{certification_confirmed:true});assert.equal((await w.getRequest(pool,r.id)).status,'approved');
+ });
+ test('simple extended medical and amendment approvals use the same route and restore deducted credit',async()=>{
+  await simpleRoute();
+  const first=await c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:event('extended_medical','2026-11-02','2027-02-01'),documents:[doc],simpleApproval:true});await decide(first.id,{certification_confirmed:true});
+  const next=await c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:{...event('extended_medical_minister','2027-02-02','2027-02-05'),related_request_id:first.id},documents:[doc],simpleApproval:true});
+  assert.equal((await w.requestView(pool,user(hr),next.id)).stages.length,1);await decide(next.id,{certification_confirmed:true,case_details:{salary_percent:'50'}});
+  assert.equal((await w.getRequest(pool,next.id)).grant_snapshot.case_determination.pay_segments[0].salary_percent,'50.000000');
+  const original=await w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:application('special','2026-10-26'),simpleApproval:true});await decide(original.id,{certification_confirmed:true});
+  const amendment=await c.submitCase(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{...event('amendment','2026-10-26'),related_request_id:original.id,amendment_action:'cancel_grant',assisted_reference:reason},simpleApproval:true});
+  await decide(amendment.id,{certification_confirmed:true});assert.equal((await w.requestView(pool,user(hr),original.id)).amendment.action,'cancel_grant');
+  assert.equal(Number((await pool.query("SELECT sum(amount)::text AS amount FROM hr_gov_ledger WHERE kind='reversal'")).rows[0].amount),1);
+ });
+ test('simple final review rejects missing facts and overspending without committing a decision',async()=>{
+  await simpleRoute();const r=await c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:event('maternity','2026-11-02','2027-01-24'),documents:[doc],simpleApproval:true});
+  await assert.rejects(decide(r.id,{certification_confirmed:true}),/eligibility|pregnancy/);assert.equal(await c.determinationFor(pool,r.id),null);
+  await assert.rejects(decide(r.id,{certification_confirmed:true,case_details:parental},owner),e=>e.status===403);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_decisions WHERE request_id=$1',[r.id])).rows[0].n,0);await w.cancelRequest(pool,{user:user(owner),actor:owner,id:r.id,reason});
+  const cash=await c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:event('recreation_encashment'),documents:[doc],simpleApproval:true});
+  await assert.rejects(decide(cash.id,{certification_confirmed:true,case_details:financial('1000')}),/available certified credit/);assert.equal(await c.determinationFor(pool,cash.id),null);
+ });
+ test('HTTP employee and assisted submissions select simple approval server-side',async()=>{
+  await simpleRoute();
+  for(const [path,data,by] of [['/cases',event('official'),owner],['/employees/'+employee.id+'/cases',{...event('lwop','2026-11-04'),assisted_reference:reason},hr],['/employees/'+employee.id+'/assisted-requests',{...application('special','2026-11-06'),assisted_reference:reason},hr]]){
+   const result=await call(path,{...data,event_reference:undefined},by);assert.equal(result.status,201,JSON.stringify(result.body));const view=await w.requestView(pool,user(hr),result.body.id);assert.equal(view.simple_approval,true);assert.equal(view.stages.length,1);
+  }
+ });
+ test('simple benefits preserve the recorded history basis across repeat payments without extra authority fields',async()=>{
+  await simpleRoute();await oldService('2019-01-01');
+  for(const date of ['2026-11-02','2026-11-04']){
+   const r=await c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:event('long_service',date),documents:[doc],simpleApproval:true});
+   const details=financial('1');delete details.transition_resolution_reference;
+   await decide(r.id,{certification_confirmed:true,case_details:details});
+   assert.equal((await w.getRequest(pool,r.id)).status,'approved');
+  }
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_benefit_bases')).rows[0].n,1);assert.equal((await pool.query('SELECT sum(units)::text AS used FROM hr_gov_benefit_commitments')).rows[0].used,'2.000000');
+ });
+ test('an older in-flight submission can be retried and an HTTP continuation adopts the simple route',async()=>{
+  const data=event('official'),old=await caseSubmit(data);await simpleRoute();
+  const retry=await c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data,documents:[doc],simpleApproval:true});assert.equal(retry.id,old.id);
+  const continued=await call('/requests/'+old.id+'/continue',{request_id:randomUUID(),source_reference:reason,reason},hr);assert.equal(continued.status,201,JSON.stringify(continued.body));
+  const view=await w.requestView(pool,user(hr),continued.body.id);assert.equal(view.simple_approval,true);assert.equal(view.stages.length,1);assert.equal((await w.getRequest(pool,old.id)).status,'cancelled');
+  const common=await call('/requests',application('recreation','2026-11-16'));assert.equal(common.status,201,JSON.stringify(common.body));assert.equal((await w.requestView(pool,user(hr),common.body.id)).simple_approval,true);
+ });
+ test('pending simplification is audited and preserves requests, decisions, stages and balance holds',async()=>{
+  const pending=await submit(application('medical','2026-11-04'));await simpleRoute();
+  const repair=(await import('../services/governmentLeavePendingSimplification.js')).simplifyPendingApprovals;
+  const before=(await w.getRequest(pool,pending.id)).application_snapshot,stages=(await pool.query('SELECT * FROM hr_gov_request_stages ORDER BY id')).rows,ledger=(await pool.query('SELECT * FROM hr_gov_ledger ORDER BY id')).rows;
+  const dry=await repair(pool);assert.equal(dry.applications.length,1);assert.equal((await w.requestView(pool,user(hr),pending.id)).simple_approval,false);
+  await assert.rejects(repair(pool,{apply:true,expected:[]}),/changed/);await repair(pool,{apply:true,expected:dry.manifest});
+  const view=await w.requestView(pool,user(officers.division.account),pending.id);assert.equal(view.simple_approval,true);assert.equal(view.status,'pending');assert.equal(view.stages.length,1);assert.equal(view.evidence_review_required,false);assert.equal(view.private_access,true);
+  assert.deepEqual((await w.getRequest(pool,pending.id)).application_snapshot,before);assert.deepEqual((await pool.query('SELECT * FROM hr_gov_request_stages ORDER BY id')).rows,stages);assert.deepEqual((await pool.query('SELECT * FROM hr_gov_ledger ORDER BY id')).rows,ledger);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_decisions')).rows[0].n,0);
+  await decide(pending.id,{certification_confirmed:true});assert.equal((await w.getRequest(pool,pending.id)).status,'approved');
+ });
+ test('pending simplification refuses to reinterpret decisions already recorded',async()=>{
+  const pending=await caseSubmit(event('official'));await decide(pending.id);await simpleRoute();
+  const repair=(await import('../services/governmentLeavePendingSimplification.js')).simplifyPendingApprovals;
+  await assert.rejects(repair(pool),/review history/);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_request_route_corrections')).rows[0].n,0);
+ });
+ test('extended LWOP has the same Supervisor route with an explicit basis and zero pay',async()=>{
+  await simpleRoute();const r=await c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:event('lwop','2026-11-02','2027-11-02'),simpleApproval:true});
+  await assert.rejects(decide(r.id,{certification_confirmed:true}),/beyond twelve months/);
+  await decide(r.id,{certification_confirmed:true,case_details:{extension_basis:'exceptional_circumstances'}});const saved=await w.getRequest(pool,r.id);assert.equal(saved.status,'approved');assert.equal(saved.grant_snapshot.stages.length,1);assert.equal(saved.grant_snapshot.case_determination.pay_segments[0].salary_percent,'0.000000');
+ });
+ test('parental pay splits automatically at the six-month service milestone',async()=>{
+  await simpleRoute();await oldService('2026-06-01');
+  const r=await c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:{...event('maternity','2026-11-02','2027-01-24'),case_details:JSON.stringify({...parental,pregnancy_number:5})},documents:[doc],simpleApproval:true});
+  await decide(r.id,{certification_confirmed:true});const pay=(await w.getRequest(pool,r.id)).grant_snapshot.case_determination.pay_segments;
+  assert.deepEqual(pay,[{start_date:'2026-11-02',end_date:'2026-11-30',salary_percent:'0.000000'},{start_date:'2026-12-01',end_date:'2027-01-24',salary_percent:'50.000000'}]);
+ });
  test('ordinary LWOP follows the configured Supervisor with automatic zero pay and no HR determination',async()=>{
   const route=await simpleRoute(),input={...event('lwop','2026-11-02','2026-11-06'),event_reference:undefined};
   const r=await caseSubmit(input,owner,[doc]),view=await w.requestView(pool,user(hr),r.id);

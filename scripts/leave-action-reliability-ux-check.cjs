@@ -209,7 +209,7 @@ const until = async (test, message) => {
         await page.getByLabel('Leave type', { exact: true }).selectOption('official');
         await page.getByLabel('From date', { exact: true }).fill('16/11/2026');
         await page.getByLabel('To date', { exact: true }).fill('17/11/2026');
-        await page.getByLabel('Event or personnel-file reference', { exact: true }).fill('Personnel file authority');
+        assert.equal(await page.getByLabel('Event or personnel-file reference', { exact: true }).count(), 0);
         await page.getByLabel('Employee request / assisted-entry authority', { exact: true }).fill('Signed employee authority');
         await page.getByLabel('Reason for leave', { exact: true }).fill('Verified official leave request.');
         await page.getByRole('button', { name: 'Submit application', exact: true }).evaluate(button => { button.click(); button.click(); });

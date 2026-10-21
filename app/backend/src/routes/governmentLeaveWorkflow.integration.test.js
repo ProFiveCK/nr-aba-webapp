@@ -232,7 +232,8 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   const list=await call('/requests?mode=mine&status=all');assert.equal(list.body.requests[0].hours,'3.5');assert.equal(list.body.requests[0].duration_unit,'hours');
   const view=await call(`/requests/${r.id}`);assert.equal(view.body.hours,'3.5');
   await assert.rejects(submit({...data,request_id:data.request_id,hours:'2'}),/different application/);
-  await decide(r.id);const granted=await w.getRequest(pool,r.id);
+  await assert.rejects(decide(r.id),/Confirm the application details/);
+  await decide(r.id,{certification_confirmed:true});const granted=await w.getRequest(pool,r.id);
   assert.equal(granted.status,'approved');assert.equal(granted.grant_snapshot.input.hours,'3.5');
   const downloaded=await call(`/requests/${r.id}/pdf`);assert.equal(downloaded.status,200);
   const {generatedPdfText}=await import('../test-support/pdfText.js');
@@ -1006,7 +1007,8 @@ assert.equal((await call(`/requests/${r.id}/pdf`,null,officers.chief_secretary.a
   assert.equal((await upload(Buffer.alloc(5*1024*1024+1),'oversized.pdf')).status,413);
   const accepted=await upload('%PDF-1.7 synthetic certificate pending human review','synthetic.pdf');assert.equal(accepted.status,201);const result=await accepted.json(),view=await w.requestView(pool,user(owner),result.id);
   assert.equal(view.status,'pending');assert.equal(view.employee_id,employee.id);assert.equal(view.charge,'1.000000');assert.equal(view.documents.length,1);assert.equal(view.documents[0].content_type,'application/pdf');
-  const forbidden=await call(`/requests/${result.id}/documents/${view.documents[0].id}`,null,officers.division.account);assert.equal(forbidden.status,404);
+  const assigned=await call(`/requests/${result.id}/documents/${view.documents[0].id}`,null,officers.division.account);assert.equal(assigned.status,200);
+  const forbidden=await call(`/requests/${result.id}/documents/${view.documents[0].id}`,null,officers.department.account);assert.equal(forbidden.status,404);
   assert.equal((await call(`/requests/${result.id}/documents/${view.documents[0].id}`)).status,200);
  });
 

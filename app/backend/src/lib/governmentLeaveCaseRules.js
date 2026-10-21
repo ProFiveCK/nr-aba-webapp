@@ -59,7 +59,13 @@ export function validatePaySegments(input,segments){
   return {start_date:segment.start_date,end_date:segment.end_date,salary_percent:decimal(rate)};
  }).map((s,i,array)=>{if(i===array.length-1)requireFact(cursor===isoDay(dayNumber(input.end_date)+1),'Pay segments must cover the final date.');return s;});
 }
-export function determineCase(context,input,data){
+export function determineCase(context,input,data,{assignedApproval=false}={}){
+ // The configured approver's recorded decision replaces role-specific signed
+ // processing references. Actual historical and monetary sources remain required.
+ const retainedReferences=['prior_history_reference','salary_valuation_reference'];
+ const reference=(facts,key)=>{if(!assignedApproval||facts===data||retainedReferences.includes(key)){
+  requireFact(typeof facts[key]==='string'&&facts[key].trim().length>=5&&facts[key].length<=500,`Record the ${assignedApproval?'':'signed '}${key.replace(/_/g,' ')}.`);
+ }};
  const evaluation=caseFoundation(context,input),facts=structuredClone(data.facts||{});requireFact(facts&&typeof facts==='object'&&!Array.isArray(facts)&&JSON.stringify(facts).length<=12000,'Use a bounded factual determination.');
  reference(data,'source_reference');reference(data,'evidence_reference');confirmed(facts,'eligibility_confirmed');
  const pay=validatePaySegments(input,data.pay_segments),count=dayNumber(input.end_date)-dayNumber(input.start_date)+1,service=serviceFacts(context,input.start_date),six=service.milestone(6);
@@ -75,7 +81,7 @@ export function determineCase(context,input,data){
    requireFact(facts.sex_eligibility==='female','Verify the female-employee eligibility specified by the reference.');
    requireFact(Number.isInteger(facts.pregnancy_number)&&facts.pregnancy_number>=1&&facts.pregnancy_number<=30,'Verify the pregnancy count.');confirmed(facts,'certificate_complete');dayNumber(facts.expected_birth_date);
    if(input.start_date>isoDay(dayNumber(facts.expected_birth_date)-42))confirmed(facts,'fitness_certified');
-   tasks.push({kind:'return_confirmation',due_date:isoDay(dayNumber(input.end_date)-28),description:'Contact Chief Secretary four weeks before leave ends; record same/equivalent position and retained benefits on return.'});
+   tasks.push({kind:'return_confirmation',due_date:isoDay(dayNumber(input.end_date)-28),description:assignedApproval?'Confirm the return date, position and retained benefits.':'Contact Chief Secretary four weeks before leave ends; record same/equivalent position and retained benefits on return.'});
   }else{
    requireFact(facts.sex_eligibility===(input.code==='paternity'?'male':'female'),'Verify the employee eligibility specified by the reference.');dayNumber(facts.event_date);
    requireFact(input.start_date===facts.event_date,'Parental leave must start at the recorded birth/adoption event.');

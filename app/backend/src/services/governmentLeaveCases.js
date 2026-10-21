@@ -1,3 +1,4 @@
+import {isSimpleApproval,simpleCaseDetails,simpleCaseInput,approvalChecks,scheduledBenefitUnits} from '../lib/governmentLeaveSimpleApproval.js';
 import {benefitBasisFor} from './governmentLeaveBenefitReconciliation.js';
 import {approvalRouteFor} from './governmentLeaveApprovalRoutes.js';
 import {standardLwopPeriod,isStandardLwop,standardLwopTerms} from '../lib/governmentLeaveStandardLwop.js';
@@ -28,8 +29,8 @@ async function overlap(client,employeeId,input,exclude=null,transferRequestId=nu
  const transfer=await legacyTransferFor(client,employeeId,input,transferRequestId||exclude);
  if((await client.query("SELECT 1 FROM hr_leave_applications legacy WHERE employee_id=$1 AND status IN ('pending','approved') AND NOT EXISTS(SELECT 1 FROM hr_gov_legacy_transfers t JOIN hr_gov_requests carried ON carried.id=t.request_id WHERE t.legacy_request_id=legacy.id AND t.approval_preserved) AND ($4::uuid IS NULL OR id<>$4) AND daterange(start_date,end_date,'[]') && daterange($2,$3,'[]')",[employeeId,input.start_date,input.end_date,transfer?.legacy_request_id||null])).rowCount)fail('Reconcile overlapping historical pending or granted leave first.');
 }
-export async function submitCase(pool,{user,actor,employeeId,data,documents=[],client:existingClient}){
- const input={code:data.code,start_date:data.start_date,end_date:data.end_date,reason:text(data.reason,'case explanation',10,4000),event_reference:text(data.event_reference||(data.code==='lwop'?`lwop:${data.request_id}`:null),'event reference'),related_request_id:data.related_request_id||null,assisted_reference:data.assisted_reference?text(data.assisted_reference,'employee assisted-entry authority'):null,notice_date:workflow.today(),...(data.code==='amendment'&&data.amendment_action?{amendment_action:data.amendment_action}:{})};
+export async function submitCase(pool,{user,actor,employeeId,data,documents=[],client:existingClient,simpleApproval=false}){
+ const input={code:data.code,start_date:data.start_date,end_date:data.end_date,reason:text(data.reason,'case explanation',10,4000),event_reference:text(data.event_reference||(simpleApproval||data.code==='lwop'?`${data.code}:${data.request_id}`:null),'event reference'),related_request_id:data.related_request_id||null,assisted_reference:data.assisted_reference?text(data.assisted_reference,'employee assisted-entry authority'):null,notice_date:workflow.today(),...(simpleApproval?{case_details:rules(()=>simpleCaseDetails(data.case_details,data.code))}:{}),...(data.code==='amendment'&&data.amendment_action?{amendment_action:data.amendment_action}:{})};
  if(input.amendment_action&&!['cancel_grant','shorten_grant'].includes(input.amendment_action))fail('Choose cancellation or early return.',400);
  const {notice_date:_notice,...stableInput}=input;const hash=fingerprint({input:stableInput,documents:documents.map(d=>({sha256:d.sha256,file_name:d.file_name}))});
  const work=async client=>{
@@ -39,20 +40,20 @@ export async function submitCase(pool,{user,actor,employeeId,data,documents=[],c
   if(['attendance','amendment'].includes(input.code)&&!isCentralHr(state.user))fail('Attendance determinations and amendments require central HR assisted entry.',403);
   const separationCase=employee.status!=='active'&&isCentralHr(state.user)&&['long_service','furlough','recreation_separation'].includes(input.code)&&input.start_date===input.end_date;
   if(employee.status!=='active'&&!separationCase||!employee.department_id||!employee.division_id)fail('An active employee and verified placement are required.');
-  const old=(await client.query('SELECT * FROM hr_gov_requests WHERE id=$1',[data.request_id])).rows[0];if(old){const legacyHash=fingerprint({input:{...input,notice_date:old.application_snapshot.input.notice_date},documents:documents.map(d=>({sha256:d.sha256,file_name:d.file_name}))});if(old.employee_id!==employeeId||![hash,legacyHash].includes(old.payload_hash))fail('The request key was used for different facts.');return {id:old.id,status:old.status};}
+  const old=(await client.query('SELECT * FROM hr_gov_requests WHERE id=$1',[data.request_id])).rows[0];if(old){const docHashes=documents.map(d=>({sha256:d.sha256,file_name:d.file_name})),legacyHash=fingerprint({input:{...input,notice_date:old.application_snapshot.input.notice_date},documents:docHashes}),hashes=[hash,legacyHash];if(simpleApproval&&!Object.keys(input.case_details||{}).length&&!old.application_snapshot.simple_approval){const {case_details:_details,...previousInput}=stableInput;hashes.push(fingerprint({input:previousInput,documents:docHashes}),fingerprint({input:{...previousInput,notice_date:old.application_snapshot.input.notice_date},documents:docHashes}));}if(old.employee_id!==employeeId||!hashes.includes(old.payload_hash))fail('The request key was used for different facts.');return {id:old.id,status:old.status};}
   const transfer=await legacyTransferFor(client,employeeId,input,data.request_id);if(transfer&&(!isCentralHr(state.user)||input.assisted_reference!==transfer.source_reference))fail('Use central HR assisted entry with the certified transfer reference.',403);
   const {evaluation,context}=await snapshot(client,employeeId,input);await overlap(client,employeeId,input,null,transfer?data.request_id:null);
-  const configuredRoute=input.code==='lwop'?await approvalRouteFor(client,employee.department_id,input.code):null;
+  const configuredRoute=simpleApproval||input.code==='lwop'?await approvalRouteFor(client,employee.department_id,input.code,{simple:simpleApproval}):null;
   const basis=context.bases.find(b=>b.id===evaluation.service_basis_id);
-  const standardLwop=configuredRoute?.configured&&standardLwopPeriod(input,basis?.leap_day_method);
-  const approvalRoute=standardLwop?configuredRoute:null;
+  const standardLwop=!simpleApproval&&configuredRoute?.configured&&standardLwopPeriod(input,basis?.leap_day_method);
+  const approvalRoute=simpleApproval||standardLwop?configuredRoute:null;
   if((await client.query("SELECT 1 FROM hr_gov_requests WHERE employee_id=$1 AND code=$2 AND status IN ('pending','approved') AND application_snapshot->'input'->>'event_reference'=$3",[employeeId,input.code,input.event_reference])).rowCount)fail('This event reference already has a pending or granted case.');
   if(input.related_request_id){
    const original=await workflow.getRequest(client,input.related_request_id);if(original.employee_id!==employeeId||original.status!=='approved')fail('Link an approved case for the same employee.');
    if(input.code==='amendment'&&(await client.query("SELECT 1 FROM hr_gov_case_links l JOIN hr_gov_requests r ON r.id=l.request_id WHERE l.original_request_id=$1 AND l.kind='amendment' AND r.status='pending'",[original.id])).rowCount)fail('An amendment is already pending for this application.');
   }else if(['amendment','extended_medical_minister'].includes(input.code))fail('This case requires its original approved application.');
   const external=(await client.query("SELECT external_id FROM hr_employee_external_ids WHERE employee_id=$1 AND source='techone_payroll'",[employeeId])).rows;
-  const application={...(standardLwop?{standard_lwop:true,approval_route:approvalRoute}:{}),separation_case:separationCase,regime:'government',engine_version:'gov-assisted-1',input,evaluation,assisted_by:input.assisted_reference?actor.id:null,employee:{id:employeeId,name:employee.display_name,department_id:employee.department_id,division_id:employee.division_id,department_name:employee.department_code,division_name:employee.division_code,payroll_id:external.length===1?external[0].external_id:null}};
+  const application={...(simpleApproval?{simple_approval:true,approval_route:approvalRoute}:{}),...(standardLwop?{standard_lwop:true,approval_route:approvalRoute}:{}),separation_case:separationCase,regime:'government',engine_version:'gov-assisted-1',input,evaluation,assisted_by:input.assisted_reference?actor.id:null,employee:{id:employeeId,name:employee.display_name,department_id:employee.department_id,division_id:employee.division_id,department_name:employee.department_code,division_name:employee.division_code,payroll_id:external.length===1?external[0].external_id:null}};
   await client.query(`INSERT INTO hr_gov_requests(id,employee_id,code,start_date,end_date,reason,medical_mode,payload_hash,application_snapshot,department_id,division_id,charge,submitted_by) VALUES($1,$2,$3,$4,$5,$6,'not_applicable',$7,$8,$9,$10,0,$11)`,[data.request_id,employeeId,input.code,input.start_date,input.end_date,input.reason,hash,application,employee.department_id,employee.division_id,actor.id]);
   if(input.related_request_id)await client.query('INSERT INTO hr_gov_case_links(request_id,original_request_id,kind,recorded_by,reference) VALUES($1,$2,$3,$4,$5)',[data.request_id,input.related_request_id,input.code==='amendment'?'amendment':'medical_escalation',actor.id,input.event_reference]);
   const request={id:data.request_id,employee_id:employeeId,department_id:employee.department_id,division_id:employee.division_id};
@@ -69,7 +70,7 @@ function legacyEvaluation(context,evaluation){
 }
 async function contextHash(client,employeeId,input,legacy=false){const {evaluation,context}=await snapshot(client,employeeId,input);const documents=(await client.query('SELECT sha256 FROM hr_gov_request_documents WHERE request_id=$1 ORDER BY id',[input.request_id])).rows;return fingerprint({evaluation:legacy?legacyEvaluation(context,evaluation):evaluation,documents});}
 async function extendedPrerequisite(client,request,facts){
- const original=await workflow.getRequest(client,request.application_snapshot.input.related_request_id);if(facts.prior_extended_request_id!==original.id||original.code!=='extended_medical'||original.status!=='approved'||original.employee_id!==request.employee_id||original.end_date!==isoDay(dayNumber(monthBoundary(original.start_date,3))-1)||request.start_date<=original.end_date)fail('Minister escalation must follow an approved complete three-month Chief Secretary medical extension.');
+ const original=await workflow.getRequest(client,request.application_snapshot.input.related_request_id);if(facts.prior_extended_request_id!==original.id||original.code!=='extended_medical'||original.status!=='approved'||original.employee_id!==request.employee_id||original.end_date!==isoDay(dayNumber(monthBoundary(original.start_date,3))-1)||request.start_date<=original.end_date)fail(isSimpleApproval(request)?'This extension must follow the employee’s approved complete three-month medical extension.':'Minister escalation must follow an approved complete three-month Chief Secretary medical extension.');
  if((await client.query('SELECT 1 FROM hr_gov_case_effects WHERE original_request_id=$1',[original.id])).rowCount)fail('Reconcile the amended medical extension before escalation.');
 }
 async function benefitAvailable(client,request,determination){
@@ -80,7 +81,7 @@ async function benefitAvailable(client,request,determination){
  const basis=await benefitBasisFor(client,request.employee_id);
  if(basis&&basis.service_basis_id!==evaluation.service_basis_id)fail('Certified benefit service basis changed; independently reconcile the preserved benefit register before further commitments.');
  if(basis&&(basis.source_reference!==facts.prior_history_reference||units(basis.prior_units)!==units(benefit.prior)||basis.unit!==benefit.unit||basis.transition_reference!==facts.transition_resolution_reference))fail('The certified historical benefit baseline changed. Resolve it through a sourced reconciliation; do not reset prior payouts.');
- text(facts.transition_resolution_reference,'long-service/furlough transition determination');
+ if(!isSimpleApproval(request))text(facts.transition_resolution_reference,'long-service/furlough transition determination');
  const used=(await client.query(`SELECT COALESCE(sum(b.units-COALESCE(e.refund,0)),0)::text AS total FROM hr_gov_benefit_commitments b LEFT JOIN LATERAL(SELECT sum((effect->>'benefit_refund')::numeric) AS refund FROM hr_gov_case_effects WHERE original_request_id=b.request_id)e ON TRUE WHERE b.employee_id=$1 AND b.basis_id=$2`,[request.employee_id,basis?.id||null])).rows[0].total;
  // Include reviewed pending commitments so independently verified cases cannot
  // reserve the same remaining benefit for leave and encashment.
@@ -103,7 +104,7 @@ async function validateAmendment(client,request,determination){
 export async function prepareDetermination(pool,{user,actor,id,data}){
  return withTransaction(pool,async client=>{
   await client.query("SELECT pg_advisory_xact_lock_shared(hashtext('hr-gov-policies'))");await workflow.assertCentral(client,user);const {request}=await locked(client,id);if(!isCase(request.code)||request.status!=='pending')fail('Only pending assisted cases accept a determination.');
-  if(isStandardLwop(request))fail('Pay for this LWOP application is calculated automatically. Use the assigned approval route.');
+  if(isSimpleApproval(request)||isStandardLwop(request))fail('Leave details and pay are checked during approval. Use the assigned approval route; fixed pay is calculated automatically.');
   if((await workflow.stagesFor(client,id)).some(s=>s.level==='hr_verifier'&&s.decision))fail('HR verification already froze this determination. Cancel/resubmit a pending case to correct it.');
   const input={...request.application_snapshot.input,request_id:id},context=await ledger.loadContext(client,request.employee_id),determination=rules(()=>determineCase(context,input,data));
   if(!['lwop','attendance','amendment'].includes(request.code)&&(await client.query('SELECT 1 FROM hr_gov_request_documents WHERE request_id=$1',[id])).rowCount===0)fail('Supporting evidence must be retained before the factual determination.');
@@ -116,10 +117,49 @@ export async function prepareDetermination(pool,{user,actor,id,data}){
  });
 }
 async function parentalDuplicate(client,request,d){if(!['maternity','paternity','adoption'].includes(request.code))return;const key=request.code==='maternity'?'expected_birth_date':'event_date',value=d.facts[key];if((await client.query(`SELECT 1 FROM hr_gov_requests r JOIN LATERAL(SELECT determination FROM hr_gov_case_determinations WHERE request_id=r.id ORDER BY version DESC LIMIT 1)d ON TRUE WHERE r.employee_id=$1 AND r.id<>$2 AND r.code=$3 AND r.status IN ('pending','approved') AND ${effectiveAbsenceSql()} AND d.determination->'facts'->>$4=$5`,[request.employee_id,request.id,request.code,key,value])).rowCount)fail('This parental event already has a reviewed pending or granted case.');}
-export async function verifyCase(client,request,employee,{hrActor=null,final=false,discretionConfirmed=false}={}){
+async function verifySimpleCase(client,request,context,evaluation,{final,approval}){
+ if(!final)return null;
+ let row=await determinationFor(client,request.id);
+ const input={...request.application_snapshot.input,request_id:request.id};
+ if(approval){
+  if(approval.certification_confirmed!==true)fail('Confirm the application details before approving.',400);
+  if(row)fail('This application already has recorded review details. Reload before approving.');
+  const details=rules(()=>simpleCaseDetails(approval.case_details,request.code));
+  if(FINANCIAL_CODES.includes(request.code)){
+   const basis=await benefitBasisFor(client,request.employee_id);
+   if(basis)Object.assign(details,{prior_consumed:basis.prior_units,duration_unit:basis.unit,prior_history_reference:basis.source_reference,transition_resolution_reference:basis.transition_reference});
+   if(request.code==='furlough'&&details.action==='take_leave')details.requested_units=rules(()=>scheduledBenefitUnits(evaluation,details.duration_unit));
+   if(['recreation_encashment','recreation_separation'].includes(request.code)){
+    const accounts=context.entitlements.filter(e=>e.code==='recreation'&&e.as_of<=request.start_date&&e.period_end>=request.start_date);
+    if(!details.entitlement_id&&accounts.length===1)details.entitlement_id=accounts[0].id;
+    details.prior_consumed='0';details.duration_unit='working_days';details.prior_history_reference=`leave-account:${details.entitlement_id}`;
+   }
+  }
+  const data=rules(()=>simpleCaseInput(context,input,details,`leave-approval:${approval.event_key}`));
+  const determination=rules(()=>determineCase(context,input,data,{assignedApproval:true}));
+  if(!['lwop','attendance','amendment'].includes(request.code)&&!(await client.query('SELECT 1 FROM hr_gov_request_documents WHERE request_id=$1',[request.id])).rowCount)fail('Attach the supporting documents before approval.');
+  await validateSimpleCase(client,request,determination);
+  row=(await client.query('INSERT INTO hr_gov_case_determinations(request_id,version,prepared_by,source_reference,evidence_reference,reason,determination,context_hash) VALUES($1,1,$2,$3,$4,$5,$6,$7) RETURNING *',[request.id,approval.actor.id,determination.source_reference,determination.evidence_reference,approval.note,determination,await contextHash(client,request.employee_id,input)])).rows[0];
+  if(['recreation_encashment','recreation_separation'].includes(request.code))await client.query('INSERT INTO hr_gov_case_credit_holds(determination_id,request_id,entitlement_id,amount) VALUES($1,$2,$3,$4)',[row.id,request.id,determination.facts.entitlement_id,determination.benefit.requested]);
+  await audit(client,approval.actor,'hr.gov.case.reviewed_with_approval',request.id,{determination_id:row.id,event_key:approval.event_key});
+ }
+ if(!row)fail('Complete the leave details in the approval form.',400);
+ if(row.context_hash!==await contextHash(client,request.employee_id,input))fail('The application details changed. Reload before approving.');
+ const determination=rules(()=>determineCase(context,input,row.determination,{assignedApproval:true}));
+ await validateSimpleCase(client,request,determination);
+ return row;
+}
+async function validateSimpleCase(client,request,determination){
+ if(request.application_snapshot.separation_case&&['take_leave','encashment'].includes(determination.facts.action))fail('A former employee’s application must use the actual reason for leaving employment.');
+ if(request.code==='extended_medical_minister')await extendedPrerequisite(client,request,determination.facts);
+ if(request.code==='amendment')await validateAmendment(client,request,determination);
+ await benefitAvailable(client,request,determination);await parentalDuplicate(client,request,determination);
+}
+export async function verifyCase(client,request,employee,{hrActor=null,final=false,discretionConfirmed=false,approval=null}={}){
  if(employee.status!=='active'&&!request.application_snapshot.separation_case||employee.leave_policy_regime!=='government'||employee.department_id!==request.department_id||employee.division_id!==request.division_id)fail('Active government status and submitted placement must remain verified. Cancel/resubmit or use the sourced assisted continuation.');
  const {evaluation,context}=await snapshot(client,request.employee_id,request.application_snapshot.input),applicationEvaluation=request.application_snapshot.evaluation;const currentHash=applicationEvaluation.snapshot_projection_version===2?evaluation.snapshot_hash:legacyEvaluation(context,evaluation).snapshot_hash;if(currentHash!==applicationEvaluation.snapshot_hash)fail('Policy, service, calendar or roster changed; cancel/resubmit for fresh approval.');
  await overlap(client,request.employee_id,request.application_snapshot.input,request.id);
+ if(isSimpleApproval(request))return verifySimpleCase(client,request,context,evaluation,{final,approval});
  if(isStandardLwop(request)){
   const basis=context.bases.find(b=>b.id===evaluation.service_basis_id);
   if(!standardLwopPeriod(request.application_snapshot.input,basis?.leap_day_method))fail('LWOP longer than twelve months needs an extended-leave review.');
@@ -145,7 +185,7 @@ export async function grantCaseEffects(client,request,row,actor){
  }
  if(d.benefit){
   let basis=null;if(!['recreation_encashment','recreation_separation'].includes(request.code)){
-   basis=await benefitBasisFor(client,request.employee_id);if(!basis)basis=(await client.query(`INSERT INTO hr_gov_benefit_bases(employee_id,service_basis_id,source_reference,prior_units,unit,transition_reference,request_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(employee_id,service_basis_id) DO NOTHING RETURNING *`,[request.employee_id,d.evaluation.service_basis_id,d.facts.prior_history_reference,d.benefit.prior,d.benefit.unit,d.facts.transition_resolution_reference,request.id])).rows[0]||(await client.query('SELECT * FROM hr_gov_benefit_bases WHERE employee_id=$1 AND service_basis_id=$2',[request.employee_id,d.evaluation.service_basis_id])).rows[0];
+   basis=await benefitBasisFor(client,request.employee_id);if(!basis)basis=(await client.query(`INSERT INTO hr_gov_benefit_bases(employee_id,service_basis_id,source_reference,prior_units,unit,transition_reference,request_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(employee_id,service_basis_id) DO NOTHING RETURNING *`,[request.employee_id,d.evaluation.service_basis_id,d.facts.prior_history_reference,d.benefit.prior,d.benefit.unit,d.facts.transition_resolution_reference||(isSimpleApproval(request)?d.source_reference:null),request.id])).rows[0]||(await client.query('SELECT * FROM hr_gov_benefit_bases WHERE employee_id=$1 AND service_basis_id=$2',[request.employee_id,d.evaluation.service_basis_id])).rows[0];
   }else await ledger.postMovement(client,{entitlementId:d.facts.entitlement_id,kind:'use',amount:decimal(-units(d.benefit.requested)),effectiveDate:request.start_date,excludeCaseRequestId:request.id,eventKey:`case-use:${request.id}`,sourceReference:`government-case:${request.id}`,actor,reason:row.reason});
   await client.query('INSERT INTO hr_gov_benefit_commitments(request_id,employee_id,basis_id,code,units,determination_id) VALUES($1,$2,$3,$4,$5,$6)',[request.id,request.employee_id,basis?.id||null,request.code,d.benefit.requested,row.id]);effects.benefit=d.benefit;
  }
@@ -175,7 +215,7 @@ export async function caseView(client,user,request,privateAccess){
  if(!isCase(request.code))return {case:false};
  const row=await determinationFor(client,request.id),effect=(await client.query('SELECT effect FROM hr_gov_case_effects WHERE request_id=$1',[request.id])).rows[0]?.effect;
  const tasks=(await client.query(`SELECT t.id,t.kind,to_char(t.due_date,'YYYY-MM-DD') AS due_date,t.description,COALESCE(e.action,'open') AS status,e.reference FROM hr_gov_case_tasks t LEFT JOIN LATERAL(SELECT * FROM hr_gov_task_events e WHERE e.task_id=t.id ORDER BY e.recorded_at DESC,e.id DESC LIMIT 1)e ON TRUE WHERE t.request_id=$1 ORDER BY t.recorded_at,t.id`,[request.id])).rows;
- return {case:true,standard_lwop:isStandardLwop(request),amendment_action:request.application_snapshot.input.amendment_action||null,event_reference:request.application_snapshot.input.event_reference,related_request_id:request.application_snapshot.input.related_request_id,assisted_entry:!!request.application_snapshot.assisted_by,can_prepare:!isStandardLwop(request)&&isCentralHr(user)&&request.status==='pending'&&!(await workflow.stagesFor(client,request.id)).some(s=>s.level==='hr_verifier'&&s.decision),determination:row?{id:row.id,prepared_by:row.prepared_by,version:row.version,source_reference:row.source_reference,pay_segments:row.determination.pay_segments,benefit:row.determination.benefit,discretion:row.determination.discretion,...(privateAccess?{facts:row.determination.facts,reason:row.reason,evidence_reference:row.evidence_reference}:{})}:null,tasks:privateAccess?tasks:tasks.map(t=>({...t,description:'Personnel follow-up is recorded by authorised HR.',reference:null})),effect:effect?{absence:effect.absence,action:effect.action,effective_end:effect.effective_end}:null,can_manage_tasks:isCentralHr(user)&&privateAccess};
+ return {case:true,simple_approval:isSimpleApproval(request),...(isSimpleApproval(request)&&privateAccess?{case_details:request.application_snapshot.input.case_details||{},approval_checks:approvalChecks(request.code),benefit_basis:FINANCIAL_CODES.includes(request.code)?await benefitBasisFor(client,request.employee_id):null}:{}),standard_lwop:isStandardLwop(request),amendment_action:request.application_snapshot.input.amendment_action||null,event_reference:request.application_snapshot.input.event_reference,related_request_id:request.application_snapshot.input.related_request_id,assisted_entry:!!request.application_snapshot.assisted_by,can_prepare:!isSimpleApproval(request)&&!isStandardLwop(request)&&isCentralHr(user)&&request.status==='pending'&&!(await workflow.stagesFor(client,request.id)).some(s=>s.level==='hr_verifier'&&s.decision),determination:row?{id:row.id,prepared_by:row.prepared_by,version:row.version,source_reference:row.source_reference,pay_segments:row.determination.pay_segments,benefit:row.determination.benefit,discretion:row.determination.discretion,...(privateAccess?{facts:row.determination.facts,reason:row.reason,evidence_reference:row.evidence_reference}:{})}:null,tasks:privateAccess?tasks:tasks.map(t=>({...t,description:'Personnel follow-up is recorded by authorised HR.',reference:null})),effect:effect?{absence:effect.absence,action:effect.action,effective_end:effect.effective_end}:null,can_manage_tasks:isCentralHr(user)&&privateAccess};
 }
 export async function recordTaskEvent(pool,{user,actor,id,taskId,data}){
  return withTransaction(pool,async client=>{
@@ -200,7 +240,7 @@ export async function recordTaskEvent(pool,{user,actor,id,taskId,data}){
  });
 }
 
-export async function continueRequest(pool,{user,actor,id,data}){
+export async function continueRequest(pool,{user,actor,id,data,simpleApproval=false}){
  return withTransaction(pool,async client=>{
   await client.query("SELECT pg_advisory_xact_lock_shared(hashtext('hr-gov-policies'))");await client.query("SELECT pg_advisory_xact_lock_shared(hashtext('hr-approval-assignments'))");await workflow.assertCentral(client,user);const {request}=await locked(client,id);
   const existing=(await client.query('SELECT * FROM hr_gov_continuations WHERE original_request_id=$1',[id])).rows[0];if(existing){if(existing.request_id!==data.request_id||existing.actor_id!==actor.id||existing.source_reference!==data.source_reference?.trim()||existing.reason!==data.reason?.trim())fail('This original application already has a different continuation.');return {id:existing.request_id,status:(await workflow.getRequest(client,existing.request_id)).status};}
@@ -208,7 +248,7 @@ export async function continueRequest(pool,{user,actor,id,data}){
   const reference=text(data.source_reference,'continuation authority'),reason=text(data.reason,'continuation reason',10,1000),documents=(await client.query('SELECT * FROM hr_gov_request_documents WHERE request_id=$1',[id])).rows;
   await workflow.cancelRequest(pool,{client,user,actor,id,reason});
   const input={...request.application_snapshot.input,request_id:data.request_id,assisted_reference:reference};
-  const result=await (isCase(request.code)?submitCase:workflow.submitRequest)(pool,{client,user,actor,employeeId:request.employee_id,data:input,documents});
+  const result=await (isCase(request.code)?submitCase:workflow.submitRequest)(pool,{client,user,actor,employeeId:request.employee_id,data:input,documents,simpleApproval});
   // An event escalation/amendment already retains its prerequisite link. The
   // continuation relationship is separately included in the new audit entry.
   if(!input.related_request_id)await client.query("INSERT INTO hr_gov_case_links(request_id,original_request_id,kind,recorded_by,reference) VALUES($1,$2,'continuation',$3,$4)",[result.id,id,actor.id,reference]);

@@ -13,13 +13,17 @@ The employee stays selected while you switch between **Leave**, **Balances**, an
 
 To submit a new request for an employee, select **Apply on behalf**. The form opens only when requested and closes after successful submission. The application remains in that employee's list for tracking.
 
-## Leave without pay
+## Approval for every leave type
 
-For ordinary LWOP of up to twelve months, the employee enters dates, a reason and any supporting documents. A personnel-file reference is not required. Where a shared approval route is configured, LWOP uses that route and its assigned officers, just like other routine applications. It does not add Head of Department, HR, Secretary or Chief Secretary stages to a route that only requires the supervisor.
+Every new application uses the configured approval route for its department, or the Government default. Without a configured route, it goes to the employee’s assigned Supervisor. Leave types never add HR, Head of Department, Secretary or Minister stages automatically. More stages are used only when explicitly configured.
 
-Pay is automatically zero. The assigned approver can read the LWOP reason and attachments, certify the application and approve it in the normal application screen. There is no separate HR factual/pay determination or mandatory decision-reason form. The final approval records the service pause and produces the approval PDF without deducting paid leave days. This access does not open private Medical records. LWOP beyond twelve months retains the extended-leave review.
+The assigned approver opens the application, reviews the reason and supporting documents, confirms the application and approves or rejects it. Comments are optional for approval; rejection requires a reason. Medical and Special evidence is checked with the approval, without a separate HR verification. Evidence access is limited to valid assigned approvers for that application and existing employee/evidence permissions; it does not open unrelated clinical records.
 
-The maintenance repair for older LWOP applications preserves their original facts, stages and decisions. It can complete an incorrectly routed application only when existing certified approvals already satisfy the current configured route; it adds an immutable correction and audit record rather than rewriting or creating approval decisions.
+Parental dates and eligibility, extended Medical pay, extended LWOP purpose and financial benefit details appear in the application or final approval screen as needed. Fixed pay rates and parental service-milestone splits are calculated automatically. Benefit history and actual monetary valuations remain required for payments, with balance and duplicate-use checks in the same transaction. There is no separate HR preparation or independent verification step for new applications.
+
+For LWOP, pay is zero and paid leave days are not deducted. Final approval records the service pause and produces the PDF. A period over twelve months needs the study or exceptional-circumstances basis in the same application and approval.
+
+Historical completed applications retain their original decisions and PDFs. Maintenance can move unreviewed pending applications to this rule through an immutable correction with an audit entry, preserving the original facts, stages, decisions and balances. It never records approval on behalf of an officer. Applications with existing review decisions require explicit reconciliation rather than automatic reinterpretation.
 
 ## Cancel approved Government leave
 
@@ -28,7 +32,7 @@ Open the approved application, select Application actions → **Cancel or shorte
 - Cancellation retains the currently approved dates and requests restoration of the remaining deduction.
 - Early return asks for the last date of leave taken and restores only the released portion.
 
-Record the employee's authority and reason. The created amendment opens immediately for HR review. HR prepares the case details, an independent HR officer verifies them, and the required approval stages complete. The balance changes at final amendment approval. The original approval and PDF remain in history. Leave already shortened can be cancelled for its remaining portion; a completed cancellation cannot refund the same deduction twice.
+Record the employee's authority and reason. The created amendment opens immediately and follows the same configured approval route. The assigned approver confirms the requested change in the application; no separate HR determination or verification is added. The balance changes at final amendment approval. The original approval and PDF remain in history. Leave already shortened can be cancelled for its remaining portion; a completed cancellation cannot refund the same deduction twice.
 
 Cancelled approved leave appears as **Cancelled after approval** and is found under the Cancelled filter. A shortened grant is labelled **Shortened after approval** and remains in the Approved filter. An approved form downloaded from the original application records the original grant.
 

@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { ButtonHTMLAttributes, KeyboardEvent, ReactNode, SVGProps } from 'react';
+import type { ButtonHTMLAttributes, KeyboardEvent, MouseEvent, ReactNode, SVGProps } from 'react';
 
 type IconName =
     | 'alert'
@@ -104,7 +104,7 @@ export function Icon({ name, className = 'h-4 w-4', ...props }: IconProps) {
 
 export function LoadingState({ label = 'Loading…' }: { label?: string }) {
     return (
-        <div className="state-surface">
+        <div className="state-surface" role="status" aria-live="polite">
             <span className="h-7 w-7 animate-spin rounded-full border-2 border-gray-200 border-t-amber-500" />
             <span>{label}</span>
         </div>
@@ -206,7 +206,37 @@ export function Button({
     );
 }
 
+/** A single asynchronous click, with immediate duplicate protection and visible progress. */
+export function AsyncButton({ onClick, onError, loadingLabel, children, disabled, ...props }: Omit<Parameters<typeof Button>[0], 'onClick' | 'onError' | 'loading'> & {
+    onClick: (event: MouseEvent<HTMLButtonElement>) => Promise<unknown>;
+    onError: (error: Error) => void;
+    loadingLabel?: string;
+}) {
+    const running = useRef(false);
+    const [busy, setBusy] = useState(false);
+    return <Button {...props} disabled={disabled} loading={busy} onClick={async event => {
+        if (disabled || running.current) return;
+        running.current = true;
+        setBusy(true);
+        try { await onClick(event); }
+        catch (error) { onError(error instanceof Error ? error : new Error('Unable to complete this action.')); }
+        finally { running.current = false; setBusy(false); }
+    }}>{busy && loadingLabel ? loadingLabel : children}</Button>;
+}
+
 const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+function focusableElements(panel: HTMLElement) {
+    return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE))
+        .filter(element => !element.matches(':disabled') && element.getClientRects().length > 0);
+}
+
+// Dialogs may close in a different order from the order in which they opened.
+const scrollLocks = new Set<symbol>();
+let originalOverflow = '';
+function topModal() {
+    const dialogs = document.querySelectorAll<HTMLElement>('[data-app-modal]');
+    return dialogs.item(dialogs.length - 1);
+}
 
 const modalSizes = { sm: 'max-w-sm', md: 'max-w-md', lg: 'max-w-lg', xl: 'max-w-xl', '2xl': 'max-w-2xl', '3xl': 'max-w-3xl', '4xl': 'max-w-4xl' };
 
@@ -235,40 +265,68 @@ export function Modal({
     const titleId = useId();
     const descriptionId = useId();
     const panelRef = useRef<HTMLDivElement>(null);
+    const rootRef = useRef<HTMLDivElement>(null);
     // Read on the first render, before an autoFocus child moves focus inside.
     const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
 
     useEffect(() => {
         const panel = panelRef.current;
-        if (panel && !panel.contains(document.activeElement)) panel.focus();
-        const previousOverflow = document.body.style.overflow;
+        if (panel && topModal() === rootRef.current && !panel.contains(document.activeElement)) panel.focus();
+        const lock = Symbol();
+        if (!scrollLocks.size) originalOverflow = document.body.style.overflow;
+        scrollLocks.add(lock);
         document.body.style.overflow = 'hidden';
         return () => {
-            document.body.style.overflow = previousOverflow;
-            opener?.focus();
+            scrollLocks.delete(lock);
+            if (!scrollLocks.size) document.body.style.overflow = originalOverflow;
+            requestAnimationFrame(() => {
+                const top = topModal();
+                if (opener?.isConnected && (!top || top.contains(opener))) opener.focus();
+            });
         };
     }, [opener]);
+
+    // Disabling or removing the focused action can send focus to the body.
+    // Escape and Tab must still work, even before focus is restored to the dialog.
+    useEffect(() => {
+        const handleOutsideKey = (event: globalThis.KeyboardEvent) => {
+            if (topModal() !== rootRef.current || rootRef.current?.contains(event.target as Node)) return;
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                if (!closeDisabled) onClose();
+            } else if (event.key === 'Tab' && panelRef.current) {
+                event.preventDefault();
+                const elements = focusableElements(panelRef.current);
+                (event.shiftKey ? elements.at(-1) : elements[0])?.focus();
+                if (!elements.length) panelRef.current.focus();
+            }
+        };
+        document.addEventListener('keydown', handleOutsideKey);
+        return () => document.removeEventListener('keydown', handleOutsideKey);
+    }, [closeDisabled, onClose]);
 
     const requestClose = () => {
         if (!closeDisabled) onClose();
     };
 
     const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+        if (topModal() !== rootRef.current) return;
         if (event.key === 'Escape') {
             event.stopPropagation();
             requestClose();
             return;
         }
         if (event.key !== 'Tab' || !panelRef.current) return;
-        const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE));
-        if (!focusable.length) return;
+        event.stopPropagation();
+        const focusable = focusableElements(panelRef.current);
+        if (!focusable.length) { event.preventDefault(); panelRef.current.focus(); return; }
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
         const active = document.activeElement;
         if (event.shiftKey && (active === first || active === panelRef.current)) {
             event.preventDefault();
             last.focus();
-        } else if (!event.shiftKey && active === last) {
+        } else if (!event.shiftKey && (active === last || !panelRef.current.contains(active))) {
             event.preventDefault();
             first.focus();
         }
@@ -276,7 +334,7 @@ export function Modal({
 
     const right = placement === 'right';
     return (
-        <div className={`fixed inset-0 z-50 flex ${right ? 'justify-end' : 'items-center justify-center px-4 py-6'}`} onKeyDown={handleKeyDown}>
+        <div ref={rootRef} data-app-modal="" className={`fixed inset-0 z-50 flex ${right ? 'justify-end' : 'items-center justify-center px-4 py-6'}`} onKeyDown={handleKeyDown}>
             <div className="absolute inset-0 bg-gray-900/60" aria-hidden="true" onClick={closeOnBackdrop ? requestClose : undefined} />
             <div
                 ref={panelRef}
@@ -291,6 +349,7 @@ export function Modal({
                     <div className="min-w-0">
                         <h2 id={titleId} className="text-xl font-semibold text-gray-900">{title}</h2>
                         {description && <div id={descriptionId} className="mt-1 text-sm text-gray-500">{description}</div>}
+                        {closeDisabled && <p role="status" className="mt-2 text-sm text-gray-600">Saving changes… Please wait for confirmation.</p>}
                     </div>
                     <button
                         type="button"

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Button, Modal, ModalActions } from '../components/Ui';
 import {
@@ -19,31 +19,43 @@ type PendingRequest =
 export function ConfirmProvider({ children }: { children: ReactNode }) {
     const [pending, setPending] = useState<PendingRequest | null>(null);
     const [inputValue, setInputValue] = useState('');
+    const active = useRef<PendingRequest | null>(null);
+
+    useEffect(() => () => {
+        const request = active.current;
+        active.current = null;
+        if (request?.kind === 'confirm') request.resolve(false);
+        else request?.resolve(null);
+    }, []);
 
     const confirm = useCallback((options: ConfirmOptions | string) => {
         const opts: ConfirmOptions = typeof options === 'string' ? { message: options } : options;
+        // A second click must never replace a promise that another action is awaiting.
+        if (active.current) return Promise.resolve(false);
         return new Promise<boolean>((resolve) => {
-            setPending({ kind: 'confirm', options: opts, resolve });
+            active.current = { kind: 'confirm', options: opts, resolve };
+            setPending(active.current);
         });
     }, []);
 
     const prompt = useCallback((options: PromptOptions | string) => {
         const opts: PromptOptions = typeof options === 'string' ? { message: options } : options;
+        if (active.current) return Promise.resolve(null);
         setInputValue(opts.defaultValue || '');
         return new Promise<string | null>((resolve) => {
-            setPending({ kind: 'prompt', options: opts, resolve });
+            active.current = { kind: 'prompt', options: opts, resolve };
+            setPending(active.current);
         });
     }, []);
 
     const value = useMemo(() => ({ confirm, prompt }), [confirm, prompt]);
 
     const close = (result: boolean | string | null) => {
-        setPending((current) => {
-            if (!current) return null;
-            if (current.kind === 'confirm') current.resolve(result as boolean);
-            else current.resolve(result as string | null);
-            return null;
-        });
+        const current = active.current;
+        active.current = null;
+        setPending(null);
+        if (current?.kind === 'confirm') current.resolve(result as boolean);
+        else current?.resolve(result as string | null);
     };
 
     const isPrompt = pending?.kind === 'prompt';

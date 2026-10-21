@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Paperclip } from 'lucide-react';
 import { downloadLeaveAttachment, formatFileSize } from './leaveAttachments';
 import type { LeaveApplication } from './types';
@@ -17,20 +17,24 @@ export function LeaveAttachmentLinks({
     application: LeaveApplication;
     onError: (message: string) => void;
 }) {
-    const [busyId, setBusyId] = useState<string | null>(null);
+    const [busyIds, setBusyIds] = useState<string[]>([]);
+    const running = useRef(new Set<string>());
     const attachments = application.attachments ?? [];
     if (!attachments.length) return null;
 
     const open = async (attachmentId: string) => {
         const attachment = attachments.find((item) => item.id === attachmentId);
-        if (!attachment) return;
-        setBusyId(attachmentId);
+        if (!attachment || running.current.has(attachmentId)) return;
+        onError('');
+        running.current.add(attachmentId);
+        setBusyIds([...running.current]);
         try {
             await downloadLeaveAttachment(application.id, attachment);
         } catch (err) {
             onError((err as Error)?.message || 'Unable to download the attachment.');
         } finally {
-            setBusyId(null);
+            running.current.delete(attachmentId);
+            setBusyIds([...running.current]);
         }
     };
 
@@ -41,10 +45,11 @@ export function LeaveAttachmentLinks({
                     <button
                         type="button"
                         onClick={() => void open(attachment.id)}
-                        disabled={busyId === attachment.id}
+                        disabled={busyIds.includes(attachment.id)}
+                        aria-busy={busyIds.includes(attachment.id) || undefined}
                         className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline disabled:opacity-50"
                     >
-                        <Paperclip size={13} aria-hidden="true" />
+                        {busyIds.includes(attachment.id) ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" /> : <Paperclip size={13} aria-hidden="true" />}
                         {attachment.file_name}
                         {attachment.byte_size > 0 && (
                             <span className="font-normal text-gray-500">({formatFileSize(attachment.byte_size)})</span>

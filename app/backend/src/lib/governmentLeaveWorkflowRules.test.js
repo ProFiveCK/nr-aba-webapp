@@ -19,6 +19,11 @@ test('uncertified counter counts baseline and pending holds; adjacent certified 
  assert.match(medicalAssessment(c,config,{...input,end_date:'2026-11-09'},result).issues.join(),/one calendar date/);
 });
 
+test('Medical assessment rejects missing or inapplicable certificate status before allowing a request',()=>{
+ const c=context(),config={medical_period_start:'2026-01-01',medical_history:[]},result={charge:'1.000000',allocations:[{entitlement_id:'medical'}],segments:[{policy_version_id:'policy'}]};
+ for(const mode of [undefined,null,'','not_applicable','unknown'])assert.match(medicalAssessment(c,config,{code:'medical',start_date:'2026-11-06',end_date:'2026-11-06',medical_mode:mode},result).issues.join(' '),/Choose with MC or without MC/);
+});
+
 test('verified single-shift exception charges roster days while old approvals keep exactly one day',()=>{
  const c=context();c.bases[0].schedule_mode='roster';c.rosters=[{day:'2026-11-06',paid_hours:'12',policy_days:'1.5'}];
  const config={medical_rule:'single_verified_shift_nonadjacent_scheduled_days',medical_period_start:'2026-01-01',medical_history:[]},input={code:'medical',start_date:'2026-11-06',end_date:'2026-11-06',medical_mode:'exemption'},result={charge:'1.500000',allocations:[{entitlement_id:'medical'}],segments:[{policy_version_id:'policy'}]};

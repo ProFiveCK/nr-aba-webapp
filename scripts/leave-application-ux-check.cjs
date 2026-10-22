@@ -15,14 +15,16 @@ const assert=require('node:assert/strict');
  let submitted=false,uploadFailure='',decisionFailure='',decisionCount=0,blocked=false,previews=0,pdfs=0;
  let enabledCodes=['recreation','medical','special'],caseFailure='',staffOnly=false;const caseUploads=[];
  let recordedMode=false,recordedDecisions=[];
+ let medicalMode='certificate';
+ const medicalTracking={configured:true,period_start:'2026-01-01',period_end:'2026-12-31',annual_days:'10',shared:{balance:'6',held:'1.5',available:'4.5'},certified:{approved_days:'2',pending_days:'0.5',baseline_days:'1'},uncertified:{approved_days:'1',pending_days:'1',baseline_days:'0',approved_occasions:1,pending_occasions:1,baseline_occasions:0,limit:3,committed_occasions:2,remaining_occasions:1},baseline_reviewed:true,issues:[]};
  let leaveCode='recreation',levels=['department','chief_secretary'],canVerify=false,evidenceRequired=false,evidenceVerified=false,canDecide=true,evidenceReviews=0;
  const certification='I certify that I have verified the application details and supporting information.';
- const summary=()=>({id:'application-123',employee_id:'employee',employee_name:'Applicant Example',code:leaveCode,start_date:'2026-11-16',end_date:'2026-11-16',charge:'0.5',duration_unit:'hours',hours:'3.5',status:decisionCount===levels.length?'approved':'pending',submitted_at:'2026-10-15T01:00:00Z',current_level:decisionCount?'chief_secretary':'department',current_label:decisionCount?'Chief Secretary':'Head of Department',current_approver:decisionCount?'Final Approver':'Department Approver',unassigned_stages:0,stage_index:Math.min(decisionCount,levels.length-1),can_pdf:decisionCount===levels.length});
+ const summary=()=>({medical_mode:leaveCode==='medical'?medicalMode:'not_applicable',id:'application-123',employee_id:'employee',employee_name:'Applicant Example',code:leaveCode,start_date:'2026-11-16',end_date:'2026-11-16',charge:'0.5',duration_unit:'hours',hours:'3.5',status:decisionCount===levels.length?'approved':'pending',submitted_at:'2026-10-15T01:00:00Z',current_level:decisionCount?'chief_secretary':'department',current_label:decisionCount?'Chief Secretary':'Head of Department',current_approver:decisionCount?'Final Approver':'Department Approver',unassigned_stages:0,stage_index:Math.min(decisionCount,levels.length-1),can_pdf:decisionCount===levels.length});
  await page.route('**/api/**',async route=>{
   const request=route.request(),url=new URL(request.url()),path=url.pathname;let body={};
   if(path==='/api/auth/me')body=staffOnly?{reviewer:{...reviewer,role:'user',account_type:'employee',permissions:{hr_access:true,hr_leave_apply:true}},permissions:{hr_access:true,hr_leave_apply:true}}:{reviewer,permissions};
   else if(path==='/api/hr/me')body={employee,balances:[],year:2026};
-  else if(path==='/api/hr/government/workflow/me')body={enabled_codes:enabledCodes,medical_rule:'single_calendar_date_nonadjacent_scheduled_days',policy:{label:'Leave policy',recreation_notice_days:14}};
+  else if(path==='/api/hr/government/workflow/me')body={enabled_codes:enabledCodes,medical_rule:'single_calendar_date_nonadjacent_scheduled_days',medical_tracking:medicalTracking,policy:{label:'Leave policy',recreation_notice_days:14}};
   else if(path==='/api/hr/government/employees/employee/account'){
    accountQueries.push(url.searchParams.toString());const through=url.searchParams.get('forecast_to')||'2026-10-31';
    body={employee,accounts:accounts.map(a=>a.code==='recreation'?{...a,forecast:{through_date:through,projected_accrual:'1.538461',available:'21.538461',schedule_issue:null}}:a),movements:[],total:0,page_size:50,as_of:'2026-10-15'};
@@ -38,7 +40,7 @@ const assert=require('node:assert/strict');
   }else if(path==='/api/hr/government/workflow/requests'){
    queries.push(url.searchParams.toString());const search=url.searchParams.get('search'),status=url.searchParams.get('status');
    const rows=(url.searchParams.get('mode')!=='mine'||submitted)&&(!search||search==='application-123')&&(status==='all'||status===summary().status)?[recordedMode?{...summary(),id:'recorded-123',record_source:'recorded',recorded_application:{id:'recorded-123',employee_name:'Applicant Example',leave_type_name:'Annual',start_date:'2026-11-16',end_date:'2026-11-16',days:1,status:'pending',can_decide:true,reason:'Recorded family appointment.'}}:summary()]:[];body={requests:rows,total:rows.length};
-  }else if(path==='/api/hr/government/workflow/requests/application-123')body={...summary(),stages:levels.map((level,ordinal)=>({id:`stage-${ordinal}`,ordinal,level,label:ordinal?'Chief Secretary':'Head of Department',binding:{id:`binding-${ordinal}`,approver_name:ordinal?'Final Approver':'Department Approver',reviewer_id:'reviewer'},decision:ordinal<decisionCount?{decision:'approved',decided_at:'2026-10-15T02:00:00Z',note:'Reviewed application'}:null,issue:blocked?'The assigned officeholder changed.':null,can_decide:canDecide&&!blocked&&decisionCount===ordinal})),documents:[],reason:'Family appointment during working hours.',medical_mode:leaveCode==='medical'?'certificate':'not_applicable',evidence_review_required:evidenceRequired,evidence_review:evidenceVerified?{actor_id:'reviewer',recorded_at:'2026-10-15T02:00:00Z'}:null,can_verify_evidence:canVerify&&!evidenceVerified,private_access:true,can_cancel:decisionCount===0,case:false};
+  }else if(path==='/api/hr/government/workflow/requests/application-123')body={...summary(),stages:levels.map((level,ordinal)=>({id:`stage-${ordinal}`,ordinal,level,label:ordinal?'Chief Secretary':'Head of Department',binding:{id:`binding-${ordinal}`,approver_name:ordinal?'Final Approver':'Department Approver',reviewer_id:'reviewer'},decision:ordinal<decisionCount?{decision:'approved',decided_at:'2026-10-15T02:00:00Z',note:'Reviewed application'}:null,issue:blocked?'The assigned officeholder changed.':null,can_decide:canDecide&&!blocked&&decisionCount===ordinal})),documents:[],reason:'Family appointment during working hours.',medical_review:leaveCode==='medical'?{checked_at:'2026-10-22T04:00:00Z',issues:[],periods:[{entitlement_id:'medical',request_charge:'0.5',request_held:decisionCount===levels.length?'0':'0.5',other_held:'1',request_occasion_included:medicalMode==='exemption',tracking:medicalTracking}]}:undefined,medical_mode:leaveCode==='medical'?medicalMode:'not_applicable',evidence_review_required:evidenceRequired,evidence_review:evidenceVerified?{actor_id:'reviewer',recorded_at:'2026-10-15T02:00:00Z'}:null,can_verify_evidence:canVerify&&!evidenceVerified,private_access:true,can_cancel:decisionCount===0,case:false};
   else if(path.endsWith('/decisions')){
    decisions.push(JSON.parse(request.postData()));await new Promise(resolve=>setTimeout(resolve,150));if(decisionFailure)return route.fulfill({status:409,json:{message:decisionFailure}});
    if(decisions.at(-1).verify_evidence)evidenceVerified=true;decisionCount++;body={id:'application-123',status:summary().status};
@@ -73,7 +75,13 @@ const assert=require('node:assert/strict');
  assert.ok(accountQueries.some(q=>q.includes('forecast_to=2026-11-17')));
  assert.ok(await page.getByText('This application uses 0.5 days of projected accrual.',{exact:true}).isVisible());
  await reason.fill('Updated reason after checking balance.');assert.equal(await submit().isEnabled(),true);assert.equal(await page.getByText('Ready for submission',{exact:false}).count(),0);
- await page.getByLabel('Leave type',{exact:true}).first().selectOption('medical');const before=uploads.length;await submit().click();await page.getByRole('alert').filter({hasText:'Attach your medical certificate'}).waitFor();assert.equal(uploads.length,before);
+ await page.getByLabel('Leave type',{exact:true}).first().selectOption('medical');const before=uploads.length;
+ const certificateStatus=page.getByLabel('Medical leave certificate status',{exact:true});
+ assert.equal(await certificateStatus.inputValue(),'');assert.equal(await certificateStatus.evaluate(el=>el.required),true);
+ await submit().click();assert.equal(await certificateStatus.evaluate(el=>el.validity.valueMissing),true);assert.equal(uploads.length,before);
+ await page.getByRole('region',{name:'Medical leave tracking',exact:true}).getByText('1 remaining',{exact:true}).waitFor();
+ await certificateStatus.selectOption('exemption');assert.equal(await certificateStatus.evaluate(el=>el.checkValidity()),true);
+ await certificateStatus.selectOption('certificate');await submit().click();await page.getByRole('alert').filter({hasText:'Attach your medical certificate'}).waitFor();assert.equal(uploads.length,before);
  // All staff leave types share one form, while keeping their distinct payloads.
  staffOnly=true;await page.reload();await page.getByRole('heading',{name:'Apply for leave',exact:true}).waitFor();
  await page.getByLabel('Apply in',{exact:true}).selectOption('hours');
@@ -151,8 +159,20 @@ const assert=require('node:assert/strict');
  await page.keyboard.press('Escape');blocked=false;levels=['department'];leaveCode='medical';evidenceRequired=true;
  await page.getByRole('button',{name:'Refresh applications',exact:true}).click();await page.getByRole('button',{name:'Review application',exact:true}).click();
  review=page.getByRole('dialog',{name:'Review leave application',exact:true});await review.getByText(/Contact HR to complete this review/).waitFor();
+ await review.getByText('With MC · medical certificate',{exact:true}).waitFor();
+ const balanceReview=review.getByRole('region',{name:'Medical balance for this application',exact:true});
+ await balanceReview.getByText('Other pending holds',{exact:true}).waitFor();
+ await balanceReview.getByText(/does not deduct it twice/).waitFor();
+ await balanceReview.getByText('1 remaining',{exact:true}).waitFor();
+ assert.ok((await balanceReview.innerText()).includes('available 4.5'));
+ for(const width of [320,390,1280]){await page.setViewportSize({width,height:900});assert.ok(await review.evaluate(el=>el.scrollWidth<=el.clientWidth),`Medical balance overflow at ${width}`);}
  assert.equal(await review.getByRole('button',{name:'Approve leave',exact:true}).isDisabled(),true);await page.keyboard.press('Escape');
- canVerify=true;await page.getByRole('button',{name:'Review application',exact:true}).click();
+ medicalMode='exemption';await page.getByRole('button',{name:'Refresh applications',exact:true}).click();
+ await page.getByText('Without MC · uncertified absence',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'Review application',exact:true}).click();
+ await review.getByText('Without MC · uncertified absence',{exact:true}).waitFor();
+ await review.getByText(/included in the pending non-MC occasions/).waitFor();await page.keyboard.press('Escape');
+ medicalMode='certificate';canVerify=true;await page.getByRole('button',{name:'Review application',exact:true}).click();
  await review.getByText(/Supporting evidence will be verified together/).waitFor();assert.equal(await review.getByRole('button',{name:'Verify supporting evidence',exact:true}).count(),0);
  for(const width of [320,390,1280]){await page.setViewportSize({width,height:900});assert.ok(await review.evaluate(el=>el.scrollWidth<=el.clientWidth),`Certification overflow at ${width}`);}
  await page.setViewportSize({width:390,height:844});

@@ -38,6 +38,7 @@ export function singleMedicalShiftCharge(context,date,charge){
 export function medicalAssessment(context,config,input,result,history=[]) {
   if(input.code!=='medical')return {issues:[],exemptions_used:0};
   const issues=[];
+  if(!['certificate','exemption'].includes(input.medical_mode))issues.push('Choose with MC or without MC for Medical leave.');
   const account=context.entitlements.find(e=>e.id===result.allocations[0]?.entitlement_id);
   if(account?.opening_id&&config.medical_period_start!==account.period_start)issues.push('HR must certify medical history for this opening service year before applying.');
   const baseline=config.medical_period_start===account?.period_start?config.medical_history:[];

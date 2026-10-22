@@ -109,3 +109,49 @@ export async function governmentLeaveMedicalSummary(client, options) {
   }
   return medicalTrackingFromRecords({ context, config, records, asOf, approveRequestId });
 }
+
+// Application reviewers need allowance totals, not other applications' dates,
+// identifiers or certificate history.
+export function medicalTrackingTotals(summary) {
+  const { history, history_total, history_truncated, ...totals } = summary;
+  return totals;
+}
+
+/** Call only after the caller has authorised private access to this request. */
+export async function governmentLeaveMedicalRequestReview(client, request) {
+  const checkedAt = new Date().toISOString(), issues = [], periods = [];
+  const context = await loadContext(client, request.employee_id);
+  const evaluation = request.grant_snapshot?.evaluation || request.application_snapshot?.evaluation;
+  const allocations = evaluation?.allocations;
+  if (!Array.isArray(allocations) || !allocations.length) {
+    return { checked_at: checkedAt, issues: ['The retained Medical allocation is missing. HR must reconcile this request before relying on its balance.'], periods };
+  }
+  const { rows: configs } = await client.query(`SELECT *,to_char(medical_period_start,'YYYY-MM-DD') AS medical_period_start,
+    to_char(medical_as_of,'YYYY-MM-DD') AS medical_as_of FROM hr_gov_workflow_configs
+    WHERE employee_id=$1 AND status='published' ORDER BY approved_at DESC,id DESC`, [request.employee_id]);
+  const { rows: holds } = await client.query(`SELECT h.entitlement_id,h.amount::text FROM hr_gov_reservations h
+    JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE h.request_id=$1 AND r.status='held'`, [request.reservation_id]);
+  for (const allocation of allocations) {
+    const account = context.entitlements.find(e => e.id === allocation.entitlement_id && e.code === 'medical');
+    if (!account || positiveCharge(allocation.amount) === null) {
+      issues.push('A retained Medical allocation has no matching certified account or valid charge. HR must reconcile this request.');
+      continue;
+    }
+    // Use this request's service year even when it is historic or future dated.
+    const firstDate = evaluation.segments?.find(s => s.entitlement_id === account.id)?.date || request.start_date;
+    const asOf = [account.as_of, account.period_start, firstDate].sort().at(-1);
+    if (!validDate(asOf) || asOf > account.period_end) {
+      issues.push('The retained Medical charge falls outside its certified service year. HR must reconcile this request.');
+      continue;
+    }
+    const config = configs.find(c => c.medical_period_start === account.period_start && c.medical_as_of === account.as_of) || null;
+    const tracking = await governmentLeaveMedicalSummary(client, { employeeId: request.employee_id, context, config, asOf });
+    const requestHeld = holds.filter(h => h.entitlement_id === account.id).reduce((sum, h) => sum + units(h.amount), 0n);
+    const otherHeld = units(account.held) - requestHeld;
+    if (request.status === 'pending' && requestHeld !== units(allocation.amount)) issues.push('This application’s pending reservation differs from its retained charge. HR must reconcile it before approval.');
+    periods.push({ entitlement_id: account.id, request_charge: allocation.amount, request_held: decimal(requestHeld),
+      other_held: decimal(otherHeld), request_occasion_included: tracking.history.some(h => h.id === request.id && h.status === 'pending' && h.mode === 'exemption'),
+      tracking: medicalTrackingTotals(tracking) });
+  }
+  return { checked_at: checkedAt, issues: [...new Set(issues)], periods };
+}

@@ -20,6 +20,7 @@ import {previewInitialFoundations,applyInitialFoundations,recordInitialCredit} f
 import * as jobs from '../services/governmentLeaveJobs.js';
 import { previewBalanceSetup, applyBalanceSetup } from '../services/governmentLeaveBalanceSetup.js';
 import {governmentEvidenceUpload} from '../services/governmentLeaveUpload.js';
+import {governmentLeaveMedicalSummary,medicalTrackingTotals} from '../services/governmentLeaveMedicalSummary.js';
 const router=express.Router();
 const access=requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_LEAVE_APPROVE,PERMISSIONS.HR_REPORT_READ);
 const central=requirePermission(PERMISSIONS.HR_ADMIN),apply=requirePermission(PERMISSIONS.HR_LEAVE_APPLY);
@@ -36,7 +37,8 @@ const applicationFields=[body('duration_unit').optional().isIn(['days','hours'])
 router.get('/me',async(req,res)=>{
   const employee=await linkedEmployee(pool,req.user.id),config=await workflow.configurationFor(pool,employee.id);
   const policy=(await pool.query(resolvedPublishedPoliciesSql)).rows.find(p=>p.effective_from<=workflow.today()&&p.effective_to>=workflow.today());
-  res.json({employee_id:employee.id,enabled_codes:config?.enabled_codes||[],medical_rule:config?.medical_rule||null,regime:employee.leave_policy_regime,policy:policy?{id:policy.id,label:policy.label,recreation_notice_days:policy.rules.recreation_notice_days}:null});
+  const medicalTracking=config?.enabled_codes.includes('medical')?medicalTrackingTotals(await governmentLeaveMedicalSummary(pool,{employeeId:employee.id,config})):null;
+  res.json({employee_id:employee.id,enabled_codes:config?.enabled_codes||[],medical_rule:config?.medical_rule||null,medical_tracking:medicalTracking,regime:employee.leave_policy_regime,policy:policy?{id:policy.id,label:policy.label,recreation_notice_days:policy.rules.recreation_notice_days}:null});
 });
 const commissioningFields=[reason,reference,date('cutover_date'),body('initial_admin_setup').optional().isBoolean({strict:true}),body('employees').isArray({min:1,max:50}),body('employees.*.employee_id').isUUID(),body('employees.*.medical_history').isArray({max:50}),body('employees.*.medical_history.*.start_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.end_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.uncertified').isBoolean(),body('history_confirmed').equals('true'),...['payroll_reference','transition_reference','history_reference'].map(name=>body(name).isString().trim().isLength({min:5,max:500}))];
 router.get('/commissioning',central,async(req,res)=>{
@@ -120,7 +122,7 @@ router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query
   const where=`${scope} AND ($2='all' OR ${effectiveStatusSql()}=$2) AND ($4::uuid IS NULL OR r.employee_id=$4)`;
   const selection=`SELECT r.id,r.employee_id,r.application_snapshot->'employee'->>'name' AS employee_name,r.code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge,r.application_snapshot->'input'->>'duration_unit' AS duration_unit,r.application_snapshot->'input'->>'hours' AS hours,r.status,(SELECT jsonb_build_object('request_id',ce.request_id,'action',ce.effect->>'action','effective_end',ce.effect->>'effective_end') FROM hr_gov_case_effects ce WHERE ce.original_request_id=r.id ORDER BY ce.version DESC LIMIT 1) AS amendment,r.submitted_at,r.stage_index,s.level AS current_level,s.label AS current_label,b.approver_name AS current_approver,
     (SELECT count(*)::int FROM hr_gov_request_stages missing WHERE missing.request_id=r.id AND ${workflow.activeStageSql('missing')} AND NOT EXISTS(SELECT 1 FROM hr_gov_stage_bindings mb WHERE mb.stage_id=missing.id)) AS unassigned_stages,
-    'workflow'::text AS record_source,NULL::text AS leave_type_name,NULL::jsonb AS recorded_application
+    'workflow'::text AS record_source,NULL::text AS leave_type_name,NULL::jsonb AS recorded_application,r.medical_mode
     FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id LEFT JOIN hr_gov_request_stages s ON s.request_id=r.id AND s.ordinal=r.stage_index
     LEFT JOIN LATERAL(SELECT approver_name FROM hr_gov_stage_bindings b WHERE b.stage_id=s.id ORDER BY recorded_at DESC,id DESC LIMIT 1)b ON TRUE
     WHERE ${where}
@@ -131,7 +133,8 @@ router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query
         'reason',a.reason,'applied_at',a.applied_at,'reviewer_note',a.reviewer_note,
         'can_decide',e.reviewer_id IS DISTINCT FROM $1 AND e.leave_policy_regime<>'government' AND NOT EXISTS(SELECT 1 FROM reviewers owner WHERE owner.id=e.reviewer_id AND owner.account_type='employee'),
         'attachments',CASE WHEN (${employeeScopeSql(req.user,'hr_evidence_read','$1')} OR ${managerScopeSql(req.user,'$1')}) THEN
-          COALESCE((SELECT jsonb_agg(jsonb_build_object('id',att.id,'file_name',att.file_name,'content_type',att.content_type,'byte_size',att.byte_size,'created_at',att.created_at) ORDER BY att.created_at) FROM hr_leave_attachments att WHERE att.application_id=a.id),'[]'::jsonb) ELSE '[]'::jsonb END)
+          COALESCE((SELECT jsonb_agg(jsonb_build_object('id',att.id,'file_name',att.file_name,'content_type',att.content_type,'byte_size',att.byte_size,'created_at',att.created_at) ORDER BY att.created_at) FROM hr_leave_attachments att WHERE att.application_id=a.id),'[]'::jsonb) ELSE '[]'::jsonb END),
+      CASE WHEN t.name='Sick (with MC)' THEN 'certificate' WHEN t.name='Sick (without MC)' THEN 'exemption' ELSE NULL END
     FROM hr_leave_applications a JOIN hr_employees e ON e.id=a.employee_id JOIN hr_leave_types t ON t.id=a.leave_type_id
     WHERE (${employeeScopeSql(req.user,'hr_leave_approve','$1')} OR ${managerScopeSql(req.user,'$1')})
       AND ($2='all' OR a.status=$2) AND ($4::uuid IS NULL OR a.employee_id=$4)

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { before, after, beforeEach, describe, test } from 'node:test';
 import { connectTestDatabase, createEmployee, resetLeaveTables, skipWithoutDatabase } from '../test-support/database.js';
+import { decimal, units } from '../lib/governmentLeaveRules.js';
 
 describe('read-only Government Medical tracking', { skip: skipWithoutDatabase }, () => {
   let pool, medical, ledger, arrangements, actor, employee, policy, account, config;
@@ -49,7 +50,7 @@ describe('read-only Government Medical tracking', { skip: skipWithoutDatabase },
   async function request({ mode = 'certificate', status = 'approved', days = [{ date: '2026-05-04', charge: '1.000000' }], entitlement: sourceAccount = account, originalEnd = null, code = 'medical', withoutSegments = false } = {}) {
     const id = randomUUID();
     const segments = days.map(day => ({ ...day, entitlement_id: sourceAccount.id, service_period_start: sourceAccount.period_start }));
-    const snapshot = { ...(withoutSegments ? {} : { evaluation: { segments } }), reason: 'SECRET request reason', medical_mode: mode };
+    const snapshot = { ...(withoutSegments ? {} : { evaluation: { segments, allocations: [{ entitlement_id: sourceAccount.id, amount: decimal(days.reduce((sum, day) => sum + units(day.charge), 0n)) }] } }), reason: 'SECRET request reason', medical_mode: mode };
     const reservation = code === 'medical' ? randomUUID() : null;
     if (reservation) await pool.query("INSERT INTO hr_gov_reservation_requests(id,employee_id,payload_hash,evaluation_snapshot,status) VALUES($1,$2,'synthetic',$3,$4)", [reservation, employee.id, snapshot, status === 'approved' ? 'consumed' : status === 'pending' ? 'held' : 'released']);
     await pool.query(`INSERT INTO hr_gov_requests(id,employee_id,code,start_date,end_date,reason,medical_mode,payload_hash,application_snapshot,department_id,division_id,charge,submitted_by,status,grant_snapshot,config_id,reservation_id)
@@ -62,6 +63,7 @@ describe('read-only Government Medical tracking', { skip: skipWithoutDatabase },
     await pool.query('INSERT INTO hr_gov_case_effects(request_id,original_request_id,effect,recorded_by,version) VALUES($1,$2,$3,$4,1)', [amendment, original, { action, effective_end: end }, actor.id]);
   }
   const tracking = (overrides = {}, client = pool) => medical.governmentLeaveMedicalSummary(client, { employeeId: employee.id, asOf: '2026-10-08', ...overrides });
+  const review = async id => medical.governmentLeaveMedicalRequestReview(pool, await (await import('./governmentLeaveWorkflow.js')).getRequest(pool, id));
   const snapshot = async () => Promise.all(['hr_employees', 'hr_gov_workflow_configs', 'hr_gov_ledger', 'hr_gov_requests', 'hr_leave_balances', 'hr_leave_applications', 'audit_log'].map(async table => (await pool.query(`SELECT to_jsonb(t) AS row FROM ${table} t ORDER BY to_jsonb(t)::text`)).rows));
 
   test('separates baseline, approved and pending usage while the uncertified limit counts occasions including two-day roster shifts', async () => {
@@ -122,6 +124,39 @@ describe('read-only Government Medical tracking', { skip: skipWithoutDatabase },
     const missing = await tracking();
     assert.equal(missing.configured, false); assert.equal(missing.certified.pending_days, null); assert.equal(missing.uncertified.remaining_occasions, null);
     assert.match(missing.issues.join(' '), /retained charge breakdown/);
+  });
+
+  test('request review follows the retained service year after renewal and separates its hold without disclosing other history', async () => {
+    const id = await request({ mode: 'exemption', status: 'pending' });
+    const other = await request({ mode: 'exemption', status: 'pending', days: [{ date: '2026-07-01', charge: '2.000000' }] });
+    await pool.query(`INSERT INTO hr_gov_reservations(request_id,entitlement_id,amount)
+      SELECT reservation_id,$2,CASE WHEN id=$1 THEN 1 ELSE 2 END FROM hr_gov_requests WHERE id=ANY($3::uuid[])`, [id, account.id, [id, other]]);
+    const next = await entitlement('2027', '2027-01-01', '10');
+    await configuration([], '2027-01-01', '2027-01-01');
+    const future = await request({ status: 'pending', entitlement: next, days: [{ date: '2027-02-01', charge: '1.000000' }] });
+    const before = await snapshot(), result = await review(id);
+    assert.deepEqual(result.issues, []);assert.equal(result.periods.length, 1);
+    const period = result.periods[0];assert.equal(period.entitlement_id, account.id);
+    assert.equal(period.tracking.period_start, '2026-01-01');assert.equal(period.tracking.baseline_reviewed, true);
+    assert.equal(period.request_held, '1.000000');assert.equal(period.other_held, '2.000000');
+    assert.deepEqual(period.tracking.shared, { balance: '7.000000', held: '3.000000', available: '4.000000' });
+    assert.equal(period.tracking.uncertified.remaining_occasions, 0);assert.equal(period.request_occasion_included, true);
+    for (const key of ['history', 'history_total', 'history_truncated']) assert.equal(period.tracking[key], undefined);
+    assert.ok(!JSON.stringify(result).includes('SECRET'));assert.ok(!JSON.stringify(result).includes(other));
+    assert.deepEqual(await snapshot(), before);
+    const nextReview = await review(future);assert.equal(nextReview.periods[0].entitlement_id, next.id);
+    assert.equal(nextReview.periods[0].tracking.period_start, '2027-01-01');assert.equal(nextReview.periods[0].tracking.uncertified.remaining_occasions, 3);
+    assert.match(nextReview.issues.join(' '), /pending reservation differs/);
+  });
+
+  test('request review does not invent an account or unused allowance when retained charges or Medical history are missing', async () => {
+    const broken = await request({ status: 'pending', withoutSegments: true });
+    const missing = await review(broken);assert.equal(missing.periods.length, 0);assert.match(missing.issues.join(' '), /allocation is missing/);
+    const next = await entitlement('2027', '2027-01-01', '10');
+    const future = await request({ status: 'pending', entitlement: next, days: [{ date: '2027-02-01', charge: '1.000000' }] });
+    const unknown = (await review(future)).periods[0].tracking;
+    assert.equal(unknown.configured, false);assert.equal(unknown.uncertified.remaining_occasions, null);
+    assert.match(unknown.issues.join(' '), /published employee configuration/);
   });
 
   test('medical details stay central-only and setup adoption metadata changes without altering employee leave rules', async () => {

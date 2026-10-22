@@ -1,8 +1,10 @@
+import type { MedicalReview } from './MedicalRequestReview';
 import type { LeaveApplication } from './types';
 import type { RecreationForecast } from './RecreationForecast';
-export type GovernmentRequestSummary={amendment?:{request_id:string;action:string;effective_end:string}|null;record_source?:'workflow'|'recorded';leave_type_name?:string|null;can_pdf?:boolean;recorded_application?:(LeaveApplication&{can_decide?:boolean})|null;id:string;employee_id:string;employee_name:string;code:string;duration_unit?:'days'|'hours'|null;hours?:string|null;start_date:string;end_date:string;charge:string;status:string;submitted_at:string;stage_index:number;current_level:string|null;current_label?:string|null;current_approver:string|null;unassigned_stages:number;};
+export type GovernmentRequestSummary={medical_mode?:string|null;amendment?:{request_id:string;action:string;effective_end:string}|null;record_source?:'workflow'|'recorded';leave_type_name?:string|null;can_pdf?:boolean;recorded_application?:(LeaveApplication&{can_decide?:boolean})|null;id:string;employee_id:string;employee_name:string;code:string;duration_unit?:'days'|'hours'|null;hours?:string|null;start_date:string;end_date:string;charge:string;status:string;submitted_at:string;stage_index:number;current_level:string|null;current_label?:string|null;current_approver:string|null;unassigned_stages:number;};
 export type GovernmentStage={id:string;ordinal:number;level:string;label?:string|null;binding:{id:string;approver_name:string;reviewer_id:string}|null;decision:{decision:string;decided_at:string;note?:string}|null;issue:string|null;can_decide:boolean};
 export type GovernmentRequest=GovernmentRequestSummary&{
+ medical_review?:MedicalReview;
  forecast?:RecreationForecast|null;
  legacy_approval?:{application_id:string;approved_by_name:string|null;approved_at:string}|null;
  approval_route?:{id:string|null;configured:boolean;stages:{level:string;label:string}[]}|null;evidence_review_required?:boolean;evidence_review?:{actor_id:string;recorded_at:string}|null;can_verify_evidence?:boolean;

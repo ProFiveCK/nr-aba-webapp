@@ -867,7 +867,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  test('HTTP isolation: private reasons/files withheld from ordinary approvers, no clinical PDF bypass, paging and no client charge injection',async()=>{
   const data=application('medical','2026-11-02'),r=await submit(data);
   const outsider=await account({hr_access:true,hr_leave_approve:true,hr_report_read:true});assert.equal((await call(`/requests/${r.id}`,null,outsider)).status,404);
-  const approver=await call(`/requests/${r.id}`,null,officers.division.account);assert.equal(approver.status,200);assert.equal(approver.body.reason,null);assert.deepEqual(approver.body.documents,[]);assert.equal(approver.cache,'no-store');
+  const approver=await call(`/requests/${r.id}`,null,officers.division.account);assert.equal(approver.status,200);assert.equal(approver.body.reason,null);assert.deepEqual(approver.body.documents,[]);assert.equal(approver.body.medical_review,undefined);assert.equal(approver.cache,'no-store');
   const centralList=await call('/requests?mode=all&status=pending',null,hr);assert.equal(centralList.status,200);assert.equal(centralList.body.total,1);assert.equal(centralList.body.requests[0].id,r.id);
   assert.equal((await call(`/requests/${r.id}/documents/${randomUUID()}`,null,officers.division.account)).status,404);
   const mine=await call('/requests?mode=mine&status=all&page=1');assert.equal(mine.body.page_size,50);assert.equal(mine.body.requests.length,1);assert.equal(mine.body.requests[0].reason,undefined);
@@ -1027,6 +1027,43 @@ assert.equal((await call(`/requests/${r.id}/pdf`,null,officers.chief_secretary.a
   await configure(['medical'],history);
   await assert.rejects(submit(application('medical')),/already committed/);
   const missing=application('medical');delete missing.medical_mode;assert.equal((await call('/preview',missing)).status,422);
+  for(const mode of [undefined,'','not_applicable','unknown']) {
+   const form=new FormData();for(const [key,value] of Object.entries({...application('medical'),medical_mode:mode}))if(value!==undefined)form.set(key,value);
+   const session=await auth.createSession(owner.id),token=auth.buildTokenPayload(owner,session.tokenId,session.expiresAt);
+   assert.equal((await fetch(base+'/api/hr/government/workflow/requests',{method:'POST',headers:{Authorization:`Bearer ${token}`},body:form})).status,422);
+  }
+ });
+ test('medical reviewers see the charged service year, MC status and live holds without other application history',async()=>{
+  await customRoute();
+  const send=data=>w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data,simpleApproval:true});
+  const a=await send(application('medical','2026-11-02')),b=await send(application('medical','2026-11-04'));
+  const list=await call('/requests?mode=queue&include_recorded=true&status=pending',null,hr);
+  assert.equal(list.body.requests.find(r=>r.id===a.id).medical_mode,'exemption');
+  const reviewer=officers.department.account;
+  const view=await call(`/requests/${a.id}`,null,reviewer);assert.equal(view.status,200);
+  const review=view.body.medical_review;assert.equal(review.periods.length,1);
+  const period=review.periods[0];assert.equal(period.request_charge,'1.000000');assert.equal(period.request_held,'1.000000');assert.equal(period.other_held,'1.000000');
+  assert.equal(period.tracking.period_start,'2026-01-01');assert.deepEqual(period.tracking.shared,{balance:'10.000000',held:'2.000000',available:'8.000000'});
+  assert.equal(period.tracking.uncertified.pending_occasions,2);assert.equal(period.tracking.uncertified.remaining_occasions,1);assert.equal(period.request_occasion_included,true);
+  assert.equal(period.tracking.history,undefined);assert.ok(!JSON.stringify(review).includes(b.id));assert.ok(!JSON.stringify(review).includes('2026-11-04'));
+  const mine=await call('/me');assert.equal(mine.body.medical_tracking.uncertified.remaining_occasions,1);assert.equal(mine.body.medical_tracking.history,undefined);
+  await decide(a.id,{certification_confirmed:true});
+  const approved=(await call(`/requests/${a.id}`,null,reviewer)).body.medical_review.periods[0];
+  assert.equal(approved.request_held,'0.000000');assert.equal(approved.other_held,'1.000000');
+  assert.deepEqual(approved.tracking.shared,{balance:'9.000000',held:'1.000000',available:'8.000000'});
+  assert.equal(approved.tracking.uncertified.approved_occasions,1);assert.equal(approved.tracking.uncertified.pending_occasions,1);assert.equal(approved.tracking.uncertified.remaining_occasions,1);
+  await w.cancelRequest(pool,{user:user(owner),actor:owner,id:b.id,reason});
+  const released=(await call(`/requests/${a.id}`,null,reviewer)).body.medical_review.periods[0];
+  assert.equal(released.tracking.shared.available,'9.000000');assert.equal(released.tracking.uncertified.remaining_occasions,2);
+  const certified=await w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,simpleApproval:true,
+   data:{...application('medical','2026-11-06'),medical_mode:'certificate'},documents:[{file_name:'mc.pdf',content_type:'application/pdf',byte_size:5,sha256:'synthetic-mc',file_data:Buffer.from('%PDF-')}]});
+  const withMc=await call(`/requests/${certified.id}`,null,reviewer);
+  assert.equal(withMc.body.medical_mode,'certificate');assert.equal(withMc.body.documents.length,1);
+  assert.equal(withMc.body.medical_review.periods[0].tracking.certified.pending_days,'1.000000');
+  assert.equal(withMc.body.medical_review.periods[0].tracking.uncertified.remaining_occasions,2);
+  assert.equal(withMc.body.medical_review.periods[0].request_occasion_included,false);
+  assert.equal((await call('/requests?mode=queue&status=pending',null,hr)).body.requests.find(r=>r.id===certified.id).medical_mode,'certificate');
+  const outsider=await account({hr_access:true,hr_report_read:true,hr_leave_approve:true});assert.equal((await call(`/requests/${a.id}`,null,outsider)).status,404);
  });
  test('due runner requires published enabled plans, prorates the cutover, and records a system audit without duplicate postings',async()=>{
   const p=await jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{code:'recreation',first_post_end:'2026-10-07',payroll_anchor:'2026-10-07',temporary_start:'appointment',source_reference:'Signed synthetic payroll anchor and proration',reason}});

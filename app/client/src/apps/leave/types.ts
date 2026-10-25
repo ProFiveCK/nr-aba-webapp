@@ -54,12 +54,6 @@ export interface LeaveBalance {
 
 export type IneligibleReason = 'temporary' | 'intern' | 'study_leave';
 
-export const INELIGIBLE_REASON_LABELS: Record<IneligibleReason, string> = {
-    temporary: 'Temporary',
-    intern: 'Intern',
-    study_leave: 'Study leave',
-};
-
 export interface Employee {
     leave_policy_regime?: 'legacy' | 'government';
     id: string;
@@ -109,13 +103,6 @@ export interface MyLeaveResponse {
     balances: LeaveBalance[];
     manager: { id: string; display_name: string; email: string | null } | null;
 }
-
-export const STATUS_STYLES: Record<LeaveStatus, string> = {
-    pending: 'bg-amber-100 text-amber-800',
-    approved: 'bg-emerald-100 text-emerald-800',
-    rejected: 'bg-red-100 text-red-700',
-    cancelled: 'bg-gray-100 text-gray-600',
-};
 
 export { formatDate } from '../../lib/date';
 

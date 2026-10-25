@@ -116,40 +116,6 @@ export function todayDDMMYY(): string {
 }
 
 /**
- * Parse CSV line (handles quoted values)
- */
-export function parseCsvLine(line: string): string[] {
-    const values: string[] = [];
-    let current = '';
-    let inQuotes = false;
-
-    for (let i = 0; i < line.length; i++) {
-        const char = line[i];
-        if (inQuotes) {
-            if (char === '"') {
-                if (line[i + 1] === '"') {
-                    current += '"';
-                    i++;
-                } else {
-                    inQuotes = false;
-                }
-            } else {
-                current += char;
-            }
-        } else if (char === '"') {
-            inQuotes = true;
-        } else if (char === ',') {
-            values.push(current.trim());
-            current = '';
-        } else {
-            current += char;
-        }
-    }
-    values.push(current.trim());
-    return values;
-}
-
-/**
  * Parse CSV text into rows
  */
 export function parseCsvRows(text: string): string[][] {
@@ -285,15 +251,6 @@ export function parseBlacklistCsv(text: string): BlacklistCsvParseResult {
 
 
 /**
- * Ensure batch code format (NN-NNNNNN)
- */
-export function ensureBatchCodeFormat(value: string): string {
-    const digits = String(value || '').replace(/\D/g, '');
-    if (digits.length <= 2) return digits;
-    return `${digits.slice(0, 2)}-${digits.slice(2)}`;
-}
-
-/**
  * Base64 encoding/decoding
  */
 export function toBase64(str: string): string {
@@ -312,15 +269,6 @@ export function downloadBase64File(base64: string, filename: string): void {
     link.href = `data:text/plain;base64,${base64}`;
     link.download = filename;
     link.click();
-}
-
-/**
- * Escape HTML
- */
-export function escapeHtml(text: string): string {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }
 
 /**
@@ -356,6 +304,3 @@ export function getBatchStageBadgeClasses(stage: string | null | undefined): str
     };
     return colorClasses[color];
 }
-
-// Alias for compatibility
-export const getStatusColor = getBatchStageBadgeClasses;

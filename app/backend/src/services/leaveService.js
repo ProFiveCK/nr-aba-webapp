@@ -21,7 +21,6 @@ import { ensureBalance } from './leaveAccrual.js';
 import { calculateWorkingDays, parseDateOnly } from '../lib/leaveDates.js';
 import { withTransaction } from '../lib/transaction.js';
 import { badRequest, forbidden, notFound } from '../lib/serviceError.js';
-import { PERMISSIONS } from '../config.js';
 
 /**
  * Balances are held per calendar year, keyed on the year the leave starts in.

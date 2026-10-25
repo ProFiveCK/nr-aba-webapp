@@ -12,7 +12,6 @@ export function units(value){const match=/^(-?)(\d{1,10})(?:\.(\d{1,6}))?$/.exec
 export function decimal(value){const negative=value<0n,absolute=negative?-value:value;return `${negative?'-':''}${absolute/1000000n}.${String(absolute%1000000n).padStart(6,'0')}`;}
 export function dayNumber(value){if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value))throw new Error('Use a calendar date (YYYY-MM-DD).');const date=new Date(`${value}T00:00:00Z`);if(!Number.isFinite(date.getTime())||date.toISOString().slice(0,10)!==value)throw new Error('Invalid calendar date.');return date.getTime()/86400000;}
 export const isoDay=number=>new Date(number*86400000).toISOString().slice(0,10);
-export const nextDay=date=>isoDay(dayNumber(date)+1);
 export function monthBoundary(date,months,leap='feb28'){
  const [y,m,d]=date.split('-').map(Number),target=new Date(Date.UTC(y,m-1+months,1));
  const last=new Date(Date.UTC(target.getUTCFullYear(),target.getUTCMonth()+1,0)).getUTCDate();

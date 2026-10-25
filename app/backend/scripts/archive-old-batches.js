@@ -76,6 +76,7 @@ async function run() {
         root_batch_id,
         is_draft,
         deleted_at,
+        workflow_type,
         archived_at
       )
       SELECT
@@ -98,6 +99,7 @@ async function run() {
         root_batch_id,
         is_draft,
         deleted_at,
+        workflow_type,
         NOW()
       FROM batch_archives
       WHERE created_at < $1

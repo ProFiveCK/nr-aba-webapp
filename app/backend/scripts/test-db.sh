@@ -3,17 +3,19 @@
 # Starts a throwaway container, waits for it, runs the tests, always cleans up.
 set -euo pipefail
 
-CONTAINER=ron-hr-test-db
-PORT=${TEST_DB_PORT:-55433}
+# Unique per run, on a free port, so parallel runs (other worktrees or
+# sessions) cannot remove each other's database. TEST_DB_PORT pins a port.
+CONTAINER=ron-hr-test-db-$$
 
 cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 cleanup
 
-echo "Starting Postgres on port $PORT ..."
 docker run -d --rm --name "$CONTAINER" \
   -e POSTGRES_PASSWORD=test -e POSTGRES_USER=test -e POSTGRES_DB=test \
-  -p "$PORT:5432" postgres:15 >/dev/null
+  -p "127.0.0.1:${TEST_DB_PORT:-}:5432" postgres:15 >/dev/null
+PORT=$(docker port "$CONTAINER" 5432/tcp | head -1 | sed 's/.*://')
+echo "Started Postgres on port $PORT"
 
 # The initialization server accepts Unix sockets before stopping again.
 # Wait for TCP so tests start only against the final Postgres server.

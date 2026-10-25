@@ -158,26 +158,6 @@ export function CardHeading({
     );
 }
 
-/**
- * A single headline figure.
- *
- * `emphasis` marks the one number a screen is really about, so a dashboard can
- * have a subject rather than a row of equally loud tiles.
- */
-export function StatTile({
-    label, value, hint, emphasis = false,
-}: { label: string; value: string; hint?: string; emphasis?: boolean }) {
-    return (
-        <div className={`app-panel p-4 ${emphasis ? 'border-brand/25 bg-brand/[0.03]' : ''}`.trim()}>
-            <p className="text-xs font-medium text-gray-500">{label}</p>
-            <p className={`mt-1 font-semibold tabular-nums ${emphasis ? 'text-4xl text-brand' : 'text-2xl text-gray-900'}`}>
-                {value}
-            </p>
-            {hint && <p className="mt-1 text-xs text-gray-500">{hint}</p>}
-        </div>
-    );
-}
-
 const buttonVariants = {
     primary: 'border-brand bg-brand text-white shadow-sm hover:bg-brand-hover',
     secondary: 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50',

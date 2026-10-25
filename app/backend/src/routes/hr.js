@@ -19,7 +19,7 @@ import { PERMISSIONS } from '../config.js';
 import { buildUpdateAssignments, changedFields, collectUpdates } from '../lib/sqlUpdate.js';
 import { normalizeNameKey } from '../lib/names.js';
 import { INELIGIBLE_REASONS, resolveEligibility } from '../lib/eligibility.js';
-import { calculateWorkingDays, parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
+import { parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js';
 
 import hrAccessRouter from './hrAccess.js';

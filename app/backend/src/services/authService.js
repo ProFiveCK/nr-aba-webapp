@@ -8,14 +8,12 @@ import {
   PASS_HASH_ROUNDS,
   COOKIE_NAME,
   isProd,
-  ACCOUNT_ROLES,
   BANK_PRESET_KEYS,
   TEMP_PASSWORD_LENGTH,
   DEFAULT_BANK_PRESETS,
   ALL_CAPABILITIES,
   ROLE_CAPABILITIES,
 } from '../config.js';
-import { lowerEmail } from '../utils/helpers.js';
 import { activeScopeSql } from './hrAccess.js';
 import { employeeApiLimiter } from '../middleware/employeeApiLimit.js';
 

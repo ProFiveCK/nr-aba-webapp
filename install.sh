@@ -639,8 +639,10 @@ build_frontend() {
 
   info "Building production bundle..."
   (cd "$client" && npm run build)
+  # Vite builds to build/; nginx serves dist/. Publish moves one to the other.
+  ./scripts/publish-frontend.sh
 
-  if [[ -d "$client/dist" ]]; then
+  if [[ -f "$client/dist/index.html" ]]; then
     ok "Frontend built → $client/dist"
   else
     die "Frontend build failed — check npm errors above"

@@ -14,3 +14,5 @@ If you view these on GitHub or in VS Code, Mermaid diagrams should render in the
 - Leave management review and simplification: [review and implementation plan](LEAVE-SIMPLIFICATION-REVIEW-2026-10-20.md)
 
 - Daily leave administration: [daily workflow guide](LEAVE-DAILY-WORK.md)
+
+Older dated review and package reports from the October 2026 leave rollout are kept for history in [archive/](archive/).

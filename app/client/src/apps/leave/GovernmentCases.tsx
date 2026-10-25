@@ -1,5 +1,5 @@
 import {SimpleLeaveDetails} from './SimpleLeaveDetails';
-import {collectLeaveDetails} from './simpleLeaveDetails';
+import {collectLeaveDetails} from './leaveDetailFields';
 import { AustralianDateInput } from '../../components/AustralianDateInput';
 import { formatDate } from '../../lib/date';
 import {useEffect,useRef,useState} from 'react';

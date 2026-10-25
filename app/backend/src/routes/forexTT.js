@@ -1,5 +1,5 @@
 import express from 'express';
-import { param, body } from '../middleware/validation.js';
+import { body } from '../middleware/validation.js';
 import { handleValidation } from '../middleware/validation.js';
 import { forexTTUpload, sha256 } from '../middleware/upload.js';
 import { pool } from '../db.js';

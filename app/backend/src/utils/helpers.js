@@ -34,7 +34,3 @@ export function decodeBase64File(fileData) {
     : String(fileData);
   return Buffer.from(normalized, 'base64');
 }
-
-export function sanitizeFileName(name) {
-  return String(name || '').trim();
-}

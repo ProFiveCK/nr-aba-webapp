@@ -6,9 +6,9 @@ Application: NR ABA portal Leave module
 
 Status: Proposed implementation plan for HR, Chief Secretary, Salary Unit, and technology review
 
-The [build backlog and delivery order](GOVERNMENT-LEAVE-BUILD-BACKLOG-2026-10-06.md) lists the work that can start now, the first implementation package, dependencies, acceptance criteria, and inputs needed before activation.
+The [build backlog and delivery order](archive/GOVERNMENT-LEAVE-BUILD-BACKLOG-2026-10-06.md) lists the work that can start now, the first implementation package, dependencies, acceptance criteria, and inputs needed before activation.
 
-The [Package 1 structure and 2,000-employee rollout plan](GOVERNMENT-LEAVE-PACKAGE-1-STRUCTURE-2026-10-06.md) records the first local backend implementation and remaining rollout gates. On 6 October the owner specified division approver → Head of Department → Chief Secretary final approval. This enterprise hierarchy must be reconciled with special statutory consents in the source policy; Salary Unit processing follows the final grant.
+The [Package 1 structure and 2,000-employee rollout plan](archive/GOVERNMENT-LEAVE-PACKAGE-1-STRUCTURE-2026-10-06.md) records the first local backend implementation and remaining rollout gates. On 6 October the owner specified division approver → Head of Department → Chief Secretary final approval. This enterprise hierarchy must be reconciled with special statutory consents in the source policy; Salary Unit processing follows the final grant.
 
 Extend the existing Leave module into a government-wide service with effective-dated policy rules, employment and service history, a reconciled leave ledger, and approval routes specific to each entitlement. Retain the existing React, Express, and PostgreSQL stack. Establish policy authority, employee identity, and opening balances before expanding access beyond Treasury.
 

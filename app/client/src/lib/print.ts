@@ -1,9 +1,14 @@
 /**
  * Opens a printable report in a new window. The caller supplies a title and the
  * inner HTML (typically a table), and this wraps it in minimal print styling.
+ *
+ * The window is opened without `noopener`: that flag makes `window.open` return
+ * null, so nothing could be written to it. It is a blank same-origin page whose
+ * only content is written here. Printing is started from this side, because the
+ * portal's CSP (script-src 'self') blocks an inline script inside the report.
  */
 export function printReport(title: string, bodyHtml: string, targetWindow?: Window): void {
-  const win = targetWindow || window.open('', '_blank', 'noopener,width=1000,height=800');
+  const win = targetWindow || window.open('', '_blank', 'width=1000,height=800');
   if (!win) return;
   const styles = `
     body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 28px; color: #111827; }
@@ -19,9 +24,14 @@ export function printReport(title: string, bodyHtml: string, targetWindow?: Wind
   `;
   win.document.open();
   win.document.write(
-    `<!doctype html><html><head><title>${escapeHtml(title)}</title><style>${styles}</style></head><body>${bodyHtml}<script>window.addEventListener('load', () => setTimeout(() => window.print(), 250));</script></body></html>`
+    `<!doctype html><html><head><title>${escapeHtml(title)}</title><style>${styles}</style></head><body>${bodyHtml}</body></html>`
   );
   win.document.close();
+  win.opener = null;
+  setTimeout(() => {
+    win.focus();
+    win.print();
+  }, 250);
 }
 
 export function escapeHtml(value: string): string {

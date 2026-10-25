@@ -2,6 +2,20 @@
 
 Use **Employees** to change one person's leave, **Work queue** to process outstanding work, and **Settings** to maintain shared rules and access.
 
+## Applying for leave and approving it
+
+Employees choose the leave type and dates; the end date defaults to the start date and the balance impact appears automatically, with no separate check step. A written reason is optional, except that Special leave still needs its justification.
+
+Recreation leave asks for the notice period set in policy. A shorter notice can still be submitted; the application carries a **short notice** flag, and every approver must tick a waiver of the notice requirement before they can approve it.
+
+An application is refused at submission, naming the stage, if no approver can currently receive it (no officeholder, an approver without leave-approval access, or the employee themself). This replaces applications that used to wait silently.
+
+Approvers open **Work queue**, which starts on **Only applications waiting on me**. Untick it to see everything in scope.
+
+If HR re-confirms the current approver of a stuck stage, no reason or reference is needed; delegating to a substitute still needs an authority reference.
+
+Employees can cancel their own approved leave before it starts: open the application, **Application actions** → **Cancel this leave**. The assigned approver confirms it and the balance is restored only then. Early returns, leave that has already started and part-period changes stay with central HR.
+
 ## Find and change an employee application
 
 1. Open Leave → Employees and search for the employee.
@@ -32,7 +46,7 @@ Open the approved application, select Application actions → **Cancel or shorte
 - Cancellation retains the currently approved dates and requests restoration of the remaining deduction.
 - Early return asks for the last date of leave taken and restores only the released portion.
 
-Record the employee's authority and reason. The created amendment opens immediately and follows the same configured approval route. The assigned approver confirms the requested change in the application; no separate HR determination or verification is added. The balance changes at final amendment approval. The original approval and PDF remain in history. Leave already shortened can be cancelled for its remaining portion; a completed cancellation cannot refund the same deduction twice.
+Central HR records the employee's authority (a personnel-file reference is optional). The created amendment opens immediately and follows the same configured approval route. The assigned approver confirms the requested change in the application; no separate HR determination or verification is added. The balance changes at final amendment approval. The original approval and PDF remain in history. Leave already shortened can be cancelled for its remaining portion; a completed cancellation cannot refund the same deduction twice.
 
 Cancelled approved leave appears as **Cancelled after approval** and is found under the Cancelled filter. A shortened grant is labelled **Shortened after approval** and remains in the Approved filter. An approved form downloaded from the original application records the original grant.
 

@@ -261,31 +261,35 @@ describe('read-only employee leave arrangements', { skip: skipWithoutDatabase },
     assert.equal((await pool.query('SELECT department_id FROM hr_employees WHERE id=$1', [retained.id])).rows[0].department_id, null);
   });
 
-  test('the Government route includes verified HR, Secretary and conditional Minister with self-approval and capability blockers', async () => {
+  async function assignDivisionTo(approver) {
+    await pool.query(`INSERT INTO hr_approval_assignments(level,department_id,division_id,approver_employee_id,effective_from,recorded_by,reason)
+      VALUES('division',$1,$2,$3,'2020-01-01',$4,$5)`, [department.id, division.id, approver.id, actor.id, reason]);
+  }
+
+  test('the route preview shows the single Supervisor stage applications actually take, and blocks self-approval', async () => {
     const subjectLogin = await account({ hr_leave_approve: true });
     await pool.query('UPDATE hr_employees SET reviewer_id=$2 WHERE id=$1', [employee.id, subjectLogin.id]);
-    const officerLogin = await account({ hr_leave_approve: true, hr_admin: true });
+    await assignDivisionTo(employee);
+    const route = (await summary()).government.route;
+    // No HR verifier, Secretary, Minister or Chief Secretary: ordinary leave never asks for them.
+    assert.deepEqual(route.stages.map(s => s.level), ['division']);
+    assert.equal(route.stages[0].label, 'Supervisor');
+    assert.match(route.stages[0].issue, /Self-approval/);
+    assert.equal(route.ready, false);
+  });
+
+  test('the route preview is ready for a valid approver and reports a revoked approval capability', async () => {
+    const officerLogin = await account({ hr_leave_approve: true });
     const officer = await createEmployee(pool, { name: 'Dated Government officer' });
     await pool.query('UPDATE hr_employees SET reviewer_id=$2 WHERE id=$1', [officer.id, officerLogin.id]);
-    for (const level of ['division', 'department', 'chief_secretary']) {
-      await pool.query(`INSERT INTO hr_approval_assignments(level,department_id,division_id,approver_employee_id,effective_from,recorded_by,reason)
-        VALUES($1,$2,$3,$4,'2020-01-01',$5,$6)`, [level, level === 'chief_secretary' ? null : department.id, level === 'division' ? division.id : null,
-        level === 'division' ? employee.id : officer.id, actor.id, reason]);
-    }
-    for (const level of ['hr_verifier', 'relevant_secretary', 'minister']) {
-      await pool.query(`INSERT INTO hr_gov_consent_offices(level,department_id,approver_employee_id,effective_from,source_reference,recorded_by,reason)
-        VALUES($1,$2,$3,'2020-01-01','synthetic',$4,$5)`, [level, level === 'hr_verifier' ? null : department.id, officer.id, actor.id, reason]);
-    }
+    await assignDivisionTo(officer);
     let route = (await summary()).government.route;
-    assert.deepEqual(route.stages.map(s => s.level), ['division', 'department', 'hr_verifier', 'relevant_secretary', 'minister', 'chief_secretary']);
-    assert.match(route.stages[0].issue, /Self-approval/);
-    assert.equal(route.stages.find(s => s.level === 'hr_verifier').issue, null);
-    assert.equal(route.stages.find(s => s.level === 'relevant_secretary').approver_name, officer.display_name);
-    assert.deepEqual(route.stages.find(s => s.level === 'minister').applies_to, ['extended_medical_minister']);
-    assert.equal(route.routes.find(r => r.code === 'special').levels.includes('relevant_secretary'), false);
-    assert.equal(route.ready, false);
+    assert.equal(route.stages[0].approver_name, officer.display_name);
+    assert.equal(route.stages[0].issue, null);
+    assert.equal(route.ready, true);
     await pool.query("UPDATE reviewers SET permissions='{}' WHERE id=$1", [officerLogin.id]);
     route = (await summary()).government.route;
-    assert.match(route.stages.find(s => s.level === 'hr_verifier').issue, /capability/);
+    assert.match(route.stages[0].issue, /capability/);
+    assert.equal(route.ready, false);
   });
 });

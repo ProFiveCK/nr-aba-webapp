@@ -15,8 +15,7 @@ export async function governmentActivity(pool,{user,from,to,page=1}){
   const summary=(await client.query(`SELECT count(*) FILTER(WHERE r.start_date<=$3 AND r.end_date>=$2)::int AS total,count(*) FILTER(WHERE r.status='pending')::int AS pending,
    count(*) FILTER(WHERE r.status='approved' AND r.start_date<=$3 AND r.end_date>=$2)::int AS approved,count(*) FILTER(WHERE r.status='rejected' AND r.start_date<=$3 AND r.end_date>=$2)::int AS rejected,
    count(*) FILTER(WHERE r.status='cancelled' AND r.start_date<=$3 AND r.end_date>=$2)::int AS cancelled,
-   count(*) FILTER(WHERE r.status='pending' AND r.submitted_at<NOW()-INTERVAL '5 days')::int AS overdue,
-   count(*) FILTER(WHERE r.status='approved' AND NOT EXISTS(SELECT 1 FROM hr_gov_salary_acknowledgements a WHERE a.request_id=r.id))::int AS salary_unacknowledged
+   count(*) FILTER(WHERE r.status='pending' AND r.submitted_at<NOW()-INTERVAL '5 days')::int AS overdue
    ${common}`,params)).rows[0];
   const queue=(await client.query(`SELECT s.level,count(*)::int AS applications
    FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id

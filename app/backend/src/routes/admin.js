@@ -12,6 +12,9 @@ import {
 } from '../services/authService.js';
 import { actorFrom, recordAudit } from '../services/auditService.js';
 import { clearLoginAttempts } from '../services/loginAttempts.js';
+import { changeAccountEmail } from '../services/accountEmail.js';
+import { withTransaction } from '../lib/transaction.js';
+import { ServiceError } from '../lib/serviceError.js';
 import {
   encryptSmtpPass,
   mailTransport,
@@ -356,6 +359,17 @@ router.delete(
   }
 );
 
+// Capabilities granted to the account itself, apart from those derived from its role,
+// legacy permissions or scoped Leave access. The edit form must save only these back.
+async function explicitCapabilities(ids) {
+  if (!ids.length) return [];
+  const { rows } = await pool.query(
+    'SELECT reviewer_id, array_agg(capability ORDER BY capability) AS caps FROM reviewer_capabilities WHERE reviewer_id = ANY($1::uuid[]) GROUP BY reviewer_id',
+    [ids]);
+  const byId = new Map(rows.map((r) => [r.reviewer_id, r.caps]));
+  return ids.map((id) => byId.get(id) || []);
+}
+
 // ===== Account management (admin) =====
 // Capability catalogue, so the admin UI renders its checkboxes from data
 // rather than hardcoding them for each new app.
@@ -370,7 +384,11 @@ router.get('/reviewers', requireAuth(['admin']), async (_req, res) => {
        FROM reviewers
       ORDER BY LOWER(COALESCE(NULLIF(display_name, ''), email)) ASC`
   );
-  res.json(await Promise.all(rows.map(async (row) => reviewerSummary(row, await reviewerAllowedPresets(row.id), await loadCapabilities(row.id)))));
+  const explicit = await explicitCapabilities(rows.map((row) => row.id));
+  res.json(await Promise.all(rows.map(async (row, i) => ({
+    ...reviewerSummary(row, await reviewerAllowedPresets(row.id), await loadCapabilities(row.id)),
+    explicit_capabilities: explicit[i],
+  }))));
 });
 
 router.post(
@@ -503,123 +521,115 @@ router.put(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const reviewerId = req.params.id;
-    const { rows: existingRows } = await pool.query(
-      `SELECT id, email, display_name, role, status, department_code, division_code, notify_on_submission, permissions, account_type FROM reviewers WHERE id = $1`,
-      [reviewerId]
-    );
-    if (!existingRows.length) {
-      res.status(404).json({ message: 'Account not found.' });
-      return;
-    }
-    const existing = existingRows[0];
-    if (existing.account_type === 'employee' && req.body.role && req.body.role !== 'user') {
-      res.status(400).json({ message: 'Employee-only accounts use explicit Leave grants. Keep the user role.' });
-      return;
-    }
-    const patch = {};
-    if (req.body.display_name !== undefined) {
-      patch.display_name = req.body.display_name === null ? null : (req.body.display_name?.trim() || null);
-    }
-    if (req.body.role !== undefined) {
-      patch.role = req.body.role;
-    }
-    if (req.body.status !== undefined) {
-      patch.status = req.body.status;
-    }
-    if (req.body.department_code !== undefined) {
-      const dept = req.body.department_code ? String(req.body.department_code).trim() : null;
-      patch.department_code = dept || null;
-    }
-    if (req.body.division_code !== undefined) {
-      patch.division_code = req.body.division_code ? String(req.body.division_code).trim() : '00';
-    }
-    if (req.body.notify_on_submission !== undefined) {
-      patch.notify_on_submission = req.body.notify_on_submission === true;
-    }
-    if (req.body.permissions !== undefined) {
-      if (req.body.permissions !== null && (typeof req.body.permissions !== 'object' || Array.isArray(req.body.permissions))) {
-        res.status(400).json({ message: 'permissions must be an object.' });
-        return;
-      }
-      patch.permissions = req.body.permissions === null ? null : req.body.permissions;
-    }
-
-    const finalRole = patch.role ?? existing.role;
-    const finalDept = Object.prototype.hasOwnProperty.call(patch, 'department_code')
-      ? patch.department_code
-      : existing.department_code;
-    if (existing.account_type !== 'employee' && finalRole === 'user' && !finalDept) {
-      res.status(400).json({ message: 'Department Head is required for user accounts.' });
-      return;
-    }
-    if (!['reviewer', 'admin'].includes(finalRole)) {
-      patch.notify_on_submission = false;
-    }
-
-    const finalDivision = Object.prototype.hasOwnProperty.call(patch, 'division_code')
-      ? patch.division_code
-      : (existing.division_code || '00');
-    patch.division_code = finalDivision;
-
-    const fields = [];
-    const values = [];
-    Object.entries(patch).forEach(([key, value]) => {
-      if (value === undefined) return;
-      if (key === 'permissions') {
-        values.push(value === null ? null : JSON.stringify(value));
-        fields.push(`${key} = $${values.length}::jsonb`);
-      } else {
-        values.push(value);
-        fields.push(`${key} = $${values.length}`);
-      }
-    });
-    if (!fields.length && req.body.capabilities === undefined) {
-      res.status(400).json({ message: 'No fields to update.' });
-      return;
-    }
-
-    let rows;
-    if (fields.length) {
-      fields.push('updated_at = NOW()');
-      values.push(reviewerId);
-      ({ rows } = await pool.query(
-        `UPDATE reviewers SET ${fields.join(', ')} WHERE id = $${values.length} RETURNING id, email, display_name, role, status, last_login_at, created_at, updated_at,
-          must_change_password, department_code, division_code, notify_on_submission, permissions, account_type`,
-        values
-      ));
-      const changed = Object.keys(patch).filter((key) => JSON.stringify(patch[key]) !== JSON.stringify(existing[key]));
-      if (changed.length) {
-        await recordAudit({
-          actor: actorFrom(req),
-          action: 'reviewer.update',
-          entityType: 'reviewer',
-          entityId: reviewerId,
-          before: Object.fromEntries(changed.map((key) => [key, existing[key]])),
-          after: Object.fromEntries(changed.map((key) => [key, patch[key]])),
-        });
-      }
-    } else {
-      ({ rows } = await pool.query(
-        `SELECT id, email, display_name, role, status, last_login_at, created_at, updated_at,
-          must_change_password, department_code, division_code, notify_on_submission, permissions, account_type
-         FROM reviewers WHERE id = $1`,
+    const actor = actorFrom(req);
+    const updated = await withTransaction(pool, async (client) => {
+      const { rows: [existing] } = await client.query(
+        `SELECT id, email, display_name, role, status, department_code, division_code, notify_on_submission, permissions, account_type
+           FROM reviewers WHERE id = $1 FOR UPDATE`,
         [reviewerId]
-      ));
-    }
+      );
+      if (!existing) throw new ServiceError(404, 'Account not found.');
+      if (existing.account_type === 'employee' && req.body.role && req.body.role !== 'user') {
+        throw new ServiceError(400, 'Employee-only accounts use explicit Leave grants. Keep the user role.');
+      }
+      const patch = {};
+      if (req.body.display_name !== undefined) {
+        patch.display_name = req.body.display_name === null ? null : (req.body.display_name?.trim() || null);
+      }
+      if (req.body.role !== undefined) patch.role = req.body.role;
+      if (req.body.status !== undefined) patch.status = req.body.status;
+      if (req.body.department_code !== undefined) {
+        const dept = req.body.department_code ? String(req.body.department_code).trim() : null;
+        patch.department_code = dept || null;
+      }
+      if (req.body.division_code !== undefined) {
+        patch.division_code = req.body.division_code ? String(req.body.division_code).trim() : '00';
+      }
+      if (req.body.notify_on_submission !== undefined) {
+        patch.notify_on_submission = req.body.notify_on_submission === true;
+      }
+      if (req.body.permissions !== undefined) {
+        // Merged into what is stored, so a caller sends only the keys it means to change.
+        // Replacing the map is how derived access used to get saved as if it were chosen.
+        patch.permissions = req.body.permissions === null ? null : { ...(existing.permissions || {}), ...req.body.permissions };
+      }
 
-    if (req.body.capabilities !== undefined) {
-      await setCapabilities(reviewerId, req.body.capabilities, req.user.id);
-      await recordAudit({
-        actor: actorFrom(req),
-        action: 'reviewer.capabilities.set',
-        entityType: 'reviewer',
-        entityId: reviewerId,
-        after: { capabilities: req.body.capabilities },
+      const finalRole = patch.role ?? existing.role;
+      const finalDept = Object.prototype.hasOwnProperty.call(patch, 'department_code')
+        ? patch.department_code
+        : existing.department_code;
+      if (existing.account_type !== 'employee' && finalRole === 'user' && !finalDept) {
+        throw new ServiceError(400, 'Department Head is required for user accounts.');
+      }
+      if (!['reviewer', 'admin'].includes(finalRole)) patch.notify_on_submission = false;
+
+      // Delete already refuses to remove the last administrator; demoting or deactivating one
+      // must too. The lock stops two administrators removing each other at the same moment.
+      if (existing.role === 'admin' && existing.status === 'active'
+        && ((patch.role !== undefined && patch.role !== 'admin') || patch.status === 'inactive')) {
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('reviewer-admins'))");
+        const { rows: [others] } = await client.query(
+          "SELECT count(*)::int AS n FROM reviewers WHERE role = 'admin' AND status = 'active' AND id <> $1", [reviewerId]);
+        if (!others.n) throw new ServiceError(400, 'At least one admin account must remain.');
+      }
+
+      patch.division_code = Object.prototype.hasOwnProperty.call(patch, 'division_code')
+        ? patch.division_code
+        : (existing.division_code || '00');
+
+      const fields = [];
+      const values = [];
+      Object.entries(patch).forEach(([key, value]) => {
+        if (value === undefined) return;
+        if (key === 'permissions') {
+          values.push(value === null ? null : JSON.stringify(value));
+          fields.push(`${key} = $${values.length}::jsonb`);
+        } else {
+          values.push(value);
+          fields.push(`${key} = $${values.length}`);
+        }
       });
-    }
+      if (!fields.length && req.body.capabilities === undefined) throw new ServiceError(400, 'No fields to update.');
 
-    const allowedPresets = await reviewerAllowedPresets(rows[0].id);
-    res.json({ reviewer: reviewerSummary(rows[0], allowedPresets, await loadCapabilities(rows[0].id)) });
+      if (fields.length) {
+        fields.push('updated_at = NOW()');
+        values.push(reviewerId);
+        await client.query(`UPDATE reviewers SET ${fields.join(', ')} WHERE id = $${values.length}`, values);
+        const changed = Object.keys(patch).filter((key) => JSON.stringify(patch[key]) !== JSON.stringify(existing[key]));
+        if (changed.length) {
+          await recordAudit({
+            client, actor, action: 'reviewer.update', entityType: 'reviewer', entityId: reviewerId,
+            before: Object.fromEntries(changed.map((key) => [key, existing[key]])),
+            after: Object.fromEntries(changed.map((key) => [key, patch[key]])),
+          });
+        }
+      }
+
+      if (req.body.capabilities !== undefined) {
+        const { rows: heldBefore } = await client.query(
+          'SELECT capability FROM reviewer_capabilities WHERE reviewer_id = $1 ORDER BY capability', [reviewerId]);
+        const before = heldBefore.map((r) => r.capability);
+        const after = (await setCapabilities(reviewerId, req.body.capabilities, req.user.id, client)).sort();
+        if (JSON.stringify(before) !== JSON.stringify(after)) {
+          await recordAudit({
+            client, actor, action: 'reviewer.capabilities.set', entityType: 'reviewer', entityId: reviewerId,
+            before: { capabilities: before }, after: { capabilities: after },
+          });
+        }
+      }
+
+      const { rows: [row] } = await client.query(
+        `SELECT id, email, display_name, role, status, last_login_at, created_at, updated_at,
+                must_change_password, department_code, division_code, notify_on_submission, permissions, account_type
+           FROM reviewers WHERE id = $1`,
+        [reviewerId]
+      );
+      return row;
+    });
+
+    const allowedPresets = await reviewerAllowedPresets(updated.id);
+    const [explicit] = await explicitCapabilities([updated.id]);
+    res.json({ reviewer: { ...reviewerSummary(updated, allowedPresets, await loadCapabilities(updated.id)), explicit_capabilities: explicit } });
   }
 );
 
@@ -655,6 +665,8 @@ router.post(
     const hash = await bcrypt.hash(password, PASS_HASH_ROUNDS);
     await pool.query('UPDATE reviewers SET password_hash = $1, must_change_password = TRUE, updated_at = NOW() WHERE id = $2', [hash, reviewerId]);
     await clearLoginAttempts(reviewer.email);
+    // Login lockouts are keyed by account id, so an email-only clear left the account locked.
+    await clearLoginAttempts(`account:${reviewerId}`);
     await pool.query('DELETE FROM reviewer_sessions WHERE reviewer_id = $1', [reviewerId]);
     reviewer.must_change_password = true;
     await recordAudit({
@@ -674,6 +686,24 @@ router.post(
     }
     const allowedPresets = await reviewerAllowedPresets(reviewer.id);
     res.json({ reviewer: reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), temporary_password: generated ? password : undefined });
+  }
+);
+
+// The email is the login ID, so changing it is its own action with its own side
+// effects (sessions, reset links, Google link, employee contact), not a field of PUT.
+router.post(
+  '/reviewers/:id/email',
+  requireAuth(['admin']),
+  [
+    param('id').isUUID(),
+    body('email').isString().trim().isEmail().isLength({ max: 254 }),
+    body('reason').isString().trim().isLength({ min: 10, max: 1000 }),
+  ],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    res.json(await changeAccountEmail(pool, {
+      reviewerId: req.params.id, email: req.body.email, reason: req.body.reason, actor: actorFrom(req),
+    }));
   }
 );
 

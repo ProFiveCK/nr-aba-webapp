@@ -37,7 +37,9 @@ export async function submitCase(pool,{user,actor,employeeId,data,documents=[],c
   await client.query("SELECT pg_advisory_xact_lock_shared(hashtext('hr-gov-policies'))");
   await client.query("SELECT pg_advisory_xact_lock_shared(hashtext('hr-approval-assignments'))");const employee=await ledger.lockEmployee(client,employeeId),state=await workflow.accountState(client,user.id,employee);
   if(!state||!(employee.reviewer_id===user.id&&state.user.permissions.hr_leave_apply||isCentralHr(state.user)&&input.assisted_reference))fail('Verified employee access or sourced central HR assisted entry is required.',403);
-  if(['attendance','amendment'].includes(input.code)&&!isCentralHr(state.user))fail('Attendance determinations and amendments require central HR assisted entry.',403);
+  // An employee may cancel their own approved leave that has not started; every other amendment, and attendance, stays with central HR.
+  const ownCancellation=input.code==='amendment'&&input.amendment_action==='cancel_grant'&&employee.reviewer_id===user.id;
+  if(['attendance','amendment'].includes(input.code)&&!isCentralHr(state.user)&&!ownCancellation)fail('Attendance determinations, early returns and other amendments require central HR assisted entry.',403);
   const separationCase=employee.status!=='active'&&isCentralHr(state.user)&&['long_service','furlough','recreation_separation'].includes(input.code)&&input.start_date===input.end_date;
   if(employee.status!=='active'&&!separationCase||!employee.department_id||!employee.division_id)fail('An active employee and verified placement are required.');
   const old=(await client.query('SELECT * FROM hr_gov_requests WHERE id=$1',[data.request_id])).rows[0];if(old){const docHashes=documents.map(d=>({sha256:d.sha256,file_name:d.file_name})),legacyHash=fingerprint({input:{...input,notice_date:old.application_snapshot.input.notice_date},documents:docHashes}),hashes=[hash,legacyHash];if(simpleApproval&&!Object.keys(input.case_details||{}).length&&!old.application_snapshot.simple_approval){const {case_details:_details,...previousInput}=stableInput;hashes.push(fingerprint({input:previousInput,documents:docHashes}),fingerprint({input:{...previousInput,notice_date:old.application_snapshot.input.notice_date},documents:docHashes}));}if(old.employee_id!==employeeId||!hashes.includes(old.payload_hash))fail('The request key was used for different facts.');return {id:old.id,status:old.status};}
@@ -50,6 +52,10 @@ export async function submitCase(pool,{user,actor,employeeId,data,documents=[],c
   if((await client.query("SELECT 1 FROM hr_gov_requests WHERE employee_id=$1 AND code=$2 AND status IN ('pending','approved') AND application_snapshot->'input'->>'event_reference'=$3",[employeeId,input.code,input.event_reference])).rowCount)fail('This event reference already has a pending or granted case.');
   if(input.related_request_id){
    const original=await workflow.getRequest(client,input.related_request_id);if(original.employee_id!==employeeId||original.status!=='approved')fail('Link an approved case for the same employee.');
+   if(ownCancellation&&!isCentralHr(state.user)){
+    if(original.start_date<=workflow.today())fail('Leave that has already started can only be changed by HR.');
+    if(input.start_date!==original.start_date||input.end_date!==original.end_date)fail('Cancel the whole approved leave period.',400);
+   }
    if(input.code==='amendment'&&(await client.query("SELECT 1 FROM hr_gov_case_links l JOIN hr_gov_requests r ON r.id=l.request_id WHERE l.original_request_id=$1 AND l.kind='amendment' AND r.status='pending'",[original.id])).rowCount)fail('An amendment is already pending for this application.');
   }else if(['amendment','extended_medical_minister'].includes(input.code))fail('This case requires its original approved application.');
   const external=(await client.query("SELECT external_id FROM hr_employee_external_ids WHERE employee_id=$1 AND source='techone_payroll'",[employeeId])).rows;
@@ -57,7 +63,9 @@ export async function submitCase(pool,{user,actor,employeeId,data,documents=[],c
   await client.query(`INSERT INTO hr_gov_requests(id,employee_id,code,start_date,end_date,reason,medical_mode,payload_hash,application_snapshot,department_id,division_id,charge,submitted_by) VALUES($1,$2,$3,$4,$5,$6,'not_applicable',$7,$8,$9,$10,0,$11)`,[data.request_id,employeeId,input.code,input.start_date,input.end_date,input.reason,hash,application,employee.department_id,employee.division_id,actor.id]);
   if(input.related_request_id)await client.query('INSERT INTO hr_gov_case_links(request_id,original_request_id,kind,recorded_by,reference) VALUES($1,$2,$3,$4,$5)',[data.request_id,input.related_request_id,input.code==='amendment'?'amendment':'medical_escalation',actor.id,input.event_reference]);
   const request={id:data.request_id,employee_id:employeeId,department_id:employee.department_id,division_id:employee.division_id};
-  for(const [ordinal,{level,label}] of (approvalRoute?.stages||caseLevels(input.code).map(level=>({level,label:null}))).entries()){const stage=(await client.query('INSERT INTO hr_gov_request_stages(request_id,ordinal,level,label) VALUES($1,$2,$3,$4) RETURNING *',[request.id,ordinal,level,label])).rows[0],offices=await workflow.effectiveOffices(client,request,level);if(offices.length===1)await workflow.bindOffice(client,stage,offices[0],actor,null,'Dated application route at submission');}
+  const unroutable=[];
+  for(const [ordinal,{level,label}] of (approvalRoute?.stages||caseLevels(input.code).map(level=>({level,label:null}))).entries()){const stage=(await client.query('INSERT INTO hr_gov_request_stages(request_id,ordinal,level,label) VALUES($1,$2,$3,$4) RETURNING *',[request.id,ordinal,level,label])).rows[0],offices=await workflow.effectiveOffices(client,request,level),binding=offices.length===1?await workflow.bindOffice(client,stage,offices[0],actor,null,'Dated application route at submission'):null;if(simpleApproval){const issue=await workflow.bindingIssue(client,{...request,submitted_by:actor.id},{...stage,binding});if(issue)unroutable.push(`${label||level}: ${issue}`);}}
+  if(unroutable.length)fail(`This application cannot be sent to an approver yet. ${unroutable.join(' ')} Ask HR to fix the approver, then apply again.`);
   await insertDocuments(client,request.id,documents);await queueCurrentLeaveApprover(client,request.id);await audit(client,actor,'hr.gov.case.submitted',request.id,{employee_id:employeeId,code:input.code,assisted_reference:input.assisted_reference});return {id:request.id,status:'pending'};
  };return existingClient?work(existingClient):withTransaction(pool,work);
 }
@@ -205,7 +213,6 @@ export async function grantCaseEffects(client,request,row,actor){
    if(d.facts.action==='shorten_grant')effects.service_exclusion_id=(await client.query("INSERT INTO hr_gov_service_exclusions(employee_id,start_date,end_date,kind,source_reference,recorded_by,reason) VALUES($1,$2,$3,'lwop',$4,$5,$6) RETURNING id",[request.employee_id,original.start_date,request.end_date,`government-case:${request.id}`,actor.id,row.reason])).rows[0].id;
   }
   const tasks=(await client.query('SELECT id FROM hr_gov_case_tasks WHERE request_id=$1',[originalId])).rows;for(const task of tasks)await client.query("INSERT INTO hr_gov_task_events(task_id,event_key,action,reference,reason,facts,actor_id) VALUES($1,gen_random_uuid(),'completed',$2,$3,$4,$5)",[task.id,d.facts.salary_correction_reference,row.reason,{amended_by:request.id},actor.id]);
-  d.tasks.push({kind:'amendment_reconciliation',due_date:null,description:'Obtain Salary Unit correction acknowledgement; original grant and PDF remain in history. Replacement dates need a fresh approved application.'});
  }
  await client.query('INSERT INTO hr_gov_case_effects(request_id,original_request_id,effect,recorded_by,version) VALUES($1,$2,$3,$4,$5)',[request.id,originalId,effects,actor.id,effects.version||1]);
  for(const task of d.tasks)await client.query('INSERT INTO hr_gov_case_tasks(request_id,kind,due_date,description,created_by) VALUES($1,$2,$3,$4,$5)',[request.id,task.kind,task.due_date,task.description,actor.id]);

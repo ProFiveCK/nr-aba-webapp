@@ -194,7 +194,8 @@ router.post(
     if (!reviewer || !valid) {
       await recordLoginAttempt(loginKey, clientIp, false);
       console.warn(`[login] ${reviewer ? 'wrong password' : 'unknown email'}: ${email} from ${clientIp}`);
-      await auditSignIn(req, 'login.failure', { email, reason: reviewer ? 'wrong_password' : 'unknown_account' });
+      // The caller gets one generic answer; the audit log keeps the real reason.
+      await auditSignIn(req, 'login.failure', { email, reason: !reviewer ? 'unknown_account' : reviewer.status !== 'active' ? 'inactive' : 'wrong_password' });
       res.status(401).json({ message: 'Invalid credentials.' });
       return;
     }
@@ -202,13 +203,6 @@ router.post(
       await auditSignIn(req, 'login.failure', { reviewer, reason: 'employee_not_ready' });
       return res.status(401).json({message:'Invalid credentials.'});
     }
-    if (reviewer.status !== 'active') {
-      console.warn(`[login] inactive account: ${email} from ${clientIp}`);
-      await auditSignIn(req, 'login.failure', { email, reason: 'inactive' });
-      res.status(403).json({ message: 'Account inactive.' });
-      return;
-    }
-
     await clearLoginAttempts(loginKey);
     const { tokenId, expiresAt } = await createSession(reviewer.id);
     await pool.query('UPDATE reviewers SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [reviewer.id]);

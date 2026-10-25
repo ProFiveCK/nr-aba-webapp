@@ -106,6 +106,37 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   await decide(amendment.id,{certification_confirmed:true});assert.equal((await w.requestView(pool,user(hr),original.id)).amendment.action,'cancel_grant');
   assert.equal(Number((await pool.query("SELECT sum(amount)::text AS amount FROM hr_gov_ledger WHERE kind='reversal'")).rows[0].amount),1);
  });
+ // First weekday at least `days` from the server's own date, which is what the cancel rule compares against.
+ const ahead=days=>{const d=new Date(`${w.today()}T12:00:00Z`);d.setUTCDate(d.getUTCDate()+days);while([0,6].includes(d.getUTCDay()))d.setUTCDate(d.getUTCDate()+1);return d.toISOString().slice(0,10);};
+ const reversed=async()=>Number((await pool.query("SELECT COALESCE(sum(amount),0)::text AS amount FROM hr_gov_ledger WHERE kind='reversal'")).rows[0].amount);
+ const cancelBody=(original,start,end=start,extra={})=>({request_id:randomUUID(),code:'amendment',amendment_action:'cancel_grant',related_request_id:original,start_date:start,end_date:end,reason:'Employee requested cancellation of approved leave',...extra});
+ test('an employee cancels their own approved leave before it starts; the days return only at final approval',async t=>{
+  const start=ahead(10);if(!start.startsWith('2026'))return t.skip('The fixtures only cover the 2026 entitlement year.');
+  await simpleRoute();
+  const original=await w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:application('special',start),simpleApproval:true});await decide(original.id,{certification_confirmed:true});
+  const view=await w.requestView(pool,user(owner),original.id);assert.equal(view.can_cancel_own,true);assert.equal(view.can_amend,false);
+  const cancel=await call('/cases',cancelBody(original.id,start),owner);assert.equal(cancel.status,201);
+  assert.equal(await reversed(),0,'asking to cancel refunds nothing');
+  assert.equal((await w.requestView(pool,user(owner),original.id)).can_cancel_own,false,'one cancellation request at a time');
+  assert.equal((await call('/cases',cancelBody(original.id,start),owner)).status,409);
+  await decide(cancel.body.id,{certification_confirmed:true});
+  assert.equal(await reversed(),1,'the approved cancellation restores the deducted day');
+  assert.equal((await w.requestView(pool,user(hr),original.id)).amendment.action,'cancel_grant');
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_case_tasks WHERE request_id=$1',[cancel.body.id])).rows[0].n,0,'no Salary Unit receipt task is created');
+ });
+ test('an employee cannot use self-service for an early return, started leave or part of a period',async t=>{
+  const start=ahead(10);if(!start.startsWith('2026'))return t.skip('The fixtures only cover the 2026 entitlement year.');
+  await simpleRoute();
+  const future=await w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:application('recreation',start,ahead(14)),simpleApproval:true});await decide(future.id,{certification_confirmed:true,notice_waived:true});
+  const early=await call('/cases',cancelBody(future.id,start,ahead(14),{amendment_action:'shorten_grant'}),owner);
+  assert.equal(early.status,403);assert.match(early.body.message,/central HR/);
+  const partial=await call('/cases',cancelBody(future.id,start,start),owner);
+  assert.equal(partial.status,400);assert.match(partial.body.message,/whole approved leave period/);
+  const started=await w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:application('special','2026-10-05'),simpleApproval:true});await decide(started.id,{certification_confirmed:true});
+  const late=await call('/cases',cancelBody(started.id,'2026-10-05'),owner);
+  assert.equal(late.status,409);assert.match(late.body.message,/already started/);
+  assert.equal((await w.requestView(pool,user(owner),started.id)).can_cancel_own,false);
+ });
  test('simple final review rejects missing facts and overspending without committing a decision',async()=>{
   await simpleRoute();const r=await c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:event('maternity','2026-11-02','2027-01-24'),documents:[doc],simpleApproval:true});
   await assert.rejects(decide(r.id,{certification_confirmed:true}),/eligibility|pregnancy/);assert.equal(await c.determinationFor(pool,r.id),null);

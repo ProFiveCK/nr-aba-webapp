@@ -69,15 +69,6 @@ export const SYNC_TIMEOUT = Number(process.env.SYNC_TIMEOUT || 30000);
 export const SYNC_ALLOWED_HOSTS = String(process.env.SYNC_ALLOWED_HOSTS || '')
   .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 
-// AI Helper
-export const AI_HELPER_ENABLED = process.env.AI_HELPER_ENABLED === 'true';
-export const AI_PROVIDER = process.env.AI_PROVIDER || 'ollama';
-export const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434';
-export const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama2';
-export const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-export const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-export const GITHUB_MODEL = process.env.GITHUB_MODEL || 'gpt-4o-mini';
-
 export const WORKFLOW_GUIDE_TEXT = `Workflow Guide:\n\n1. Level 1 users prepare an ABA file in the Generator, enter the PD#, add notes, and click Commit.\n2. Reviewers are notified by email, open the Reviewer tab, and approve or reject the batch.\n3. If rejected, the submitter fixes their copy (upload via Reader → Load) and resubmits.\n4. Once approved, reviewers/admins can download the ABA from the archive; admins can delete batches when finished.`;
 
 // File upload limits
@@ -89,21 +80,6 @@ export const FOREX_TT_ALLOWED_MIMES = new Set([
   'image/jpg',
 ]);
 export const FOREX_TT_ALLOWED_EXTENSIONS = new Set(['.pdf', '.png', '.jpg', '.jpeg']);
-
-// Supporting documents on a leave application — a partner's invitation letter
-// for official leave, a medical certificate for sick leave. Word documents are
-// allowed on top of the FOREX set because an invitation usually arrives as one.
-export const LEAVE_ATTACHMENT_MAX_FILE_BYTES = 10 * 1024 * 1024;
-export const LEAVE_ATTACHMENT_MAX_FILES = 5;
-export const LEAVE_ATTACHMENT_ALLOWED_MIMES = new Set([
-  'application/pdf',
-  'image/png',
-  'image/jpeg',
-  'image/jpg',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-]);
-export const LEAVE_ATTACHMENT_ALLOWED_EXTENSIONS = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.doc', '.docx']);
 
 // Permissions
 export const PERMISSIONS = {

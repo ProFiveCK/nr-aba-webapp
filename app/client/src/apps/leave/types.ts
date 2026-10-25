@@ -1,25 +1,5 @@
 export type LeaveStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 
-export type ResetPeriod = 'none' | 'financial_year' | 'anniversary';
-
-export interface LeaveType {
-    id: string;
-    name: string;
-    description: string | null;
-    default_days: string;
-    is_accruable: boolean;
-    requires_note: boolean;
-    is_active: boolean;
-    accrual_days_per_fortnight: string;
-    reset_period: ResetPeriod;
-    max_balance: string | null;
-    /** The type is only granted on the strength of a document, e.g. a medical certificate. */
-    requires_attachment?: boolean;
-    /** Names the document to attach, so the form can ask for it by name. */
-    attachment_label?: string | null;
-    usage_count?: number;
-}
-
 /** A supporting document on a leave application, without its bytes. */
 export interface LeaveAttachment {
     id: string;
@@ -105,12 +85,6 @@ export interface MyLeaveResponse {
 }
 
 export { formatDate } from '../../lib/date';
-
-export interface PublicHoliday {
-    id: string;
-    holiday_date: string;
-    name: string;
-}
 
 /**
  * Working days between two dates, inclusive: weekdays that are not public

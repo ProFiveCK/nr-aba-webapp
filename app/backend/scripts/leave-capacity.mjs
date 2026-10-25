@@ -19,7 +19,7 @@ try{
  docker('run','-d','--rm','--name',name,'-e',`POSTGRES_PASSWORD=${password}`,'-e','POSTGRES_USER=capacity','-e','POSTGRES_DB=leave_capacity','-p','127.0.0.1::5432','postgres:15');
  let ready=false;for(let i=0;i<60;i++){try{docker('exec',name,'pg_isready','-h','127.0.0.1','-U','capacity');ready=true;break;}catch{await delay(500);}}assert.ok(ready,'Disposable database did not become ready.');
  const dbPort=docker('port',name,'5432/tcp').trim().split(':').at(-1);
- Object.assign(process.env,{DATABASE_URL:`postgres://capacity:${password}@127.0.0.1:${dbPort}/leave_capacity`,JWT_SECRET:randomBytes(32).toString('hex'),NODE_ENV:'test',BCRYPT_ROUNDS:'12',SMTP_HOST:'',ACCRUAL_SCHEDULER:'off',GOVERNMENT_LEAVE_SCHEDULER:'off',AI_HELPER_ENABLED:'false',DEFAULT_ADMIN_EMAIL:'',DEFAULT_ADMIN_PASSWORD:''});
+ Object.assign(process.env,{DATABASE_URL:`postgres://capacity:${password}@127.0.0.1:${dbPort}/leave_capacity`,JWT_SECRET:randomBytes(32).toString('hex'),NODE_ENV:'test',BCRYPT_ROUNDS:'12',SMTP_HOST:'',ACCRUAL_SCHEDULER:'off',GOVERNMENT_LEAVE_SCHEDULER:'off',DEFAULT_ADMIN_EMAIL:'',DEFAULT_ADMIN_PASSWORD:''});
  const db=await import('../src/db.js');pool=db.pool;await db.initSchema();
  const auth=await import('../src/services/authService.js'),passwordHash=await auth.hashPassphrase(password);
  const hr=(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES('hr@capacity.example.test','Synthetic capacity HR','user',$1,'{\"hr_admin\":true,\"hr_access\":true}') RETURNING *",[passwordHash])).rows[0];

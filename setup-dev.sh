@@ -286,9 +286,6 @@ EOF
         WINDOWS_SYNC_URL=http://host.docker.internal:8088/sync-trigger
 SYNC_TIMEOUT=30000
 
-        # AI Helper settings (optional)
-AI_HELPER_ENABLED=false
-
 EOF
         
         log_success "Configuration saved to $ENV_FILE"

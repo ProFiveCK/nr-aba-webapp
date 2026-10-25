@@ -138,37 +138,6 @@ function leaveDates(application) {
   return `${format(application.start_date)} to ${format(application.end_date)}`;
 }
 
-/** Tells the approving manager that leave is waiting for them. */
-/**
- * Tells whoever will decide a leave application that it is waiting.
- *
- * `approvers` is a list rather than the applicant's manager alone, because a
- * staff record with no manager set used to notify nobody at all: the request
- * appeared in the administrators' queue and sat there unannounced. The caller
- * decides who they are; this only has to reach all of them.
- *
- * Returns the addresses written to, which is what the caller logs.
- */
-export async function notifyLeaveSubmitted({ application, employee, approvers }) {
-  if (!mailTransport || testingModeEnabled) return [];
-  const to = [...new Set(
-    (approvers || []).map((approver) => lowerEmail(approver?.email || '')).filter(Boolean)
-  )];
-  if (!to.length) return [];
-
-  const link = appUrl('leave/approvals');
-  const text = `${employee.display_name} has applied for leave and needs your approval.
-
-Type: ${application.leave_type_name}
-Dates: ${leaveDates(application)}
-Working days: ${application.days}
-${application.reason ? `Reason: ${application.reason}\n` : ''}
-Review it here: ${link}
-`;
-  await sendMail({ to: to.join(', '), subject: `Leave approval needed — ${employee.display_name}`, text });
-  return to;
-}
-
 /** Tells the applicant what was decided. Rejections always carry the reason. */
 export async function notifyLeaveDecision({ application, employee, decision, note, decidedBy, approver }) {
   if (!mailTransport || testingModeEnabled) return [];

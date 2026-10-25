@@ -275,13 +275,8 @@ router.get(
   }
 );
 
-// Retain historical reads and decisions, but accept new applications only
-// through the current policy workflow. Older clients must not reopen a second
-// submission path for employees whose transfer is still being reviewed.
-router.post('/leaves', requirePermission(PERMISSIONS.HR_LEAVE_APPLY), async () => {
-  throw new ServiceError(409, 'Use My Leave to apply through the current policy approval workflow. If your leave setup is incomplete, ask HR to finish staff transfer and activation.');
-});
-
+// New applications go through the government workflow; there is no legacy submit
+// route. Historical reads, cancellations and decisions remain below.
 router.post(
   '/leaves/:id/cancel',
   requirePermission(PERMISSIONS.HR_LEAVE_APPLY),

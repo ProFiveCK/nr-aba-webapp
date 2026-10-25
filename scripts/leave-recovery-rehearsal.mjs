@@ -24,7 +24,7 @@ export async function runDisposableRecovery() {
  let snapshotHolder,dumpFd;const started=performance.now();
  function appEnv(host,restoredSecrets) {
   const path=resolve(output,`${host}.env`);
-  protectedFile(path,Object.entries({NODE_ENV:'development',LOCAL_REVIEW_ONLY:'production-copy',RECOVERY_REHEARSAL:'isolated-fixture',DB_HOST:host,DB_NAME:db,DB_USER:role,DB_PASSWORD:restoredSecrets.dbPassword,JWT_SECRET:restoredSecrets.jwt,DATA_ENC_KEY:restoredSecrets.dataKey,SMTP_ENC_KEY:restoredSecrets.smtpKey,SMTP_HOST:'',DEFAULT_ADMIN_EMAIL:'',DEFAULT_ADMIN_PASSWORD:'',ACCRUAL_SCHEDULER:'off',GOVERNMENT_LEAVE_SCHEDULER:'off',AI_HELPER_ENABLED:'false',PORT:'4000',TZ:'UTC'}).map(([key,value])=>`${key}=${value}`).join('\n')+'\n');return path;
+  protectedFile(path,Object.entries({NODE_ENV:'development',LOCAL_REVIEW_ONLY:'production-copy',RECOVERY_REHEARSAL:'isolated-fixture',DB_HOST:host,DB_NAME:db,DB_USER:role,DB_PASSWORD:restoredSecrets.dbPassword,JWT_SECRET:restoredSecrets.jwt,DATA_ENC_KEY:restoredSecrets.dataKey,SMTP_ENC_KEY:restoredSecrets.smtpKey,SMTP_HOST:'',DEFAULT_ADMIN_EMAIL:'',DEFAULT_ADMIN_PASSWORD:'',ACCRUAL_SCHEDULER:'off',GOVERNMENT_LEAVE_SCHEDULER:'off',PORT:'4000',TZ:'UTC'}).map(([key,value])=>`${key}=${value}`).join('\n')+'\n');return path;
  }
  const mounts=directory=>['-v',`${resolve(root,'app/backend/src')}:/app/src:ro`,'-v',`${resolve(root,'scripts/leave-recovery-fixture.mjs')}:/app/leave-recovery-fixture.mjs:ro`,'-v',`${directory}:/rehearsal`,'-v',`${resolve(directory,'uploads')}:/app/uploads`];
  async function startDatabase(name) {

@@ -70,14 +70,6 @@ export async function hashPassphrase(passphrase) {
   return bcrypt.hash(passphrase, PASS_HASH_ROUNDS);
 }
 
-export function isLegacyPassphraseHash(hash) {
-  return typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash);
-}
-
-export function legacyHashPassphrase(passphrase) {
-  return crypto.createHash('sha256').update(passphrase).digest('hex');
-}
-
 export async function createSession(reviewerId) {
   const tokenId = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + SESSION_MINUTES * 60 * 1000);

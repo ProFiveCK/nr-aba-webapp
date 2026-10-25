@@ -495,9 +495,6 @@ SMTP_FROM=${SMTP_FROM}
 SFTP_SYNC_METHOD=database
 WINDOWS_SYNC_URL=http://host.docker.internal:8088/sync-trigger
 SYNC_TIMEOUT=30000
-
-# ── AI helper (optional) ─────────────────────────────────────────
-AI_HELPER_ENABLED=false
 EOF
 
     ok "Saved $ENV_FILE"

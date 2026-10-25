@@ -125,13 +125,6 @@ SMTP_PASS=<smtp-password>
 SMTP_FROM=notifications@example.com
 ```
 
-#### AI Helper (Optional)
-```bash
-AI_HELPER_ENABLED=true
-AI_PROVIDER=github
-GITHUB_TOKEN=<your-github-token>
-```
-
 ### 3. Create Docker Network
 
 ```bash

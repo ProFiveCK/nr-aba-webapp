@@ -36,7 +36,6 @@ services:
       SMTP_HOST: ''
       ACCRUAL_SCHEDULER: 'off'
       GOVERNMENT_LEAVE_SCHEDULER: 'off'
-      AI_HELPER_ENABLED: 'false'
       TZ: Pacific/Nauru
     volumes:
       - ./app/backend/src:/app/src:ro

@@ -9,7 +9,7 @@ describe('verified employee onboarding and lifecycle over real HTTP',{skip:skipW
   before(async()=>{
     pool=await connectTestDatabase();service=await import('../services/employeeOnboarding.js');auth=await import('../services/authService.js');
     const express=(await import('express')).default,errors=await import('../middleware/errors.js');errors.enableAsyncErrors();
-    const app=express();app.use(express.json());app.use('/api/hr',(await import('./hr.js')).default);app.use('/api/auth',(await import('./auth.js')).default);app.get('/api/finance-check',auth.requireAuth(),(_req,res)=>res.json({ok:true}));app.use(errors.errorHandler);
+    const app=express();app.use(express.json());app.use('/api/hr',(await import('./hr.js')).default);app.use('/api/auth',(await import('./auth.js')).default);app.get('/api/finance-check',auth.requireAuth(),(_req,res)=>res.json({ok:true}));app.use(errors.notFoundHandler);app.use(errors.errorHandler);
     server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});base=`http://127.0.0.1:${server.address().port}`;
   });
   after(async()=>{if(server)await new Promise(resolve=>server.close(resolve));await pool?.end();});
@@ -47,7 +47,7 @@ describe('verified employee onboarding and lifecycle over real HTTP',{skip:skipW
     const email=`shared-${randomUUID()}@example.test`;await pool.query('UPDATE hr_employees SET email=$2 WHERE id=$1',[employee.id,email]);const peer=await person('Synthetic Shared Contact','000002-Ab',email);const shared=await prepare('email',[employee.id,peer.id]);assert.equal((await call(`/api/hr/onboarding/batches/${shared.id}`)).body.counts[0].decision,'blocked');
     const existing=await account('Verified Existing',{hr_access:true,hr_leave_apply:true});await pool.query('UPDATE hr_employees SET email=$2 WHERE id=$1',[employee.id,existing.email]);const batch=await prepare('email'),row=(await call(`/api/hr/onboarding/batches/${batch.id}`)).body.rows[0];assert.equal(row.decision,'blocked');assert.equal((await pool.query('SELECT reviewer_id FROM hr_employees WHERE id=$1',[employee.id])).rows[0].reviewer_id,null);
     assert.equal((await call(`/api/hr/onboarding/batches/${batch.id}/rows/${row.id}`,{decision:'link',reviewer_id:existing.id,reason})).status,200);await apply(batch);assert.equal((await pool.query('SELECT reviewer_id FROM hr_employees WHERE id=$1',[employee.id])).rows[0].reviewer_id,existing.id);assert.deepEqual((await auth.loadCapabilities(existing.id)).sort(),['hr_access','hr_leave_apply']);
-    assert.equal((await call('/api/hr/leaves',{leave_type_id:randomUUID(),start_date:'2026-10-08',end_date:'2026-10-09',reason},existing)).status,409);
+    assert.equal((await call('/api/hr/leaves',{leave_type_id:randomUUID(),start_date:'2026-10-08',end_date:'2026-10-09',reason},existing)).status,404);
   });
   test('changed employee facts reject a stale batch atomically',async()=>{
     const peer=await person(),batch=await prepare('payroll',[employee.id,peer.id]);await pool.query('UPDATE hr_employees SET display_name=$2 WHERE id=$1',[peer.id,'Changed since review']);await assert.rejects(apply(batch),error=>error.status===409);
@@ -74,7 +74,7 @@ describe('verified employee onboarding and lifecycle over real HTTP',{skip:skipW
     const picker=await call(`/api/hr/directory/accounts?search=${encodeURIComponent(alias)}`);assert.equal(picker.body.total,1);assert.equal(picker.body.accounts[0].login_alias,alias);assert.equal(picker.body.accounts[0].password_hash,undefined);
     assert.equal((await call('/api/auth/login',{login_alias:alias.toLowerCase(),password:'Synthetic verified password'},null)).status,401);
     const me=await call('/api/hr/me',undefined,row,'GET',login.body.token);assert.equal(me.status,200);assert.deepEqual(me.body.balances,[]);assert.equal((await pool.query('SELECT 1 FROM hr_leave_balances WHERE employee_id=$1',[employee.id])).rowCount,0);assert.equal((await call('/api/finance-check',undefined,row,'GET',login.body.token)).status,403);
-    assert.equal((await call('/api/hr/leaves',{leave_type_id:randomUUID(),start_date:'2026-10-08',end_date:'2026-10-09',reason},row,'POST',login.body.token)).status,409);
+    assert.equal((await call('/api/hr/leaves',{leave_type_id:randomUUID(),start_date:'2026-10-08',end_date:'2026-10-09',reason},row,'POST',login.body.token)).status,404);
     await pool.query("UPDATE hr_employees SET reviewer_id=NULL WHERE id=$1",[employee.id]);assert.equal((await call('/api/auth/login',{login_alias:alias,password:'Synthetic verified password'},null)).status,401);
   });
   test('email activation and HR recovery replace credentials and invalidate old sessions',async()=>{
@@ -105,7 +105,7 @@ describe('verified employee onboarding and lifecycle over real HTTP',{skip:skipW
     await (await import('../services/employeeDirectory.js')).setEmployeeAccount(pool,{employeeId:employee.id,reviewerId:existing.id,actor:central,reason});
     const batch=await prepare();assert.equal((await call(`/api/hr/onboarding/batches/${batch.id}`)).body.rows[0].decision,'retain');await apply(batch);
     assert.equal((await pool.query('SELECT leave_policy_regime FROM hr_employees WHERE id=$1',[employee.id])).rows[0].leave_policy_regime,'government');assert.deepEqual((await auth.loadCapabilities(existing.id)).sort(),['hr_access','hr_leave_apply']);
-    assert.equal((await call('/api/hr/leaves',{leave_type_id:randomUUID(),start_date:'2026-10-08',end_date:'2026-10-09',reason},existing)).status,409);
+    assert.equal((await call('/api/hr/leaves',{leave_type_id:randomUUID(),start_date:'2026-10-08',end_date:'2026-10-09',reason},existing)).status,404);
   });
   test('legacy final decisions queued behind government enrollment cannot bypass the gate',async()=>{
     const type=(await pool.query("INSERT INTO hr_leave_types(name,default_days) VALUES ($1,10) RETURNING id",[`Lifecycle-${randomUUID()}`])).rows[0];

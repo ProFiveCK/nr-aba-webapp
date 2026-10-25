@@ -3,6 +3,7 @@ import { body } from '../middleware/validation.js';
 import { handleValidation } from '../middleware/validation.js';
 import { forexTTUpload, sha256 } from '../middleware/upload.js';
 import { pool } from '../db.js';
+import { withTransaction } from '../lib/transaction.js';
 import { requireAuth, requirePermission } from '../services/authService.js';
 import { notifyForexTTReviewers, notifyForexTTSubmitter } from '../services/notificationService.js';
 import { generateForexTTPdf } from '../services/pdfService.js';
@@ -45,21 +46,23 @@ function allowedNextStatuses(current, actor) {
   return base;
 }
 
-async function recordEvent(requestId, actor, status, comments = null, metadata = {}) {
-  await pool.query(
+async function recordEvent(requestId, actor, status, comments = null, metadata = {}, db = pool) {
+  await db.query(
     `INSERT INTO forex_tt_reviews (request_id, reviewer, actor_id, status, comments, metadata)
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [requestId, actor.display_name || actor.email, actor.id, status, comments, metadata]
   );
 }
 
-async function loadRequest(code, actor) {
-  const { rows } = await pool.query(
+// `lock` takes a row lock, for use inside a transaction that goes on to change
+// the request: whoever holds it decides from the request as it now stands.
+async function loadRequest(code, actor, { db = pool, lock = false } = {}) {
+  const { rows } = await db.query(
     `SELECT id, request_id, root_request_id, submitted_by, department_code, division_code,
             status, version, form_data, bank_confirmation, claimed_by, claimed_at, created_at, updated_at, deleted_at
        FROM forex_tt_requests
       WHERE request_id = $1
-        AND deleted_at IS NULL`,
+        AND deleted_at IS NULL${lock ? '\n      FOR UPDATE' : ''}`,
     [code]
   );
   if (!rows.length) return null;
@@ -301,27 +304,21 @@ router.post(
   forexTTUpload,
   async (req, res) => {
     try {
-      const request = await loadRequest(req.params.requestId, req.user);
-      if (!request) {
-        res.status(404).json({ message: 'Request not found.' });
-        return;
-      }
-      if (request.submitted_by !== req.user.id) {
-        res.status(403).json({ message: 'Only the submitter may upload attachments.' });
-        return;
-      }
-      if (!['draft', 'needs_changes'].includes(request.status)) {
-        res.status(400).json({ message: 'Attachments can only be added while drafting or addressing changes.' });
-        return;
-      }
-
       const files = req.files || [];
       const category = req.body?.category || 'supporting';
-      const inserted = [];
-      for (const file of files) {
-        const checksum = sha256(file.buffer);
-        // Mark previous attachments of the same category as superseded
-        await pool.query(
+      const outcome = await withTransaction(pool, async (client) => {
+        const request = await loadRequest(req.params.requestId, req.user, { db: client, lock: true });
+        if (!request) return { fail: [404, 'Request not found.'] };
+        if (request.submitted_by !== req.user.id) {
+          return { fail: [403, 'Only the submitter may upload attachments.'] };
+        }
+        if (!['draft', 'needs_changes'].includes(request.status)) {
+          return { fail: [400, 'Attachments can only be added while drafting or addressing changes.'] };
+        }
+        // An upload replaces the category's earlier files once, up front. Doing
+        // it per file superseded the files this same upload had just stored, so
+        // selecting several files kept only the last.
+        await client.query(
           `UPDATE forex_tt_attachments
               SET superseded_at = NOW()
             WHERE request_id = $1
@@ -329,14 +326,23 @@ router.post(
               AND superseded_at IS NULL`,
           [request.id, category]
         );
-        const { rows } = await pool.query(
-          `INSERT INTO forex_tt_attachments (request_id, category, file_name, file_data, checksum, uploaded_by)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           RETURNING id, category, file_name, checksum, created_at`,
-          [request.id, category, file.originalname, file.buffer, checksum, req.user.id]
-        );
-        inserted.push(rows[0]);
+        const inserted = [];
+        for (const file of files) {
+          const { rows } = await client.query(
+            `INSERT INTO forex_tt_attachments (request_id, category, file_name, file_data, checksum, uploaded_by)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id, category, file_name, checksum, created_at`,
+            [request.id, category, file.originalname, file.buffer, sha256(file.buffer), req.user.id]
+          );
+          inserted.push(rows[0]);
+        }
+        return { inserted };
+      });
+      if (outcome.fail) {
+        res.status(outcome.fail[0]).json({ message: outcome.fail[1] });
+        return;
       }
+      const { inserted } = outcome;
       res.status(201).json({ attachments: inserted });
     } catch (err) {
       console.error('Failed to upload FOREX TT attachments', err);
@@ -450,62 +456,65 @@ router.patch(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     const { status: targetStatus, comments, bank_confirmation: bankConfirmation } = req.body;
-    const request = await loadRequest(req.params.requestId, req.user);
-    if (!request) {
-      res.status(404).json({ message: 'Request not found.' });
-      return;
-    }
-    const isOwner = request.submitted_by === req.user.id;
-    const isReviewer = req.user.permissions?.review_forex_tt || req.user.role === 'admin';
+    // The request row is locked and every check runs against it as it stands, so
+    // two reviewers cannot both claim (or both approve) the same request: the
+    // second waits, then sees the new status and is refused. The status change
+    // and its history entry commit together.
+    const outcome = await withTransaction(pool, async (client) => {
+      const request = await loadRequest(req.params.requestId, req.user, { db: client, lock: true });
+      if (!request) return { fail: [404, 'Request not found.'] };
+      const isOwner = request.submitted_by === req.user.id;
+      const isReviewer = req.user.permissions?.review_forex_tt || req.user.role === 'admin';
 
-    if (targetStatus === 'submitted' && !isOwner) {
-      res.status(403).json({ message: 'Only the submitter can submit this request.' });
-      return;
-    }
-    if (['claimed', 'processing', 'approved'].includes(targetStatus) && !isReviewer) {
-      res.status(403).json({ message: 'Only FOREX TT reviewers can perform this action.' });
-      return;
-    }
-    if (['claimed', 'processing', 'approved'].includes(targetStatus) && isOwner) {
-      res.status(403).json({ message: 'You cannot review your own request. Another FOREX TT reviewer must take it.' });
-      return;
-    }
-    if (!canTransition(request.status, targetStatus, req.user)) {
-      res.status(400).json({ message: `Cannot move request from ${request.status} to ${targetStatus}.` });
-      return;
-    }
+      if (targetStatus === 'submitted' && !isOwner) {
+        return { fail: [403, 'Only the submitter can submit this request.'] };
+      }
+      if (['claimed', 'processing', 'approved'].includes(targetStatus) && !isReviewer) {
+        return { fail: [403, 'Only FOREX TT reviewers can perform this action.'] };
+      }
+      if (['claimed', 'processing', 'approved'].includes(targetStatus) && isOwner) {
+        return { fail: [403, 'You cannot review your own request. Another FOREX TT reviewer must take it.'] };
+      }
+      if (!canTransition(request.status, targetStatus, req.user)) {
+        return { fail: [400, `Cannot move request from ${request.status} to ${targetStatus}.`] };
+      }
 
-    const updates = ['status = $1', 'version = version + 1', 'updated_at = NOW()'];
-    const values = [targetStatus];
-    if (targetStatus === 'claimed') {
-      updates.push('claimed_by = $' + (values.length + 1));
-      updates.push('claimed_at = NOW()');
-      values.push(req.user.id);
-    }
-    if (targetStatus === 'submitted' || targetStatus === 'needs_changes') {
-      updates.push('claimed_by = NULL');
-      updates.push('claimed_at = NULL');
-    }
-    if (targetStatus === 'approved' && bankConfirmation !== undefined) {
-      updates.push('bank_confirmation = $' + (values.length + 1));
-      values.push(bankConfirmation);
-    }
-    values.push(request.id);
+      const updates = ['status = $1', 'version = version + 1', 'updated_at = NOW()'];
+      const values = [targetStatus];
+      if (targetStatus === 'claimed') {
+        updates.push('claimed_by = $' + (values.length + 1));
+        updates.push('claimed_at = NOW()');
+        values.push(req.user.id);
+      }
+      if (targetStatus === 'submitted' || targetStatus === 'needs_changes') {
+        updates.push('claimed_by = NULL');
+        updates.push('claimed_at = NULL');
+      }
+      if (targetStatus === 'approved' && bankConfirmation !== undefined) {
+        updates.push('bank_confirmation = $' + (values.length + 1));
+        values.push(bankConfirmation);
+      }
+      values.push(request.id);
 
-    const { rows } = await pool.query(
-      `UPDATE forex_tt_requests
-          SET ${updates.join(', ')}
-        WHERE id = $${values.length}
-        RETURNING id, request_id, status, version, form_data, bank_confirmation, claimed_by, claimed_at, created_at, updated_at`,
-      values
-    );
-    const updated = rows[0];
-
-    await recordEvent(request.id, req.user, targetStatus, comments, {
-      from_status: request.status,
-      to_status: targetStatus,
-      bank_confirmation: bankConfirmation || null,
+      const { rows } = await client.query(
+        `UPDATE forex_tt_requests
+            SET ${updates.join(', ')}
+          WHERE id = $${values.length}
+          RETURNING id, request_id, status, version, form_data, bank_confirmation, claimed_by, claimed_at, created_at, updated_at`,
+        values
+      );
+      await recordEvent(request.id, req.user, targetStatus, comments, {
+        from_status: request.status,
+        to_status: targetStatus,
+        bank_confirmation: bankConfirmation || null,
+      }, client);
+      return { updated: rows[0] };
     });
+    if (outcome.fail) {
+      res.status(outcome.fail[0]).json({ message: outcome.fail[1] });
+      return;
+    }
+    const { updated } = outcome;
 
     if (targetStatus === 'submitted') {
       notifyForexTTReviewers(updated, req.user).catch((err) => console.error('Failed to notify FOREX TT reviewers', err));

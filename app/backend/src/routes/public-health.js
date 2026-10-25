@@ -2,6 +2,7 @@ import express from 'express';
 import { body, param } from '../middleware/validation.js';
 import { handleValidation } from '../middleware/validation.js';
 import { pool } from '../db.js';
+import { withTransaction } from '../lib/transaction.js';
 import { requirePermission } from '../services/authService.js';
 import { encryptSecret, decryptSecret } from '../services/encryption.js';
 import { recordAudit } from '../services/auditService.js';
@@ -112,18 +113,22 @@ router.post(
       const fullName = String(req.body.full_name).trim();
       const bankAccount = req.body.bank_account ? String(req.body.bank_account).trim() : null;
       const enc = encryptSecret(bankAccount);
-      const { rows } = await pool.query(
-        `INSERT INTO public_health_participants (full_name, bank_bsb, bank_account_enc, bank_account_name, village, external_ref, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING *`,
-        [fullName, req.body.bank_bsb ?? null, enc, req.body.bank_account_name ?? null, req.body.village ?? null, req.body.external_ref ?? null, req.user.id]
-      );
-      const participant = rows[0];
-      await pool.query(
-        `INSERT INTO public_health_participant_levels (participant_id, level, reason, created_by)
-         VALUES ($1, 'LV1', 'initial', $2)`,
-        [participant.id, req.user.id]
-      );
+      // A participant without a level row would be paid as nothing, so the two
+      // inserts stand or fall together.
+      const participant = await withTransaction(pool, async (client) => {
+        const { rows } = await client.query(
+          `INSERT INTO public_health_participants (full_name, bank_bsb, bank_account_enc, bank_account_name, village, external_ref, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING *`,
+          [fullName, req.body.bank_bsb ?? null, enc, req.body.bank_account_name ?? null, req.body.village ?? null, req.body.external_ref ?? null, req.user.id]
+        );
+        await client.query(
+          `INSERT INTO public_health_participant_levels (participant_id, level, reason, created_by)
+           VALUES ($1, 'LV1', 'initial', $2)`,
+          [rows[0].id, req.user.id]
+        );
+        return rows[0];
+      });
       await recordAudit({
         actor: req.user,
         action: 'public_health.participant.created',
@@ -146,40 +151,45 @@ router.post(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     try {
-      let created = 0;
-      let skipped = 0;
-      for (const item of req.body.participants) {
-        const fullName = String(item?.full_name || '').trim();
-        if (!fullName) {
-          skipped += 1;
-          continue;
-        }
-        const externalRef = item?.external_ref ? String(item.external_ref).trim() : null;
-        if (externalRef) {
-          const { rows: existing } = await pool.query(
-            'SELECT id FROM public_health_participants WHERE external_ref = $1',
-            [externalRef]
-          );
-          if (existing.length) {
+      // All or nothing: a half-applied import cannot simply be re-run, because
+      // rows without an external reference would be created a second time.
+      const { created, skipped } = await withTransaction(pool, async (client) => {
+        let created = 0;
+        let skipped = 0;
+        for (const item of req.body.participants) {
+          const fullName = String(item?.full_name || '').trim();
+          if (!fullName) {
             skipped += 1;
             continue;
           }
+          const externalRef = item?.external_ref ? String(item.external_ref).trim() : null;
+          if (externalRef) {
+            const { rows: existing } = await client.query(
+              'SELECT id FROM public_health_participants WHERE external_ref = $1',
+              [externalRef]
+            );
+            if (existing.length) {
+              skipped += 1;
+              continue;
+            }
+          }
+          const enc = encryptSecret(item?.bank_account ? String(item.bank_account).trim() : null);
+          const village = item?.village ? String(item.village).trim() : null;
+          const { rows } = await client.query(
+            `INSERT INTO public_health_participants (full_name, bank_bsb, bank_account_enc, bank_account_name, village, external_ref, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id`,
+            [fullName, item?.bank_bsb ?? null, enc, item?.bank_account_name ?? null, village, externalRef, req.user.id]
+          );
+          await client.query(
+            `INSERT INTO public_health_participant_levels (participant_id, level, reason, created_by)
+             VALUES ($1, 'LV1', 'import', $2)`,
+            [rows[0].id, req.user.id]
+          );
+          created += 1;
         }
-        const enc = encryptSecret(item?.bank_account ? String(item.bank_account).trim() : null);
-        const village = item?.village ? String(item.village).trim() : null;
-        const { rows } = await pool.query(
-          `INSERT INTO public_health_participants (full_name, bank_bsb, bank_account_enc, bank_account_name, village, external_ref, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           RETURNING id`,
-          [fullName, item?.bank_bsb ?? null, enc, item?.bank_account_name ?? null, village, externalRef, req.user.id]
-        );
-        await pool.query(
-          `INSERT INTO public_health_participant_levels (participant_id, level, reason, created_by)
-           VALUES ($1, 'LV1', 'import', $2)`,
-          [rows[0].id, req.user.id]
-        );
-        created += 1;
-      }
+        return { created, skipped };
+      });
       await recordAudit({
         actor: req.user,
         action: 'public_health.participants.imported',
@@ -281,42 +291,53 @@ router.patch(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     try {
-      const { rows } = await pool.query('SELECT * FROM public_health_participants WHERE id = $1', [req.params.id]);
-      if (!rows.length) {
+      const changed = await withTransaction(pool, async (client) => {
+        // The participant row is the lock: two changes for one person queue up
+        // instead of both closing the open level and each opening another.
+        const { rows } = await client.query(
+          'SELECT * FROM public_health_participants WHERE id = $1 FOR UPDATE',
+          [req.params.id]
+        );
+        if (!rows.length) return null;
+        const participant = rows[0];
+        const { rows: currentRows } = await client.query(
+          `SELECT level
+             FROM public_health_participant_levels
+            WHERE participant_id = $1
+              AND effective_to IS NULL
+            ORDER BY effective_from DESC
+            LIMIT 1`,
+          [participant.id]
+        );
+        const currentLevel = currentRows[0]?.level || 'LV1';
+        const newLevel = req.body.level;
+        const reasonText = String(req.body.reason).trim();
+        const direction = tierRank(newLevel) > tierRank(currentLevel)
+          ? 'promotion'
+          : tierRank(newLevel) < tierRank(currentLevel)
+            ? 'demotion'
+            : 'manual';
+        // Closing the old level and opening the new one must not be separable:
+        // a participant with no open level is paid as nothing.
+        await client.query(
+          `UPDATE public_health_participant_levels
+              SET effective_to = NOW()
+            WHERE participant_id = $1
+              AND effective_to IS NULL`,
+          [participant.id]
+        );
+        await client.query(
+          `INSERT INTO public_health_participant_levels (participant_id, level, reason, notes, created_by)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [participant.id, newLevel, direction, reasonText, req.user.id]
+        );
+        return { participant, currentLevel, newLevel, reasonText };
+      });
+      if (!changed) {
         res.status(404).json({ message: 'Participant not found.' });
         return;
       }
-      const participant = rows[0];
-      const { rows: currentRows } = await pool.query(
-        `SELECT level
-           FROM public_health_participant_levels
-          WHERE participant_id = $1
-            AND effective_to IS NULL
-          ORDER BY effective_from DESC
-          LIMIT 1`,
-        [participant.id]
-      );
-      const currentLevel = currentRows[0]?.level || 'LV1';
-      const newLevel = req.body.level;
-      const reasonText = String(req.body.reason).trim();
-      const direction = tierRank(newLevel) > tierRank(currentLevel)
-        ? 'promotion'
-        : tierRank(newLevel) < tierRank(currentLevel)
-          ? 'demotion'
-          : 'manual';
-
-      await pool.query(
-        `UPDATE public_health_participant_levels
-            SET effective_to = NOW()
-          WHERE participant_id = $1
-            AND effective_to IS NULL`,
-        [participant.id]
-      );
-      await pool.query(
-        `INSERT INTO public_health_participant_levels (participant_id, level, reason, notes, created_by)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [participant.id, newLevel, direction, reasonText, req.user.id]
-      );
+      const { participant, currentLevel, newLevel, reasonText } = changed;
       await recordAudit({
         actor: req.user,
         action: 'public_health.participant.level_changed',
@@ -357,29 +378,32 @@ router.post(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     try {
-      const { rows } = await pool.query(
-        `INSERT INTO public_health_pay_periods (paid_date, created_by)
-         VALUES ($1, $2)
-         RETURNING *`,
-        [req.body.paid_date, req.user.id]
-      );
-      const period = rows[0];
-      await pool.query(
-        `INSERT INTO public_health_period_entries (period_id, participant_id, level, active, amount)
-         SELECT $1, p.id, COALESCE(l.level, 'LV1'), (COALESCE(l.level, 'LV1') <> 'LV0'), COALESCE(t.monthly_amount, 0)
-           FROM public_health_participants p
-           LEFT JOIN LATERAL (
-             SELECT level
-               FROM public_health_participant_levels
-              WHERE participant_id = p.id
-                AND effective_to IS NULL
-              ORDER BY effective_from DESC
-              LIMIT 1
-           ) l ON TRUE
-           LEFT JOIN public_health_tiers t ON t.code = COALESCE(l.level, 'LV1')
-          WHERE p.status = 'active'`,
-        [period.id]
-      );
+      // A period with no entries is an empty pay run, so both inserts commit together.
+      const period = await withTransaction(pool, async (client) => {
+        const { rows } = await client.query(
+          `INSERT INTO public_health_pay_periods (paid_date, created_by)
+           VALUES ($1, $2)
+           RETURNING *`,
+          [req.body.paid_date, req.user.id]
+        );
+        await client.query(
+          `INSERT INTO public_health_period_entries (period_id, participant_id, level, active, amount)
+           SELECT $1, p.id, COALESCE(l.level, 'LV1'), (COALESCE(l.level, 'LV1') <> 'LV0'), COALESCE(t.monthly_amount, 0)
+             FROM public_health_participants p
+             LEFT JOIN LATERAL (
+               SELECT level
+                 FROM public_health_participant_levels
+                WHERE participant_id = p.id
+                  AND effective_to IS NULL
+                ORDER BY effective_from DESC
+                LIMIT 1
+             ) l ON TRUE
+             LEFT JOIN public_health_tiers t ON t.code = COALESCE(l.level, 'LV1')
+            WHERE p.status = 'active'`,
+          [rows[0].id]
+        );
+        return rows[0];
+      });
       await recordAudit({
         actor: req.user,
         action: 'public_health.period.created',
@@ -437,29 +461,40 @@ router.put(
   async (req, res) => {
     if (!handleValidation(req, res)) return;
     try {
-      const period = await getPeriod(req.params.id);
-      if (!period) {
+      const entries = req.body.entries || [];
+      const outcome = await withTransaction(pool, async (client) => {
+        // Locked so the draft check still holds when the entries are written:
+        // a period submitted meanwhile must not be edited under the reviewer.
+        const { rows } = await client.query(
+          'SELECT * FROM public_health_pay_periods WHERE id = $1 FOR UPDATE',
+          [req.params.id]
+        );
+        if (!rows.length) return { missing: true };
+        if (rows[0].status !== 'draft') return { notDraft: true };
+        let updated = 0;
+        for (const e of entries) {
+          // LV0 (demoted, no payment) is never activatable — forced inactive.
+          const { rowCount } = await client.query(
+            `UPDATE public_health_period_entries
+                SET active = CASE WHEN level = 'LV0' THEN FALSE ELSE $1 END,
+                    updated_at = NOW()
+              WHERE period_id = $2
+                AND participant_id = $3`,
+            [e?.active === true, rows[0].id, e?.participant_id]
+          );
+          updated += rowCount;
+        }
+        return { period: rows[0], updated };
+      });
+      if (outcome.missing) {
         res.status(404).json({ message: 'Pay period not found.' });
         return;
       }
-      if (period.status !== 'draft') {
+      if (outcome.notDraft) {
         res.status(400).json({ message: 'Only draft periods can be edited.' });
         return;
       }
-      const entries = req.body.entries || [];
-      let updated = 0;
-      for (const e of entries) {
-        // LV0 (demoted, no payment) is never activatable — forced inactive.
-        const { rowCount } = await pool.query(
-          `UPDATE public_health_period_entries
-              SET active = CASE WHEN level = 'LV0' THEN FALSE ELSE $1 END,
-                  updated_at = NOW()
-            WHERE period_id = $2
-              AND participant_id = $3`,
-          [e?.active === true, period.id, e?.participant_id]
-        );
-        updated += rowCount;
-      }
+      const { period, updated } = outcome;
       await recordAudit({
         actor: req.user,
         action: 'public_health.period.entries_updated',

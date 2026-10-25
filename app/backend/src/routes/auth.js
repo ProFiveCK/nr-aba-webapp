@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { body, handleValidation } from '../middleware/validation.js';
 import { pool } from '../db.js';
+import { withTransaction } from '../lib/transaction.js';
 import {
   buildTokenPayload,
   clearAuthCookie,
@@ -487,42 +488,46 @@ router.post(
     if (!handleValidation(req, res)) return;
     const { token, new_password } = req.body;
     
-    const { rows } = await pool.query(
-      `SELECT prt.reviewer_id, prt.expires_at, r.email, r.display_name, r.status
-       FROM password_reset_tokens prt
-       JOIN reviewers r ON r.id = prt.reviewer_id
-       WHERE prt.token = $1 AND prt.expires_at > NOW()`,
-      [sha256Hex(token)]
-    );
-    
-    if (!rows.length) {
+    // One transaction, and the token row is locked first: a reset token works
+    // once, so a second request using it waits, then finds it gone. The
+    // password change, the token and the sessions end together, so a failure
+    // cannot leave a new password with a still-usable token.
+    const outcome = await withTransaction(pool, async (client) => {
+      const { rows } = await client.query(
+        `SELECT prt.reviewer_id, r.email, r.status
+           FROM password_reset_tokens prt
+           JOIN reviewers r ON r.id = prt.reviewer_id
+          WHERE prt.token = $1 AND prt.expires_at > NOW()
+          FOR UPDATE OF prt`,
+        [sha256Hex(token)]
+      );
+      if (!rows.length) return { invalid: true };
+      const { reviewer_id, email, status } = rows[0];
+      if (status !== 'active') return { inactive: true };
+
+      const newHash = await bcrypt.hash(new_password, PASS_HASH_ROUNDS);
+      await client.query(
+        'UPDATE reviewers SET password_hash = $1, must_change_password = FALSE, updated_at = NOW() WHERE id = $2',
+        [newHash, reviewer_id]
+      );
+      await client.query('UPDATE hr_account_tokens SET revoked_at=NOW() WHERE reviewer_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL', [reviewer_id]);
+      await client.query('DELETE FROM password_reset_tokens WHERE reviewer_id = $1', [reviewer_id]);
+      await client.query('DELETE FROM reviewer_sessions WHERE reviewer_id = $1', [reviewer_id]);
+      return { reviewer_id, email };
+    });
+    if (outcome.invalid) {
       res.status(400).json({ message: 'Invalid or expired reset token.' });
       return;
     }
-    
-    const { reviewer_id, email, display_name, status } = rows[0];
-    
-    if (status !== 'active') {
+    if (outcome.inactive) {
       res.status(403).json({ message: 'Account is inactive.' });
       return;
     }
-    
-    // Update password
-    const newHash = await bcrypt.hash(new_password, PASS_HASH_ROUNDS);
-    await pool.query(
-      'UPDATE reviewers SET password_hash = $1, must_change_password = FALSE, updated_at = NOW() WHERE id = $2',
-      [newHash, reviewer_id]
-    );
-    
-    await pool.query('UPDATE hr_account_tokens SET revoked_at=NOW() WHERE reviewer_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL',[reviewer_id]);
-    // Clean up reset token and sessions
-    await pool.query('DELETE FROM password_reset_tokens WHERE reviewer_id = $1', [reviewer_id]);
-    await pool.query('DELETE FROM reviewer_sessions WHERE reviewer_id = $1', [reviewer_id]);
     await recordAudit({
-      actor: { id: null, email, ip: req.ip },
+      actor: { id: null, email: outcome.email, ip: req.ip },
       action: 'password.reset',
       entityType: 'reviewer',
-      entityId: reviewer_id,
+      entityId: outcome.reviewer_id,
     });
     
     res.json({ message: 'Password reset successful. You can now sign in with your new password.' });

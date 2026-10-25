@@ -1,6 +1,7 @@
 import express from 'express';
 import { body, param, handleValidation } from '../middleware/validation.js';
 import { pool } from '../db.js';
+import { withTransaction } from '../lib/transaction.js';
 import { requireAuth } from '../services/authService.js';
 import { actorFrom, recordAudit } from '../services/auditService.js';
 import {
@@ -148,11 +149,13 @@ router.post(
       res.status(400).json({ message: 'No valid entries to import.', errors: invalid });
       return;
     }
-    const client = await pool.connect();
     const stats = { inserted: 0, updated: 0 };
-    try {
-      await client.query('BEGIN');
+    await withTransaction(pool, async (client) => {
       for (const entry of validEntries) {
+        // A failed statement poisons the whole transaction in Postgres, so each
+        // row gets a savepoint: a bad row is skipped and reported, and the
+        // rest still commit.
+        await client.query('SAVEPOINT import_row');
         try {
           const { rows } = await client.query(
             `INSERT INTO blacklist_entries (bsb, account, label, notes, active)
@@ -162,22 +165,16 @@ router.post(
              RETURNING (xmax = 0)::boolean AS inserted` ,
             [entry.bsb, entry.account, entry.label, entry.notes, entry.active]
           );
+          await client.query('RELEASE SAVEPOINT import_row');
           if (rows[0]?.inserted) stats.inserted += 1;
           else stats.updated += 1;
         } catch (err) {
+          await client.query('ROLLBACK TO SAVEPOINT import_row');
           console.error('Import blacklist row failed', err);
           invalid.push({ index: entry.rowNumber, message: 'Database error while importing row.' });
         }
       }
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK');
-      console.error('Failed to import blacklist entries', err);
-      res.status(500).json({ message: 'Unable to import blacklist entries.' });
-      return;
-    } finally {
-      client.release();
-    }
+    });
     await audit(req, 'blacklist.import', 'blacklist_entry', null, {
       metadata: { inserted: stats.inserted, updated: stats.updated, skipped: invalid.length },
     });

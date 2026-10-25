@@ -35,7 +35,8 @@ export function LeaveApp() {
         <div className="leave-workspace min-w-0 space-y-6">
             {import.meta.env.VITE_LOCAL_REVIEW_KIND === 'production-copy' && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">Local production copy · Changes stay on this computer. Email, external connections and automatic accrual are disabled.</p>}
             <Routes>
-                <Route index element={<Navigate to={fallback} replace />} />
+                {/* Absolute: a relative target from the catch-all route is resolved against the full path in React Router 7, so it kept appending to it. */}
+                <Route index element={<Navigate to={`/leave/${fallback}`} replace />} />
                 {visible.some((s) => s.id === 'work-queue') && <><Route path="work-queue" element={<WorkQueue />} /><Route path="approvals" element={<LeaveRedirect to="/leave/work-queue" />} />{user?.permissions?.hr_admin && <Route path="overview" element={<LeaveRedirect to="/leave/work-queue?view=overview" />} />}</>}
                 {visible.some((s) => s.id === 'my-leave') && <Route path="my-leave" element={<MyLeave />} />}
                 {visible.some((s) => s.id === 'calendar') && <Route path="calendar" element={<Calendar />} />}
@@ -45,7 +46,7 @@ export function LeaveApp() {
                 {visible.some((s) => s.id === 'settings') && <><Route path="settings" element={<Staff key="settings" workspace="settings" />} /><Route path="policies" element={<Navigate to="/leave/settings?view=policies" replace />} /></>}
                 {/* An unknown or forbidden section, including one reached from
                     an old bookmark, falls back rather than showing nothing. */}
-                <Route path="*" element={<Navigate to={fallback} replace />} />
+                <Route path="*" element={<Navigate to={`/leave/${fallback}`} replace />} />
             </Routes>
         </div>
     );

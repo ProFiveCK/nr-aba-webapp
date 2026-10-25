@@ -18,7 +18,6 @@ router.get('/operations',async(req,res)=>{
   await assertCentral(client,req.user);
   const totals=(await client.query(`SELECT
    (SELECT count(*)::int FROM hr_gov_requests WHERE status='pending') AS pending_requests,
-   (SELECT count(*)::int FROM hr_gov_requests r WHERE status='approved' AND NOT EXISTS(SELECT 1 FROM hr_gov_salary_acknowledgements a WHERE a.request_id=r.id)) AS salary_acknowledgements_due,
    (SELECT count(*)::int FROM hr_gov_payroll_batches b WHERE NOT EXISTS(SELECT 1 FROM hr_gov_payroll_batches n WHERE n.supersedes_id=b.id) AND NOT EXISTS(SELECT 1 FROM hr_gov_payroll_receipts a WHERE a.batch_id=b.id)) AS registers_due,
    (SELECT count(*)::int FROM hr_gov_openings WHERE status='preview') AS openings_due,
    (SELECT count(*)::int FROM hr_gov_job_plans WHERE status='draft') AS job_plans_due,

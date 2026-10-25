@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { withTransaction } from '../lib/transaction.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool } from '../db.js';
@@ -168,11 +169,10 @@ export async function loadCapabilities(reviewerId) {
  * Replaces a reviewer's grants with exactly `capabilities`, in one transaction
  * so a failure cannot leave someone with a half-applied set of permissions.
  */
-export async function setCapabilities(reviewerId, capabilities, grantedBy = null) {
+export async function setCapabilities(reviewerId, capabilities, grantedBy = null, existingClient = null) {
   const wanted = [...new Set(capabilities.filter((c) => ALL_CAPABILITIES.includes(c)))];
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  // With a client the caller owns the transaction (so this joins it); without one it makes its own.
+  const apply = async (client) => {
     await client.query(
       'DELETE FROM reviewer_capabilities WHERE reviewer_id = $1 AND NOT (capability = ANY($2::text[]))',
       [reviewerId, wanted]
@@ -184,13 +184,9 @@ export async function setCapabilities(reviewerId, capabilities, grantedBy = null
         [reviewerId, capability, grantedBy]
       );
     }
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  };
+  if (existingClient) await apply(existingClient);
+  else await withTransaction(pool, apply);
   return wanted;
 }
 

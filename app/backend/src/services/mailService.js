@@ -237,9 +237,18 @@ async function notifyPublicHealthReviewers(batch, metadata) {
   await sendMail(mailOptions);
 }
 
+// The account's current address if the batch is tied to one, else the address recorded at submission.
+async function submitterAddress(batch, metadata) {
+  if (batch?.submitted_by) {
+    const { rows: [account] } = await pool.query('SELECT email FROM reviewers WHERE id = $1', [batch.submitted_by]);
+    if (account?.email) return account.email;
+  }
+  return batch?.submitted_email || metadata?.submitted_by_email;
+}
+
 async function notifySubmitterOfApproval(batch, metadata, comments, actor) {
   if (!mailTransport || testingModeEnabled) return;
-  const recipient = batch?.submitted_email || metadata?.submitted_by_email;
+  const recipient = await submitterAddress(batch, metadata);
   if (!recipient) return;
   const formattedCode = formatBatchCode(batch.code);
   const departmentCode = metadata?.department_code || batch.department_code || 'Unknown';
@@ -261,7 +270,7 @@ Sign in to the Naoero Treasury portal to view the approved batch.
 
 async function notifySubmitterOfRejection(batch, metadata, comments, actor) {
   if (!mailTransport || testingModeEnabled) return;
-  const recipient = batch?.submitted_email || metadata?.submitted_by_email;
+  const recipient = await submitterAddress(batch, metadata);
   if (!recipient) return;
   const formattedCode = formatBatchCode(batch.code);
   const departmentCode = metadata?.department_code || batch.department_code || 'Unknown';

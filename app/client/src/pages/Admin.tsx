@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent, ReactNode } from 'react';
 import {
-    Bell,
     Check,
     Copy,
     KeyRound,
+    Mail,
     MoreVertical,
     Pencil,
     Plus,
@@ -30,6 +30,8 @@ import {
     parseBlacklistCsv,
 } from '../lib/utils';
 import { STAGE_META, BLACKLIST_IMPORT_LIMIT, HEADER_PRESETS } from '../lib/constants';
+import { ACCESS_PRESETS, presetById, presetCapabilities } from './Admin/accessPresets';
+import { ChangeEmailDialog } from './Admin/ChangeEmailDialog';
 
 const HEADER_PRESET_KEYS = Object.keys(HEADER_PRESETS);
 
@@ -58,6 +60,11 @@ const SIGNUP_ROLE_OPTIONS: { value: SignupRequest['requested_role']; label: stri
     { value: 'reviewer', label: 'Reviewer (Treasury)' },
 ];
 
+// What each role means to the person reading the user list.
+const ACCOUNT_ROLE_LABELS: Record<string, string> = {
+    user: 'Staff', banking: 'Banking', payroll: 'Payroll', public_health: 'Fit for Duty', reviewer: 'Reviewer', admin: 'Administrator',
+};
+
 function roleLabel(role: string): string {
     return SIGNUP_ROLE_OPTIONS.find((o) => o.value === role)?.label || role;
 }
@@ -79,6 +86,8 @@ interface AdminAccount {
     updated_at: string;
     permissions?: Record<string, boolean>;
     capabilities?: string[];
+    /** Granted to this account itself, apart from anything its role or scoped access implies. */
+    explicit_capabilities?: string[];
 }
 
 interface AdminArchiveEntry {
@@ -139,8 +148,12 @@ interface AccountFormState {
     department_code: string;
     division_code: string;
     notify_on_submission: boolean;
+    /** Only keys this form manages (the FOREX TT notice); the server merges them. */
     permissions: Record<string, boolean>;
+    original_notify_forex: boolean;
     capabilities: string[];
+    /** A preset id, or 'current' to keep what the account has. */
+    access: string;
     hr_employee_id: string;
     original_hr_employee_id: string;
     link_reason: string;
@@ -163,12 +176,14 @@ const EMPTY_FORM: AccountFormState = {
     id: null,
     email: '',
     display_name: '',
-    role: 'reviewer',
+    role: 'user',
     department_code: '',
     division_code: '00',
-    notify_on_submission: true,
+    notify_on_submission: false,
     permissions: {},
+    original_notify_forex: false,
     capabilities: [],
+    access: 'leave-staff',
     hr_employee_id: '',
     original_hr_employee_id: '',
     link_reason: '',
@@ -480,21 +495,6 @@ function accountAccessGroups(account: AdminAccount, capabilityGroups: Capability
         .filter((group) => group.granted.length > 0);
 }
 
-// Notification preferences are per-user settings, not access grants (see
-// CAPABILITY_CATALOGUE's notify_* comment in config.js), so they don't belong
-// in the capability catalogue either — collapsed into one badge here instead
-// of a column per workflow that can send a notification.
-function notificationSummary(account: AdminAccount): string[] {
-    const items: string[] = [];
-    if ((account.role === 'reviewer' || account.role === 'admin') && account.notify_on_submission) {
-        items.push('ABA submissions');
-    }
-    if (account.permissions?.notify_forex_tt_submissions) {
-        items.push('FOREX TT submissions');
-    }
-    return items;
-}
-
 function RowMenu({ children }: { children: ReactNode }) {
     const [open, setOpen] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
@@ -551,7 +551,7 @@ function UserManagementPanel() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [search, setSearch] = useState('');
-    const [roleFilter, setRoleFilter] = useState<'all' | AdminAccount['role']>('all');
+    const [emailTarget, setEmailTarget] = useState<AdminAccount | null>(null);
     const [appFilter, setAppFilter] = useState('all');
     const [form, setForm] = useState<AccountFormState>({ ...EMPTY_FORM });
     const [isEditing, setIsEditing] = useState(false);
@@ -561,7 +561,6 @@ function UserManagementPanel() {
     const [tempPassword, setTempPassword] = useState<{ email: string; value: string } | null>(null);
     const formRef = useRef<HTMLFormElement | null>(null);
     const [capabilityGroups, setCapabilityGroups] = useState<CapabilityGroup[]>([]);
-    const [roleCapabilities, setRoleCapabilities] = useState<Record<string, string[]>>({});
     const [hrEmployees, setHrEmployees] = useState<HrEmployeeOption[]>([]);
     const canLinkStaff = authUser?.permissions?.hr_admin === true;
     const { addToast } = useToast();
@@ -589,11 +588,8 @@ function UserManagementPanel() {
     // catalogue surfaces it here without touching this component.
     useEffect(() => {
         apiClient
-            .get<{ groups: CapabilityGroup[]; role_capabilities: Record<string, string[]> }>('/capability-catalogue')
-            .then((data) => {
-                setCapabilityGroups(data?.groups || []);
-                setRoleCapabilities(data?.role_capabilities || {});
-            })
+            .get<{ groups: CapabilityGroup[] }>('/capability-catalogue')
+            .then((data) => setCapabilityGroups(data?.groups || []))
             .catch(() => setCapabilityGroups([]));
     }, []);
 
@@ -613,6 +609,7 @@ function UserManagementPanel() {
     const toggleCapability = (key: string, checked: boolean) => {
         setForm((prev) => ({
             ...prev,
+            access: 'custom',
             capabilities: checked
                 ? [...new Set([...prev.capabilities, key])]
                 : prev.capabilities.filter((c) => c !== key),
@@ -622,8 +619,6 @@ function UserManagementPanel() {
     const filteredAccounts = useMemo(() => {
         const term = search.trim().toLowerCase();
         return accounts.filter((account) => {
-            const matchesRole = roleFilter === 'all' || account.role === roleFilter;
-            if (!matchesRole) return false;
             if (appFilter !== 'all') {
                 const effective = new Set(account.capabilities || []);
                 const group = capabilityGroups.find((g) => g.app === appFilter);
@@ -635,8 +630,8 @@ function UserManagementPanel() {
                 .join(' ');
             return haystack.includes(term);
         });
-    }, [accounts, search, roleFilter, appFilter, capabilityGroups]);
-    const accountPages = usePagination(filteredAccounts, `${search}|${roleFilter}|${appFilter}`);
+    }, [accounts, search, appFilter, capabilityGroups]);
+    const accountPages = usePagination(filteredAccounts, `${search}|${appFilter}`);
 
     const resetForm = () => {
         setForm({ ...EMPTY_FORM });
@@ -644,8 +639,36 @@ function UserManagementPanel() {
         setFormError('');
     };
 
+    const offeredKeys = useMemo(() => capabilityGroups.flatMap((g) => g.capabilities.map((c) => c.key)), [capabilityGroups]);
+
+    const applyPreset = (presetId: string) => {
+        const preset = presetById(presetId);
+        if (!preset) {
+            const current = presetId === 'current' ? accounts.find((a) => a.id === form.id) : undefined;
+            setForm((prev) => current ? {
+                ...prev,
+                access: 'current',
+                role: current.role,
+                capabilities: current.explicit_capabilities ?? [],
+                notify_on_submission: current.notify_on_submission ?? prev.notify_on_submission,
+            } : { ...prev, access: presetId });
+            return;
+        }
+        setForm((prev) => ({
+            ...prev,
+            access: preset.id,
+            role: preset.role,
+            capabilities: presetCapabilities(preset, offeredKeys),
+            notify_on_submission: ['reviewer', 'admin'].includes(preset.role) ? prev.notify_on_submission : false,
+        }));
+    };
+
     const openCreate = () => {
         resetForm();
+        const preset = presetById(EMPTY_FORM.access);
+        if (preset) {
+            setForm({ ...EMPTY_FORM, role: preset.role, capabilities: presetCapabilities(preset, offeredKeys) });
+        }
         setIsFormOpen(true);
     };
 
@@ -670,8 +693,11 @@ function UserManagementPanel() {
             department_code: account.department_code || '',
             division_code: account.division_code || '00',
             notify_on_submission: account.notify_on_submission ?? (account.role === 'reviewer'),
-            permissions: account.permissions || {},
-            capabilities: account.capabilities || [],
+            permissions: { notify_forex_tt_submissions: account.permissions?.notify_forex_tt_submissions === true },
+            original_notify_forex: account.permissions?.notify_forex_tt_submissions === true,
+            // Only what was granted to the account itself; sending back derived access would save it as chosen.
+            capabilities: account.explicit_capabilities ?? [],
+            access: 'current',
             hr_employee_id: linkedId,
             original_hr_employee_id: linkedId,
             link_reason: '',
@@ -761,13 +787,9 @@ function UserManagementPanel() {
             body.notify_on_submission = false;
         }
 
-        // Explicit FOREX TT permissions
-        const nextPermissions: Record<string, boolean> = { ...form.permissions };
-        if (!['reviewer', 'admin'].includes(form.role)) {
-            delete nextPermissions.review_forex_tt;
-            delete nextPermissions.notify_forex_tt_submissions;
-        }
-        body.permissions = nextPermissions;
+        // Only the FOREX TT notice is managed here, and only when it changed; the server merges it.
+        const wantsForexNotice = ['reviewer', 'admin'].includes(form.role) && form.permissions.notify_forex_tt_submissions === true;
+        if (wantsForexNotice !== form.original_notify_forex) body.permissions = { notify_forex_tt_submissions: wantsForexNotice };
         body.capabilities = form.capabilities;
 
         setSaving(true);
@@ -825,6 +847,7 @@ function UserManagementPanel() {
     };
 
     const canReceiveNotifications = form.role === 'reviewer' || form.role === 'admin';
+    const requiresDepartment = form.role === 'user' && form.account_type !== 'employee';
     const selectedEmployee = hrEmployees.find(e => e.id === form.hr_employee_id);
     const displacedAccount = accounts.find(a => a.id === selectedEmployee?.reviewer_id);
     const linkChanged = form.hr_employee_id !== form.original_hr_employee_id;
@@ -859,19 +882,6 @@ function UserManagementPanel() {
                             onChange={(e) => setSearch(e.target.value)}
                             className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                         />
-                        <select
-                            value={roleFilter}
-                            onChange={(e) => setRoleFilter(e.target.value as typeof roleFilter)}
-                            className="rounded-full border border-gray-300 px-4 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                        >
-                            <option value="all">All roles</option>
-                            <option value="user">User</option>
-                            <option value="banking">Banking</option>
-                            <option value="payroll">Payroll</option>
-                            <option value="public_health">Fit for Duty</option>
-                            <option value="reviewer">Reviewer</option>
-                            <option value="admin">Admin</option>
-                        </select>
                         <select
                             value={appFilter}
                             onChange={(e) => setAppFilter(e.target.value)}
@@ -908,43 +918,40 @@ function UserManagementPanel() {
                             <thead className="bg-gray-50 text-left text-xs font-semibold uppercase text-gray-600">
                                 <tr>
                                     <th className="px-3 py-2">User</th>
-                                    <th className="px-3 py-2">Role</th>
-                                    <th className="px-3 py-2">Dept / Div</th>
                                     <th className="px-3 py-2">Access</th>
                                     <th className="px-3 py-2">Status</th>
-                                    <th className="px-3 py-2">Notifications</th>
-                                    <th className="px-3 py-2">Last Login</th>
+                                    <th className="px-3 py-2">Last sign-in</th>
                                     <th className="px-3 py-2 text-right">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100 bg-white">
                                 {loading ? (
                                     <tr>
-                                        <td colSpan={8} className="px-3 py-6 text-center text-gray-500">
+                                        <td colSpan={5} className="px-3 py-6 text-center text-gray-500">
                                             Loading…
                                         </td>
                                     </tr>
                                 ) : filteredAccounts.length === 0 ? (
                                     <tr>
-                                        <td colSpan={8} className="px-3 py-6 text-center text-gray-500">
+                                        <td colSpan={5} className="px-3 py-6 text-center text-gray-500">
                                             No accounts match the current filters.
                                         </td>
                                     </tr>
                                 ) : (
                                     accountPages.pageRows.map((account) => {
                                         const accessGroups = accountAccessGroups(account, capabilityGroups);
-                                        const notifs = notificationSummary(account);
                                         return (
                                             <tr key={account.id}>
                                                 <td className="px-3 py-2">
                                                     <div className="font-semibold text-gray-900">{account.display_name || '—'}</div>
                                                     <div className="text-xs text-gray-500">{account.email}</div>
+                                                    <div className="text-xs text-gray-400">{ACCOUNT_ROLE_LABELS[account.role] || account.role}{account.department_code ? ` · Dept ${account.department_code}` : ''}</div>
                                                 </td>
-                                                <td className="px-3 py-2 capitalize">{account.role}</td>
-                                                <td className="px-3 py-2 font-mono text-gray-600">{account.department_code || '—'} / {account.division_code || '00'}</td>
                                                 <td className="px-3 py-2">
                                                     <div className="flex max-w-xs flex-wrap gap-1">
-                                                        {accessGroups.length === 0 ? (
+                                                        {account.role === 'admin' ? (
+                                                            <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">All apps</span>
+                                                        ) : accessGroups.length === 0 ? (
                                                             <span className="text-xs text-gray-400">No app access</span>
                                                         ) : (
                                                             accessGroups.map((group) => {
@@ -976,17 +983,6 @@ function UserManagementPanel() {
                                                         {account.status}
                                                     </span>
                                                 </td>
-                                                <td className="px-3 py-2">
-                                                    <span
-                                                        title={notifs.length ? notifs.join(', ') : 'No notifications enabled'}
-                                                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                                            notifs.length ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-500'
-                                                        }`}
-                                                    >
-                                                        <Bell className="h-3 w-3" />
-                                                        {notifs.length || 'Off'}
-                                                    </span>
-                                                </td>
                                                 <td className="px-3 py-2 text-gray-600">
                                                     {account.last_login_at ? formatIsoDateTime(account.last_login_at) : 'Never'}
                                                 </td>
@@ -1001,6 +997,9 @@ function UserManagementPanel() {
                                                             <Pencil className="h-4 w-4" />
                                                         </button>
                                                         <RowMenu>
+                                                            <RowMenuItem icon={<Mail className="h-4 w-4" />} onClick={() => setEmailTarget(account)}>
+                                                                Change email…
+                                                            </RowMenuItem>
                                                             <RowMenuItem icon={<KeyRound className="h-4 w-4" />} onClick={() => handleResetPassword(account)}>
                                                                 Reset password
                                                             </RowMenuItem>
@@ -1029,24 +1028,14 @@ function UserManagementPanel() {
                 <Modal
                     title={isEditing ? 'Edit user' : 'Add user'}
                     description={isEditing
-                        ? "Update a user's role, department, and notification preferences."
-                        : 'Create a new account for a submitter, banking officer, payroll user, reviewer, or admin.'}
+                        ? 'Change who they are and what they can open.'
+                        : 'Pick the job this person does. You can fine-tune their access afterwards.'}
                     onClose={closeForm}
                     closeDisabled={saving}
                     size="2xl"
                 >
-                        <form ref={formRef} onSubmit={handleFormSubmit} className="space-y-4">
+                        <form ref={formRef} onSubmit={handleFormSubmit} className="space-y-5">
                     <div className="grid gap-4 md:grid-cols-2">
-                        <label className="text-sm font-medium text-gray-700">
-                            Email
-                            <input
-                                type="email"
-                                value={form.email}
-                                onChange={(e) => setForm({ ...form, email: e.target.value })}
-                                disabled={isEditing}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:bg-gray-100"
-                            />
-                        </label>
                         <label className="text-sm font-medium text-gray-700">
                             Display name
                             <input
@@ -1056,144 +1045,67 @@ function UserManagementPanel() {
                                 className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                             />
                         </label>
+                        <div className="text-sm font-medium text-gray-700">
+                            Email
+                            {isEditing ? (
+                                <div className="mt-1 flex items-center gap-2">
+                                    <span className="min-w-0 flex-1 truncate rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-normal text-gray-700">{form.email}</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => { const current = accounts.find((a) => a.id === form.id); if (current) setEmailTarget(current); }}
+                                        className="shrink-0 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    >
+                                        Change…
+                                    </button>
+                                </div>
+                            ) : (
+                                <input
+                                    type="email"
+                                    required
+                                    value={form.email}
+                                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                />
+                            )}
+                        </div>
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-2">
-                        <label className="text-sm font-medium text-gray-700">
-                            Role
+                    <div className="space-y-1.5">
+                        <label className="block text-sm font-medium text-gray-700">
+                            Access
                             <select
-                                value={form.role}
-                                onChange={(e) => {
-                                    const nextRole = e.target.value as AdminAccount['role'];
-                                    setForm({
-                                        ...form,
-                                        role: nextRole,
-                                        notify_on_submission:
-                                            nextRole === 'reviewer' || nextRole === 'admin'
-                                                ? form.notify_on_submission
-                                                : false,
-                                    });
-                                }}
+                                value={form.access}
+                                onChange={(e) => applyPreset(e.target.value)}
                                 className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                             >
-                                <option value="user">User</option>
-                                <option value="banking">Banking</option>
-                                <option value="payroll">Payroll</option>
-                                <option value="public_health">Fit for Duty</option>
-                                <option value="reviewer">Reviewer</option>
-                                <option value="admin">Admin</option>
+                                {isEditing && <option value="current">Keep current access</option>}
+                                {form.access === 'custom' && <option value="custom">Custom (set under Advanced access)</option>}
+                                {ACCESS_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
                             </select>
                         </label>
-                        <label className="text-sm font-medium text-gray-700">
-                            Department head code {form.role === 'user' && form.account_type !== 'employee' ? '(required)' : '(optional)'}
+                        <p className="text-xs text-gray-500">
+                            {presetById(form.access)?.description
+                                || (form.access === 'custom' ? 'A custom combination chosen under Advanced access.' : 'Their access stays as it is. Pick a job to replace it, or adjust it under Advanced access.')}
+                        </p>
+                        {isEditing && presetById(form.access) && (
+                            <p className="text-xs text-amber-700">This replaces their current access when you save.</p>
+                        )}
+                    </div>
+
+                    {requiresDepartment && (
+                        <label className="block text-sm font-medium text-gray-700">
+                            Department head code (required)
                             <input
                                 type="text"
                                 value={form.department_code || ''}
                                 onChange={(e) => setForm({ ...form, department_code: e.target.value })}
                                 maxLength={2}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:bg-gray-100"
+                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                                 placeholder="e.g. 12"
                             />
-                            <p className="mt-1 text-xs text-gray-500">
-                                Used to auto-fill batch submissions and audit metadata.
-                            </p>
+                            <p className="mt-1 text-xs font-normal text-gray-500">Two digits. Used to pre-fill batch submissions and FOREX TT requests.</p>
                         </label>
-                        <label className="text-sm font-medium text-gray-700">
-                            Division code (optional)
-                            <input
-                                type="text"
-                                value={form.division_code || ''}
-                                onChange={(e) => setForm({ ...form, division_code: e.target.value })}
-                                maxLength={2}
-                                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:bg-gray-100"
-                                placeholder="e.g. 01, blank = 00"
-                            />
-                            <p className="mt-1 text-xs text-gray-500">
-                                Defaults to 00. Determines bank account presets via Department Profiles.
-                            </p>
-                        </label>
-                    </div>
-
-                    <label className={`inline-flex items-center gap-2 text-sm font-medium text-gray-700 ${!canReceiveNotifications ? 'opacity-60' : ''}`}
-                    >
-                        <input
-                            type="checkbox"
-                            checked={Boolean(form.notify_on_submission)}
-                            onChange={(e) => setForm({ ...form, notify_on_submission: e.target.checked })}
-                            disabled={!canReceiveNotifications}
-                        />
-                        Receive ABA submission notifications (reviewers & admins)
-                    </label>
-
-                    <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
-                        <p className="text-sm font-medium text-gray-800">FOREX TT notifications</p>
-                        <label className={`flex items-center gap-2 text-sm text-gray-700 ${!canReceiveNotifications ? 'opacity-60' : ''}`}>
-                            <input
-                                type="checkbox"
-                                checked={Boolean(form.permissions.notify_forex_tt_submissions)}
-                                onChange={(e) => setForm({
-                                    ...form,
-                                    permissions: { ...form.permissions, notify_forex_tt_submissions: e.target.checked },
-                                })}
-                                disabled={!canReceiveNotifications}
-                            />
-                            Notify me of new FOREX TT submissions
-                        </label>
-                    </div>
-
-                    {/* Capabilities: granted in any combination, so one person can be an
-                        ABA preparer, a reviewer and a banking officer at the same time. */}
-                    <div className="space-y-3 rounded-lg border border-gray-200 p-4">
-                        <div>
-                            <p className="text-sm font-semibold text-gray-900">App access &amp; capabilities</p>
-                            <p className="mt-0.5 text-xs text-gray-500">
-                                Tick everything this person does. These are independent of the role above —
-                                someone can hold several at once. Greyed items are already granted by their role
-                                and cannot be removed here.
-                            </p>
-                        </div>
-
-                        <div className="grid gap-3 sm:grid-cols-2">
-                            {capabilityGroups.map((group) => {
-                                // Capabilities are granted per account, not implied by the
-                                // role. The role's usual set is offered as a starting point
-                                // when creating an account, never as something locked on.
-                                const typicalForRole = roleCapabilities[form.role] || [];
-                                return (
-                                    <div key={group.app} className="rounded-md border border-gray-200 bg-white p-3">
-                                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                            {group.label}
-                                        </p>
-                                        <div className="space-y-1.5">
-                                            {group.capabilities.map((capability) => {
-                                                const typical = typicalForRole.includes(capability.key);
-                                                const checked = form.capabilities.includes(capability.key);
-                                                return (
-                                                    <label
-                                                        key={capability.key}
-                                                        className="flex items-start gap-2 text-sm text-gray-700"
-                                                        title={typical ? `Usually granted to the ${form.role} role` : undefined}
-                                                    >
-                                                        <input
-                                                            type="checkbox"
-                                                            className="mt-0.5"
-                                                            checked={checked}
-                                                            onChange={(e) => toggleCapability(capability.key, e.target.checked)}
-                                                        />
-                                                        <span>{capability.label}</span>
-                                                    </label>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-
-                        {!capabilityGroups.length && (
-                            <p className="text-sm text-gray-500">Capability catalogue unavailable.</p>
-                        )}
-                    </div>
+                    )}
 
                     {canLinkStaff && <><label className="block text-sm font-medium text-gray-700">
                         Leave staff record (optional)
@@ -1222,6 +1134,120 @@ function UserManagementPanel() {
                     </>}</>}
                     {!canLinkStaff && <p className="text-sm text-gray-500">Central HR permission is required to change staff login assignments.</p>}
 
+                    <details className="rounded-lg border border-gray-200 p-3">
+                        <summary className="cursor-pointer text-sm font-semibold text-gray-800">Advanced access</summary>
+                        <div className="mt-3 space-y-4">
+                            <div className="grid gap-4 md:grid-cols-2">
+                                <label className="text-sm font-medium text-gray-700">
+                                    Role
+                                    <select
+                                        value={form.role}
+                                        onChange={(e) => {
+                                            const nextRole = e.target.value as AdminAccount['role'];
+                                            setForm({
+                                                ...form,
+                                                role: nextRole,
+                                                access: 'custom',
+                                                notify_on_submission: nextRole === 'reviewer' || nextRole === 'admin' ? form.notify_on_submission : false,
+                                            });
+                                        }}
+                                        className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                    >
+                                        <option value="user">User</option>
+                                        <option value="banking">Banking</option>
+                                        <option value="payroll">Payroll</option>
+                                        <option value="public_health">Fit for Duty</option>
+                                        <option value="reviewer">Reviewer</option>
+                                        <option value="admin">Admin</option>
+                                    </select>
+                                    <p className="mt-1 text-xs font-normal text-gray-500">Decides which screens open. Choosing a job above sets this for you.</p>
+                                </label>
+                                <label className="text-sm font-medium text-gray-700">
+                                    Division code (optional)
+                                    <input
+                                        type="text"
+                                        value={form.division_code || ''}
+                                        onChange={(e) => setForm({ ...form, division_code: e.target.value })}
+                                        maxLength={2}
+                                        className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                        placeholder="e.g. 01, blank = 00"
+                                    />
+                                    <p className="mt-1 text-xs font-normal text-gray-500">Defaults to 00. Picks bank account presets via Department Profiles.</p>
+                                </label>
+                                {!requiresDepartment && (
+                                    <label className="text-sm font-medium text-gray-700">
+                                        Department head code (optional)
+                                        <input
+                                            type="text"
+                                            value={form.department_code || ''}
+                                            onChange={(e) => setForm({ ...form, department_code: e.target.value })}
+                                            maxLength={2}
+                                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                            placeholder="e.g. 12"
+                                        />
+                                    </label>
+                                )}
+                            </div>
+
+                            <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                <p className="text-sm font-medium text-gray-800">Email notifications</p>
+                                {!canReceiveNotifications && (
+                                    <p className="text-xs text-gray-500">Only reviewers and administrators receive review emails.</p>
+                                )}
+                                <label className={`flex items-center gap-2 text-sm text-gray-700 ${!canReceiveNotifications ? 'opacity-60' : ''}`}>
+                                    <input
+                                        type="checkbox"
+                                        checked={Boolean(form.notify_on_submission)}
+                                        onChange={(e) => setForm({ ...form, notify_on_submission: e.target.checked })}
+                                        disabled={!canReceiveNotifications}
+                                    />
+                                    Email me when Fit for Duty batches need review
+                                </label>
+                                <label className={`flex items-center gap-2 text-sm text-gray-700 ${!canReceiveNotifications ? 'opacity-60' : ''}`}>
+                                    <input
+                                        type="checkbox"
+                                        checked={Boolean(form.permissions.notify_forex_tt_submissions)}
+                                        onChange={(e) => setForm({
+                                            ...form,
+                                            permissions: { ...form.permissions, notify_forex_tt_submissions: e.target.checked },
+                                        })}
+                                        disabled={!canReceiveNotifications}
+                                    />
+                                    Email me about new FOREX TT requests
+                                </label>
+                            </div>
+
+                            <div className="space-y-3">
+                                <p className="text-xs text-gray-500">
+                                    Tick everything this person does, in any combination. Choosing a job above fills these in.
+                                </p>
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    {capabilityGroups.map((group) => (
+                                        <div key={group.app} className="rounded-md border border-gray-200 bg-white p-3">
+                                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">{group.label}</p>
+                                            <div className="space-y-1.5">
+                                                {group.capabilities.map((capability) => (
+                                                    <label key={capability.key} className="flex items-start gap-2 text-sm text-gray-700">
+                                                        <input
+                                                            type="checkbox"
+                                                            className="mt-0.5"
+                                                            checked={form.capabilities.includes(capability.key)}
+                                                            onChange={(e) => toggleCapability(capability.key, e.target.checked)}
+                                                        />
+                                                        <span>{capability.label}</span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                {!capabilityGroups.length && (
+                                    <p className="text-sm text-gray-500">Capability catalogue unavailable.</p>
+                                )}
+                            </div>
+                        </div>
+                    </details>
+
                     {formError && <p role="alert" className="text-sm text-red-600">{formError}</p>}
 
                     <ModalActions>
@@ -1232,6 +1258,20 @@ function UserManagementPanel() {
                     </ModalActions>
                         </form>
                 </Modal>
+            )}
+
+            {emailTarget && (
+                <ChangeEmailDialog
+                    account={emailTarget}
+                    isSelf={String(authUser?.id) === emailTarget.id}
+                    onClose={() => setEmailTarget(null)}
+                    onChanged={(email) => {
+                        setEmailTarget(null);
+                        if (isEditing && form.id === emailTarget.id) closeForm();
+                        addToast(`Sign-in email changed to ${email}.`, 'success');
+                        void refresh();
+                    }}
+                />
             )}
 
             {tempPassword && (

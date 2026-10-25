@@ -26,6 +26,9 @@ import {queueCurrentLeaveApprover,queueLeaveDecision} from './governmentLeaveNot
 export const today=()=>new Date(Date.now()+12*3600000).toISOString().slice(0,10);
 const fail=(message,status=409)=>{throw new ServiceError(status,message);};
 const reasonText=value=>{if(typeof value!=='string'||value.trim().length<10||value.length>4000)fail('Provide a reason of 10–4,000 characters.',400);return value.trim();};
+// Ordinary leave needs no written reason; Special leave still needs its sufficient-cause justification.
+const NO_REASON='Not stated';
+const applicationReason=(code,value)=>{const text=typeof value==='string'?value.trim():'';if(code==='special'||text)return reasonText(text);return NO_REASON;};
 const audit=(client,actor,action,id,after)=>recordAudit({client,actor,action,entityType:'hr_gov_request',entityId:id,after});
 const normalizedDates="*,to_char(start_date,'YYYY-MM-DD') AS start_date,to_char(end_date,'YYYY-MM-DD') AS end_date";
 export async function accountState(client,id,scope=null) {
@@ -172,7 +175,7 @@ async function medicalHistory(client,employeeId,exclude=null) {
 }
 async function assess(client,employeeId,input,exclude=null,retainedConfig=null,transferRequestId=null) {
   const config=retainedConfig||await configurationFor(client,employeeId);
-  const evaluation=await ledger.evaluate(client,employeeId,{...input,notice_date:input.notice_date||today(),certificate_available:input.medical_mode==='certificate',verified_single_shift_exemption:config?.medical_rule==='single_verified_shift_nonadjacent_scheduled_days'&&input.medical_mode==='exemption',justification_available:!!input.reason},{excludeReservationId:exclude});
+  const evaluation=await ledger.evaluate(client,employeeId,{...input,notice_date:input.notice_date||today(),certificate_available:input.medical_mode==='certificate',verified_single_shift_exemption:config?.medical_rule==='single_verified_shift_nonadjacent_scheduled_days'&&input.medical_mode==='exemption',justification_available:!!input.reason&&input.reason!==NO_REASON},{excludeReservationId:exclude});
   const context=await ledger.loadContext(client,employeeId);
   const correctionIssue=await serviceCorrectionIssue(client,employeeId,config?.recorded_at);if(correctionIssue)evaluation.issues.push(correctionIssue);
   if(!config||!config.enabled_codes.includes(input.code))evaluation.issues.push('This leave type is not activated for the employee. HR must approve the reviewed configuration.');
@@ -202,7 +205,7 @@ export async function previewRequest(client,user,employeeId,input) {
 // Shared office locks allow unrelated employees to apply concurrently while
 // dated office changes take the exclusive lock and retain a coherent route.
 export async function submitRequest(pool,{user,actor,employeeId,data,documents=[],client:existingClient,simpleApproval=false}) {
-  const reason=reasonText(data.reason),input={code:data.code,start_date:data.start_date,end_date:data.end_date,reason,...leaveDurationInput(data),medical_mode:data.code==='medical'?data.medical_mode:'not_applicable'};
+  const reason=applicationReason(data.code,data.reason),input={code:data.code,start_date:data.start_date,end_date:data.end_date,reason,...leaveDurationInput(data),medical_mode:data.code==='medical'?data.medical_mode:'not_applicable'};
   const payloadHash=fingerprint({input,...(data.assisted_reference?{assisted_reference:data.assisted_reference}:{}),documents:documents.map(d=>({sha256:d.sha256,file_name:d.file_name,content_type:d.content_type}))});
   const work=async client=>{
     await client.query("SELECT pg_advisory_xact_lock_shared(hashtext('hr-approval-assignments'))");const employee=await ledger.lockEmployee(client,employeeId);
@@ -224,10 +227,15 @@ export async function submitRequest(pool,{user,actor,employeeId,data,documents=[
     await client.query(`INSERT INTO hr_gov_requests(id,employee_id,config_id,code,start_date,end_date,reason,medical_mode,payload_hash,application_snapshot,department_id,division_id,reservation_id,charge,submitted_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$1,$13,$14)`,[data.request_id,employeeId,config.id,input.code,input.start_date,input.end_date,reason,input.medical_mode,payloadHash,applicationSnapshot,employee.department_id,employee.division_id,evaluation.charge,actor.id]);
     const request={id:data.request_id,employee_id:employeeId,department_id:employee.department_id,division_id:employee.division_id};
+    const unroutable=[];
     for(const [ordinal,{level,label}] of approvalRoute.stages.entries()) {
       const {rows:[stage]}=await client.query('INSERT INTO hr_gov_request_stages(request_id,ordinal,level,label) VALUES($1,$2,$3,$4) RETURNING *',[request.id,ordinal,level,label]);
-      const offices=await effectiveOffices(client,request,level);if(offices.length===1)await bindOffice(client,stage,offices[0],actor,null,'Dated route snapshot at employee submission');
+      const offices=await effectiveOffices(client,request,level);
+      const binding=offices.length===1?await bindOffice(client,stage,offices[0],actor,null,'Dated route snapshot at employee submission'):null;
+      // An application nobody is assigned to just waits, unannounced, holding the balance. Refuse it now, naming the stage.
+      if(simpleApproval){const issue=await bindingIssue(client,{...request,submitted_by:actor.id},{...stage,binding});if(issue)unroutable.push(`${label||level}: ${issue}`);}
     }
+    if(unroutable.length)fail(`This application cannot be sent to an approver yet. ${unroutable.join(' ')} Ask HR to fix the approver, then apply again.`);
     for(const document of documents)await client.query('INSERT INTO hr_gov_request_documents(request_id,file_name,content_type,byte_size,sha256,file_data) VALUES($1,$2,$3,$4,$5,$6)',[request.id,document.file_name,document.content_type,document.byte_size,document.sha256,document.file_data]);
     await queueCurrentLeaveApprover(client,request.id);
     await audit(client,actor,'hr.gov.request.submitted',request.id,{employee_id:employeeId,code:input.code,charge:evaluation.charge,config_id:config.id});return {id:request.id,status:'pending'};
@@ -273,11 +281,11 @@ export async function requestView(client,user,id) {
   const separateEvidence=!isSimpleApproval(request)&&['medical','special'].includes(request.code)&&!stages.some(s=>s.level==='hr_verifier');
   const canVerifyEvidence=separateEvidence&&!evidenceReview&&request.status==='pending'&&isCentralHr(user)&&privateAccess&&user.id!==request.submitted_by&&user.id!==employee.reviewer_id;
   const documents=privateAccess?(await client.query('SELECT id,file_name,content_type,byte_size,sha256 FROM hr_gov_request_documents WHERE request_id=$1',[id])).rows:[];
-  const ack=(await client.query('SELECT reference,recorded_at FROM hr_gov_salary_acknowledgements WHERE request_id=$1',[id])).rows[0]||null;
   const caseDetails=await cases.caseView(client,user,request,privateAccess),amendment=(await client.query('SELECT request_id,effect FROM hr_gov_case_effects WHERE original_request_id=$1 ORDER BY version DESC LIMIT 1',[id])).rows[0]||null;
+  const cancellationPending=(await client.query("SELECT 1 FROM hr_gov_case_links l JOIN hr_gov_requests r ON r.id=l.request_id WHERE l.original_request_id=$1 AND l.kind='amendment' AND r.status='pending'",[id])).rowCount>0;
   const forecast=request.application_snapshot.evaluation?.forecast;
   if(forecast)caseDetails.forecast={through_date:forecast.through_date,projected_accrual:forecast.projected_accrual,available:forecast.available,forecast_used:forecast.forecast_used};
-  return {...caseDetails,simple_approval:isSimpleApproval(request),approval_checks:approvalChecks(request.code),legacy_approval:request.application_snapshot.legacy_approval?{application_id:request.application_snapshot.legacy_approval.application_id,approved_by_name:request.application_snapshot.legacy_approval.approved_by_name,approved_at:request.application_snapshot.legacy_approval.approved_at}:null,approval_route:request.route_correction?.approval_route||request.application_snapshot.approval_route||null,evidence_review_required:separateEvidence,evidence_review:evidenceReview,can_verify_evidence:canVerifyEvidence,amendment:amendment?{request_id:amendment.request_id,action:amendment.effect.action,effective_end:amendment.effect.effective_end}:null,assisted_entry:!!request.application_snapshot.assisted_by,can_amend:request.status==='approved'&&request.code!=='amendment'&&amendment?.effect.action!=='cancel_grant'&&employee.status==='active'&&isCentralHr(user),can_continue:request.status==='pending'&&isCentralHr(user),id:request.id,...leaveDurationInput(request.application_snapshot.input),employee_id:request.employee_id,employee_name:request.application_snapshot.employee.name,code:request.code,start_date:request.start_date,end_date:request.end_date,charge:request.charge,status:request.status,submitted_at:request.submitted_at,completed_at:request.completed_at,stage_index:request.stage_index,stages,reason:privateAccess?request.reason:null,documents,medical_mode:request.medical_mode,private_access:privateAccess,can_cancel:request.status==='pending'&&(employee.reviewer_id===user.id||isCentralHr(user)),can_pdf:request.status==='approved'&&privateAccess,salary_acknowledgement:ack,can_ack:request.status==='approved'&&isCentralHr(user)&&!ack};
+  return {...caseDetails,short_notice:request.application_snapshot.evaluation?.short_notice||null,simple_approval:isSimpleApproval(request),approval_checks:approvalChecks(request.code),legacy_approval:request.application_snapshot.legacy_approval?{application_id:request.application_snapshot.legacy_approval.application_id,approved_by_name:request.application_snapshot.legacy_approval.approved_by_name,approved_at:request.application_snapshot.legacy_approval.approved_at}:null,approval_route:request.route_correction?.approval_route||request.application_snapshot.approval_route||null,evidence_review_required:separateEvidence,evidence_review:evidenceReview,can_verify_evidence:canVerifyEvidence,amendment:amendment?{request_id:amendment.request_id,action:amendment.effect.action,effective_end:amendment.effect.effective_end}:null,assisted_entry:!!request.application_snapshot.assisted_by,can_amend:request.status==='approved'&&request.code!=='amendment'&&amendment?.effect.action!=='cancel_grant'&&employee.status==='active'&&isCentralHr(user),can_cancel_own:request.status==='approved'&&request.code!=='amendment'&&!amendment&&!cancellationPending&&employee.status==='active'&&employee.reviewer_id===user.id&&request.start_date>today(),can_continue:request.status==='pending'&&isCentralHr(user),id:request.id,...leaveDurationInput(request.application_snapshot.input),employee_id:request.employee_id,employee_name:request.application_snapshot.employee.name,code:request.code,start_date:request.start_date,end_date:request.end_date,charge:request.charge,status:request.status,submitted_at:request.submitted_at,completed_at:request.completed_at,stage_index:request.stage_index,stages,reason:privateAccess?request.reason:null,documents,medical_mode:request.medical_mode,private_access:privateAccess,can_cancel:request.status==='pending'&&(employee.reviewer_id===user.id||isCentralHr(user)),can_pdf:request.status==='approved'&&privateAccess};
 }
 async function lockedRequest(client,id) {
   const ref=await getRequest(client,id);const employee=await ledger.lockEmployee(client,ref.employee_id);
@@ -293,13 +301,16 @@ export async function rebindStage(pool,{user,actor,id,stageId,data}) {
     let office=offices[0];
     if(data.substitute_employee_id&&data.substitute_employee_id!==office.approver_employee_id) {
       if(stage.level==='chief_secretary')fail('Chief Secretary must be the verified current or acting Chief Secretary; HOD delegation cannot substitute.');
+      // Re-confirming the current officeholder needs no paperwork; delegating to someone else does.
+      reasonText(data.reason);
+      if(typeof data.source_reference!=='string'||data.source_reference.trim().length<5)fail('A substitute needs an authority reference.',400);
       const {rows:[substitute]}=await client.query("SELECT id,display_name,reviewer_id FROM hr_employees WHERE id=$1 AND status='active'",[data.substitute_employee_id]);
       if(!substitute?.reviewer_id)fail('Choose an active verified substitute.');
       office={...office,assignment_kind:'substitute',approver_employee_id:substitute.id,approver_name:substitute.display_name,reviewer_id:substitute.reviewer_id};
     }
     const candidate={...stage,binding:{...office,assignment_id:office.id}};
     const issue=await bindingIssue(client,request,candidate);if(issue)fail(issue);
-    const binding=await bindOffice(client,stage,office,actor,data.source_reference,reasonText(data.reason));
+    const binding=await bindOffice(client,stage,office,actor,data.source_reference,typeof data.reason==='string'&&data.reason.trim()?reasonText(data.reason):'Approval assignment re-confirmed by central HR');
     await queueCurrentLeaveApprover(client,id);
     await audit(client,actor,'hr.gov.stage.rebound',id,{stage_id:stageId,previous_binding:stage.binding?.id||null,binding});return binding;
   });
@@ -377,6 +388,9 @@ export async function decideRequest(pool,{user,actor,id,data}) {
     const issue=await bindingIssue(client,request,stage);if(issue)fail(issue,403);
     if(data.decision==='approved'&&data.certification_confirmed!==undefined&&data.certification_confirmed!==true)fail('Certify that you have verified the application before approving.',400);
     if(data.decision==='approved'&&(isSimpleApproval(request)||isStandardLwop(request))&&data.certification_confirmed!==true)fail('Confirm the application details before approving.',400);
+    // Short notice is not a bar to applying, but whoever approves must knowingly waive it.
+    const shortNotice=request.application_snapshot?.evaluation?.short_notice||null;
+    if(data.decision==='approved'&&shortNotice&&data.notice_waived!==true)fail(`This application is short of the ${shortNotice.required_days}-day notice period. Confirm that you waive the notice requirement to approve it.`,400);
     if(!isSimpleApproval(request)&&data.verify_evidence!==undefined&&data.verify_evidence!==false){
       if(data.verify_evidence!==true||data.decision!=='approved'||data.certification_confirmed!==true||!data.verification_comment)fail('Confirm certification and evidence verification together with approval.',400);
       // Another HR officer may have verified while this application was open.
@@ -410,7 +424,7 @@ export async function decideRequest(pool,{user,actor,id,data}) {
     }else if(stage.ordinal===stages.length-1) {
       await finalizeApprovedRequest(pool,client,request,employee,actor,{note,currentEvaluation,discretionConfirmed:data.discretion_confirmed===true});
     }else await client.query('UPDATE hr_gov_requests SET stage_index=stage_index+1 WHERE id=$1',[id]);
-    await audit(client,actor,'hr.gov.stage.decided',id,{stage_id:stage.id,binding_id:stage.binding.id,level:stage.level,decision:data.decision,...(data.certification_confirmed===true?{certification_confirmed:true}:{}),...(data.verify_evidence===true?{evidence_review_requested:true}:{})});
+    await audit(client,actor,'hr.gov.stage.decided',id,{stage_id:stage.id,binding_id:stage.binding.id,level:stage.level,decision:data.decision,...(data.certification_confirmed===true?{certification_confirmed:true}:{}),...(data.decision==='approved'&&shortNotice?{notice_waived:true,notice:shortNotice}:{}),...(data.verify_evidence===true?{evidence_review_requested:true}:{})});
     const status=(await getRequest(client,id)).status;
     await queueLeaveDecision(client,{requestId:id,eventKey:data.event_key,actorId:actor.id,stage,decision:data.decision,status});
     await queueCurrentLeaveApprover(client,id);
@@ -459,13 +473,4 @@ export async function cancelRequest(pool,{user,actor,id,reason,client:existingCl
     await client.query("UPDATE hr_gov_requests SET status='cancelled',completed_at=NOW() WHERE id=$1",[id]);
     await audit(client,actor,'hr.gov.request.cancelled',id,{reason});return {id,status:'cancelled'};
   };return existingClient?work(existingClient):withTransaction(pool,work);
-}
-export async function acknowledgeSalary(pool,{user,actor,id,data}) {
-  return withTransaction(pool,async client=>{
-    await assertCentral(client,user);const {request}=await lockedRequest(client,id);if(request.status!=='approved')fail('Chief Secretary must grant leave first.');
-    const {rows:[existing]}=await client.query('SELECT * FROM hr_gov_salary_acknowledgements WHERE request_id=$1',[id]);
-    if(existing){if(existing.reference!==data.reference)fail('Salary acknowledgement already has a different reference.');return existing;}
-    const {rows:[ack]}=await client.query('INSERT INTO hr_gov_salary_acknowledgements(request_id,actor_id,reference,reason) VALUES($1,$2,$3,$4) RETURNING *',[id,actor.id,data.reference,reasonText(data.reason)]);
-    await audit(client,actor,'hr.gov.salary.acknowledged',id,{reference:ack.reference});return ack;
-  });
 }

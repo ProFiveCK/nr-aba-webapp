@@ -315,6 +315,16 @@ export async function initSchema() {
     await client.query('ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS login_alias TEXT');
     await client.query("ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS onboarding_state TEXT NOT NULL DEFAULT 'ready' CHECK (onboarding_state IN ('ready','pending','offboarded'))");
     await client.query('ALTER TABLE reviewers ALTER COLUMN email DROP NOT NULL');
+    // Every write path lowercases the email, but the plain UNIQUE constraint is case-sensitive.
+    // Add the case-insensitive guard only when no legacy rows collide, so a bad row cannot stop boot.
+    await client.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM reviewers WHERE email IS NOT NULL GROUP BY lower(email) HAVING count(*) > 1) THEN
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_reviewers_email_lower ON reviewers (lower(email));
+        ELSE
+          RAISE NOTICE 'reviewers has emails that differ only by case; idx_reviewers_email_lower not created';
+        END IF;
+      END $$`);
     await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_reviewers_login_alias ON reviewers(login_alias) WHERE login_alias IS NOT NULL');
     await client.query(`DO $$ BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'reviewers_login_identity_check') THEN

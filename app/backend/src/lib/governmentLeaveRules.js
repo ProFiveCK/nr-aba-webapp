@@ -72,7 +72,7 @@ export function calculateEvaluation(context,input){
  const start=dayNumber(input.start_date),end=dayNumber(input.end_date),today=dayNumber(input.notice_date);
  if(end<start||end-start>365)throw new Error('Preview at most 366 consecutive calendar dates.');
  if(!CODES.includes(input.code))throw new Error('Choose a stable government leave code.');
- const issues=[],requirements=[],warnings=[],segments=[],policies=new Map(),services=new Map(),allocations=new Map();let charge=0n,hours=0;
+ const issues=[],requirements=[],warnings=[],segments=[],policies=new Map(),services=new Map(),allocations=new Map();let charge=0n,hours=0,shortNotice=null;
  const common=COMMON_CODES.includes(input.code);
  for(let n=start;n<=end;n++){
    const date=isoDay(n),policy=context.policies.find(p=>p.status==='published'&&p.effective_from<=date&&p.effective_to>=date);
@@ -92,7 +92,8 @@ export function calculateEvaluation(context,input){
    if(input.code==='recreation'){
      const months=period.employment_category==='temporary'?policy.rules.temporary_recreation_months:policy.rules.ordinary_recreation_months;
      const qualified=service.milestone?.(months);if(!qualified||date<qualified)issues.push(`Recreation requires ${months} months of credited continuous service${qualified?`; eligible ${qualified}`:''}.`);
-     if(start-today<policy.rules.recreation_notice_days)issues.push(`Recreation requires at least ${policy.rules.recreation_notice_days} calendar days' notice.`);
+     // Short notice no longer blocks the application: it is flagged, and each approver must expressly waive it.
+     if(start-today<policy.rules.recreation_notice_days){shortNotice={required_days:policy.rules.recreation_notice_days,given_days:Math.max(0,start-today)};warnings.push(`Short notice: recreation leave needs ${policy.rules.recreation_notice_days} calendar days' notice. The approver must waive the notice requirement to approve this.`);}
    }
    if(!common)continue;
    if(!calendar){if(calendarCoverageRequired(context)){issues.push('An approved calendar must cover every requested date.');continue;}warnings.push(calendarFallbackNotice);}
@@ -126,6 +127,6 @@ export function calculateEvaluation(context,input){
  if(!common)issues.push('This entitlement requires the assisted case module and an authorised determination.');
  const allocated=[...allocations.values()].map(a=>({...a,amount:decimal(a.amount)}));
  for(const item of allocated){const account=context.entitlements.find(e=>e.id===item.entitlement_id);if(units(item.amount)>units(account.available))issues.push('The request exceeds a certified entitlement after existing reservations.');}
- const result={engine_version:ENGINE_VERSION,code:input.code,eligible_for_preview:issues.length===0,submission_enabled:false,issues:[...new Set(issues)],warnings:[...new Set(warnings)],requirements,charge:decimal(charge),scheduled_hours:hours,...(hourly?{duration_unit:'hours',requested_hours:Number(duration.hours)}:{}),segments,allocations:allocated,policy_versions:[...policies.values()],service_bases:[...services.values()].filter(Boolean),required_offices:['division','head_of_department',...(['recreation','medical','lwop'].includes(input.code)?['relevant_secretary_consent']:[]),'chief_secretary'],source_reference:SOURCE};
+ const result={engine_version:ENGINE_VERSION,code:input.code,eligible_for_preview:issues.length===0,submission_enabled:false,issues:[...new Set(issues)],warnings:[...new Set(warnings)],short_notice:shortNotice,requirements,charge:decimal(charge),scheduled_hours:hours,...(hourly?{duration_unit:'hours',requested_hours:Number(duration.hours)}:{}),segments,allocations:allocated,policy_versions:[...policies.values()],service_bases:[...services.values()].filter(Boolean),required_offices:['division','head_of_department',...(['recreation','medical','lwop'].includes(input.code)?['relevant_secretary_consent']:[]),'chief_secretary'],source_reference:SOURCE};
  return {...result,input:{...input},snapshot_hash:fingerprint({context,input,result})};
 }

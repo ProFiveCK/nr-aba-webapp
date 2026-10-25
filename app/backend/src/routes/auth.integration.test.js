@@ -51,6 +51,10 @@ describe('auth routes', { skip: skipWithoutDatabase }, () => {
     assert.equal((await login('auth-inactive@example.test', testPassword())).status, 401);
     const right = await login('auth-inactive@example.test', password);
     assert.deepEqual([right.status, right.json.message], [401, 'Invalid credentials.']);
+    // The caller learns nothing, but the audit log records that the account was inactive.
+    const { rows: [last] } = await pool.query(
+      "SELECT metadata FROM audit_log WHERE action = 'login.failure' AND actor_email = 'auth-inactive@example.test' ORDER BY id DESC LIMIT 1");
+    assert.equal(last.metadata.reason, 'inactive');
     await clearLockout('auth-inactive@example.test');
   });
 

@@ -10,7 +10,10 @@ test('ordinary three-month and temporary twelve-month recreation are distinct; t
  assert.match(calculateEvaluation(context('temporary'),input('maternity')).issues.join(),/excluded/);assert.match(calculateEvaluation(context('contract'),input('lwop')).issues.join(),/permanent/);
 });
 test('notice uses calendar days; holidays exempt only recreation/medical; medical eight days use one pool',()=>{
- const c=context();assert.ok(calculateEvaluation(c,{...input('recreation','2026-10-15'),notice_date:'2026-10-01'}).eligible_for_preview);assert.match(calculateEvaluation(c,{...input('recreation','2026-10-14'),notice_date:'2026-10-01'}).issues.join(),/14 calendar/);
+ const c=context();assert.ok(calculateEvaluation(c,{...input('recreation','2026-10-15'),notice_date:'2026-10-01'}).eligible_for_preview);const short=calculateEvaluation(c,{...input('recreation','2026-10-14'),notice_date:'2026-10-01'});
+ // Short notice no longer blocks the application; it is flagged so each approver must waive it.
+ assert.ok(short.eligible_for_preview);assert.match(short.warnings.join(),/14 calendar/);assert.deepEqual(short.short_notice,{required_days:14,given_days:13});
+ assert.equal(calculateEvaluation(c,{...input('recreation','2026-10-15'),notice_date:'2026-10-01'}).short_notice,null);
  assert.equal(calculateEvaluation(c,input('recreation','2026-10-26','2026-10-27')).charge,'1.000000');assert.equal(calculateEvaluation(c,input('medical','2026-10-26','2026-10-27')).charge,'1.000000');assert.equal(calculateEvaluation(c,input('special','2026-10-26','2026-10-27')).charge,'2.000000');
  const eight=calculateEvaluation(c,input('medical','2026-11-02','2026-11-11'));assert.equal(eight.charge,'8.000000');assert.ok(eight.eligible_for_preview);assert.match(calculateEvaluation(c,{...input('medical','2026-11-02','2026-11-11'),certificate_available:false}).issues.join(),/certificate/);
 });
@@ -76,5 +79,7 @@ test('hourly input cannot exceed its schedule or bypass dates, holidays, balance
  assert.equal(calculateEvaluation(c,{...hourly,start_date:'2026-10-26',end_date:'2026-10-26'}).eligible_for_preview,false);
  assert.equal(calculateEvaluation(c,{...hourly,start_date:'2026-10-25',end_date:'2026-10-25'}).eligible_for_preview,false);
  c.entitlements[0].available='0.4';assert.match(calculateEvaluation(c,hourly).issues.join(),/exceeds.*entitlement/);
- assert.match(calculateEvaluation(context(),{...hourly,notice_date:'2026-10-26'}).issues.join(),/notice/);
+ const sameDay=calculateEvaluation(context(),{...hourly,notice_date:'2026-10-26'});
+ // Hourly leave is held to the same notice rule: flagged for the approver, never skipped.
+ assert.match(sameDay.warnings.join(),/notice/);assert.ok(sameDay.short_notice);
 });

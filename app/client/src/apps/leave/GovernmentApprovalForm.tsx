@@ -17,15 +17,18 @@ export function GovernmentApprovalForm({ request, stage, evidenceOnly = false, d
     request: GovernmentRequest; stage?: GovernmentStage; evidenceOnly?: boolean; disabled?: boolean;
     onSave: (data: FormData, eventKey: string) => Promise<void>; onBusyChange: (busy: boolean) => void;
 }) {
-    const [certified, setCertified] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
+    const [certified, setCertified] = useState(false), [waived, setWaived] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
     const [eventKey] = useState(() => crypto.randomUUID());
     const saving = useRef(false), feedback = useRef<HTMLParagraphElement>(null);
     const verifiesEvidence = !request.simple_approval && (evidenceOnly || stage?.level === 'hr_verifier' || request.can_verify_evidence === true);
     const action = evidenceOnly ? 'Verify supporting evidence' : stage ? approvalAction(request, stage) : 'Approve leave';
     const final = !evidenceOnly && stage?.ordinal === request.stages.length - 1;
+    // Short notice does not stop an employee applying, but the approver must knowingly waive it.
+    const shortNotice = !evidenceOnly ? request.short_notice : null;
+    const ready = certified && (!shortNotice || waived);
     return <form className="space-y-3 rounded-lg border border-blue-200 bg-blue-50 p-4" onSubmit={event => {
         event.preventDefault();
-        if (!certified || disabled || saving.current) return;
+        if (!ready || disabled || saving.current) return;
         const data = new FormData(event.currentTarget);
         saving.current = true; setBusy(true); onBusyChange(true); setError('');
         void onSave(data, eventKey).catch((err: Error) => {
@@ -42,11 +45,12 @@ export function GovernmentApprovalForm({ request, stage, evidenceOnly = false, d
             {request.simple_approval && request.case && final && <SimpleLeaveDetails code={request.code} initial={request.case_details} request={request}/>}
             {request.simple_approval && !!request.approval_checks?.length && <ul className="list-disc space-y-1 pl-5 text-sm text-gray-700">{request.approval_checks.map(check=><li key={check}>{check}</li>)}</ul>}
             {request.simple_approval && ['maternity','paternity'].includes(request.code) && <p className="text-sm text-gray-700">Approval also accepts any short notice. Pay is calculated automatically from verified service and parental details.</p>}
+            {shortNotice && <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm"><input className="mt-0.5 h-5 w-5 shrink-0" name="notice_waived" type="checkbox" required checked={waived} onChange={event => setWaived(event.target.checked)} /><span><strong>Short notice.</strong> This was applied for {shortNotice.given_days} day{shortNotice.given_days === 1 ? '' : 's'} ahead; {shortNotice.required_days} calendar days&apos; notice is required. I waive the notice requirement for this application.</span></label>}
             <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-blue-200 bg-white p-3 text-sm"><input className="mt-0.5 h-5 w-5 shrink-0" name="certification_confirmed" type="checkbox" required checked={certified} onChange={event => setCertified(event.target.checked)} /><span>{approvalCertification}</span></label>
             {!request.simple_approval && stage?.level === 'chief_secretary' && !!request.determination?.discretion.length && <label className="flex items-start gap-3 text-sm"><input name="discretion_confirmed" type="checkbox" required className="mt-1" /> I confirm the recorded late-notice or extended-LWOP discretionary authority for this grant.</label>}
             {request.case && !request.standard_lwop && !request.simple_approval ? <Field label="Decision reason"><textarea name="note" required minLength={10} maxLength={2000} rows={3} className={inputClass} /></Field> : <details><summary className="cursor-pointer text-sm text-gray-700">Add a comment (optional)</summary><div className="mt-3"><Field label="Review comment (optional)"><textarea name="note" maxLength={evidenceOnly ? 1000-approvalCertification.length-1 : 2000} rows={3} className={inputClass} /></Field></div></details>}
         </fieldset>
         {error && <p ref={feedback} tabIndex={-1} role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-        <Button type="submit" loading={busy} disabled={disabled || !certified}>{action}</Button>
+        <Button type="submit" loading={busy} disabled={disabled || !ready}>{action}</Button>
     </form>;
 }

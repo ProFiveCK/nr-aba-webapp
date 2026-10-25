@@ -78,8 +78,47 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   await l.publishPolicy(pool,{user:user(certifier),actor:certifier,id:successor.id,reason,expected_revision:1});await configure();
   const day=new Date(`${w.today()}T12:00:00Z`);day.setUTCDate(day.getUTCDate()+1);while([0,6].includes(day.getUTCDay()))day.setUTCDate(day.getUTCDate()+1);
   const input={...application('recreation',day.toISOString().slice(0,10)),notice_date:'2000-01-01'};
-  const preview=await call('/preview',input);assert.equal(preview.status,200);assert.ok(preview.body.issues.some(issue=>issue.includes('14 calendar')));
-  const result=await call('/requests',input);assert.equal(result.status,409);assert.match(result.body.message,/14 calendar days/);
+  // The server's own date is used, so a forged notice_date cannot hide short notice.
+  const preview=await call('/preview',input);assert.equal(preview.status,200);
+  assert.equal(preview.body.eligible_for_preview,true);assert.equal(preview.body.issues.length,0);
+  assert.ok(preview.body.warnings.some(warning=>warning.includes('14 calendar')));assert.equal(preview.body.short_notice.required_days,14);
+  // Short notice no longer stops the application; every approver must expressly waive it.
+  const result=await call('/requests',input);assert.equal(result.status,201);
+  assert.equal((await w.requestView(pool,user(hr),result.body.id)).short_notice.required_days,14);
+  await assert.rejects(()=>decide(result.body.id,{certification_confirmed:true}),/waive the notice/);
+  assert.equal((await w.getRequest(pool,result.body.id)).status,'pending');
+  await decide(result.body.id,{certification_confirmed:true,notice_waived:true});
+  assert.equal((await w.getRequest(pool,result.body.id)).status,'approved');
+ });
+ test('annual leave needs no written reason, but Special leave still needs its justification',async()=>{
+  const {reason:_unused,...plain}=application('recreation','2026-11-02');
+  const ok=await call('/requests',plain);assert.equal(ok.status,201);
+  assert.equal((await w.getRequest(pool,ok.body.id)).reason,'Not stated');
+  const {reason:_ignored,...special}=application('special','2026-11-09');
+  const refused=await call('/requests',special);assert.equal(refused.status,400);
+  assert.equal((await call('/requests',application('special','2026-11-09'))).status,201);
+ });
+ test('an application nobody can approve is refused at once, naming the stage, and holds no balance',async()=>{
+  await customRoute([{level:'parent_division',label:'Treasury unit approver'}]);
+  const before=(await pool.query('SELECT count(*)::int AS n FROM hr_gov_requests')).rows[0].n;
+  const refused=await call('/requests',application('recreation','2026-11-03'));
+  assert.equal(refused.status,409);assert.match(refused.body.message,/Treasury unit approver.*missing officeholder/);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_requests')).rows[0].n,before);
+ });
+ test('the approvals queue can show only what is waiting on the signed-in officer',async()=>{
+  const r=await submit(application('recreation','2026-11-04'));
+  const everything=await call('/requests?mode=queue',null,hr);assert.equal(everything.status,200);
+  assert.ok(everything.body.requests.some(x=>x.id===r.id),'HR sees it through its scope');
+  const hrWaiting=await call('/requests?mode=queue&assigned=true',null,hr);assert.equal(hrWaiting.body.requests.some(x=>x.id===r.id),false);
+  const mine=await call('/requests?mode=queue&assigned=true',null,officers.division.account);
+  assert.deepEqual(mine.body.requests.map(x=>x.id),[r.id]);
+ });
+ test('re-confirming the current approver needs no paperwork; a substitute still needs an authority reference',async()=>{
+  const r=await submit(application('recreation','2026-11-05'));
+  const stage=(await w.requestView(pool,user(hr),r.id)).stages[0];
+  assert.equal((await call(`/requests/${r.id}/stages/${stage.id}/rebind`,{},hr)).status,200);
+  const delegated=await call(`/requests/${r.id}/stages/${stage.id}/rebind`,{substitute_employee_id:officers.department.employee.id,reason},hr);
+  assert.equal(delegated.status,400);assert.match(delegated.body.message,/authority reference/);
  });
  test('submission queues only the current assigned approver and SMTP acceptance is recorded once',async()=>{
   const data=application(),r=await submit(data);await submit(data);
@@ -838,7 +877,8 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   assert.equal((await call('/calendar?from=2026-11-01&to=2026-11-30',null,outsider)).body.entries.length,0);
   assert.equal((await call('/calendar?from=2026-11-01&to=2026-11-30',null,hr)).body.entries.length,1);
 assert.equal((await call(`/requests/${r.id}/pdf`,null,officers.chief_secretary.account)).status,404);assert.equal((await call(`/requests/${r.id}/pdf`)).status,200);
-  assert.equal((await call(`/requests/${r.id}/salary-acknowledgement`,{reference:'Synthetic Salary Unit register',reason},owner)).status,403);assert.equal((await call(`/requests/${r.id}/salary-acknowledgement`,{reference:'Synthetic Salary Unit register',reason},hr)).status,200);
+  // Per-request salary acknowledgement was retired: Salary Unit receipts are recorded per payroll register.
+  assert.equal((await call(`/requests/${r.id}/salary-acknowledgement`,{reference:'Synthetic Salary Unit register',reason},hr)).status,404);
  });
  test('calendar shows submitted leave with status, preserves scope and removes rejected or cancelled applications',async()=>{
   const r=await submit();

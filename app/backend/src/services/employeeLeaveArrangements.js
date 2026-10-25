@@ -2,7 +2,7 @@ import {calendarCoverageRequired,calendarFallbackNotice} from '../lib/government
 import { governmentLeaveMedicalSummary } from './governmentLeaveMedicalSummary.js';
 import { ServiceError } from '../lib/serviceError.js';
 import { COMMON_CODES, serviceFacts } from '../lib/governmentLeaveRules.js';
-import { CASE_CODES, caseLevels } from '../lib/governmentLeaveCaseRules.js';
+import { CASE_CODES } from '../lib/governmentLeaveCaseRules.js';
 import { canAccessEmployee, isCentralHr } from './hrAccess.js';
 import { loadContext } from './governmentLeave.js';
 import { bindingIssue, configurationFor, effectiveOffices, today } from './governmentLeaveWorkflow.js';
@@ -18,10 +18,11 @@ export async function employeeGovernmentRoute(client, employee) {
   const request = { employee_id: employee.id, submitted_by: employee.reviewer_id,
     department_id: employee.department_id, division_id: employee.division_id };
   const codes = [...COMMON_CODES, ...CASE_CODES];
-  const commonRoutes=new Map();
-  for(const code of COMMON_CODES)commonRoutes.set(code,await approvalRouteFor(client,employee.department_id,code));
-  const levelsFor = code => COMMON_CODES.includes(code) ? commonRoutes.get(code).stages.map(s=>s.level) : caseLevels(code);
-  const levels = ['division', ...([...commonRoutes.values()].some(r=>r.stages.some(s=>s.level==='parent_division'))?['parent_division']:[]), 'department', 'hr_verifier', 'relevant_secretary', 'minister', 'chief_secretary'];
+  // Every new application, ordinary or special, takes the configured route (or the
+  // single Supervisor stage when none is set), so only those offices are required.
+  const route=await approvalRouteFor(client,employee.department_id,'recreation',{simple:true});
+  const levels=route.stages.map(s=>s.level);
+  const levelsFor = () => levels;
   const stages = [];
   for (const level of levels) {
     const offices = await effectiveOffices(client, request, level);
@@ -30,7 +31,7 @@ export async function employeeGovernmentRoute(client, employee) {
       { level, binding: { ...office, assignment_id: office.id } });
     if (level === 'division' && !employee.division_id) issue = 'Employee division is unverified.';
     if (['division', 'parent_division', 'department', 'relevant_secretary', 'minister'].includes(level) && !employee.department_id) issue = 'Employee department is unverified.';
-    stages.push({ level, label:commonRoutes.get('recreation').stages.find(s=>s.level===level)?.label||null, approver_employee_id: office?.approver_employee_id || null, approver_name: office?.approver_name || null,
+    stages.push({ level, label:route.stages.find(s=>s.level===level)?.label||null, approver_employee_id: office?.approver_employee_id || null, approver_name: office?.approver_name || null,
       issue, conditional: ['relevant_secretary', 'minister'].includes(level), applies_to: codes.filter(code => levelsFor(code).includes(level)) });
   }
   return { ready: COMMON_CODES.every(code=>stages.filter(s=>levelsFor(code).includes(s.level)).every(s=>!s.issue)),

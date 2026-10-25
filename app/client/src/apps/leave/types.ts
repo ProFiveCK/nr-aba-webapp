@@ -1,25 +1,5 @@
 export type LeaveStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 
-export type ResetPeriod = 'none' | 'financial_year' | 'anniversary';
-
-export interface LeaveType {
-    id: string;
-    name: string;
-    description: string | null;
-    default_days: string;
-    is_accruable: boolean;
-    requires_note: boolean;
-    is_active: boolean;
-    accrual_days_per_fortnight: string;
-    reset_period: ResetPeriod;
-    max_balance: string | null;
-    /** The type is only granted on the strength of a document, e.g. a medical certificate. */
-    requires_attachment?: boolean;
-    /** Names the document to attach, so the form can ask for it by name. */
-    attachment_label?: string | null;
-    usage_count?: number;
-}
-
 /** A supporting document on a leave application, without its bytes. */
 export interface LeaveAttachment {
     id: string;
@@ -53,12 +33,6 @@ export interface LeaveBalance {
 }
 
 export type IneligibleReason = 'temporary' | 'intern' | 'study_leave';
-
-export const INELIGIBLE_REASON_LABELS: Record<IneligibleReason, string> = {
-    temporary: 'Temporary',
-    intern: 'Intern',
-    study_leave: 'Study leave',
-};
 
 export interface Employee {
     leave_policy_regime?: 'legacy' | 'government';
@@ -110,20 +84,7 @@ export interface MyLeaveResponse {
     manager: { id: string; display_name: string; email: string | null } | null;
 }
 
-export const STATUS_STYLES: Record<LeaveStatus, string> = {
-    pending: 'bg-amber-100 text-amber-800',
-    approved: 'bg-emerald-100 text-emerald-800',
-    rejected: 'bg-red-100 text-red-700',
-    cancelled: 'bg-gray-100 text-gray-600',
-};
-
 export { formatDate } from '../../lib/date';
-
-export interface PublicHoliday {
-    id: string;
-    holiday_date: string;
-    name: string;
-}
 
 /**
  * Working days between two dates, inclusive: weekdays that are not public

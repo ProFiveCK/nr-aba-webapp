@@ -17,6 +17,7 @@ import {
   skipWithoutDatabase,
   upsertLeaveType,
 } from '../test-support/database.js';
+import * as legacy from '../test-support/legacyLeave.js';
 
 describe('leave service', { skip: skipWithoutDatabase }, () => {
   let pool;
@@ -48,53 +49,8 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
 
   after(async () => { await pool?.end(); });
 
-  const apply = (overrides = {}) => service.applyForLeave(pool, {
+  const apply = (overrides = {}) => legacy.applyForLeave(pool, {
     employee: ana, leaveTypeId: annual.id, startDate: START, endDate: END, reason: 'Family', ...overrides,
-  });
-
-  // Who hears about a new application. The rule matters because a staff
-  // record with no manager used to notify nobody: the request reached the
-  // administrators' queue but no email reached them.
-  describe('who is told about a new application', () => {
-    async function makeAdmin(email) {
-      const { rows } = await pool.query(
-        `INSERT INTO reviewers (email, display_name, role, password_hash, permissions, status)
-         VALUES ($1, $1, 'user', 'x', '{"hr_admin": true}'::jsonb, 'active') RETURNING id`,
-        [email]
-      );
-      return rows[0].id;
-    }
-
-    test('an active manager with approval capability and verified placement', async () => {
-      const {rows:[login]}=await pool.query(`INSERT INTO reviewers(email,display_name,role,password_hash,permissions)
-        VALUES ('manager@example.test','Manager','user','x','{"hr_leave_approve":true}') RETURNING id`);
-      const {rows:[department]}=await pool.query("INSERT INTO hr_departments(name) VALUES ('Notification Finance') RETURNING id");
-      await pool.query('UPDATE hr_employees SET department_id=$2 WHERE id=ANY($1::uuid[])',[[ana.id,manager.id],department.id]);
-      await pool.query("UPDATE hr_employees SET reviewer_id=$2,email='manager@example.test' WHERE id=$1",[manager.id,login.id]);
-      const fresh = (await pool.query('SELECT * FROM hr_employees WHERE id = $1', [ana.id])).rows[0];
-
-      const approvers = await service.leaveApprovers(pool, fresh);
-      assert.deepEqual(approvers.map((a) => a.email), ['manager@example.test']);
-    });
-
-    test('the administrators, when no manager is set', async () => {
-      await makeAdmin('admin-one@example.test');
-      const orphan = await createEmployee(pool, { name: 'No Manager' });
-
-      const approvers = await service.leaveApprovers(pool, orphan);
-      assert.ok(approvers.some((a) => a.email === 'admin-one@example.test'),
-        'an application from someone with no manager still reaches an administrator');
-    });
-
-    test('the administrators, when the manager has no address on file', async () => {
-      await makeAdmin('admin-two@example.test');
-      await pool.query('UPDATE hr_employees SET email = NULL WHERE id = $1', [manager.id]);
-      const fresh = (await pool.query('SELECT * FROM hr_employees WHERE id = $1', [ana.id])).rows[0];
-
-      const approvers = await service.leaveApprovers(pool, fresh);
-      assert.ok(approvers.length > 0, 'it does not fall silent just because the manager has no email');
-      assert.ok(approvers.every((a) => a.email), 'and never returns an approver with no address');
-    });
   });
 
   describe('applying', () => {

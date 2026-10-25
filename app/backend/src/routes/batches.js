@@ -2,6 +2,7 @@ import express from 'express';
 import crypto from 'crypto';
 import { body, param, query, handleValidation } from '../middleware/validation.js';
 import { pool } from '../db.js';
+import { withTransaction } from '../lib/transaction.js';
 import { requireAuth } from '../services/authService.js';
 import { actorFrom, recordAudit } from '../services/auditService.js';
 import {
@@ -439,71 +440,79 @@ router.patch(
   const actor = req.user;
   const notifySubmitter = req.body.notify !== false; // default true unless explicitly false
 
-    const { rows } = await pool.query(
-      `SELECT batch_id, code, root_batch_id, department_code, file_name, checksum, created_at, transactions,
-        workflow_type, stage, stage_updated_at, pd_number, submitted_email, submitted_by, is_draft
-         FROM batch_archives
-        WHERE code = $1`,
-      [code]
-    );
-    if (!rows.length) {
-      res.status(404).json({ message: 'Batch not found.' });
-      return;
-    }
-    const batch = rows[0];
-    const metadata = (batch.transactions && typeof batch.transactions === 'object') ? batch.transactions : {};
-    const currentStage = batch.stage;
-    // Departmental ABA has no approval step (submitted -> rejected only);
-    // public health keeps the full approve/reject gate.
-    const baseTransitions = workflowStageTransitions(batch.workflow_type);
-    const allowedNext = baseTransitions[currentStage] || [];
-    const isOverride = batch.workflow_type === 'public_health'
-      && actor?.role === 'admin'
-      && currentStage !== 'submitted'
-      && targetStage === 'approved';
-    if (!allowedNext.includes(targetStage)) {
-      res.status(400).json({ message: `Cannot move batch from ${currentStage} to ${targetStage}.` });
-      return;
-    }
-    const isSubmitter = batch.submitted_by
-      ? batch.submitted_by === actor.id
-      : Boolean(batch.submitted_email) && lowerEmail(batch.submitted_email) === lowerEmail(actor.email);
-    if (targetStage === 'approved' && isSubmitter) {
-      res.status(403).json({ message: 'You cannot approve a batch you submitted. Another reviewer must approve it.' });
-      return;
-    }
-    const stageUpdatedIso = new Date().toISOString();
-    const { rows: updatedRows } = await pool.query(
-      `UPDATE batch_archives
-          SET stage = $1,
-              stage_updated_at = $2
-        WHERE code = $3
-      RETURNING batch_id, code, root_batch_id, department_code, file_name, checksum, created_at, transactions,
-                stage, stage_updated_at, pd_number, submitted_email, submitted_by, is_draft`,
-      [targetStage, stageUpdatedIso, code]
-    );
-    const updated = updatedRows[0];
+    // The batch row is locked and every check runs against the locked row, so
+    // two reviewers acting at once cannot both move the same batch: the second
+    // waits, then finds the stage already changed and is refused. The stage
+    // change and its review record commit together.
+    const outcome = await withTransaction(pool, async (client) => {
+      const { rows } = await client.query(
+        `SELECT batch_id, code, root_batch_id, department_code, file_name, checksum, created_at, transactions,
+          workflow_type, stage, stage_updated_at, pd_number, submitted_email, submitted_by, is_draft
+           FROM batch_archives
+          WHERE code = $1
+          FOR UPDATE`,
+        [code]
+      );
+      if (!rows.length) return { fail: [404, 'Batch not found.'] };
+      const batch = rows[0];
+      const metadata = (batch.transactions && typeof batch.transactions === 'object') ? batch.transactions : {};
+      const currentStage = batch.stage;
+      // Departmental ABA has no approval step (submitted -> rejected only);
+      // public health keeps the full approve/reject gate.
+      const baseTransitions = workflowStageTransitions(batch.workflow_type);
+      const allowedNext = baseTransitions[currentStage] || [];
+      const isOverride = batch.workflow_type === 'public_health'
+        && actor?.role === 'admin'
+        && currentStage !== 'submitted'
+        && targetStage === 'approved';
+      if (!allowedNext.includes(targetStage)) {
+        return { fail: [400, `Cannot move batch from ${currentStage} to ${targetStage}.`] };
+      }
+      const isSubmitter = batch.submitted_by
+        ? batch.submitted_by === actor.id
+        : Boolean(batch.submitted_email) && lowerEmail(batch.submitted_email) === lowerEmail(actor.email);
+      if (targetStage === 'approved' && isSubmitter) {
+        return { fail: [403, 'You cannot approve a batch you submitted. Another reviewer must approve it.'] };
+      }
+      const stageUpdatedIso = new Date().toISOString();
+      const { rows: updatedRows } = await client.query(
+        `UPDATE batch_archives
+            SET stage = $1,
+                stage_updated_at = $2
+          WHERE code = $3
+        RETURNING batch_id, code, root_batch_id, department_code, file_name, checksum, created_at, transactions,
+                  stage, stage_updated_at, pd_number, submitted_email, submitted_by, is_draft`,
+        [targetStage, stageUpdatedIso, code]
+      );
+      const updated = updatedRows[0];
 
-    await pool.query(
-      `INSERT INTO batch_reviews (batch_id, reviewer, status, comments, metadata, actor_id, stage)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [
-        updated.batch_id,
-        actor.display_name || actor.email,
-        targetStage,
-        commentsRaw || null,
-        {
-          from_stage: currentStage,
-          to_stage: targetStage,
-          pd_number: updated.pd_number,
-          department_code: updated.department_code,
-          override_by_admin: isOverride === true,
-          notify_submitter: notifySubmitter === true
-        },
-        actor.id,
-        targetStage
-      ]
-    );
+      await client.query(
+        `INSERT INTO batch_reviews (batch_id, reviewer, status, comments, metadata, actor_id, stage)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          updated.batch_id,
+          actor.display_name || actor.email,
+          targetStage,
+          commentsRaw || null,
+          {
+            from_stage: currentStage,
+            to_stage: targetStage,
+            pd_number: updated.pd_number,
+            department_code: updated.department_code,
+            override_by_admin: isOverride === true,
+            notify_submitter: notifySubmitter === true
+          },
+          actor.id,
+          targetStage
+        ]
+      );
+      return { updated, metadata, currentStage, isOverride };
+    });
+    if (outcome.fail) {
+      res.status(outcome.fail[0]).json({ message: outcome.fail[1] });
+      return;
+    }
+    const { updated, metadata, currentStage, isOverride } = outcome;
 
     await recordAudit({
       actor: actorFrom(req),

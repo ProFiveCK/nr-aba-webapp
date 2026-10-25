@@ -1,9 +1,5 @@
 import express from 'express';
-import { param, body } from '../middleware/validation.js';
-import { handleValidation } from '../middleware/validation.js';
 import { pool } from '../db.js';
-import { requireAuth } from '../services/authService.js';
-import { FOREX_TT_STATUSES } from '../config.js';
 
 const router = express.Router();
 

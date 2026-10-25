@@ -1,16 +1,7 @@
 import express from 'express';
-import crypto from 'crypto';
 import fs from 'fs/promises';
-import bcrypt from 'bcryptjs';
-import rateLimit from 'express-rate-limit';
-import { body, handleValidation } from '../middleware/validation.js';
 import { pool } from '../db.js';
-import {
-  hashPassphrase,
-  isLegacyPassphraseHash,
-  legacyHashPassphrase,
-  requireAuth,
-} from '../services/authService.js';
+import { requireAuth } from '../services/authService.js';
 
 const router = express.Router();
 
@@ -67,67 +58,6 @@ async function safeFetchSyncUrl(url, init) {
   }
   return fetch(url, init);
 }
-
-router.get('/reviewer/passphrase', async (_req, res) => {
-  const { rows } = await pool.query('SELECT updated_at FROM reviewer_settings WHERE id = TRUE');
-  if (!rows.length) {
-    res.json({ configured: false });
-    return;
-  }
-  res.json({ configured: true, updated_at: rows[0].updated_at });
-});
-
-router.post(
-  '/reviewer/passphrase',
-  [requireAuth(['admin']), body('passphrase').isString().isLength({ min: 4, max: 128 })],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const passphraseHash = await hashPassphrase(req.body.passphrase);
-    const { rows } = await pool.query(
-      `INSERT INTO reviewer_settings (id, passphrase_hash, updated_at)
-       VALUES (TRUE, $1, NOW())
-       ON CONFLICT (id) DO UPDATE SET passphrase_hash = EXCLUDED.passphrase_hash, updated_at = NOW()
-       RETURNING updated_at`,
-      [passphraseHash]
-    );
-    res.status(201).json({ configured: true, updated_at: rows[0].updated_at });
-  }
-);
-
-const passphraseLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { message: 'Too many passphrase attempts. Please try again later.' },
-});
-
-router.post(
-  '/reviewer/passphrase/verify',
-  [passphraseLimiter, body('passphrase').isString().isLength({ min: 1, max: 128 })],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const { rows } = await pool.query('SELECT passphrase_hash FROM reviewer_settings WHERE id = TRUE');
-    if (!rows.length || !rows[0].passphrase_hash) {
-      res.status(404).json({ message: 'Reviewer passphrase not configured.' });
-      return;
-    }
-    const incoming = req.body.passphrase;
-    const stored = rows[0].passphrase_hash;
-    let valid = false;
-    if (isLegacyPassphraseHash(stored)) {
-      // Legacy SHA-256 path — compare in constant time, then offer no upgrade hook here.
-      const incomingHash = legacyHashPassphrase(incoming);
-      if (incomingHash.length === stored.length) {
-        valid = crypto.timingSafeEqual(Buffer.from(incomingHash, 'hex'), Buffer.from(stored, 'hex'));
-      }
-    } else {
-      valid = await bcrypt.compare(incoming, stored);
-    }
-    if (valid) res.json({ valid: true });
-    else res.status(401).json({ valid: false, message: 'Invalid passphrase.' });
-  }
-);
 
 // ========== SFTP SYNC ENDPOINTS ==========
 

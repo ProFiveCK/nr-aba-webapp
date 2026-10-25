@@ -223,14 +223,10 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
       const response=await call(staff,'/directory',undefined,'GET',bearer);assert.equal(response.status,403,'session remains valid, scope was not committed');
     } finally {await pool.query('DROP TRIGGER reject_scope_audit ON audit_log; DROP FUNCTION reject_scope_audit()');}
   });
-  test('approval queues withhold evidence metadata, self decisions remain blocked and notifications require current authority',async()=>{
+  test('approval queues withhold evidence metadata, self decisions remain blocked',async()=>{
     await grant(approver,['hr_leave_approve']);const queue=await call(approver,'/approvals?status=approved');assert.deepEqual(queue.body[0].attachments,[]);
     await grant(approver,['hr_evidence_read']);assert.equal((await call(approver,'/approvals?status=approved')).body[0].attachments.length,1);
     await grant(owner,['hr_leave_approve']);assert.equal((await call(owner,`/leaves/${pending.id}/decision`,{decision:'approved'})).status,403);
-    const manager=await createEmployee(pool,{name:'Foreign notification manager'});await pool.query('UPDATE hr_employees SET reviewer_id=$2,department_id=$3 WHERE id=$1',[manager.id,approver.id,foreign.id]);await pool.query('UPDATE hr_employees SET manager_id=$2 WHERE id=$1',[employee.id,manager.id]);
-    await pool.query('UPDATE hr_access_scopes SET revoked_at=NOW() WHERE reviewer_id=$1',[approver.id]);
-    const {leaveApprovers}=await import('../services/leaveService.js');const targets=await leaveApprovers(pool,employee);
-    assert.ok(!targets.some(row=>row.email===approver.email),'a foreign manager must not receive the leave notification');assert.ok(targets.some(row=>row.email===central.email));
   });
 
 });

@@ -139,6 +139,35 @@ describe('batch routes', { skip: skipWithoutDatabase }, () => {
     assert.equal((await lastAudit(pool, 'batch.reject', code)).metadata.comments, 'Wrong account');
   });
 
+  test('concurrent rejections of one batch: one wins, one review is recorded', async () => {
+    const { json: { code } } = await submit(submitter, GOOD);
+    const reject = () => app.call('PATCH', `/api/batches/${code}/stage`, {
+      token: reviewer.token, body: { stage: 'rejected', comments: 'Race', notify: false },
+    });
+    const results = await Promise.all([reject(), reject(), reject(), reject()]);
+    assert.deepEqual(results.map((r) => r.status).sort(), [200, 400, 400, 400]);
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM batch_reviews r JOIN batch_archives b ON b.batch_id = r.batch_id
+        WHERE b.code = $1 AND r.status = 'rejected'`, [code]);
+    assert.equal(rows[0].n, 1, 'one review record, so one submitter email');
+  });
+
+  test('a stage change is not kept when its review record cannot be written', async () => {
+    const { json: { code } } = await submit(submitter, GOOD);
+    await pool.query(`CREATE OR REPLACE FUNCTION batch_test_refuse() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'refused by test'; END; $$ LANGUAGE plpgsql`);
+    await pool.query('CREATE TRIGGER batch_test_refuse BEFORE INSERT ON batch_reviews FOR EACH ROW EXECUTE FUNCTION batch_test_refuse()');
+    try {
+      const res = await app.call('PATCH', `/api/batches/${code}/stage`, {
+        token: reviewer.token, body: { stage: 'rejected', notify: false },
+      });
+      assert.equal(res.status, 500);
+    } finally {
+      await pool.query('DROP TRIGGER IF EXISTS batch_test_refuse ON batch_reviews');
+    }
+    assert.equal((await stored(code)).stage, 'submitted', 'the batch is still awaiting review');
+  });
+
   test('only an admin deletes a batch, and the audit log keeps what was deleted', async () => {
     const { json: { code } } = await submit(submitter, GOOD);
     assert.equal((await app.call('DELETE', `/api/batches/${code}`, { token: reviewer.token })).status, 403);

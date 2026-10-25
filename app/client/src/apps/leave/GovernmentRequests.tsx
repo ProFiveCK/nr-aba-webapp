@@ -1,5 +1,5 @@
 import {SimpleLeaveDetails} from './SimpleLeaveDetails';
-import {collectLeaveDetails} from './simpleLeaveDetails';
+import {collectLeaveDetails} from './leaveDetailFields';
 import {RecordedLeaveReview} from './RecordedLeaveReview';
 import {LeaveEmailStatus} from './LeaveEmailStatus';
 import {GovernmentApprovalForm,approvalCertification} from './GovernmentApprovalForm';

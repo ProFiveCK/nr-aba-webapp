@@ -116,23 +116,6 @@ export async function resolveGoogleIdentity(idToken, { ip } = {}) {
   return { result: GoogleSignInResult.OK, reviewer, linkedNow: true };
 }
 
-export async function listIdentities(reviewerId) {
-  const { rows } = await pool.query(
-    `SELECT provider, email, linked_at, last_login_at
-       FROM reviewer_identities WHERE reviewer_id = $1 ORDER BY linked_at`,
-    [reviewerId]
-  );
-  return rows;
-}
-
-export async function unlinkIdentity(reviewerId, provider) {
-  const { rowCount } = await pool.query(
-    'DELETE FROM reviewer_identities WHERE reviewer_id = $1 AND provider = $2',
-    [reviewerId, provider]
-  );
-  return rowCount > 0;
-}
-
 /**
  * Retires a pending temporary password when its owner signs in with Google.
  *

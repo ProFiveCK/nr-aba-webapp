@@ -33,7 +33,6 @@ services:
       SMTP_HOST: ''
       ACCRUAL_SCHEDULER: 'off'
       GOVERNMENT_LEAVE_SCHEDULER: 'off'
-      AI_HELPER_ENABLED: 'false'
       DEFAULT_ADMIN_EMAIL: ''
       DEFAULT_ADMIN_PASSWORD: ''
       TZ: Pacific/Nauru

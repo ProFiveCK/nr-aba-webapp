@@ -48,7 +48,7 @@ export async function startApp(mounts) {
     return { status: response.status, json, headers: response.headers };
   }
 
-  return { call, close: () => new Promise((resolve) => server.close(resolve)) };
+  return { call, base, close: () => new Promise((resolve) => server.close(resolve)) };
 }
 
 /** A password generated per run, so no credential-shaped literal is committed. */
@@ -57,8 +57,9 @@ export const testPassword = () => crypto.randomBytes(12).toString('hex');
 /**
  * Creates (or replaces) an account and signs it in. Returns the row, its
  * password and a session token. Cheap bcrypt rounds: these are fixtures.
+ * `capabilities` are granted on top of the role, as an admin would in the UI.
  */
-export async function createAccount(pool, email, { role = 'user', status = 'active', departmentCode = null, password = testPassword() } = {}) {
+export async function createAccount(pool, email, { role = 'user', status = 'active', departmentCode = null, password = testPassword(), capabilities = [] } = {}) {
   const auth = await import('../services/authService.js');
   await pool.query('DELETE FROM reviewers WHERE email = $1', [email]);
   const { rows: [reviewer] } = await pool.query(
@@ -66,6 +67,7 @@ export async function createAccount(pool, email, { role = 'user', status = 'acti
      VALUES ($1, $1, $2, $3, $4, FALSE, $5) RETURNING *`,
     [email, role, status, await bcrypt.hash(password, 4), departmentCode]
   );
+  if (capabilities.length) await auth.setCapabilities(reviewer.id, capabilities);
   const { tokenId, expiresAt } = await auth.createSession(reviewer.id);
   return { reviewer, password, token: auth.buildTokenPayload(reviewer, tokenId, expiresAt) };
 }

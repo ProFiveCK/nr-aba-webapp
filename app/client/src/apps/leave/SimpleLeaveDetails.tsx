@@ -2,7 +2,7 @@ import {AustralianDateInput} from '../../components/AustralianDateInput';
 import {Field,inputClass} from './ManagementFields';
 import type {GovernmentRequest} from './governmentWorkflowTypes';
 
-import {leaveDetailFields} from './simpleLeaveDetails';
+import {leaveDetailFields} from './leaveDetailFields';
 
 export function SimpleLeaveDetails({code,initial={},application=false,request}:{code:string;initial?:Record<string,unknown>;application?:boolean;request?:GovernmentRequest}){
  const basis=request?.benefit_basis,fields=leaveDetailFields(code,application).filter(f=>!basis||!['duration_unit','prior_consumed','prior_history_reference'].includes(f.key));

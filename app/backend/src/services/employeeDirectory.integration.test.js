@@ -24,6 +24,7 @@ describe('employee directory and enterprise approval foundation', { skip: skipWi
     app.use('/api/auth', authRouter);
     app.get('/api/batches', auth.requireAuth(), (_req, res) => res.json({ ok: true }));
     app.get('/api/hr/limited-test', auth.requireAuth(), limiter, (_req, res) => res.json({ ok: true }));
+    app.use(errors.notFoundHandler);
     app.use(errors.errorHandler);
     server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
     base = `http://127.0.0.1:${server.address().port}`;
@@ -142,8 +143,8 @@ describe('employee directory and enterprise approval foundation', { skip: skipWi
     const token = changed.body.token;
     assert.equal((await call(token, '/api/hr/me')).status, 200);
     const leaveType = await upsertLeaveType(pool, { name: 'T:EmployeeFoundation', defaultDays: 20 });
-    assert.equal((await call(token, '/api/hr/leaves', { leave_type_id: leaveType.id, start_date: '2026-10-20', end_date: '2026-10-21', reason })).status, 409,
-      'submission waits for the government staged workflow');
+    assert.equal((await call(token, '/api/hr/leaves', { leave_type_id: leaveType.id, start_date: '2026-10-20', end_date: '2026-10-21', reason })).status, 404,
+      'there is no legacy submission route; leave goes through the government workflow');
     const { rows: [application] } = await pool.query(`INSERT INTO hr_leave_applications (employee_id, leave_type_id, start_date, end_date, days, status)
       VALUES ($1,$2,'2026-10-20','2026-10-21',2,'pending') RETURNING id`, [employee.id, leaveType.id]);
     assert.equal((await call(await tokenFor(actor), `/api/hr/leaves/${application.id}/decision`, { decision: 'approved' })).status, 409,

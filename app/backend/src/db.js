@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { readFileSync } from 'node:fs';
 import {initOrganisationHierarchySchema,initParentApproverSchema} from './services/organisationHierarchy.js';
 import { initGovernmentLeaveSchema } from './services/governmentLeaveSchema.js';
 import dotenv from 'dotenv';
@@ -163,7 +164,7 @@ if (useSSL) {
       sslOpts.ca = /-----BEGIN/.test(ca) ? ca : undefined;
       if (!sslOpts.ca) {
         try {
-          sslOpts.ca = require('fs').readFileSync(ca, 'utf8');
+          sslOpts.ca = readFileSync(ca, 'utf8');
         } catch (err) {
           console.error('FATAL: DB_SSL_CA path could not be read:', err.message);
           process.exit(1);

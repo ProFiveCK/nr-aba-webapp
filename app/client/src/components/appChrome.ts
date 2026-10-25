@@ -37,7 +37,3 @@ export function useAppSections(sections: AppSection[]): void {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [key, setSections]);
 }
-
-export function useAppChrome(): AppChrome {
-    return useContext(AppChromeContext);
-}

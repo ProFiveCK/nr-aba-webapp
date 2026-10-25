@@ -54,7 +54,6 @@ const [
   { default: listsRouter },
   { default: batchesRouter },
   { default: syncRouter },
-  { default: aiHelperRouter },
 ] = await Promise.all([
   import('./routes/forexTT.js'),
   import('./routes/health.js'),
@@ -66,7 +65,6 @@ const [
   import('./routes/lists.js'),
   import('./routes/batches.js'),
   import('./routes/sync.js'),
-  import('./routes/aiHelper.js'),
 ]);
 const app = express();
 
@@ -165,7 +163,6 @@ app.use('/api/payroll', payrollRouter);
 app.use('/api', listsRouter);
 app.use('/api', batchesRouter);
 app.use('/api', syncRouter);
-app.use('/api/ai-helper', aiHelperRouter);
 
 // Creates the first administrator on a fresh install, from DEFAULT_ADMIN_*.
 // Only while there is no active administrator at all, so deleting or renaming

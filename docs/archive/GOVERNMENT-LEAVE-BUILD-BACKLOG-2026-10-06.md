@@ -6,7 +6,7 @@ Status updated 7 October: Packages 1A–1E and Packages 2–6 include the functi
 
 Build the interim portal in six reviewable packages, beginning with employee identity, access control, and calculation foundations. Automate common leave and provide an authorised case process for less common or disputed calculations. The portal will own leave for the expected six-to-twelve-month gap; live TechnologyOne Leave integration is deferred.
 
-The [policy summary and implementation plan](GOVERNMENT-LEAVE-POLICY-IMPLEMENTATION-PLAN-2026-10-06.md) supplies the detailed rules, source references, configuration assessment, and migration requirements. This backlog turns that plan into an execution order with dependencies and completion criteria.
+The [policy summary and implementation plan](../GOVERNMENT-LEAVE-POLICY-IMPLEMENTATION-PLAN-2026-10-06.md) supplies the detailed rules, source references, configuration assessment, and migration requirements. This backlog turns that plan into an execution order with dependencies and completion criteria.
 
 ## Confirmed implementation choices
 

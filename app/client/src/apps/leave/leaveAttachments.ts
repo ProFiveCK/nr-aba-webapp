@@ -1,11 +1,6 @@
 import { apiClient } from '../../lib/api';
 import type { LeaveAttachment } from './types';
 
-/** What a 10MB server-side limit looks like to someone choosing a file. */
-export const LEAVE_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
-export const LEAVE_ATTACHMENT_MAX_FILES = 5;
-export const LEAVE_ATTACHMENT_ACCEPT = '.pdf,.png,.jpg,.jpeg,.doc,.docx';
-
 /** "412 KB" — enough for someone to tell two versions of a scan apart. */
 export function formatFileSize(bytes: number): string {
     if (!Number.isFinite(bytes) || bytes <= 0) return '';

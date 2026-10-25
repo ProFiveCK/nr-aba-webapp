@@ -14,10 +14,6 @@ function key() {
   }
 }
 
-export function isEncryptionEnabled() {
-  return key() !== null;
-}
-
 export function encryptSecret(plain) {
   if (plain === null || plain === undefined) return null;
   const k = key();

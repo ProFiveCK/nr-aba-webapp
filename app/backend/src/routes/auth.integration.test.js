@@ -5,6 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import bcrypt from 'bcryptjs';
 import test, { after, before, describe } from 'node:test';
 import { connectTestDatabase, skipWithoutDatabase } from '../test-support/database.js';
 import { createAccount, lastAudit, prepareRoutes, startApp, testPassword } from '../test-support/http.js';
@@ -98,6 +99,44 @@ describe('auth routes', { skip: skipWithoutDatabase }, () => {
     assert.ok(await lastAudit(pool, 'password.reset', reviewer.id));
     const again = await app.call('POST', '/api/auth/reset-password', { body: { token: raw, new_password: testPassword() } });
     assert.equal(again.status, 400, 'a reset token works once');
+  });
+
+  const storeResetToken = (reviewerId, raw) => pool.query(
+    `INSERT INTO password_reset_tokens (reviewer_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 hour')
+     ON CONFLICT (reviewer_id) DO UPDATE SET token = EXCLUDED.token, expires_at = EXCLUDED.expires_at`,
+    [reviewerId, sha256(raw)]
+  );
+
+  test('a reset token used by two requests at once works for exactly one', async () => {
+    const { reviewer } = await createAccount(pool, 'auth-reset-race@example.test');
+    const raw = crypto.randomBytes(32).toString('hex');
+    await storeResetToken(reviewer.id, raw);
+    const passwords = [testPassword(), testPassword(), testPassword()];
+    const results = await Promise.all(passwords.map((new_password) =>
+      app.call('POST', '/api/auth/reset-password', { body: { token: raw, new_password } })));
+    assert.deepEqual(results.map((r) => r.status).sort(), [200, 400, 400]);
+    const winner = passwords[results.findIndex((r) => r.status === 200)];
+    const { rows: [row] } = await pool.query('SELECT password_hash FROM reviewers WHERE id = $1', [reviewer.id]);
+    assert.ok(await bcrypt.compare(winner, row.password_hash), 'the password is the winner\'s, not whichever request finished last');
+  });
+
+  test('a reset that cannot finish changes nothing and the token stays usable', async () => {
+    const { reviewer, password } = await createAccount(pool, 'auth-reset-atomic@example.test');
+    const raw = crypto.randomBytes(32).toString('hex');
+    await storeResetToken(reviewer.id, raw);
+    await pool.query(`CREATE OR REPLACE FUNCTION auth_test_refuse() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'refused by test'; END; $$ LANGUAGE plpgsql`);
+    await pool.query('CREATE TRIGGER auth_test_refuse BEFORE DELETE ON reviewer_sessions FOR EACH ROW EXECUTE FUNCTION auth_test_refuse()');
+    try {
+      const res = await app.call('POST', '/api/auth/reset-password', { body: { token: raw, new_password: testPassword() } });
+      assert.equal(res.status, 500);
+    } finally {
+      await pool.query('DROP TRIGGER IF EXISTS auth_test_refuse ON reviewer_sessions');
+    }
+    const { rows: [row] } = await pool.query('SELECT password_hash FROM reviewers WHERE id = $1', [reviewer.id]);
+    assert.ok(await bcrypt.compare(password, row.password_hash), 'the old password still works');
+    const retry = await app.call('POST', '/api/auth/reset-password', { body: { token: raw, new_password: testPassword() } });
+    assert.equal(retry.status, 200, 'the same token can be used again once the fault is gone');
   });
 
   test('asking for a reset stores only a hash of the emailed token', async () => {

@@ -286,9 +286,6 @@ EOF
         WINDOWS_SYNC_URL=http://host.docker.internal:8088/sync-trigger
 SYNC_TIMEOUT=30000
 
-        # AI Helper settings (optional)
-AI_HELPER_ENABLED=false
-
 EOF
         
         log_success "Configuration saved to $ENV_FILE"
@@ -392,8 +389,10 @@ if [ ! -d "$CLIENT_DIR/dist" ] || prompt_yes_no "Rebuild frontend?"; then
     npm run build
     
     cd - > /dev/null
+    # Vite builds to build/; nginx serves dist/. Publish moves one to the other.
+    ./scripts/publish-frontend.sh
     
-    if [ -d "$CLIENT_DIR/dist" ]; then
+    if [ -f "$CLIENT_DIR/dist/index.html" ]; then
         log_success "Frontend built successfully"
     else
         log_error "Frontend build failed!"
@@ -499,7 +498,6 @@ echo ""
 echo -e "${BLUE}${BOLD}Documentation:${NC}"
 echo -e "  ${CYAN}Setup Guide:${NC}         DEPLOYMENT.md"
 echo -e "  ${CYAN}Main README:${NC}         README.md"
-echo -e "  ${CYAN}Quick Start:${NC}         QUICK-START-MACOS.md"
 echo ""
 
 if [ "$EXISTING_VOLUME" = false ]; then

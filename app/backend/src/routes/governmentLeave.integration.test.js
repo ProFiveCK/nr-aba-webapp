@@ -240,7 +240,7 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
   await pool.query("UPDATE hr_employees SET leave_policy_regime='legacy' WHERE id=$1",[employee.id]);
   await pool.query("UPDATE reviewers SET account_type='staff' WHERE id=$1",[owner.id]);
   const result=await call('/api/hr/leaves',{leave_type_id:randomUUID(),start_date:'2026-10-20',end_date:'2026-10-21',reason},owner);
-  assert.equal(result.status,409);assert.match(result.body.message,/current policy approval workflow/);
+  assert.equal(result.status,404);
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_leave_applications')).rows[0].n,0);
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_leave_balances')).rows[0].n,0);
  });

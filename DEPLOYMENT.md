@@ -125,13 +125,6 @@ SMTP_PASS=<smtp-password>
 SMTP_FROM=notifications@example.com
 ```
 
-#### AI Helper (Optional)
-```bash
-AI_HELPER_ENABLED=true
-AI_PROVIDER=github
-GITHUB_TOKEN=<your-github-token>
-```
-
 ### 3. Create Docker Network
 
 ```bash
@@ -497,7 +490,6 @@ Disable email sending during testing:
 ## 📚 Additional Resources
 
 - **[README.md](README.md)** - Application overview and architecture
-- **[QUICK-START-MACOS.md](QUICK-START-MACOS.md)** - macOS-specific development setup
 - **[PRODUCTION-MIGRATION-GUIDE.md](PRODUCTION-MIGRATION-GUIDE.md)** - Migrating from old to new stack
 - **[docs/](docs/)** - User guides for submitters, reviewers, and administrators
 

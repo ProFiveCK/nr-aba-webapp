@@ -43,23 +43,6 @@ export function isBlacklistedCombo(bsb: string, account: string): boolean {
 }
 
 /**
- * Get blacklist entry details for a BSB/account combination
- */
-export function getBlacklistDetails(bsb: string, account: string): BlacklistEntry | null {
-    const normalizedBsb = normalizeBSBStrict(bsb);
-    const normalizedAccount = normalizeAccountStrict(account);
-    if (!normalizedBsb || !normalizedAccount) return null;
-
-    return (
-        activeBlacklistEntries.find((entry) => {
-            const entryBsb = normalizeBSBStrict(entry.bsb);
-            const entryAccount = normalizeAccountStrict(entry.account);
-            return entryBsb === normalizedBsb && entryAccount === normalizedAccount;
-        }) || null
-    );
-}
-
-/**
  * Refresh the active blacklist from the backend
  */
 export async function refreshActiveBlacklist(): Promise<void> {

@@ -8,14 +8,12 @@ import {
   PASS_HASH_ROUNDS,
   COOKIE_NAME,
   isProd,
-  ACCOUNT_ROLES,
   BANK_PRESET_KEYS,
   TEMP_PASSWORD_LENGTH,
   DEFAULT_BANK_PRESETS,
   ALL_CAPABILITIES,
   ROLE_CAPABILITIES,
 } from '../config.js';
-import { lowerEmail } from '../utils/helpers.js';
 import { activeScopeSql } from './hrAccess.js';
 import { employeeApiLimiter } from '../middleware/employeeApiLimit.js';
 
@@ -70,14 +68,6 @@ export function generateTempPassword(length = TEMP_PASSWORD_LENGTH) {
 
 export async function hashPassphrase(passphrase) {
   return bcrypt.hash(passphrase, PASS_HASH_ROUNDS);
-}
-
-export function isLegacyPassphraseHash(hash) {
-  return typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash);
-}
-
-export function legacyHashPassphrase(passphrase) {
-  return crypto.createHash('sha256').update(passphrase).digest('hex');
 }
 
 export async function createSession(reviewerId) {

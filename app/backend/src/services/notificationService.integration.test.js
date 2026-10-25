@@ -18,8 +18,10 @@ describe('notifications follow the admin testing-mode switch', { skip: skipWitho
   const leave = {
     application: { leave_type_name: 'Annual', start_date: '2026-10-12', end_date: '2026-10-13', days: 2, reason: 'Rest' },
     employee: { display_name: 'Ana' },
-    approvers: [{ email: 'approver@test' }],
   };
+  // Any mail the leave notifier would send; used to probe the testing-mode switch.
+  const decision = { ...leave, employee: { display_name: 'Ana', email: 'ana@test' }, decision: 'approved',
+    approver: { email: 'approver@test' }, decidedBy: 'Approver' };
 
   before(async () => {
     pool = await connectTestDatabase();
@@ -34,13 +36,13 @@ describe('notifications follow the admin testing-mode switch', { skip: skipWitho
   test('testing mode on: nothing is sent', async () => {
     await pool.query('UPDATE reviewer_settings SET testing_mode = TRUE WHERE id = TRUE');
     await mail.refreshTestingModeSetting();
-    assert.deepEqual(await notifications.notifyLeaveSubmitted(leave), []);
+    assert.deepEqual(await notifications.notifyLeaveDecision(decision), []);
   });
 
   test('testing mode off: a send is attempted', async () => {
     await pool.query('UPDATE reviewer_settings SET testing_mode = FALSE WHERE id = TRUE');
     await mail.refreshTestingModeSetting();
-    await assert.rejects(() => notifications.notifyLeaveSubmitted(leave));
+    await assert.rejects(() => notifications.notifyLeaveDecision(decision));
   });
 
   test('legacy decision emails go separately to the applicant and deciding approver', async () => {

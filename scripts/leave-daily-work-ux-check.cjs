@@ -71,11 +71,7 @@ const assert = require('node:assert/strict');
   await page.getByRole('heading', { name: 'Apply on behalf of an employee' }).waitFor({ state: 'hidden' });
   assert.equal(posts, 1);
   await page.getByRole('button', { name: 'View application', exact: true }).click();
-  await page.getByRole('button', { name: 'Application actions', exact: true }).click();
   await page.getByRole('button', { name: 'Cancel or shorten approved leave', exact: true }).waitFor();
-  await page.keyboard.press('Escape'); // closes only the actions disclosure
-  assert.equal(await page.getByRole('dialog').count(), 1);
-  assert.equal(await page.getByRole('button', { name: 'Application actions', exact: true }).getAttribute('aria-expanded'), 'false');
   await page.keyboard.press('Escape');
   await employeeNav.getByRole('button', { name: 'Details and access', exact: true }).click();
   await page.getByRole('heading', { name: 'Account access', exact: true }).waitFor();

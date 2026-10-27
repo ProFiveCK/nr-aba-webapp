@@ -12,16 +12,16 @@ An application is refused at submission, naming the stage, if no approver can cu
 
 Approvers open **Work queue**, which starts on **Only applications waiting on me**. Untick it to see everything in scope.
 
-If HR re-confirms the current approver of a stuck stage, no reason or reference is needed; delegating to a substitute still needs an authority reference.
+If a stage is stuck, central HR sees **Fix approver assignment** on that application. Re-confirming the current approver needs no reason or reference; delegating to a substitute still needs an authority reference.
 
-Employees can cancel their own approved leave before it starts: open the application, **Application actions** → **Cancel this leave**. The assigned approver confirms it and the balance is restored only then. Early returns, leave that has already started and part-period changes stay with central HR.
+Employees can cancel their own approved leave before it starts: open the application and select **Cancel this leave**. The assigned approver confirms it and the balance is restored only then. Early returns, leave that has already started and part-period changes stay with central HR.
 
 ## Find and change an employee application
 
 1. Open Leave → Employees and search for the employee.
 2. Select Manage. The employee opens at **Leave**, showing all application statuses.
 3. Search or filter the list and open the application.
-4. Select **Application actions** to download its approved PDF, cancel a pending application, request cancellation or early return, or resolve an approval assignment. The available actions depend on the application and your permissions.
+4. The application shows only the actions it allows: download its approved PDF, cancel it while pending, request cancellation or early return once approved, or fix a stuck approver assignment.
 
 The employee stays selected while you switch between **Leave**, **Balances**, and **Details and access**. Balances includes the account and movement history. Details and access includes appointment facts, the current login, approvers and verification history.
 
@@ -31,7 +31,11 @@ To submit a new request for an employee, select **Apply on behalf**. The form op
 
 Every new application uses the configured approval route for its department, or the Government default. Without a configured route, it goes to the employee’s assigned Supervisor. Leave types never add HR, Head of Department, Secretary or Minister stages automatically. More stages are used only when explicitly configured.
 
-The assigned approver opens the application, reviews the reason and supporting documents, confirms the application and approves or rejects it. Comments are optional for approval; rejection requires a reason. Medical and Special evidence is checked with the approval, without a separate HR verification. Evidence access is limited to valid assigned approvers for that application and existing employee/evidence permissions; it does not open unrelated clinical records.
+The assigned approver opens the application, reviews the reason and supporting documents, confirms the application and chooses **Approve**, **Amend** or **Reject**. Comments are optional for approval; rejection requires a reason.
+
+**Amend** changes the dates (or the hours of hourly leave) of a pending Recreation, Medical or Special application. Give a reason. The days and balance hold are recalculated, the documents and the original notice date are kept, and the application starts its approvals again with the new dates; the original is kept as cancelled and linked. Other leave types are rejected and reapplied for instead.
+
+**Reject** is final for that application: it is not approved and the held balance is released. The employee sees the reason and can select **Change and resubmit**, which copies the application into the form so they can fix it, attach documents again and submit it as a new application with fresh approvals. Medical and Special evidence is checked with the approval, without a separate HR verification. Evidence access is limited to valid assigned approvers for that application and existing employee/evidence permissions; it does not open unrelated clinical records.
 
 Medical applicants, including HR applying on behalf, must explicitly select **With MC** or **Without MC**; neither is preselected. With MC requires an attachment. The server checks the allowance for non-consecutive uncertified absences, including reviewed earlier usage and pending requests. Both options use the same Medical balance.
 
@@ -45,7 +49,7 @@ Historical completed applications retain their original decisions and PDFs. Main
 
 ## Cancel approved Government leave
 
-Open the approved application, select Application actions → **Cancel or shorten approved leave**, and choose the intended change.
+Open the approved application, select **Cancel or shorten approved leave**, and choose the intended change.
 
 - Cancellation retains the currently approved dates and requests restoration of the remaining deduction.
 - Early return asks for the last date of leave taken and restores only the released portion.

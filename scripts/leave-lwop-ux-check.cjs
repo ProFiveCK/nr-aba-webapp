@@ -27,10 +27,10 @@ const assert=require('node:assert/strict');
   await dialog.getByText('Family circumstances requiring unpaid leave.',{exact:true}).waitFor();
   await dialog.getByRole('button',{name:'Download Application letter.pdf'}).waitFor();
   await dialog.getByText(/0% salary/).waitFor();
-  assert.equal(await dialog.getByRole('button',{name:'Approve leave',exact:true}).isEnabled(),false);
+  assert.equal(await dialog.getByRole('button',{name:'Approve',exact:true}).isEnabled(),false);
   await dialog.getByRole('checkbox',{name:'I certify that I have verified the application details and supporting information.'}).check();
   await page.screenshot({path:'/tmp/aba-lwop-supervisor-mobile.png',fullPage:true});
-  await dialog.getByRole('button',{name:'Approve leave',exact:true}).click();await dialog.getByText('Leave approved.',{exact:true}).waitFor();
+  await dialog.getByRole('button',{name:'Approve',exact:true}).click();await dialog.getByText('Leave approved.',{exact:true}).waitFor();
   assert.equal(decisions.length,1);assert.equal(decisions[0].certification_confirmed,true);assert.equal(decisions[0].stage_id,'stage');
   await dialog.getByText('Approval progress and history · 1 of 1 completed',{exact:true}).waitFor();
   for(const width of [390,1280]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth),false);}

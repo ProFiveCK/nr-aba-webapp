@@ -1,5 +1,6 @@
 import {SimpleLeaveDetails} from './SimpleLeaveDetails';
 import { useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Button } from '../../components/Ui';
 import { formatDate } from '../../lib/date';
 import { Field, inputClass } from './ManagementFields';
@@ -7,21 +8,16 @@ import { governmentLabel as label } from './governmentWorkflowTypes';
 import type { GovernmentRequest, GovernmentStage } from './governmentWorkflowTypes';
 
 export const approvalCertification = 'I certify that I have verified the application details and supporting information.';
-function approvalAction(request: GovernmentRequest, stage: GovernmentStage) {
-    if(request.simple_approval)return stage.ordinal===request.stages.length-1?'Approve leave':'Approve and continue';
-    return stage.ordinal === request.stages.length - 1 ? 'Approve leave' : stage.level === 'hr_verifier' ? 'Verify evidence' : stage.level === 'relevant_secretary' ? 'Record consent' : stage.level === 'minister' ? 'Record Minister grant' : 'Recommend leave';
-}
-
 /** Review, certification and the decision stay inside the application modal. */
-export function GovernmentApprovalForm({ request, stage, evidenceOnly = false, disabled = false, onSave, onBusyChange }: {
-    request: GovernmentRequest; stage?: GovernmentStage; evidenceOnly?: boolean; disabled?: boolean;
+export function GovernmentApprovalForm({ request, stage, evidenceOnly = false, disabled = false, onSave, onBusyChange, actions }: {
+    request: GovernmentRequest; stage?: GovernmentStage; evidenceOnly?: boolean; disabled?: boolean; actions?: ReactNode;
     onSave: (data: FormData, eventKey: string) => Promise<void>; onBusyChange: (busy: boolean) => void;
 }) {
     const [certified, setCertified] = useState(false), [waived, setWaived] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
     const [eventKey] = useState(() => crypto.randomUUID());
     const saving = useRef(false), feedback = useRef<HTMLParagraphElement>(null);
     const verifiesEvidence = !request.simple_approval && (evidenceOnly || stage?.level === 'hr_verifier' || request.can_verify_evidence === true);
-    const action = evidenceOnly ? 'Verify supporting evidence' : stage ? approvalAction(request, stage) : 'Approve leave';
+    const action = evidenceOnly ? 'Verify supporting evidence' : 'Approve';
     const final = !evidenceOnly && stage?.ordinal === request.stages.length - 1;
     // Short notice does not stop an employee applying, but the approver must knowingly waive it.
     const shortNotice = !evidenceOnly ? request.short_notice : null;
@@ -51,6 +47,6 @@ export function GovernmentApprovalForm({ request, stage, evidenceOnly = false, d
             {request.case && !request.standard_lwop && !request.simple_approval ? <Field label="Decision reason"><textarea name="note" required minLength={10} maxLength={2000} rows={3} className={inputClass} /></Field> : <details><summary className="cursor-pointer text-sm text-gray-700">Add a comment (optional)</summary><div className="mt-3"><Field label="Review comment (optional)"><textarea name="note" maxLength={evidenceOnly ? 1000-approvalCertification.length-1 : 2000} rows={3} className={inputClass} /></Field></div></details>}
         </fieldset>
         {error && <p ref={feedback} tabIndex={-1} role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-        <Button type="submit" loading={busy} disabled={disabled || !ready}>{action}</Button>
+        <div className="flex flex-wrap gap-2"><Button type="submit" loading={busy} disabled={disabled || !ready}>{action}</Button>{actions}</div>
     </form>;
 }

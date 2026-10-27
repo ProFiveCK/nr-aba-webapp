@@ -263,3 +263,25 @@ export async function continueRequest(pool,{user,actor,id,data,simpleApproval=fa
   await audit(client,actor,'hr.gov.case.continued',result.id,{original_request_id:id,reference,reason});return result;
  });
 }
+// The current approver changes a pending application's dates. Submitted facts and holds are immutable, so, like a
+// continuation, the original is cancelled and resubmitted with the new dates, its documents and fresh approvals.
+export async function amendRequest(pool,{user,actor,id,data}){
+ return withTransaction(pool,async client=>{
+  await client.query("SELECT pg_advisory_xact_lock_shared(hashtext('hr-gov-policies'))");await client.query("SELECT pg_advisory_xact_lock_shared(hashtext('hr-approval-assignments'))");const {request}=await locked(client,id);
+  const existing=(await client.query('SELECT * FROM hr_gov_continuations WHERE original_request_id=$1',[id])).rows[0];if(existing){if(existing.request_id!==data.request_id||existing.actor_id!==actor.id)fail('This application was already changed. Reload it.');return {id:existing.request_id,status:(await workflow.getRequest(client,existing.request_id)).status};}
+  if(request.status!=='pending')fail('Only pending applications can be amended.');
+  if(isCase(request.code))fail('Only Recreation, Medical and Special leave can be amended. Reject it and ask the employee to apply again.');
+  const stage=(await workflow.stagesFor(client,id)).find(s=>s.ordinal===request.stage_index);
+  if(!stage?.binding||stage.binding.reviewer_id!==user.id||await workflow.bindingIssue(client,request,stage))fail('Only the current approver can amend this application.',403);
+  const reason=text(data.reason,'reason for the change',10,1000),old=request.application_snapshot.input;
+  const input={...old,start_date:data.start_date,end_date:data.end_date,...(old.duration_unit==='hours'?{hours:data.hours}:{}),request_id:data.request_id,submitted_by:request.submitted_by};
+  if(input.start_date===old.start_date&&input.end_date===old.end_date&&String(input.hours)===String(old.hours))fail('Change the dates or hours before amending.',400);
+  const documents=(await client.query('SELECT * FROM hr_gov_request_documents WHERE request_id=$1',[id])).rows;
+  await workflow.cancelRequest(pool,{client,user,actor,id,reason:`Amended by the approver: ${reason}`,authorized:true});
+  const result=await workflow.submitRequest(pool,{client,user,actor,employeeId:request.employee_id,data:input,documents,simpleApproval:isSimpleApproval(request),authorized:true});
+  const reference=`Amended by the approver from ${old.start_date}–${old.end_date}`;
+  await client.query("INSERT INTO hr_gov_case_links(request_id,original_request_id,kind,recorded_by,reference) VALUES($1,$2,'continuation',$3,$4)",[result.id,id,actor.id,reference]);
+  await client.query('INSERT INTO hr_gov_continuations(original_request_id,request_id,actor_id,source_reference,reason) VALUES($1,$2,$3,$4,$5)',[id,result.id,actor.id,reference,reason]);
+  await audit(client,actor,'hr.gov.request.amended',result.id,{original_request_id:id,from:{start_date:old.start_date,end_date:old.end_date,hours:old.hours||null,charge:request.charge},to:{start_date:input.start_date,end_date:input.end_date,hours:input.hours||null},reason});return result;
+ });
+}

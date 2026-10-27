@@ -79,21 +79,20 @@ const until = async (test, message) => {
         // A committed approval stays successful when its follow-up read fails, with a local retry instead of stale actions.
         detailFailure = true;
         await review().getByRole('checkbox', { name: certification, exact: true }).check();
-        await review().getByRole('button', { name: 'Approve leave', exact: true }).click();
+        await review().getByRole('button', { name: 'Approve', exact: true }).click();
         await review().getByRole('status').filter({ hasText: 'Leave approved.' }).waitFor();
         await review().getByRole('alert').filter({ hasText: 'Application refresh is temporarily unavailable.' }).waitFor();
-        assert.equal(await review().getByRole('button', { name: 'Approve leave', exact: true }).isDisabled(), true);
+        assert.equal(await review().getByRole('button', { name: 'Approve', exact: true }).isDisabled(), true);
         assert.equal(await review().getByRole('button', { name: 'Close dialog', exact: true }).isEnabled(), true);
         assert.equal(decisions.length, 1);
         detailFailure = false;
         await review().getByRole('button', { name: 'Refresh application details', exact: true }).click();
         const approvedDialog = page.getByRole('dialog', { name: 'Leave application', exact: true });
         await approvedDialog.waitFor();
-        assert.equal(await approvedDialog.getByRole('button', { name: 'Approve leave', exact: true }).count(), 0);
+        assert.equal(await approvedDialog.getByRole('button', { name: 'Approve', exact: true }).count(), 0);
 
         // Downloads visibly run once, fail cleanly, and permit retry.
         holdDownload = true;
-        await approvedDialog.getByRole('button', { name: 'Application actions', exact: true }).click();
         await approvedDialog.getByRole('button', { name: 'Download approved PDF', exact: true }).evaluate(button => { button.click(); button.click(); });
         await approvedDialog.getByRole('button', { name: 'Preparing download…', exact: true }).waitFor();
         await until(() => held.length === 1, 'Download was not held');
@@ -103,7 +102,7 @@ const until = async (test, message) => {
         assert.equal(await approvedDialog.getByRole('button', { name: 'Download approved PDF', exact: true }).isEnabled(), true);
         await approvedDialog.getByRole('button', { name: 'Download approved PDF', exact: true }).click();
         await until(() => downloadCalls === 2, 'Download could not be retried');
-        await until(() => approvedDialog.getByRole('button', { name: 'Application actions', exact: true }).isEnabled(), 'Download did not settle');
+        await until(() => approvedDialog.getByRole('button', { name: 'Download approved PDF', exact: true }).isEnabled(), 'Download did not settle');
         assert.equal(await approvedDialog.getByRole('alert').count(), 0, 'A successful retry must clear the previous error');
         await page.keyboard.press('Escape');
 
@@ -112,7 +111,7 @@ const until = async (test, message) => {
         await page.getByRole('button', { name: 'Refresh applications', exact: true }).click();
         await row('B').getByRole('button', { name: 'Review application', exact: true }).click();
         await review().getByRole('checkbox', { name: certification, exact: true }).check(); holdDetail = 'B';
-        await review().getByRole('button', { name: 'Approve leave', exact: true }).click();
+        await review().getByRole('button', { name: 'Approve', exact: true }).click();
         await review().getByText('Refreshing application details…', { exact: true }).waitFor();
         await until(() => held.length === 1, 'Post-save refresh was not held');
         await review().getByRole('button', { name: 'Close dialog', exact: true }).click();

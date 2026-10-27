@@ -24,13 +24,13 @@ const assert=require('node:assert/strict');
    const dialog=page.getByRole('dialog');await dialog.getByText('Awaiting Supervisor · Example Supervisor.',{exact:true}).waitFor();
    assert.equal(await dialog.getByText(/HR factual and pay determination|awaiting HR verification|independent verification|Chief Secretary must/).count(),0,type);
    assert.equal(await dialog.getByLabel('Decision reason',{exact:true}).count(),0,type);
-   assert.equal(await dialog.getByRole('button',{name:'Approve leave',exact:true}).isEnabled(),false,type);
+   assert.equal(await dialog.getByRole('button',{name:'Approve',exact:true}).isEnabled(),false,type);
    for(const field of await dialog.locator('input[required]:not([type="checkbox"])').all())if(!await field.inputValue())await field.fill(await field.getAttribute('type')==='number'?'1':'Example actual source record');
    // Payout fields are conditional policy requirements, completed inline.
    for(const name of ['payable_amount','salary_percent']){const field=dialog.locator(`[name="detail_${name}"]`);if(await field.count())await field.fill(name==='salary_percent'?'50':'100');}
    const valuation=dialog.locator('[name="detail_salary_valuation_reference"]');if(await valuation.count())await valuation.fill('Example payroll calculation');
    await dialog.getByRole('checkbox',{name:'I certify that I have verified the application details and supporting information.'}).check();
-   await dialog.getByRole('button',{name:'Approve leave',exact:true}).click();await dialog.getByText('Leave approved.',{exact:true}).waitFor();
+   await dialog.getByRole('button',{name:'Approve',exact:true}).click();await dialog.getByText('Leave approved.',{exact:true}).waitFor();
    assert.equal(decisions.at(-1).certification_confirmed,true);assert.equal(decisions.at(-1).verify_evidence,undefined);
    await dialog.getByText('Approval progress and history · 1 of 1 completed',{exact:true}).waitFor();
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth),false,type);

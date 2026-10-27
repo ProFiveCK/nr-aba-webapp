@@ -46,9 +46,8 @@ it('opens an employee at the leave list with application entry on demand', () =>
     expect(html).not.toContain('Supporting documents');
     expect(html).not.toContain('Follow-up status');
 });
-it('keeps secondary application actions behind one disclosure', () => {
-    const html = render(<ApplicationActions actions={[{ label: 'Cancel pending application', onSelect: () => {} }]} />);
-    expect(html).toContain('Application actions');
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).not.toContain('Cancel pending application');
+it('shows application actions as plain buttons, without a menu', () => {
+    const html = render(<ApplicationActions actions={[{ label: 'Cancel application', onSelect: () => {} }]} />);
+    expect(html).toContain('Cancel application');
+    expect(html).not.toContain('aria-expanded');
 });

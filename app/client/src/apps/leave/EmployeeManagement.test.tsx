@@ -46,7 +46,8 @@ it('reports incomplete leave access without presenting a migration workflow', ()
             legacy_not_entitled: 0, legacy_excluded_contracts: 0 },
     };
     const html = renderToStaticMarkup(<MemoryRouter><LeaveSetupStatus usage={usage} onOpen={() => {}}/></MemoryRouter>);
-    expect(html).toContain('Access needs review');
+    expect(html).toContain('4 employees need setup review');
+    expect(html).not.toContain('Manage employees');
     expect(html).toContain('No published policy covers today');
     expect(html).toContain('Advanced maintenance');
     expect(html).toContain('bulk employee accounts');

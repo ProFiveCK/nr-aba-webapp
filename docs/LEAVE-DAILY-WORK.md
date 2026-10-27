@@ -74,7 +74,7 @@ An employee's Leave tab links to that person's outstanding follow-ups. The Work 
 
 ## Change a verified login
 
-For an individual employee, open Details and access → **Payroll ID and login** to review or change the login. Login history and leave history stay on the employee record.
+For an individual employee, open Details and access → **Payroll ID and login** to review or change the login. Use **Set up login** (no login yet) or **Activation & recovery** to issue an activation or recovery link, revoke unused links, offboard or restore the employee. Login history and leave history stay on the employee record.
 
 In Administration → User Management, edit the account and choose its **Leave staff record**. The selection can replace another login, move the account from a former employee, or clear the link. Review the displayed replacement and record a reason before saving. Both links change together; affected users must sign in again. A stale or failed staff assignment leaves the links unchanged and keeps the form open with an explanation. Account details and the staff assignment are separate saves, so the message explicitly identifies partial success.
 
@@ -88,7 +88,7 @@ Use **Change allowances** only when the leave rules themselves change. The form 
 
 No end date extends future coverage. It does not add coverage before the original policy start date. Application errors now identify the first date missing published policy coverage.
 
-Advanced maintenance contains leave activation and balance schedules, bulk account lifecycle tools, and payroll reconciliation. For one employee, a missing setup item shows a **Leave setup needs attention** notice on their record with a button to the exact step. Ordinary active employees open at their leave list.
+Advanced maintenance contains leave activation and balance schedules, bulk account lifecycle tools, and payroll reconciliation. For one employee, a missing setup item shows a **Leave setup needs attention** notice on their record with a button to the exact step. Central HR can also open **Service & balance corrections** (service basis, opening balances, corrections and reversals) or **Leave access & schedules** from the employee's Balances tab. Ordinary active employees open at their leave list.
 
 Approvals between HR officers (calendars, schedules, service basis, opening balances, leave access, balance schedules, appointment corrections) all use **Approve**. An appointment correction appears on the employee's Details and access only while it awaits approval.
 

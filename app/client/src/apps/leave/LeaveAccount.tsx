@@ -91,12 +91,6 @@ export function LeaveAccount({ employeeId, refreshVersion = 0, initiallyExpanded
                 <Pager page={page} pageCount={Math.ceil(data.total / data.page_size)} total={data.total} pageSize={data.page_size} setPage={setPage} />
                 <p className="text-sm text-gray-600">Pending applications reserve days without posting a deduction. Final approval posts the deduction; rejection or cancellation releases the hold. Approved amendments may return days as a separate entry.</p>
             </div></details>
-            <details className="app-panel p-4"><summary className="cursor-pointer text-sm font-semibold">How leave is calculated</summary><div className="mt-3 space-y-3 text-sm text-gray-600">
-                <p>The opening is the certified starting balance, including agreed credits carried forward at transfer. Later credits, earned leave, deductions, expiry and corrections are recorded above with their reference. Previous service years remain separate accounts.</p>
-                <p>Leave charges follow the policy effective on the requested dates, verified service and work schedule, and the approved holiday calendar. The date check on each application shows its calculated charge.</p>
-                {current.map(account => <p key={account.id}><strong>{governmentLabel(account.code)}</strong> · Opening policy: {reviewRecordLabel(account.policy_label)}. Annual policy amount: {leaveDays(account.rules[`${account.code}_annual_days`])} days.{account.code === 'recreation' && <> Balance cap: {leaveDays(account.rules.recreation_cap_days)} days. Earned leave is posted through the approved accrual schedule, including any proration and cap.</>}</p>)}
-                <p>Posted availability comes from certified entries, approved deductions and pending holds. Recreation applications may also use projected accrual through the requested leave end date, based on the approved payroll schedule. Credits are posted only when due; a posted balance may be negative while future approved leave is covered by projected accrual.</p>
-            </div></details>
         </>}
     </section>;
 }

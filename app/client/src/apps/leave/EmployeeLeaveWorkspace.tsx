@@ -1,4 +1,3 @@
-import {policyEndLabel} from './policyDates';
 import { LeaveAccount } from './LeaveAccount';
 import { useAuth } from '../../contexts/useAuth';
 import { MedicalTracking } from './MedicalTracking';
@@ -7,7 +6,6 @@ import { policyVersionLabel } from './policyVersionLabel';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { apiClient } from '../../lib/api';
-import { formatDate } from '../../lib/date';
 import { Button, LoadingState } from '../../components/Ui';
 import { EmployeeDetails } from './EmployeeDetails';
 import { EmployeeOnboarding } from './EmployeeOnboarding';
@@ -64,12 +62,6 @@ export function EmployeeLeaveWorkspace({profile,departments,patterns,central,sec
         {error&&<p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         {!summary&&!error&&<LoadingState label="Loading current leave arrangements…"/>}
         {section==='arrangements'&&summary&&<>
-            <div className="app-panel space-y-3 p-5"><div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">Leave summary</h3><Button variant="secondary" onClick={()=>void refresh()}>Refresh</Button></div>
-                {summary.regime === 'government' && government?.activation.status !== 'active' && <p className="text-sm text-gray-600">Review this employee’s appointment, certified balances and leave access before they apply.</p>}
-                {government?.policy && summary.regime === 'government' && <p className="text-sm text-gray-600">Policy: <strong>{reviewRecordLabel(policyVersionLabel(government.policy.label,'published'))}</strong> · {formatDate(government.policy.effective_from)} to {policyEndLabel(government.policy.effective_to)}.</p>}
-                {summary.regime !== 'government' && <p className="text-sm text-gray-600">Reporting manager: <strong>{reviewRecordLabel(summary.reporting_manager.name || 'Not assigned')}</strong>.</p>}
-            </div>
-
             {canReadBalances&&<LeaveAccount key={id} employeeId={id} refreshVersion={version}/>}
             {government?.medical_tracking&&<MedicalTracking tracking={government.medical_tracking} legacy={summary.regime==='legacy'}/>}
 
@@ -78,7 +70,6 @@ export function EmployeeLeaveWorkspace({profile,departments,patterns,central,sec
         {section==='details'&&<>
             {government&&<details className="app-panel space-y-3 p-4"><summary className="cursor-pointer font-semibold">Leave approvers and policy</summary><div className="mt-3 space-y-3"><p className="text-sm text-gray-600">Each application retains its submitted approval route.</p>{government.policy&&<p className="text-sm">Policy: {reviewRecordLabel(policyVersionLabel(government.policy.label,'published'))}</p>}<ol className="space-y-2">{government.route.stages.filter(s=>s.applies_to.some(code=>['recreation','medical','special'].includes(code))).map(s=><li key={s.level} className="rounded-lg border border-gray-200 p-3 text-sm"><p><strong>{s.label||stages[s.level]||leaveName(s.level)}</strong> · {reviewRecordLabel(s.approver_name||'Unassigned')}</p>{s.issue&&<p className="mt-1 text-amber-800">{s.issue}</p>}</li>)}</ol>{central&&<Link className="text-sm font-semibold text-brand underline" to="/leave/settings?view=organisation">Manage approvers</Link>}</div></details>}
             <EmployeeDetails embedded profile={profile} central={central} departments={departments} patterns={patterns} onClose={onClose} onChanged={refresh}/>
-            {central&&<details className="app-panel space-y-3 p-4"><summary className="cursor-pointer font-semibold">Advanced employee maintenance</summary><p className="mt-3 text-sm text-gray-600">Review this employee’s initial balances, login lifecycle and leave activation.</p><div className="flex flex-wrap gap-2">{steps.map(([key,label])=><Button key={key} variant="secondary" onClick={()=>onNavigate('prepare',key)}>{label}</Button>)}</div><Link className="block text-sm font-semibold text-brand underline" to="/leave/settings?view=advanced">Open bulk and payroll maintenance</Link></details>}
         </>}
         {section==='applications'&&<EmployeeApplications key={id} employeeId={id} canApply={central&&summary?.regime==='government'&&profile.employee.status==='active'} canReview={canReview}/>}
         {section==='prepare'&&central&&<>

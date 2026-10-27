@@ -168,6 +168,18 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   const view=await w.requestView(pool,user(hr),continued.body.id);assert.equal(view.simple_approval,true);assert.equal(view.stages.length,1);assert.equal((await w.getRequest(pool,old.id)).status,'cancelled');
   const common=await call('/requests',application('recreation','2026-11-16'));assert.equal(common.status,201,JSON.stringify(common.body));assert.equal((await w.requestView(pool,user(hr),common.body.id)).simple_approval,true);
  });
+ test('the current approver amends pending dates: days and hold are recalculated, documents kept, approval restarts',async()=>{
+  await simpleRoute();const supervisor=officers.division.account;
+  const old=await w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:application('recreation','2026-11-16','2026-11-18'),documents:[doc],simpleApproval:true});
+  const amend=(by,data={})=>call('/requests/'+old.id+'/amend',{request_id:randomUUID(),start_date:'2026-11-16',end_date:'2026-11-17',reason,...data},by);
+  assert.equal((await amend(owner)).status,403);assert.equal((await amend(officers.department.account)).status,403);
+  assert.equal((await amend(supervisor,{end_date:'2026-11-18'})).status,400);
+  const amended=await amend(supervisor);assert.equal(amended.status,201,JSON.stringify(amended.body));
+  const held=async()=>(await pool.query("SELECT COALESCE(sum(h.amount),0)::numeric AS n FROM hr_gov_reservations h JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE r.status='held' AND r.employee_id=$1",[employee.id])).rows[0].n;
+  assert.equal((await w.getRequest(pool,old.id)).status,'cancelled');assert.equal(Number(await held()),2);
+  const view=await w.requestView(pool,user(supervisor),amended.body.id);assert.equal(view.end_date,'2026-11-17');assert.equal(Number(view.charge),2);assert.equal(view.documents.length,1);assert.equal(view.stage_index,0);assert.equal(view.short_notice,null);
+  assert.equal((await decide(amended.body.id,{certification_confirmed:true})).status,'approved');assert.equal(Number(await held()),0);
+ });
  test('pending simplification is audited and preserves requests, decisions, stages and balance holds',async()=>{
   const pending=await submit(application('medical','2026-11-04'));await simpleRoute();
   const repair=(await import('../services/governmentLeavePendingSimplification.js')).simplifyPendingApprovals;

@@ -204,28 +204,30 @@ export async function previewRequest(client,user,employeeId,input) {
 }
 // Shared office locks allow unrelated employees to apply concurrently while
 // dated office changes take the exclusive lock and retain a coherent route.
-export async function submitRequest(pool,{user,actor,employeeId,data,documents=[],client:existingClient,simpleApproval=false}) {
+// authorized: the caller has already checked authority (an approver amending dates), keeping the original notice date and submitter.
+export async function submitRequest(pool,{user,actor,employeeId,data,documents=[],client:existingClient,simpleApproval=false,authorized=false}) {
   const reason=applicationReason(data.code,data.reason),input={code:data.code,start_date:data.start_date,end_date:data.end_date,reason,...leaveDurationInput(data),medical_mode:data.code==='medical'?data.medical_mode:'not_applicable'};
+  const noticeDate=authorized&&data.notice_date||today(),submittedBy=authorized&&data.submitted_by||actor.id;
   const payloadHash=fingerprint({input,...(data.assisted_reference?{assisted_reference:data.assisted_reference}:{}),documents:documents.map(d=>({sha256:d.sha256,file_name:d.file_name,content_type:d.content_type}))});
   const work=async client=>{
     await client.query("SELECT pg_advisory_xact_lock_shared(hashtext('hr-approval-assignments'))");const employee=await ledger.lockEmployee(client,employeeId);
     const state=await accountState(client,user.id,employee);
-    if(!state||!(employee.reviewer_id===user.id&&state.user.permissions.hr_leave_apply||isCentralHr(state.user)&&typeof data.assisted_reference==='string'&&data.assisted_reference.trim().length>=5))fail('Only the current verified employee may submit this application.',403);
+    if(!state||!(authorized||employee.reviewer_id===user.id&&state.user.permissions.hr_leave_apply||isCentralHr(state.user)&&typeof data.assisted_reference==='string'&&data.assisted_reference.trim().length>=5))fail('Only the current verified employee may submit this application.',403);
     const {rows:[old]}=await client.query('SELECT * FROM hr_gov_requests WHERE id=$1',[data.request_id]);
     if(old){if(old.employee_id!==employeeId||old.payload_hash!==payloadHash)fail('The request key was already used for a different application.');return {id:old.id,status:old.status};}
     if(employee.reviewer_id===user.id&&!data.assisted_reference)await assertCutoverResolved(client,employeeId);
     const transfer=await legacyTransferFor(client,employeeId,input,data.request_id);if(transfer&&(!isCentralHr(state.user)||data.assisted_reference?.trim()!==transfer.source_reference))fail('The certified transfer requires central HR assisted entry with its exact signed reconciliation reference.',403);
-    const {config,evaluation}=await assess(client,employeeId,input,null,null,transfer?data.request_id:null);if(!evaluation.eligible_for_preview)fail(evaluation.issues.join(' '));
+    const {config,evaluation}=await assess(client,employeeId,{...input,notice_date:noticeDate},null,null,transfer?data.request_id:null);if(!evaluation.eligible_for_preview)fail(evaluation.issues.join(' '));
     if(!employee.department_id||!employee.division_id)fail('HR must verify the department and division.');
     const placementIssue=await divisionPlacementIssue(client,employee.division_id);if(placementIssue)fail(placementIssue);
     if(input.code==='medical'&&input.medical_mode==='certificate'&&!documents.length)fail('Attach the medical certificate before submitting.',400);
     const approvalRoute=await approvalRouteFor(client,employee.department_id,input.code,{simple:simpleApproval});
-    const applicationSnapshot={...(simpleApproval?{simple_approval:true}:{}),approval_route:approvalRoute,assisted_by:data.assisted_reference?actor.id:null,assisted_reference:data.assisted_reference||null,regime:'government',engine_version:ENGINE_VERSION,employee:{id:employee.id,name:employee.display_name,department_id:employee.department_id,division_id:employee.division_id,department_name:employee.department_code,division_name:employee.division_code},config_id:config.id,input:{...input,notice_date:today()},evaluation};
+    const applicationSnapshot={...(simpleApproval?{simple_approval:true}:{}),approval_route:approvalRoute,assisted_by:data.assisted_reference?actor.id:null,assisted_reference:data.assisted_reference||null,regime:'government',engine_version:ENGINE_VERSION,employee:{id:employee.id,name:employee.display_name,department_id:employee.department_id,division_id:employee.division_id,department_name:employee.department_code,division_name:employee.division_code},config_id:config.id,input:{...input,notice_date:noticeDate},evaluation};
     const external=(await client.query("SELECT external_id FROM hr_employee_external_ids WHERE employee_id=$1 AND source='techone_payroll'",[employeeId])).rows;
     applicationSnapshot.employee.payroll_id=external.length===1?external[0].external_id:null;
-    await ledger.reserveEvaluation(pool,{client,employeeId,input:{...input,notice_date:today(),certificate_available:input.medical_mode==='certificate',verified_single_shift_exemption:config.medical_rule==='single_verified_shift_nonadjacent_scheduled_days'&&input.medical_mode==='exemption',justification_available:true},requestId:data.request_id,actor,authorize:async()=>true});
+    await ledger.reserveEvaluation(pool,{client,employeeId,input:{...input,notice_date:noticeDate,certificate_available:input.medical_mode==='certificate',verified_single_shift_exemption:config.medical_rule==='single_verified_shift_nonadjacent_scheduled_days'&&input.medical_mode==='exemption',justification_available:true},requestId:data.request_id,actor,authorize:async()=>true});
     await client.query(`INSERT INTO hr_gov_requests(id,employee_id,config_id,code,start_date,end_date,reason,medical_mode,payload_hash,application_snapshot,department_id,division_id,reservation_id,charge,submitted_by)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$1,$13,$14)`,[data.request_id,employeeId,config.id,input.code,input.start_date,input.end_date,reason,input.medical_mode,payloadHash,applicationSnapshot,employee.department_id,employee.division_id,evaluation.charge,actor.id]);
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$1,$13,$14)`,[data.request_id,employeeId,config.id,input.code,input.start_date,input.end_date,reason,input.medical_mode,payloadHash,applicationSnapshot,employee.department_id,employee.division_id,evaluation.charge,submittedBy]);
     const request={id:data.request_id,employee_id:employeeId,department_id:employee.department_id,division_id:employee.division_id};
     const unroutable=[];
     for(const [ordinal,{level,label}] of approvalRoute.stages.entries()) {
@@ -233,7 +235,7 @@ export async function submitRequest(pool,{user,actor,employeeId,data,documents=[
       const offices=await effectiveOffices(client,request,level);
       const binding=offices.length===1?await bindOffice(client,stage,offices[0],actor,null,'Dated route snapshot at employee submission'):null;
       // An application nobody is assigned to just waits, unannounced, holding the balance. Refuse it now, naming the stage.
-      if(simpleApproval){const issue=await bindingIssue(client,{...request,submitted_by:actor.id},{...stage,binding});if(issue)unroutable.push(`${label||level}: ${issue}`);}
+      if(simpleApproval){const issue=await bindingIssue(client,{...request,submitted_by:submittedBy},{...stage,binding});if(issue)unroutable.push(`${label||level}: ${issue}`);}
     }
     if(unroutable.length)fail(`This application cannot be sent to an approver yet. ${unroutable.join(' ')} Ask HR to fix the approver, then apply again.`);
     for(const document of documents)await client.query('INSERT INTO hr_gov_request_documents(request_id,file_name,content_type,byte_size,sha256,file_data) VALUES($1,$2,$3,$4,$5,$6)',[request.id,document.file_name,document.content_type,document.byte_size,document.sha256,document.file_data]);
@@ -465,11 +467,11 @@ export async function finalizeApprovedRequest(pool,client,request,employee,actor
       const bytes=await generateGovernmentLeavePdf(grant);
       await client.query("UPDATE hr_gov_requests SET status='approved',completed_at=NOW(),grant_snapshot=$2,final_pdf=$3,stage_index=$4 WHERE id=$1",[id,grant,Buffer.from(bytes),completed.at(-1).ordinal]);
 }
-export async function cancelRequest(pool,{user,actor,id,reason,client:existingClient}) {
+export async function cancelRequest(pool,{user,actor,id,reason,client:existingClient,authorized=false}) {
   reason=reasonText(reason);
   const work=async client=>{
     const {request,employee}=await lockedRequest(client,id);const state=await accountState(client,user.id,employee);
-    if(!state||!(employee.reviewer_id===user.id||isCentralHr(state.user)))fail('Request not found.',404);
+    if(!state||!(authorized||employee.reviewer_id===user.id||isCentralHr(state.user)))fail('Request not found.',404);
     if(request.status==='cancelled')return {id,status:'cancelled'};
     if(request.status!=='pending')fail('A granted/rejected request needs the assisted amendment workflow.');
     if(request.reservation_id)await ledger.finishReservation(pool,{client,employeeId:request.employee_id,requestId:request.reservation_id,action:'released',actor,reason,authorize:async()=>true});

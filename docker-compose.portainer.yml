@@ -5,7 +5,10 @@
 # Portainer server), and listens on loopback unless PORTAINER_AGENT_BIND names
 # the LAN address your Portainer server connects to.
 #
-#   docker compose -f docker-compose.portainer.yml --env-file .env.prod up -d
+# Both values go in .env.portainer, not .env.prod: the API container loads all
+# of .env.prod, and the agent secret must not be readable from there.
+#
+#   docker compose -f docker-compose.portainer.yml --env-file .env.portainer up -d
 name: ron-stack-portainer
 
 services:

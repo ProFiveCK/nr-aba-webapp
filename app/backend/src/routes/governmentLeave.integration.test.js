@@ -195,6 +195,31 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
   await opening();const held=await reserve(),calendar=(await ctx()).calendars[0];await s.createCalendar(pool,{user:user(central),actor:central,data:{label:'Declared holiday correction',effective_from:'2026-01-01',effective_to:'2027-12-31',supersedes_id:calendar.id,holidays:[{date:'2026-11-02',name:'Declared holiday'}],source_reference:'Synthetic Gazette successor',reason}});assert.equal((await ctx()).calendars.length,1);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_calendars')).rows[0].n,2);await assert.rejects(finish(held.id),e=>e.status===409);assert.equal((await ctx()).entitlements[0].held,'1.000000');await finish(held.id,'released');
   await s.addFoundationRecord(pool,{user:user(central),actor:central,employeeId:employee.id,kind:'roster',data:{day:'2026-11-03',paid_hours:'12',policy_days:'1.5',source_reference:'Signed twelve-hour conversion',reason}});const old=(await ctx()).rosters[0];await s.addFoundationRecord(pool,{user:user(central),actor:central,employeeId:employee.id,kind:'roster',data:{day:old.day,paid_hours:'0',policy_days:'0',supersedes_id:old.id,source_reference:'Signed off-duty correction',reason}});assert.equal((await ctx()).rosters[0].policy_days,'0.000000');
  });
+ test('a stale or overlapping holiday save explains the conflict in plain words and records nothing',async()=>{
+  const calendar=(await ctx()).calendars[0],save=data=>s.createCalendar(pool,{user:user(central),actor:central,data:{label:'Public holidays',holidays:[],source_reference:'Gazette No. 45 of 2026',reason,...data}});
+  await save({effective_from:'2026-01-01',effective_to:'2027-12-31',supersedes_id:calendar.id});
+  await assert.rejects(save({effective_from:'2026-01-01',effective_to:'2027-12-31',supersedes_id:calendar.id}),e=>e.status===409&&/changed by someone else after you opened them/.test(e.message));
+  await assert.rejects(save({effective_from:'2027-01-01',effective_to:'2027-12-31'}),e=>e.status===409&&/already saved for some of these dates/.test(e.message));
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_calendars')).rows[0].n,2);
+ });
+ test('one holiday-list save records a new version of a changed year and starts a new year together, or records nothing',async()=>{
+  const calendar=(await ctx()).calendars[0],count=async()=>(await pool.query('SELECT count(*)::int AS n FROM hr_gov_calendars')).rows[0].n;
+  const corrected={label:'Synthetic Calendar',effective_from:'2026-01-01',effective_to:'2027-12-31',holidays:[{date:'2026-12-25',name:'Christmas Day'}],source_reference:'Gazette No. 45 of 2026',reason:'Updated the public holidays: 1 added.',supersedes_id:calendar.id};
+  const added={label:'Public holidays 2028',effective_from:'2028-01-01',effective_to:'2028-12-31',holidays:[{date:'2028-01-01',name:"New Year's Day"}],source_reference:'Gazette No. 45 of 2026',reason:'Saved the public holidays for 2028 (1 holiday).'};
+  const clash={...added,label:'Public holidays 2027',effective_from:'2027-01-01',effective_to:'2027-12-31',holidays:[]};
+  assert.equal((await call('/api/hr/government/calendars/batch',{calendars:[corrected,clash]})).status,409);
+  assert.equal(await count(),1);
+  assert.equal((await call('/api/hr/government/calendars/batch',{calendars:[]})).status,422);
+  assert.equal((await call('/api/hr/government/calendars/batch',{calendars:[{...added,holidays:[{date:'2028-01-01',name:''}]}]})).status,422);
+  assert.equal((await call('/api/hr/government/calendars/batch',{calendars:[corrected,added]},scoped)).status,403);
+  const saved=await call('/api/hr/government/calendars/batch',{calendars:[corrected,added]});
+  assert.equal(saved.status,201);assert.equal(saved.body.length,2);assert.equal(await count(),3);
+  const {rows}=await pool.query("SELECT label,supersedes_id,reason,holidays FROM hr_gov_calendars WHERE id=ANY($1) ORDER BY effective_from",[saved.body.map(r=>r.id)]);
+  assert.deepEqual(rows.map(r=>[r.label,r.supersedes_id,r.reason]),[['Synthetic Calendar',calendar.id,corrected.reason],['Public holidays 2028',null,added.reason]]);
+  assert.deepEqual(rows[0].holidays,[{date:'2026-12-25',name:'Christmas Day'}]);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM audit_log WHERE action='hr.gov.calendar.published' AND entity_id=ANY($1)",[saved.body.map(r=>r.id)])).rows[0].n,2);
+  await assert.rejects(pool.query("UPDATE hr_gov_calendars SET holidays='[]' WHERE id=$1",[saved.body[0].id]),/immutable/);
+ });
  test('server preview and pages are scoped; caller cannot supply notice date or charges; no public grant route exists',async()=>{
   await opening();const response=await call(`/api/hr/government/employees/${employee.id}/evaluate`,{...input(),charge:'0',notice_date:'1900-01-01'},owner);assert.equal(response.status,200);assert.equal(response.body.charge,'1.000000');assert.equal(response.body.submission_enabled,false);assert.equal(response.cache,'no-store');assert.notEqual(response.body.input.notice_date,'1900-01-01');
   for(const path of [`/api/hr/government/employees/${employee.id}`,`/api/hr/government/employees/${employee.id}/ledger`])assert.equal((await call(path,undefined,scoped)).status,404);

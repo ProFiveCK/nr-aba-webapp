@@ -131,17 +131,27 @@ export async function extendPolicy(pool,{user,actor,id,data}){
   return after;
  });
 }
-export async function createCalendar(pool,{user,actor,data}){
- central(user);const reason=managementReason(data.reason),start=dayNumber(data.effective_from),end=dayNumber(data.effective_to);
+function checkCalendar(data){
+ const reason=managementReason(data.reason),start=dayNumber(data.effective_from),end=dayNumber(data.effective_to);
  if(end<start||end-start>731)fail('A calendar must cover at most two years.',400);
  if(new Set(data.holidays.map(h=>h.date)).size!==data.holidays.length)fail('Resolve colliding holiday dates before publication.',400);
  for(const h of data.holidays)if(dayNumber(h.date)<start||dayNumber(h.date)>end)fail('Holiday dates must be within calendar coverage.',400);
- return withTransaction(pool,async client=>{
-  await client.query("SELECT pg_advisory_xact_lock(hashtext('hr-gov-calendars'))");
-  if(data.supersedes_id){const {rows:[prior]}=await client.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_calendars WHERE id=$1",[data.supersedes_id]);if(!prior||prior.effective_from!==data.effective_from||prior.effective_to!==data.effective_to||(await client.query('SELECT 1 FROM hr_gov_calendars WHERE supersedes_id=$1',[prior.id])).rowCount)fail('Replace only the current calendar with exactly the same coverage.');}
-  else if((await client.query("SELECT 1 FROM hr_gov_calendars WHERE daterange(effective_from,effective_to,'[]') && daterange($1,$2,'[]')",[data.effective_from,data.effective_to])).rowCount)fail('Calendar coverage overlaps. Explicitly replace its current version.');
-  const {rows:[row]}=await client.query('INSERT INTO hr_gov_calendars(label,effective_from,effective_to,holidays,source_reference,recorded_by,reason,supersedes_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[data.label,data.effective_from,data.effective_to,JSON.stringify(data.holidays),data.source_reference,actor.id,reason,data.supersedes_id||null]);await audit(client,actor,'hr.gov.calendar.published',row.id,row);return row;
- });
+ return reason;
+}
+async function insertCalendar(client,actor,data,reason){
+ if(data.supersedes_id){const {rows:[prior]}=await client.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_calendars WHERE id=$1",[data.supersedes_id]);if(!prior||prior.effective_from!==data.effective_from||prior.effective_to!==data.effective_to)fail('Replace only the current calendar with exactly the same coverage.');if((await client.query('SELECT 1 FROM hr_gov_calendars WHERE supersedes_id=$1',[prior.id])).rowCount)fail('These holidays were changed by someone else after you opened them. Close this window to see the latest list, then make your change again.');}
+ else if((await client.query("SELECT 1 FROM hr_gov_calendars WHERE daterange(effective_from,effective_to,'[]') && daterange($1,$2,'[]')",[data.effective_from,data.effective_to])).rowCount)fail('Holidays are already saved for some of these dates. Close this window and edit the saved holidays instead.');
+ const {rows:[row]}=await client.query('INSERT INTO hr_gov_calendars(label,effective_from,effective_to,holidays,source_reference,recorded_by,reason,supersedes_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[data.label,data.effective_from,data.effective_to,JSON.stringify(data.holidays),data.source_reference,actor.id,reason,data.supersedes_id||null]);await audit(client,actor,'hr.gov.calendar.published',row.id,row);return row;
+}
+const lockCalendars=client=>client.query("SELECT pg_advisory_xact_lock(hashtext('hr-gov-calendars'))");
+export async function createCalendar(pool,{user,actor,data}){
+ central(user);const reason=checkCalendar(data);
+ return withTransaction(pool,async client=>{await lockCalendars(client);return insertCalendar(client,actor,data,reason);});
+}
+/** Saves several calendars all or none: the years that one save of the holiday list changed or started. */
+export async function createCalendars(pool,{user,actor,data}){
+ central(user);const reasons=data.calendars.map(checkCalendar);
+ return withTransaction(pool,async client=>{await lockCalendars(client);const rows=[];for(const [i,calendar] of data.calendars.entries())rows.push(await insertCalendar(client,actor,calendar,reasons[i]));return rows;});
 }
 export async function addFoundationRecord(pool,{user,actor,employeeId,kind,data,client:existingClient=null}){
  central(user);const reason=managementReason(data.reason);

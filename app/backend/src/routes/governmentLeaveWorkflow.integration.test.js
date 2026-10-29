@@ -98,6 +98,15 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   const refused=await call('/requests',special);assert.equal(refused.status,400);
   assert.equal((await call('/requests',application('special','2026-11-09'))).status,201);
  });
+ test('leave runs Friday to Monday for two days, but cannot start or end on a weekend',async()=>{
+  const friToMon=await call('/preview',application('recreation','2026-11-06','2026-11-09'));
+  assert.equal(friToMon.body.eligible_for_preview,true,friToMon.body.issues.join(' '));assert.equal(friToMon.body.charge,'2.000000');
+  const fromSaturday=await call('/preview',application('recreation','2026-11-07','2026-11-09'));
+  assert.equal(fromSaturday.body.eligible_for_preview,false);assert.match(fromSaturday.body.issues.join(' '),/Saturday 07\/11\/2026: it is not one of your working days/);
+  const toSunday=await call('/requests',application('recreation','2026-11-06','2026-11-08'));
+  assert.equal(toSunday.status,409);assert.match(toSunday.body.message,/Sunday 08\/11\/2026/);
+  const holidays=await call('/holidays');assert.equal(holidays.status,200);assert.deepEqual(holidays.body,[]);
+ });
  test('an application nobody can approve is refused at once, naming the stage, and holds no balance',async()=>{
   await customRoute([{level:'parent_division',label:'Treasury unit approver'}]);
   const before=(await pool.query('SELECT count(*)::int AS n FROM hr_gov_requests')).rows[0].n;

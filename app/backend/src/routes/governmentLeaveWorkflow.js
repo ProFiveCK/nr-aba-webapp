@@ -99,6 +99,12 @@ router.post('/requests',apply,governmentEvidenceUpload,[...applicationFields,bod
   if(!handleValidation(req,res))return;const employee=await linkedEmployee(pool,req.user.id);
   res.status(201).json(await workflow.submitRequest(pool,{...args(req),simpleApproval:true,employeeId:employee.id,documents:req.governmentDocuments||[]}));
 });
+// Gazetted public holidays from the current (not superseded) calendars, for the application form's calendar.
+router.get('/holidays',async(_req,res)=>{
+  const {rows}=await pool.query(`SELECT h->>'date' AS date,h->>'name' AS name FROM hr_gov_calendars c CROSS JOIN jsonb_array_elements(c.holidays) h
+    WHERE NOT EXISTS(SELECT 1 FROM hr_gov_calendars successor WHERE successor.supersedes_id=c.id) ORDER BY 1 LIMIT 2000`);
+  res.json(rows);
+});
 // Calendar exposes absence dates only; personnel reasons, files and medical
 // evidence stay behind the separate request/evidence checks.
 router.get('/calendar',[query('from').custom(value=>{dayNumber(value);return true;}),query('to').custom(value=>{dayNumber(value);return true;}),query('page').optional().isInt({min:1,max:10000})],async(req,res)=>{

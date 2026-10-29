@@ -15,7 +15,7 @@ import {recordAudit} from './auditService.js';
 import {reviewerSummary} from './authService.js';
 import {isCentralHr,canAccessEmployee,activeScopeSql} from './hrAccess.js';
 import * as ledger from './governmentLeave.js';
-import {COMMON_CODES,leaveDurationInput,calculateEvaluation,fingerprint,dayNumber,serviceFacts,units,ENGINE_VERSION} from '../lib/governmentLeaveRules.js';
+import {COMMON_CODES,leaveDurationInput,calculateEvaluation,fingerprint,segmentsFingerprint,dayNumber,serviceFacts,units,ENGINE_VERSION} from '../lib/governmentLeaveRules.js';
 import {medicalAssessment,singleMedicalShiftCharge} from '../lib/governmentLeaveWorkflowRules.js';
 import * as cases from './governmentLeaveCases.js';
 import {isCase} from '../lib/governmentLeaveCaseRules.js';
@@ -331,7 +331,7 @@ async function verifyRetainedRequest(client,request,employee) {
   const {evaluation}=await assess(client,request.employee_id,request.application_snapshot.input,request.id,config);
   const issues=evaluation.issues.filter(i=>!i.includes('exceeds a certified entitlement'));
   if(issues.length)fail(issues.join(' '));
-  if(fingerprint(evaluation.segments)!==fingerprint(request.application_snapshot.evaluation.segments))fail('The calculation changed. Cancel and resubmit for a new calculation and approvals.');
+  if(segmentsFingerprint(evaluation.segments)!==segmentsFingerprint(request.application_snapshot.evaluation.segments))fail('The calculation changed. Cancel and resubmit for a new calculation and approvals.');
   return evaluation;
 }
 async function evidenceFacts(client,request,data) {

@@ -8,6 +8,10 @@ export const DEFAULT_RULES={ordinary_recreation_months:3,temporary_recreation_mo
 export const SOURCE='GoN HRIS Reference Updated D; DHRL 22 July / 15 September 2026; owner ordinary-recreation decision 6 October 2026';
 export function canonical(value){return JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.entries(item).sort(([a],[b])=>a.localeCompare(b))):item);}
 export const fingerprint=value=>createHash('sha256').update(canonical(value)).digest('hex');
+// Compares two day-by-day calculations by what they charge. Which calendar version covered a day is
+// kept on the segment as a record, but publishing or replacing a calendar must not invalidate pending
+// applications whose holidays did not change; a holiday that does change one shows in charge and holiday_exempt.
+export const segmentsFingerprint=segments=>fingerprint(segments.map(({calendar_id:_calendar,...segment})=>segment));
 export function units(value){const match=/^(-?)(\d{1,10})(?:\.(\d{1,6}))?$/.exec(String(value));if(!match)throw new Error('Use a decimal with at most six places.');return (match[1]? -1n:1n)*(BigInt(match[2])*1000000n+BigInt((match[3]||'').padEnd(6,'0')));}
 export function decimal(value){const negative=value<0n,absolute=negative?-value:value;return `${negative?'-':''}${absolute/1000000n}.${String(absolute%1000000n).padStart(6,'0')}`;}
 export function dayNumber(value){if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value))throw new Error('Use a calendar date (YYYY-MM-DD).');const date=new Date(`${value}T00:00:00Z`);if(!Number.isFinite(date.getTime())||date.toISOString().slice(0,10)!==value)throw new Error('Invalid calendar date.');return date.getTime()/86400000;}

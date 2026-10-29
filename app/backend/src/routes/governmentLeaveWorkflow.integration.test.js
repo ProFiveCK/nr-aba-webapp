@@ -107,6 +107,16 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   assert.equal(toSunday.status,409);assert.match(toSunday.body.message,/Sunday 08\/11\/2026/);
   const holidays=await call('/holidays');assert.equal(holidays.status,200);assert.deepEqual(holidays.body,[]);
  });
+ test('publishing or replacing a calendar blocks a pending application only when a holiday changes its charge',async()=>{
+  const replace=async holidays=>{const current=(await l.loadContext(pool,employee.id)).calendars[0];return l.createCalendar(pool,{user:user(hr),actor:hr,data:{label:'Synthetic workflow calendar corrected',effective_from:current.effective_from,effective_to:current.effective_to,supersedes_id:current.id,holidays,source_reference:'Synthetic holiday Gazette successor',reason}});};
+  const elsewhere=await submit(application('recreation','2026-11-02'));await replace([{date:'2026-12-25',name:'Christmas Day'}]);
+  assert.equal((await grant(elsewhere.id)).status,'approved');
+  const declared=await submit(application('recreation','2026-11-03','2026-11-04'));await replace([{date:'2026-11-03',name:'Declared holiday'},{date:'2026-12-25',name:'Christmas Day'}]);
+  await assert.rejects(grant(declared.id),/The calculation changed/);
+  await pool.query('TRUNCATE hr_gov_calendars CASCADE');const beforeFirst=await submit(application('recreation','2026-11-05'));
+  await l.createCalendar(pool,{user:user(hr),actor:hr,data:{label:'Synthetic first calendar',effective_from:'2026-10-29',effective_to:'2027-12-31',holidays:[{date:'2026-12-25',name:'Christmas Day'}],source_reference:'Synthetic holiday Gazette reference',reason}});
+  assert.equal((await grant(beforeFirst.id)).status,'approved');
+ });
  test('an application nobody can approve is refused at once, naming the stage, and holds no balance',async()=>{
   await customRoute([{level:'parent_division',label:'Treasury unit approver'}]);
   const before=(await pool.query('SELECT count(*)::int AS n FROM hr_gov_requests')).rows[0].n;

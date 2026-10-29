@@ -10,7 +10,7 @@ import {withTransaction} from '../lib/transaction.js';
 import {recordAudit} from './auditService.js';
 import {managementReason} from './employeeManagement.js';
 import {isCentralHr,canAccessEmployee} from './hrAccess.js';
-import {DEFAULT_RULES,validateRules,dayNumber,units,decimal,fingerprint,calculateEvaluation,serviceFacts} from '../lib/governmentLeaveRules.js';
+import {DEFAULT_RULES,validateRules,dayNumber,units,decimal,fingerprint,segmentsFingerprint,calculateEvaluation,serviceFacts} from '../lib/governmentLeaveRules.js';
 export {DEFAULT_RULES};
 const fail=(message,status=409)=>{throw new ServiceError(status,message);};
 const audit=(client,actor,action,id,after)=>recordAudit({client,actor,action,entityType:'hr_government_leave',entityId:id,after});
@@ -246,7 +246,7 @@ export async function finishReservation(pool,{employeeId,requestId,action,actor,
    // The authority callback must recheck evidence and stage completion. Calculation inputs are retained below.
    const checked=await evaluate(client,employeeId,snapshot.input,{excludeReservationId:requestId});
    const oldSegments=snapshot.segments.map(s=>({...s,entitlement_id:s.entitlement_id}));
-   if(checked.engine_version!==snapshot.engine_version||fingerprint(checked.segments)!==fingerprint(oldSegments)||checked.issues.some(issue=>!issue.includes('exceeds a certified entitlement')))fail('Policy, service or calendar changed; refresh and review before final grant.');
+   if(checked.engine_version!==snapshot.engine_version||segmentsFingerprint(checked.segments)!==segmentsFingerprint(oldSegments)||checked.issues.some(issue=>!issue.includes('exceeds a certified entitlement')))fail('Policy, service or calendar changed; refresh and review before final grant.');
   }
   await client.query('UPDATE hr_gov_reservation_requests SET status=$2,completed_at=NOW() WHERE id=$1',[requestId,action]);
   if(action==='consumed')for(const hold of holds)await postMovement(client,{entitlementId:hold.entitlement_id,kind:'use',amount:decimal(-units(hold.amount)),effectiveDate:request.evaluation_snapshot.segments.find(s=>s.entitlement_id===hold.entitlement_id&&units(s.charge)>0n).date,eventKey:`use:${requestId}:${hold.entitlement_id}`,sourceReference:`request:${requestId}`,actor,reason,forecastReservationId:request.evaluation_snapshot.code==='recreation'?requestId:null});

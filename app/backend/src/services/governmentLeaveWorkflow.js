@@ -100,18 +100,41 @@ export async function prepareConfiguration(pool,{user,actor,employeeId,data,clie
     await audit(client,actor,'hr.gov.workflow.prepared',row.id,{employee_id:employeeId,enabled_codes:row.enabled_codes});return row;
   };return existingClient?work(existingClient):withTransaction(pool,work);
 }
-export async function publishConfiguration(pool,{user,actor,id,reason,client:existingClient=null}) {
+export async function publishConfiguration(pool,{user,actor,id,reason,client:existingClient=null,oneStep=false}) {
   ledger.central(user);
   const work=async client=>{
     await assertCentral(client,user);const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_workflow_configs WHERE id=$1',[id]);if(!ref)fail('Configuration not found.',404);
     await ledger.lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT * FROM hr_gov_workflow_configs WHERE id=$1 FOR UPDATE',[id]);
     if(row.status==='published')return row;await assertDraftUsable(client,'configuration',row.id);
-    const reviewMode=await configurationReviewMode(client,{user,actor,preparedBy:row.prepared_by,initialReview:!!initialAdminReview(client,actor.id,row.employee_id)});
+    const reviewMode=oneStep?'one_step':await configurationReviewMode(client,{user,actor,preparedBy:row.prepared_by,initialReview:!!initialAdminReview(client,actor.id,row.employee_id)});
     const context=await ledger.loadContext(client,row.employee_id);if(fingerprint(context)!==row.snapshot_hash)fail('The employee foundations changed. Prepare a fresh configuration.');
     if(row.enabled_codes.length){await assertCutoverResolved(client,row.employee_id,{activation:true});readyConfiguration(context,row.enabled_codes);}
     const {rows:[after]}=await client.query("UPDATE hr_gov_workflow_configs SET status='published',approved_by=$2,approved_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id]);
     await audit(client,actor,'hr.gov.workflow.published',id,{employee_id:row.employee_id,enabled_codes:row.enabled_codes,reason:reasonText(reason),review_mode:reviewMode});return after;
   };return existingClient?work(existingClient):withTransaction(pool,work);
+}
+const LEAVE_TYPE_NAMES={recreation:'Recreation',medical:'Medical',special:'Special'};
+// Saving new leave types keeps the earlier Medical absences already recorded for the same Medical year.
+async function keptMedicalHistory(client,employeeId,context) {
+  const previous=await configurationFor(client,employeeId),medical=context.entitlements.find(e=>e.code==='medical'&&e.period_start<=today()&&e.period_end>=today());
+  if(!previous||!medical||previous.medical_period_start!==medical.period_start||previous.medical_as_of!==medical.as_of)return [];
+  return previous.medical_history.map(({start_date,end_date,uncertified})=>({start_date,end_date,uncertified}));
+}
+// HR ticks the leave types an employee can apply for and they apply at once. The audit log records who changed them.
+export async function saveLeaveTypes(pool,{user,actor,employeeId,data}) {
+  ledger.central(user);
+  if(!Array.isArray(data.enabled_codes))fail('Choose the leave types this employee can apply for.',400);
+  return withTransaction(pool,async client=>{
+    await assertCentral(client,user);await ledger.lockEmployee(client,employeeId);
+    const context=await ledger.loadContext(client,employeeId),basis=serviceFacts(context,today()).basis;
+    const types=COMMON_CODES.filter(code=>data.enabled_codes.includes(code)),note=typeof data.note==='string'?data.note.trim():'';
+    // Rostered staff can work long shifts, so a single Medical absence is one shift rather than one calendar date.
+    const medicalRule=basis?.schedule_mode==='roster'?'single_verified_shift_nonadjacent_scheduled_days':'single_calendar_date_nonadjacent_scheduled_days';
+    const reason=`${types.length?`Leave types set to ${types.map(code=>LEAVE_TYPE_NAMES[code]).join(', ')}.`:'Leave applications paused.'}${note?` Note: ${note}`:''}`;
+    const medicalHistory=data.medical_history??await keptMedicalHistory(client,employeeId,context);
+    const config=await prepareConfiguration(pool,{client,user,actor,employeeId,data:{enabled_codes:types,medical_rule:medicalRule,medical_history:medicalHistory,source_reference:'Leave types',legacy_resolution_reference:'Leave types',reason}});
+    return publishConfiguration(pool,{client,user,actor,id:config.id,reason,oneStep:true});
+  });
 }
 export async function assignConsentOffice(pool,{user,actor,data}) {
   ledger.central(user);
@@ -176,7 +199,7 @@ async function assess(client,employeeId,input,exclude=null,retainedConfig=null,t
   const evaluation=await ledger.evaluate(client,employeeId,{...input,notice_date:input.notice_date||today(),certificate_available:input.medical_mode==='certificate',verified_single_shift_exemption:config?.medical_rule==='single_verified_shift_nonadjacent_scheduled_days'&&input.medical_mode==='exemption',justification_available:!!input.reason&&input.reason!==NO_REASON},{excludeReservationId:exclude});
   const context=await ledger.loadContext(client,employeeId);
   const correctionIssue=await serviceCorrectionIssue(client,employeeId,config?.recorded_at);if(correctionIssue)evaluation.issues.push(correctionIssue);
-  if(!config||!config.enabled_codes.includes(input.code))evaluation.issues.push('This leave type is not activated for the employee. HR must approve the reviewed configuration.');
+  if(!config||!config.enabled_codes.includes(input.code))evaluation.issues.push('This leave type is not switched on for this employee. HR can tick it under Leave types in their record.');
   if(config&&input.code==='medical') {
     const medical=medicalAssessment(context,config,input,evaluation,await medicalHistory(client,employeeId,exclude));
     evaluation.issues.push(...medical.issues);evaluation.medical_exemptions_used=medical.exemptions_used;

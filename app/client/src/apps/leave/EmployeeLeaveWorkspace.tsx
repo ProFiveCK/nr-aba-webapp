@@ -32,7 +32,7 @@ export type EmployeeSection = 'arrangements'|'details'|'applications'|'prepare';
 export type PreparationStep = 'identity'|'login'|'balances'|'activation';
 const stages:Record<string,string>={division:'Divisional approver',parent_division:'Treasury / parent unit approver',department:'Head of Department',hr_verifier:'HR evidence verifier',relevant_secretary:'Relevant Secretary',minister:'Minister',chief_secretary:'Chief Secretary'};
 const leaveName=(code:string)=>code.replaceAll('_',' ').replace(/^./,c=>c.toUpperCase());
-const steps: [PreparationStep, string][] = [['balances', 'Service & balances'], ['login', 'Account access'], ['activation', 'Leave access & schedules']];
+const steps: [PreparationStep, string][] = [['balances', 'Service & balances'], ['login', 'Account access'], ['activation', 'Leave types & balance schedules']];
 
 export function EmployeeLeaveWorkspace({profile,departments,patterns,central,section,step,onNavigate,onClose,onChanged}:{profile:EmployeeProfile;departments:OrgDepartment[];patterns:WorkPattern[];central:boolean;section:EmployeeSection;step:PreparationStep;onNavigate:(section:EmployeeSection,step?:PreparationStep)=>void;onClose:()=>void;onChanged:()=>Promise<void>}) {
     const { user } = useAuth();
@@ -46,7 +46,7 @@ export function EmployeeLeaveWorkspace({profile,departments,patterns,central,sec
     const missing = summary?.preparation.find(item => item.status === 'missing');
     const needsSetup = central && (summary?.regime === 'government' || summary?.account_type === 'employee') && !!missing;
     const canReview = central || user?.permissions?.hr_report_read === true || user?.permissions?.hr_leave_approve === true;
-    const state = summary?.regime === 'government' ? (summary.restricted ? 'Access restricted' : government?.activation.status === 'active' ? 'Leave access active' : government?.activation.status === 'paused' ? 'Leave access paused' : 'Setup incomplete') : summary ? 'Employee record' : 'Loading…';
+    const state = summary?.regime === 'government' ? (summary.restricted ? 'Access restricted' : government?.activation.status === 'active' ? 'Can apply for leave' : government?.activation.status === 'paused' ? 'Leave paused' : 'Setup incomplete') : summary ? 'Employee record' : 'Loading…';
     return <div className="space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0"><Button variant="ghost" onClick={onClose}>← Employees</Button><h2 className="mt-2 break-words text-xl font-semibold text-gray-900">{reviewRecordLabel(profile.employee.display_name)}</h2><p className="break-words text-sm text-gray-600">{reviewRecordLabel(profile.employee.department_code||'Department unverified')} / {reviewRecordLabel(profile.employee.division_code||'Division unverified')} · {profile.employee.status}</p></div><span className="rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-900">{state}</span></div>
         <nav aria-label="Employee management" className="flex flex-wrap gap-2 border-b border-gray-200 pb-3">{([['applications', 'Leave'], ...(canReadBalances ? [['arrangements', 'Balances']] : []), ['details', 'Details and access']] as [EmployeeSection,string][]).map(([key,label])=><Button key={key} variant={(section==='prepare'?'details':section)===key?'primary':'secondary'} aria-current={(section==='prepare'?'details':section) === key ? 'page' : undefined} onClick={()=>onNavigate(key)}>{label}</Button>)}</nav>
@@ -62,7 +62,7 @@ export function EmployeeLeaveWorkspace({profile,departments,patterns,central,sec
         {error&&<p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         {!summary&&!error&&<LoadingState label="Loading current leave arrangements…"/>}
         {section==='arrangements'&&summary&&<>
-            {central&&<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={()=>onNavigate('prepare','balances')}>Service &amp; balance corrections</Button><Button variant="secondary" onClick={()=>onNavigate('prepare','activation')}>Leave access &amp; schedules</Button></div>}
+            {central&&<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={()=>onNavigate('prepare','balances')}>Service &amp; balance corrections</Button><Button variant="secondary" onClick={()=>onNavigate('prepare','activation')}>Leave types &amp; balance schedules</Button></div>}
             {canReadBalances&&<LeaveAccount key={id} employeeId={id} refreshVersion={version}/>}
             {government?.medical_tracking&&<MedicalTracking tracking={government.medical_tracking} legacy={summary.regime==='legacy'}/>}
 

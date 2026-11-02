@@ -88,7 +88,7 @@ Use **Change allowances** only when the leave rules themselves change. The form 
 
 No end date extends future coverage. It does not add coverage before the original policy start date. Application errors now identify the first date missing published policy coverage.
 
-Advanced maintenance contains leave activation and balance schedules, bulk account lifecycle tools, and payroll reconciliation. For one employee, a missing setup item shows a **Leave setup needs attention** notice on their record with a button to the exact step. Central HR can also open **Service & balance corrections** (service basis, opening balances, corrections and reversals) or **Leave access & schedules** from the employee's Balances tab. Ordinary active employees open at their leave list.
+Advanced maintenance contains recent leave type changes and balance schedules, bulk account lifecycle tools, and payroll reconciliation. For one employee, a missing setup item shows a **Leave setup needs attention** notice on their record with a button to the exact step. Central HR can also open **Service & balance corrections** (service basis, opening balances, corrections and reversals) or **Leave types & balance schedules** from the employee's Balances tab. Ordinary active employees open at their leave list.
 
 Approvals between HR officers (calendars, schedules, service basis, opening balances, leave access, balance schedules, appointment corrections) all use **Approve**. An appointment correction appears on the employee's Details and access only while it awaits approval.
 

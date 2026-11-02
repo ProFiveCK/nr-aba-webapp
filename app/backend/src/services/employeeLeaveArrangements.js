@@ -144,7 +144,7 @@ export async function employeeLeaveArrangements(client, { user, employeeId }) {
           : 'Required openings for enabled common leave types are certified. Teacher recreation remains a discretionary case.' },
     item('reconciliation', 'Retained leave reconciliation', !cutoverIssue && !correctionIssue, cutoverIssue || correctionIssue || 'No retained-cutover or subsequent service-correction blocker was found; verify the migration and activation evidence.'),
     item('approvals', 'Government approval offices', route.ready, 'The nominated officers for the configured approval levels must be current. Other leave cases use their own approval routes.'),
-    item('activation', 'Approved activation', enrolled && activationStatus === 'active', !enrolled ? 'Publication of policy or configuration alone does not enrol the employee.' : activationStatus === 'active' ? `Enabled: ${enabled.join(', ')}. Actual request eligibility is checked separately.` : activationStatus === 'paused' ? 'Latest approved configuration pauses common leave applications.' : 'The system administrator or a different central HR officer reviews the prepared activation configuration.'),
+    item('activation', 'Leave types', enrolled && activationStatus === 'active', !enrolled ? 'Finish setting up this employee first, then choose their leave types.' : activationStatus === 'active' ? `Can apply for: ${enabled.map(code => code[0].toUpperCase() + code.slice(1)).join(', ')}.` : activationStatus === 'paused' ? 'Leave applications are paused. Tick their leave types to switch them back on.' : 'Choose the leave types this employee can apply for.'),
   ];
   return result;
 }

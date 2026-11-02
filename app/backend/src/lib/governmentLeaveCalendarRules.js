@@ -1,3 +1,5 @@
-// Older retained contexts without a preference preserve their strict treatment.
-export const calendarCoverageRequired = context => context.calendar_settings?.require_calendar_coverage ?? true;
-export const calendarFallbackNotice = 'Holiday calendar coverage is optional. Dates without an entered calendar use the recorded work schedule; holidays in entered calendars still apply.';
+// A date with no entered public holidays is treated as having none, so each scheduled working day counts.
+export const holidaysMissingNotice = date => {
+  const year = date.slice(0, 4);
+  return `No public holidays are entered for ${year} yet, so a public holiday in ${year} is counted as a normal working day. HR can add them in Settings → Policies → Holidays.`;
+};

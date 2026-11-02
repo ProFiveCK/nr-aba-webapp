@@ -1,6 +1,6 @@
 import {badRequest} from './serviceError.js';
 import { createHash } from 'node:crypto';
-import {calendarCoverageRequired,calendarFallbackNotice} from './governmentLeaveCalendarRules.js';
+import {holidaysMissingNotice} from './governmentLeaveCalendarRules.js';
 export const ENGINE_VERSION='gov-foundation-1';
 export const CODES = ['recreation','medical','special','teacher_recreation','extended_medical','extended_medical_minister','maternity','paternity','adoption','official','lwop','long_service','furlough','recreation_encashment','recreation_separation','attendance','amendment','witness_republic','witness_other'];
 export const COMMON_CODES=['recreation','medical','special'];
@@ -100,7 +100,7 @@ export function calculateEvaluation(context,input){
      if(start-today<policy.rules.recreation_notice_days){shortNotice={required_days:policy.rules.recreation_notice_days,given_days:Math.max(0,start-today)};warnings.push(`Short notice: recreation leave needs ${policy.rules.recreation_notice_days} calendar days' notice. The approver must waive the notice requirement to approve this.`);}
    }
    if(!common)continue;
-   if(!calendar){if(calendarCoverageRequired(context)){issues.push('An approved calendar must cover every requested date.');continue;}warnings.push(calendarFallbackNotice);}
+   if(!calendar)warnings.push(holidaysMissingNotice(date));
    let policyDays=0n,paidHours=0,rosterId=null,patternId=null;
    if(service.basis?.schedule_mode==='roster'){
      const roster=context.rosters.find(r=>r.day===date);if(!roster){issues.push('Published roster coverage is missing, including off-duty dates.');continue;}
@@ -123,7 +123,8 @@ export function calculateEvaluation(context,input){
    if(amount>0n&&entitlement){const old=allocations.get(entitlement.id)||{entitlement_id:entitlement.id,amount:0n};old.amount+=amount;allocations.set(entitlement.id,old);}
    segments.push({date,charge:decimal(amount),scheduled_hours:paidHours,...(hourly?{leave_hours:Number(duration.hours)}:{}),holiday_exempt:exempt,policy_version_id:policy.id,calendar_id:calendar?.id||null,service_basis_id:service.basis?.id||null,service_period_id:period.id,employment_category:period.employment_category,is_teacher:period.is_teacher===true,is_intern:period.is_intern===true,work_pattern_id:patternId,roster_id:rosterId,entitlement_id:entitlement?.id||null,service_period_start:service.period_start,service_period_end:service.period_end});
  }
- if(common&&charge===0n)issues.push('The selected dates contain no chargeable absence.');
+ // A date skipped for missing records already has its own issue, so only report a zero charge when every date was calculated.
+ if(common&&charge===0n&&segments.length===end-start+1)issues.push('The selected dates contain no chargeable absence.');
  if(input.code==='medical')requirements.push('Medical history and the three non-consecutive single-absence counter must be verified at submission.');
  const verifiedSingleShift=input.verified_single_shift_exemption===true&&end===start&&charge>0n&&charge<=2000000n&&segments.length===1&&!!segments[0].roster_id&&Number(segments[0].scheduled_hours)>0;
  if(input.code==='medical'&&(charge>1000000n||end>start)&&!input.certificate_available&&!verifiedSingleShift)issues.push('A medical certificate is required for this multi-day absence.');

@@ -35,7 +35,7 @@ export function HolidayCalendars({ calendars, today, onSaved }: { calendars: Hol
             <h4 className="font-semibold">Public holidays</h4>
             <Button onClick={() => setEditing(true)}>{current.length ? 'Edit holidays' : 'Add holidays'}</Button>
         </div>
-        <p className="text-sm text-gray-600">Enter the Gazetted public holidays. Leave calculations use them to work out which days count as leave.{fictional && ' The example holiday below is fictional.'}</p>
+        <p className="text-sm text-gray-600">Enter the Gazetted public holidays. A public holiday inside someone's leave is not counted as a leave day. A year with no holidays entered is treated as having none.{fictional && ' The example holiday below is fictional.'}</p>
         {!current.length ? <p className="text-sm text-gray-500">No public holidays have been entered yet. Choose Add holidays to enter them from the Gazette.</p>
             : <article className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
                 <div className="space-y-1">

@@ -17,10 +17,10 @@ test('notice uses calendar days; holidays exempt only recreation/medical; medica
  assert.equal(calculateEvaluation(c,input('recreation','2026-10-26','2026-10-27')).charge,'1.000000');assert.equal(calculateEvaluation(c,input('medical','2026-10-26','2026-10-27')).charge,'1.000000');assert.equal(calculateEvaluation(c,input('special','2026-10-26','2026-10-27')).charge,'2.000000');
  const eight=calculateEvaluation(c,input('medical','2026-11-02','2026-11-11'));assert.equal(eight.charge,'8.000000');assert.ok(eight.eligible_for_preview);assert.match(calculateEvaluation(c,{...input('medical','2026-11-02','2026-11-11'),certificate_available:false}).issues.join(),/certificate/);
 });
-test('missing pattern/calendar/roster fails closed; verified 12-hour and off-duty roster are explicit',()=>{
- const c=context();c.pattern_approvals=[];assert.match(calculateEvaluation(c,input()).issues.join(),/conversion/);c.bases[0].schedule_mode='roster';assert.match(calculateEvaluation(c,input()).issues.join(),/roster coverage/);
+test('missing pattern/roster fails closed; verified 12-hour and off-duty roster are explicit',()=>{
+ const c=context();c.pattern_approvals=[];assert.deepEqual(calculateEvaluation(c,input()).issues,['The weekly work pattern and policy-day conversion must be verified.']);c.bases[0].schedule_mode='roster';assert.match(calculateEvaluation(c,input()).issues.join(),/roster coverage/);
  c.rosters=[{id:'r',day:'2026-10-27',paid_hours:'12',policy_days:'1.5'},{id:'off',day:'2026-10-28',paid_hours:'0',policy_days:'0'}];const result=calculateEvaluation(c,input('recreation','2026-10-27','2026-10-28'));assert.equal(result.charge,'1.500000');assert.equal(result.scheduled_hours,12);assert.ok(result.eligible_for_preview);
- c.calendars=[];assert.match(calculateEvaluation(c,input()).issues.join(),/calendar/);
+ c.calendars=[];assert.ok(calculateEvaluation(c,input()).eligible_for_preview);
 });
 test('LWOP pauses credited thresholds without resetting continuity; breaks and unknown credit require review',()=>{
  const c=context();c.exclusions=[{start_date:'2026-02-01',end_date:'2026-02-28',kind:'lwop'}];assert.equal(serviceFacts(c,'2026-05-01').milestone(3),'2026-04-29');assert.equal(serviceFacts(c,'2026-05-01').credited_days,92);
@@ -47,13 +47,10 @@ test('trusted Medical shift exception still requires one paid roster date and bo
  c.rosters[0].paid_hours='20';c.rosters[0].policy_days='2.5';assert.match(calculateEvaluation(c,{...request,verified_single_shift_exemption:true}).issues.join(),/certificate/);
 });
 
-test('optional calendar coverage uses scheduled days and preserves entered holiday exemptions',()=>{
- const c=context();c.calendar_settings={require_calendar_coverage:false};c.calendars=[];
+test('a year without entered holidays counts every scheduled day and keeps entered holiday exemptions',()=>{
+ const c=context();c.calendars=[];
  const result=calculateEvaluation(c,input('medical'));
- assert.equal(result.eligible_for_preview,true,result.issues.join(' '));assert.equal(result.charge,'1.000000');assert.equal(result.segments[0].calendar_id,null);assert.equal(result.warnings.length,1);
- c.calendar_settings.require_calendar_coverage=true;
- assert.match(calculateEvaluation(c,input('medical')).issues.join(' '),/calendar/);
- c.calendar_settings.require_calendar_coverage=false;
+ assert.equal(result.eligible_for_preview,true,result.issues.join(' '));assert.equal(result.charge,'1.000000');assert.equal(result.segments[0].calendar_id,null);assert.deepEqual(result.warnings,['No public holidays are entered for 2026 yet, so a public holiday in 2026 is counted as a normal working day. HR can add them in Settings → Policies → Holidays.']);
  c.calendars=[{id:'entered',effective_from:'2026-10-27',effective_to:'2026-10-27',holidays:[{date:'2026-10-27',name:'Entered holiday'}]}];
  const mixed=calculateEvaluation(c,{...input('medical'),end_date:'2026-10-28',certificate_available:true});
  assert.equal(mixed.eligible_for_preview,true,mixed.issues.join(' '));assert.equal(mixed.charge,'1.000000');assert.equal(mixed.segments[0].holiday_exempt,true);assert.equal(mixed.segments[1].calendar_id,null);
@@ -82,4 +79,12 @@ test('hourly input cannot exceed its schedule or bypass dates, holidays, balance
  const sameDay=calculateEvaluation(context(),{...hourly,notice_date:'2026-10-26'});
  // Hourly leave is held to the same notice rule: flagged for the approver, never skipped.
  assert.match(sameDay.warnings.join(),/notice/);assert.ok(sameDay.short_notice);
+});
+
+test('a zero charge is reported only when every date was calculated',()=>{
+ const c=context();
+ assert.deepEqual(calculateEvaluation(c,input('medical','2026-10-26')).issues,['The selected dates contain no chargeable absence.']);
+ assert.deepEqual(calculateEvaluation(c,input('medical','2026-10-31','2026-11-01')).issues,['The selected dates contain no chargeable absence.']);
+ c.bases[0].schedule_mode='roster';
+ assert.deepEqual(calculateEvaluation(c,input('medical')).issues,['Published roster coverage is missing, including off-duty dates.']);
 });

@@ -32,8 +32,8 @@ test('furlough signed working days exclude a Gazette holiday; signed calendar-da
  const i=input('furlough','2026-11-02',5),facts={action:'take_leave',duration_unit:'working_days',requested_units:'4',duration_unit_reference:'Synthetic holiday-excluding working-day schedule',prior_history_reference:'Synthetic reconciled historic payout register',prior_history_reconciled:true,prior_consumed:'0'};
  assert.equal(determineCase(context(),i,data(i,facts)).benefit.requested,'4.000000');assert.throws(()=>determineCase(context(),i,data(i,{...facts,requested_units:'5'})),/verified dated absence/);assert.equal(determineCase(context(),i,data(i,{...facts,duration_unit:'calendar_days',requested_units:'5'})).benefit.requested,'5.000000');
 });
-test('assisted foundation stops uncovered calendar, unknown category and service changes without inventing annual credit',()=>{
- const i=input('official');const c=context();c.calendars=[];assert.throws(()=>caseFoundation(c,i),/holiday coverage/);const unknown=context();unknown.periods[0].employment_category='unknown';assert.throws(()=>caseFoundation(unknown,i),/legal employment category/);
+test('assisted foundation stops unknown category and service changes without inventing annual credit',()=>{
+ const i=input('official');const unknown=context();unknown.periods[0].employment_category='unknown';assert.throws(()=>caseFoundation(unknown,i),/legal employment category/);
  const c1=context(),before=caseFoundation(c1,i);c1.exclusions.push({kind:'other_excluded',start_date:'2026-01-01',end_date:'2026-01-03'});assert.notEqual(caseFoundation(c1,i).snapshot_hash,before.snapshot_hash);
 });
 
@@ -51,8 +51,7 @@ test('dated case dependencies ignore unrelated future publications but retain co
  assert.notEqual(caseFoundation(c,i).snapshot_hash,before.snapshot_hash);
 });
 
-test('an optional holiday calendar also permits scheduled assisted-case dates',()=>{
- const c=context();c.calendars=[];c.calendar_settings={require_calendar_coverage:false};
- const result=caseFoundation(c,input('official'));assert.ok(result.segments.length);assert.equal(result.segments[0].calendar_id,null);
- c.calendar_settings.require_calendar_coverage=true;assert.throws(()=>caseFoundation(c,input('official')),/holiday coverage/);
+test('assisted-case dates without entered holidays use the scheduled days',()=>{
+ const c=context();c.calendars=[];
+ const result=caseFoundation(c,input('official'));assert.ok(result.segments.length);assert.equal(result.segments[0].calendar_id,null);assert.equal(result.segments[0].holiday,false);
 });

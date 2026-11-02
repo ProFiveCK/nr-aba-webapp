@@ -73,7 +73,6 @@ export async function employeeReadiness(client,employeeId){
  if(needsCoverage&&!coverage)issues.push('Independently review dated roster/teacher coverage under Rollout readiness.');
  const policy=context.policies.find(p=>p.effective_from<=date&&p.effective_to>=date);
  if(!policy)issues.push('Publish a current policy.');
- if(!context.calendars.some(c=>c.effective_from<=date&&c.effective_to>=date))issues.push('Publish a current holiday calendar.');
  const medicalSpecialOnly=period?.is_teacher||period?.employment_category==='temporary';
  const commonCodes=medicalSpecialOnly?['medical','special']:['recreation','medical','special'];
  if(!config||!commonCodes.every(c=>config.enabled_codes.includes(c)))issues.push(`Review and activate the ${medicalSpecialOnly?'Medical and Special types':'three common types'} under Applications & jobs.`);

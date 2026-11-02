@@ -1,5 +1,4 @@
 import {decorateDrafts} from '../services/governmentLeaveDrafts.js';
-import {calendarSettings,updateCalendarSettings} from '../services/governmentLeaveCalendarSettings.js';
 import governmentLeaveReportingRouter from './governmentLeaveReporting.js';
 import governmentLeaveDraftsRouter from './governmentLeaveDrafts.js';
 import {resolvedPublishedPoliciesSql} from '../services/governmentLeavePolicyTransitions.js';
@@ -37,11 +36,6 @@ router.get('/balances',requirePermission(PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_BAL
 router.get('/employees/:id/account',access,[id,query('page').optional().isInt({min:1,max:100000}),query('entitlement_id').optional().isUUID(),query('forecast_to').optional().custom(value=>{dayNumber(value);return true;})],async(req,res)=>{
  if(!handleValidation(req,res))return;
  res.json(await employeeLeaveAccount(pool,{user:req.user,employeeId:req.params.id,entitlementId:req.query.entitlement_id||null,page:Number(req.query.page)||1,forecastTo:req.query.forecast_to||null}));
-});
-router.get('/calendar-settings',central,async(_req,res)=>res.json(await calendarSettings(pool)));
-router.put('/calendar-settings',central,[body('require_calendar_coverage').isBoolean({strict:true}),body('expected_revision').isInt({min:1,max:2147483646}).toInt()],async(req,res)=>{
- if(!handleValidation(req,res))return;
- res.json(await updateCalendarSettings(pool,data(req)));
 });
 router.get('/configuration',central,async(_req,res)=>{
  const [policies,calendars,patterns,deletedPolicies]=await Promise.all([pool.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_policy_versions WHERE deleted_at IS NULL ORDER BY recorded_at DESC LIMIT 100"),pool.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_calendars ORDER BY recorded_at DESC LIMIT 100"),pool.query('SELECT p.*,a.id AS approval_id,a.source_reference FROM hr_work_patterns p LEFT JOIN hr_gov_pattern_approvals a ON a.work_pattern_id=p.id ORDER BY p.name LIMIT 100'),pool.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(effective_to,'YYYY-MM-DD') AS effective_to FROM hr_gov_policy_versions WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 100")]);

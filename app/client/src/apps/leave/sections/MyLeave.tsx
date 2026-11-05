@@ -30,7 +30,7 @@ export function MyLeave() {
         {!summary && !error && <LoadingState label="Loading your leave…" />}
         {!summary && error && <Button variant="secondary" onClick={() => { setError(''); setVersion(value => value + 1); }}>Try loading your leave again</Button>}
         {summary && <>
-            {summary.employee.leave_policy_regime === 'government' ? <GovernmentMyLeave employeeId={summary.employee.id} /> : <div className="app-panel space-y-2 p-5"><h2 className="text-xl font-semibold">My leave</h2><p role="status" className="text-sm text-gray-700">Your leave setup needs review. Ask HR to complete your leave setup and activation so you can apply under the current policy.</p></div>}
+            {summary.employee.leave_policy_regime === 'government' ? <GovernmentMyLeave employeeId={summary.employee.id} /> : <div className="app-panel space-y-2 p-5"><h2 className="text-xl font-semibold">My leave</h2><p role="status" className="text-sm text-gray-700">Your leave is not set up yet. Ask HR to finish your leave setup so you can apply.</p></div>}
             <details className="app-panel p-4" onToggle={event => { if (event.currentTarget.open && history === null) void loadHistory(); }}>
                 <summary className="cursor-pointer text-sm font-semibold">Leave history</summary>
                 <div className="mt-3 space-y-3"><p className="text-sm text-gray-600">View your recorded applications, decisions and approved PDFs.</p>

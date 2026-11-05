@@ -1,6 +1,5 @@
 import {assertDraftUsable} from './governmentLeaveDrafts.js';
 import {applyRecreationForecast} from './governmentLeaveForecast.js';
-import {initialAdminReview} from './governmentLeaveInitialAdmin.js';
 import {resolvedPublishedPoliciesSql,validateReplacementFields,approvePolicyReplacement} from './governmentLeavePolicyTransitions.js';
 import {randomUUID} from 'node:crypto';
 import {assertCentral} from './governmentLeaveWorkflow.js';
@@ -212,10 +211,14 @@ export async function prepareOpening(pool,{client:existingClient=null,user,actor
  };
  return existingClient?work(existingClient):withTransaction(pool,work);
 }
+// One HR officer adds an opening balance and it is available at once; the audit log records who did it.
+export async function saveOpening(pool,{user,actor,employeeId,data}){
+ return withTransaction(pool,async client=>{const opening=await prepareOpening(pool,{client,user,actor,employeeId,data});return certifyOpening(pool,{client,user,actor,id:opening.id,reason:data.reason});});
+}
+// Applies an opening balance saved before openings took effect straight away.
 export async function certifyOpening(pool,{client:existingClient=null,user,actor,id,reason}){
  central(user);reason=managementReason(reason);
  const work=async client=>{const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_openings WHERE id=$1',[id]);if(!ref)fail('Opening not found.',404);await lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT *,to_char(as_of,\'YYYY-MM-DD\') AS as_of FROM hr_gov_openings WHERE id=$1 FOR UPDATE',[id]);await assertDraftUsable(client,'opening',id);if(row.status==='certified')return row;
-  if(row.prepared_by===actor.id&&!initialAdminReview(client,actor.id,row.employee_id))fail('A different central HR officer must certify the reviewed opening.',403);
   if((await openingSnapshot(client,row.employee_id)).hash!==row.snapshot_hash)fail('Employee, policy, calendar or balances changed after preview. Prepare a new opening.');
   if((await client.query("SELECT 1 FROM hr_gov_entitlements WHERE employee_id=$1 AND code=$2 AND daterange(period_start,period_end,'[]') && daterange($3,$4,'[]')",[row.employee_id,row.code,row.period_start,row.period_end])).rowCount)fail('This entitlement period is already certified. Use an audited correction.');
   const {rows:[entitlement]}=await client.query('INSERT INTO hr_gov_entitlements(employee_id,code,policy_version_id,period_start,period_end,as_of,opening_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',[row.employee_id,row.code,row.policy_version_id,row.period_start,row.period_end,row.as_of,row.id]);

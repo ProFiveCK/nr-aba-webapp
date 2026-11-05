@@ -32,29 +32,36 @@ async function validatePeriod(client,employeeId,periodId,p){
  if(p.work_pattern_id&&!(await client.query('SELECT 1 FROM hr_work_patterns WHERE id=$1',[p.work_pattern_id])).rowCount)fail('Choose a recorded work pattern.',400);
  if((await client.query("SELECT 1 FROM hr_employee_service_periods WHERE employee_id=$1 AND id<>$2 AND daterange(start_date,end_date,'[]') && daterange($3::date,$4::date,'[]')",[employeeId,periodId,p.start_date,p.end_date])).rowCount)fail('Corrected dates overlap another appointment. Review both periods.');
 }
-export async function prepareServiceCorrection(pool,{user,actor,employeeId,periodId,data}){
+export async function prepareServiceCorrection(pool,{user,actor,employeeId,periodId,data,client:existingClient=null}){
  central(user);const reason=managementReason(data.reason),proposed=proposedPeriod(data);
- if(typeof data.source_reference!=='string'||data.source_reference.trim().length<5||data.source_reference.length>500)fail('Record the authorised correction source.',400);
- return withTransaction(pool,async client=>{
+ const source=typeof data.source_reference==='string'&&data.source_reference.trim()?data.source_reference.trim():'Recorded in the leave app';if(source.length>500)fail('Keep the reference under 500 characters.',400);
+ const work=async client=>{
  await assertCentral(client,user);await lockEmployee(client,employeeId);const {rows:[before]}=await client.query(periodSelect+' FOR UPDATE',[periodId,employeeId]);if(!before)fail('Appointment not found.',404);
  if(fingerprint(before)!==data.expected_hash)fail('The appointment changed. Reload before preparing a correction.');
  await validatePeriod(client,employeeId,periodId,proposed);
  if(Object.keys(proposed).every(key=>proposed[key]===(before[key]??null)))fail('There are no appointment changes to review.',400);
- const {rows:[row]}=await client.query('INSERT INTO hr_employee_service_corrections(employee_id,period_id,before_snapshot,proposed,before_hash,source_reference,prepared_by,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[employeeId,periodId,JSON.stringify(before),JSON.stringify(proposed),fingerprint(before),data.source_reference.trim(),actor.id,reason]);
+ const {rows:[row]}=await client.query('INSERT INTO hr_employee_service_corrections(employee_id,period_id,before_snapshot,proposed,before_hash,source_reference,prepared_by,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[employeeId,periodId,JSON.stringify(before),JSON.stringify(proposed),fingerprint(before),source,actor.id,reason]);
  await recordAudit({client,actor,action:'hr.employee.service_correction.prepared',entityType:'hr_employee',entityId:employeeId,after:row});return row;
- });
+ };
+ return existingClient?work(existingClient):withTransaction(pool,work);
 }
-export async function approveServiceCorrection(pool,{user,actor,id,reason}){
+// One HR officer corrects an appointment and it applies at once; the old facts stay in the correction history.
+export async function saveServiceCorrection(pool,{user,actor,employeeId,periodId,data}){
+ return withTransaction(pool,async client=>{const row=await prepareServiceCorrection(pool,{user,actor,employeeId,periodId,data,client});return approveServiceCorrection(pool,{user,actor,id:row.id,reason:data.reason,client});});
+}
+// Applies a correction saved before corrections took effect straight away.
+export async function approveServiceCorrection(pool,{user,actor,id,reason,client:existingClient=null}){
  central(user);const approvalReason=managementReason(reason);
- return withTransaction(pool,async client=>{
+ const work=async client=>{
  await assertCentral(client,user);const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_employee_service_corrections WHERE id=$1',[id]);if(!ref)fail('Correction not found.',404);
- await lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT * FROM hr_employee_service_corrections WHERE id=$1 FOR UPDATE',[id]);if(row.status!=='draft')fail('Only an active correction draft can be approved.');if(row.prepared_by===actor.id)fail('A different central HR officer must approve the appointment correction.',403);
+ await lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT * FROM hr_employee_service_corrections WHERE id=$1 FOR UPDATE',[id]);if(row.status!=='draft')fail('Only an active correction draft can be approved.');
  const {rows:[before]}=await client.query(periodSelect+' FOR UPDATE',[row.period_id,row.employee_id]);if(fingerprint(before)!==row.before_hash)fail('The appointment changed. Prepare a fresh correction.');
  await validatePeriod(client,row.employee_id,row.period_id,row.proposed);const p=row.proposed;
  await client.query('UPDATE hr_employee_service_periods SET start_date=$2,end_date=$3,employment_category=$4,is_teacher=$5,is_intern=$6,counts_for_service=$7,work_pattern_id=$8,appointment_reference=$9 WHERE id=$1',[row.period_id,p.start_date,p.end_date,p.employment_category,p.is_teacher,p.is_intern,p.counts_for_service,p.work_pattern_id,p.appointment_reference]);
  const {rows:[after]}=await client.query("UPDATE hr_employee_service_corrections SET status='approved',approved_by=$2,approval_reason=$3,approved_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id,approvalReason]);
  await recordAudit({client,actor,action:'hr.employee.service_period.corrected',entityType:'hr_employee',entityId:row.employee_id,before,after:{...after,preserved_balances:true,pending_applications_require_review:true}});await syncServiceStart(client,{employeeId:row.employee_id,actor});return after;
- });
+ };
+ return existingClient?work(existingClient):withTransaction(pool,work);
 }
 export async function discardServiceCorrection(pool,{user,actor,id,reason,action='discard'}){
  central(user);const verified=managementReason(reason);if(!['discard','restore'].includes(action))fail('Choose discard or restore.',400);

@@ -72,7 +72,7 @@ async function annualPoolIssue(client,account,history,policy) {
 export function readyConfiguration(context,codes) {
   if(context.employee.status!=='active'||context.employee.leave_policy_regime!=='government')fail('Choose an active government employee.');
   const facts=serviceFacts(context,today());if(facts.issues.length)fail(facts.issues.join(' '));
-  for(const code of codes)if(!context.entitlements.some(e=>e.code===code&&e.period_start===facts.period_start&&e.period_end===facts.period_end&&e.as_of<=today()))fail(`Certify the ${code} opening for this service year first.`);
+  for(const code of codes)if(!context.entitlements.some(e=>e.code===code&&e.period_start===facts.period_start&&e.period_end===facts.period_end&&e.as_of<=today()))fail(`Add the ${code} opening balance for this service year first.`);
   const policy=context.policies.find(p=>p.effective_from<=today()&&p.effective_to>=today());if(!policy)fail('Publish an effective policy first.');
   for(const code of codes){const account=context.entitlements.find(e=>e.code===code&&e.period_start===facts.period_start);const limit=policy.rules[code==='recreation'?'recreation_cap_days':`${code}_annual_days`];if(units(account.balance)>creditLimit(account,limit))fail('A balance exceeds the standard government quantum/cap. Resolve the signed transition before activation; historical balances are preserved.');}
 }
@@ -102,8 +102,8 @@ export async function saveLeaveTypes(pool,{user,actor,employeeId,data}) {
       const policy=context.policies.find(p=>p.effective_from<=today()&&p.effective_to>=today()),issue=await annualPoolIssue(client,account,code==='medical'?history:[],policy);
       if(issue)fail(issue);
     }
-    if(history.filter(h=>h.uncertified).length>3)fail('Resolve medical history exceeding three uncertified exemptions.',400);
-    for(let i=0;i<history.length;i++)for(let j=i+1;j<history.length;j++)if(history[i].start_date<=history[j].end_date&&history[i].end_date>=history[j].start_date)fail('Resolve overlapping historical medical records.',400);
+    if(history.filter(h=>h.uncertified).length>3)fail('Enter no more than three earlier Medical absences without a certificate.',400);
+    for(let i=0;i<history.length;i++)for(let j=i+1;j<history.length;j++)if(history[i].start_date<=history[j].end_date&&history[i].end_date>=history[j].start_date)fail('Two earlier Medical absences overlap. Fix the dates.',400);
     const {rows:[row]}=await client.query(`INSERT INTO hr_gov_workflow_configs(employee_id,enabled_codes,medical_rule,medical_history,medical_period_start,medical_as_of,source_reference,legacy_resolution_reference,snapshot_hash,prepared_by,reason)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[employeeId,data.enabled_codes,data.medical_rule,JSON.stringify(history),medical?.period_start||null,medical?.as_of||null,data.source_reference,data.legacy_resolution_reference,fingerprint(context),actor.id,reasonText(data.reason)]);
     const {rows:[after]}=await client.query("UPDATE hr_gov_workflow_configs SET status='published',approved_by=$2,approved_at=NOW() WHERE id=$1 RETURNING *",[row.id,actor.id]);

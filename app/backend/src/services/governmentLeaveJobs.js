@@ -17,7 +17,7 @@ export async function prepareJobPlan(pool,{user,actor,employeeId,data,client:exi
     await assertCentral(client,user);await ledger.lockEmployee(client,employeeId);
     const context=await ledger.loadContext(client,employeeId),facts=serviceFacts(context,today());
     if(facts.issues.length)fail(facts.issues.join(' '));
-    if(!context.entitlements.some(e=>e.code===data.code&&e.period_start===facts.period_start))fail('Certify the current opening first.');
+    if(!context.entitlements.some(e=>e.code===data.code&&e.period_start===facts.period_start))fail('Add the opening balance for the current service year first.');
     if(data.code==='recreation') {
       if(!data.payroll_anchor||!data.first_post_end||!['appointment','qualification'].includes(data.temporary_start))fail('Confirm the actual payroll anchor, first posting and temporary-service accrual treatment.');
       if((dayNumber(data.first_post_end)-dayNumber(data.payroll_anchor))%14!==0)fail('First posting must align to the confirmed fourteen-day payroll cycle.');
@@ -49,7 +49,7 @@ export async function approveJobPlan(pool,{user,actor,id,reason,client:existingC
       const {rows:[previous]}=await client.query("SELECT to_char(max(period_end),'YYYY-MM-DD') AS last_credited FROM hr_accrual_runs");
       if(previous.last_credited!==plan.previous_payroll_end)fail('The last credited payroll changed. Review the continuity schedule again.');
     }
-    if(fingerprint(await ledger.loadContext(client,plan.employee_id))!==plan.snapshot_hash)fail('Foundations changed after preparation. Prepare a fresh job plan.');
+    if(fingerprint(await ledger.loadContext(client,plan.employee_id))!==plan.snapshot_hash)fail('This employee’s service details changed after the schedule was saved. Save a new balance schedule.');
     const {rows:[after]}=await client.query("UPDATE hr_gov_job_plans SET status='published',approved_by=$2,approved_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id]);
     await recordAudit({client,actor,action:'hr.gov.jobs.approved',entityType:'hr_gov_job_plan',entityId:id,after:{...after,approval_reason:reason}});return after;
   };
@@ -61,7 +61,7 @@ function governingPolicy(context,date) {
 }
 async function renewTo(client,context,plan,asOf,actor) {
   let account=context.entitlements.filter(e=>e.code===plan.code&&e.as_of<=asOf).at(-1);
-  if(!account)fail('The approved job has no certified starting entitlement.');
+  if(!account)fail('This schedule has no opening balance for the current year.');
   if(context.entitlements.some(e=>e.code===plan.code&&e.period_end<asOf&&units(e.balance)>0n&&account.opening_id&&e.id!==account.id))fail('A later manual opening exists while an earlier year retains credit. Reconcile that cutover before automatic renewal.');
   const renewals=[];
   for(let i=0;account.period_end<asOf&&i<5;i++) {
@@ -102,7 +102,7 @@ async function executeEmployeeJobs(pool,{user,actor,employeeId,asOf,clockDate,or
     for(const plan of plans) {
       const correctionIssue=await serviceCorrectionIssue(client,employeeId,plan.recorded_at);if(correctionIssue)fail(correctionIssue);
       if(!config?.enabled_codes.includes(plan.code)){results.push({code:plan.code,paused:true});continue;}
-      const facts=serviceFacts(context,asOf);if(facts.issues.length||facts.basis.id!==plan.service_basis_id)fail('The certified service basis changed. Review the job plan.');
+      const facts=serviceFacts(context,asOf);if(facts.issues.length||facts.basis.id!==plan.service_basis_id)fail('This employee’s service details changed. Save a new balance schedule.');
       // Accruals in an old period must post before its carry-forward. Process payroll dates chronologically.
       const posts=[];let limited=false;
       if(plan.code==='recreation') {

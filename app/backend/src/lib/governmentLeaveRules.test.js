@@ -18,14 +18,14 @@ test('notice uses calendar days; holidays exempt only recreation/medical; medica
  const eight=calculateEvaluation(c,input('medical','2026-11-02','2026-11-11'));assert.equal(eight.charge,'8.000000');assert.ok(eight.eligible_for_preview);assert.match(calculateEvaluation(c,{...input('medical','2026-11-02','2026-11-11'),certificate_available:false}).issues.join(),/certificate/);
 });
 test('missing pattern/roster fails closed; verified 12-hour and off-duty roster are explicit',()=>{
- const c=context();c.pattern_approvals=[];assert.deepEqual(calculateEvaluation(c,input()).issues,['The weekly work pattern and policy-day conversion must be verified.']);c.bases[0].schedule_mode='roster';assert.match(calculateEvaluation(c,input()).issues.join(),/roster coverage/);
+ const c=context();c.pattern_approvals=[];assert.deepEqual(calculateEvaluation(c,input()).issues,['The employee’s weekly work schedule needs to be confirmed.']);c.bases[0].schedule_mode='roster';assert.match(calculateEvaluation(c,input()).issues.join(),/Roster days are missing/);
  c.rosters=[{id:'r',day:'2026-10-27',paid_hours:'12',policy_days:'1.5'},{id:'off',day:'2026-10-28',paid_hours:'0',policy_days:'0'}];const result=calculateEvaluation(c,input('recreation','2026-10-27','2026-10-28'));assert.equal(result.charge,'1.500000');assert.equal(result.scheduled_hours,12);assert.ok(result.eligible_for_preview);
  c.calendars=[];assert.ok(calculateEvaluation(c,input()).eligible_for_preview);
 });
 test('LWOP pauses credited thresholds without resetting continuity; breaks and unknown credit require review',()=>{
  const c=context();c.exclusions=[{start_date:'2026-02-01',end_date:'2026-02-28',kind:'lwop'}];assert.equal(serviceFacts(c,'2026-05-01').milestone(3),'2026-04-29');assert.equal(serviceFacts(c,'2026-05-01').credited_days,92);
  c.bases[0].anniversary_method='pause_exclusions';assert.equal(serviceFacts(c,'2026-05-01').period_end,'2027-01-28');assert.match(calculateEvaluation(c,input('medical','2026-02-10')).issues.join(),/overlaps recorded LWOP/);
- c.exclusions[0].kind='continuity_break';assert.match(serviceFacts(c,'2026-05-01').issues.join(),/new certified/);c.periods[0].counts_for_service=null;assert.match(serviceFacts(c,'2026-05-01').issues.join(),/unresolved/);
+ c.exclusions[0].kind='continuity_break';assert.match(serviceFacts(c,'2026-05-01').issues.join(),/new service start/);c.periods[0].counts_for_service=null;assert.match(serviceFacts(c,'2026-05-01').issues.join(),/counts for service/);
 });
 test('long exclusions and service-year splits are bounded, leap convention explicit and exact precision preserved',()=>{
  const c=context();c.exclusions=[{start_date:'2026-01-02',end_date:'2026-08-01',kind:'lwop'}];assert.equal(serviceFacts(c,'2026-10-27').milestone(3),'2026-10-30');
@@ -86,5 +86,5 @@ test('a zero charge is reported only when every date was calculated',()=>{
  assert.deepEqual(calculateEvaluation(c,input('medical','2026-10-26')).issues,['The selected dates contain no chargeable absence.']);
  assert.deepEqual(calculateEvaluation(c,input('medical','2026-10-31','2026-11-01')).issues,['The selected dates contain no chargeable absence.']);
  c.bases[0].schedule_mode='roster';
- assert.deepEqual(calculateEvaluation(c,input('medical')).issues,['Published roster coverage is missing, including off-duty dates.']);
+ assert.deepEqual(calculateEvaluation(c,input('medical')).issues,['Roster days are missing for some of these dates, including days off.']);
 });

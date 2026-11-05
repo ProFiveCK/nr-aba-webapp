@@ -34,12 +34,12 @@ export function serviceFacts(context,asAt){
  const basis=context.bases.filter(b=>b.effective_from<=asAt).at(-1);if(!basis)return {issues:['Record the employee’s appointment start date under Details and access.']};
  const start=basis.continuity_start,first=dayNumber(start),finish=dayNumber(asAt),issues=[];
  if(finish-first>18300)throw new Error('Service history exceeds the supported 50-year window.');
- for(const item of context.exclusions)if(item.kind==='continuity_break'&&item.start_date<=asAt&&item.end_date>=start)issues.push('A recorded continuity break requires a new certified service basis.');
+ for(const item of context.exclusions)if(item.kind==='continuity_break'&&item.start_date<=asAt&&item.end_date>=start)issues.push('A break in service was recorded. Set a new service start date.');
  const periods=context.periods.filter(p=>!p.end_date||p.end_date>=start),covered=[];
  for(const p of periods)if(p.counts_for_service!=null)covered.push([Math.max(first,dayNumber(p.start_date)),p.end_date?dayNumber(p.end_date):first+18301]);
  covered.sort((a,b)=>a[0]-b[0]);let until=first-1;
  for(const [from,to] of covered){if(from>until+1)break;until=Math.max(until,to);}
- if(until<finish)issues.push('Service history has a gap or an unresolved credit determination.');
+ if(until<finish)issues.push('The appointment history has a gap, or an appointment does not say whether it counts for service.');
  const raw=[...context.exclusions.filter(x=>x.kind!=='continuity_break').map(x=>[Math.max(first,dayNumber(x.start_date)),dayNumber(x.end_date)]),...periods.filter(p=>p.counts_for_service===false).map(p=>[Math.max(first,dayNumber(p.start_date)),p.end_date?dayNumber(p.end_date):first+18301])].filter(([from,to])=>to>=from).sort((a,b)=>a[0]-b[0]);
  const merged=[];for(const range of raw){const prior=merged.at(-1);if(prior&&range[0]<=prior[1]+1)prior[1]=Math.max(prior[1],range[1]);else merged.push([...range]);}
  const excludedBefore=end=>merged.reduce((sum,[from,to])=>sum+Math.max(0,Math.min(end-1,to)-from+1),0);
@@ -87,7 +87,7 @@ export function calculateEvaluation(context,input){
    policies.set(policy.id,policy);services.set(service.basis?.id,service.basis);
    issues.push(...service.issues);
    if(context.exclusions.some(x=>x.kind==='lwop'&&x.start_date<=date&&x.end_date>=date))issues.push('The requested absence overlaps recorded LWOP. Resolve it through an authorised amendment.');
-   if(!period){issues.push('No verified appointment covers every requested date.');continue;}
+   if(!period){issues.push('The employee has no appointment recorded for some of these dates.');continue;}
    if(['unknown','casual','probationary'].includes(period.employment_category))issues.push('HR must determine the category and applicable legal terms; intern designation alone does not determine entitlement.');
    if(input.code==='recreation'&&period.is_teacher)issues.push('Teacher recreation requires an authorised discretionary case.');
    if(['maternity','paternity','adoption'].includes(input.code)&&period.employment_category==='temporary')issues.push('Temporary parental applications are excluded under the September DHRL confirmation.');
@@ -103,11 +103,11 @@ export function calculateEvaluation(context,input){
    if(!calendar)warnings.push(holidaysMissingNotice(date));
    let policyDays=0n,paidHours=0,rosterId=null,patternId=null;
    if(service.basis?.schedule_mode==='roster'){
-     const roster=context.rosters.find(r=>r.day===date);if(!roster){issues.push('Published roster coverage is missing, including off-duty dates.');continue;}
+     const roster=context.rosters.find(r=>r.day===date);if(!roster){issues.push('Roster days are missing for some of these dates, including days off.');continue;}
      policyDays=units(roster.policy_days);paidHours=Number(roster.paid_hours);rosterId=roster.id;
    }else{
      const pattern=context.patterns.find(p=>p.id===period.work_pattern_id),approval=context.pattern_approvals.find(a=>a.work_pattern_id===period.work_pattern_id);
-     if(!pattern||!approval||!pattern.hours_per_day){issues.push('The weekly work pattern and policy-day conversion must be verified.');continue;}
+     if(!pattern||!approval||!pattern.hours_per_day){issues.push('The employee’s weekly work schedule needs to be confirmed.');continue;}
      patternId=pattern.id;const weekday=new Date(n*86400000).getUTCDay()||7;
      if(pattern.working_weekdays.includes(weekday)){policyDays=1000000n;paidHours=Number(pattern.hours_per_day);}
    }

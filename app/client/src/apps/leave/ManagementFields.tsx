@@ -12,8 +12,8 @@ export function Field({ label, children }: { label: string; children: ReactEleme
     const id = useId();
     return <div className="leave-field min-w-0 space-y-2 text-sm font-medium text-gray-700"><label className="block" htmlFor={id}>{label}</label>{cloneElement(children, { id })}</div>;
 }
-export function ReasonField({defaultValue,label="Verification reason",maxLength=1000}:{defaultValue?:string;label?:string;maxLength?:number}={}) { return <Field label={label}><textarea name="reason" defaultValue={defaultValue} required minLength={10} maxLength={maxLength} rows={3} className={inputClass} placeholder="Record the evidence or authority checked (at least 10 characters)." /></Field>; }
-export function ActionDialog({ title, description, onClose, onSave, children, defaultReason, reasonLabel, reasonMaxLength, automaticReason, saveLabel = 'Save verified change' }: { title: string; description?: string; onClose: () => void; onSave: (data: FormData) => Promise<void>; children: ReactNode; defaultReason?:string; reasonLabel?:string; reasonMaxLength?:number; automaticReason?:string; saveLabel?: string }) {
+export function ReasonField({defaultValue,label="Reason",maxLength=1000}:{defaultValue?:string;label?:string;maxLength?:number}={}) { return <Field label={label}><textarea name="reason" defaultValue={defaultValue} required minLength={10} maxLength={maxLength} rows={3} className={inputClass} placeholder="Why is this change needed? (at least 10 characters)" /></Field>; }
+export function ActionDialog({ title, description, onClose, onSave, children, defaultReason, reasonLabel, reasonMaxLength, automaticReason, saveLabel = 'Save' }: { title: string; description?: string; onClose: () => void; onSave: (data: FormData) => Promise<void>; children: ReactNode; defaultReason?:string; reasonLabel?:string; reasonMaxLength?:number; automaticReason?:string; saveLabel?: string }) {
     const [busy, setBusy] = useState(false), [error, setError] = useState('');
     const saving = useRef(false), feedback = useRef<HTMLParagraphElement>(null);
     async function save(form: HTMLFormElement) {

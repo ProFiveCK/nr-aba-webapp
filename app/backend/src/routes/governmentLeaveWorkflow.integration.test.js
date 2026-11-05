@@ -607,7 +607,7 @@ assert.equal((await call(`/requests/${r.id}/pdf`,null,officers.chief_secretary.a
   try{await assert.rejects(decide(r.id),/synthetic audit failure/);assert.equal((await w.getRequest(pool,r.id)).status,'pending');assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'20.000000');}finally{await pool.query('DROP TRIGGER synthetic_gov_audit_failure ON audit_log; DROP FUNCTION synthetic_gov_audit_failure()');}
   await decide(r.id);assert.equal((await w.getRequest(pool,r.id)).status,'approved');
  });
- async function plan(code='recreation'){const data={code,first_post_end:'2026-10-14',payroll_anchor:'2026-10-14',temporary_start:'appointment',source_reference:'Signed synthetic 26-period cumulative-floor and calendar proration approval',reason};const p=await jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data});await jobs.approveJobPlan(pool,{user:user(certifier),actor:certifier,id:p.id,reason});return p;}
+ async function plan(code='recreation'){const data={code,first_post_end:'2026-10-14',payroll_anchor:'2026-10-14',temporary_start:'appointment',source_reference:'Signed synthetic 26-period cumulative-floor and calendar proration approval',reason};return jobs.saveJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data});}
  async function zeroRecreation(){const account=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation');await l.correctLedger(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{entitlement_id:account.id,amount:'-20',effective_date:'2026-10-01',event_key:randomUUID(),source_reference:'Synthetic zero posted Recreation balance',reason}});return account;}
  test('forecast funds leave through its end date, grants before payroll, and later payroll posts once',async()=>{
   const account=await zeroRecreation();await plan();
@@ -672,9 +672,9 @@ assert.equal((await call(`/requests/${r.id}/pdf`,null,officers.chief_secretary.a
   assert.equal((await accountView('forecast_to=not-a-date')).status,422);
   assert.equal((await accountView('forecast_to=2099-01-01')).status,400);
  });
- test('reviewed jobs require independent approval, do not forecast, preserve proration, cap-stop and retries',async()=>{
+ test('one HR officer starts a balance schedule; jobs do not forecast, preserve proration, cap-stop and retries',async()=>{
   assert.equal((await jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id})).results.length,0);
-  const p=await jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{code:'recreation',first_post_end:'2026-10-14',payroll_anchor:'2026-10-14',temporary_start:'appointment',source_reference:'Signed synthetic payroll configuration',reason}});await assert.rejects(jobs.approveJobPlan(pool,{user:user(hr),actor:hr,id:p.id,reason}),/different central/);await jobs.approveJobPlan(pool,{user:user(certifier),actor:certifier,id:p.id,reason});
+  const p=await jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{code:'recreation',first_post_end:'2026-10-14',payroll_anchor:'2026-10-14',temporary_start:'appointment',source_reference:'Signed synthetic payroll configuration',reason}});await jobs.approveJobPlan(pool,{user:user(hr),actor:hr,id:p.id,reason});
   await assert.rejects(jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id,asOf:'2099-01-01'}),/future entitlement/);
   const run=()=>jobs.runEmployeeJobs(pool,{user:user(hr),actor:hr,employeeId:employee.id,asOf:'2026-10-28',clockDate:'2026-10-28'});await Promise.all([run(),run()]);assert.equal((await pool.query("SELECT count(*)::int AS n FROM hr_gov_job_posts WHERE code='recreation'")).rows[0].n,2);
   assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'21.538461');

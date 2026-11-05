@@ -121,7 +121,7 @@ export async function assignConsentOffice(pool,{user,actor,data}) {
     if(data.effective_to&&data.effective_to<data.effective_from)fail('Office dates are reversed.',400);
     if(['relevant_secretary','minister'].includes(data.level)&&!data.department_id||data.level==='hr_verifier'&&data.department_id)fail('Secretary is department-specific; HR verifier is government-wide.',400);
     if((await client.query("SELECT 1 FROM hr_gov_consent_offices a LEFT JOIN hr_gov_consent_withdrawals w ON w.office_id=a.id WHERE level=$1 AND department_id IS NOT DISTINCT FROM $2::uuid AND daterange(effective_from,COALESCE(w.effective_to,a.effective_to),'[]') && daterange($3,$4,'[]')",[data.level,data.department_id||null,data.effective_from,data.effective_to||null])).rowCount)fail('An effective consent office already covers these dates.');
-    const {rows:[row]}=await client.query('INSERT INTO hr_gov_consent_offices(level,department_id,approver_employee_id,effective_from,effective_to,source_reference,recorded_by,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[data.level,data.department_id||null,employee.id,data.effective_from,data.effective_to||null,data.source_reference,actor.id,reasonText(data.reason)]);
+    const {rows:[row]}=await client.query('INSERT INTO hr_gov_consent_offices(level,department_id,approver_employee_id,effective_from,effective_to,source_reference,recorded_by,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[data.level,data.department_id||null,employee.id,data.effective_from,data.effective_to||null,data.source_reference||'Recorded in the leave app',actor.id,reasonText(data.reason)]);
     await audit(client,actor,'hr.gov.consent_office.assigned',row.id,row);return row;
   });
 }

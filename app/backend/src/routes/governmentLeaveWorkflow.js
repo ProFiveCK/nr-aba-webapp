@@ -25,6 +25,7 @@ router.use(access);
 router.use(caseRouter);
 const id=param('id').isUUID(),reason=body('reason').isString().trim().isLength({min:10,max:1000});
 const reference=body('source_reference').isString().trim().isLength({min:5,max:500});
+const optionalReference=body('source_reference').optional({values:'falsy'}).isString().trim().isLength({max:500});
 const date=name=>body(name).isString().custom(value=>{dayNumber(value);return true;});
 const optionalDate=name=>body(name).optional({nullable:true,checkFalsy:true}).custom(value=>{dayNumber(value);return true;});
 const actor=req=>({id:req.user.id,email:req.user.email,ip:req.ip});
@@ -66,9 +67,9 @@ router.get('/consent-offices',central,[query('page').optional().isInt({min:1,max
  const total=(await pool.query(`SELECT count(*)::int AS total ${from} WHERE ${where}`,filters)).rows[0].total;
  res.json({offices,total,page,page_size:pageSize});
 });
-router.post('/consent-offices',central,[reason,reference,body('level').isIn(['relevant_secretary','hr_verifier','minister']),body('department_id').optional({nullable:true,checkFalsy:true}).isUUID(),body('approver_employee_id').isUUID(),date('effective_from'),optionalDate('effective_to')],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await workflow.assignConsentOffice(pool,args(req)));});
+router.post('/consent-offices',central,[reason,optionalReference,body('level').isIn(['relevant_secretary','hr_verifier','minister']),body('department_id').optional({nullable:true,checkFalsy:true}).isUUID(),body('approver_employee_id').isUUID(),date('effective_from'),optionalDate('effective_to')],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await workflow.assignConsentOffice(pool,args(req)));});
 router.post('/consent-offices/:id/close',central,[id,reason,date('effective_to')],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.closeConsentOffice(pool,args(req)));});
-router.post('/employees/:id/job-plans',central,[id,reason,reference,body('code').isIn(COMMON_CODES),body('calculation_confirmed').equals('true'),optionalDate('first_post_end'),optionalDate('payroll_anchor'),body('temporary_start').optional().isIn(['appointment','qualification'])],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await jobs.prepareJobPlan(pool,args(req)));});
+router.post('/employees/:id/job-plans',central,[id,reason,optionalReference,body('code').isIn(COMMON_CODES),body('calculation_confirmed').equals('true'),optionalDate('first_post_end'),optionalDate('payroll_anchor'),body('temporary_start').optional().isIn(['appointment','qualification'])],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await jobs.saveJobPlan(pool,args(req)));});
 router.post('/job-plans/:id/approve',central,[id,reason],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await jobs.approveJobPlan(pool,{...args(req),reason:req.body.reason}));});
 router.post('/employees/:id/run-jobs',central,[id,optionalDate('as_of')],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await jobs.runEmployeeJobs(pool,{...args(req),asOf:req.body.as_of||workflow.today()}));});
 router.post('/preview',apply,applicationFields,async(req,res)=>{

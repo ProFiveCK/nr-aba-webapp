@@ -47,6 +47,22 @@ describe('government preparation lifecycle and verified appointment correction',
 
  async function http(path,by,data){const session=await auth.createSession(by.id),token=auth.buildTokenPayload(by,session.tokenId,session.expiresAt);const r=await fetch(base+'/api/hr'+path,{method:data?'POST':'GET',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});return{status:r.status,body:await r.json()};}
 
+ test('one HR officer saves leave types in one step; the Medical rule follows the work schedule and earlier absences are kept',async()=>{
+ await l.publishPolicy(pool,{user:user(hr),actor:hr,id:policy.id,reason});
+ await l.addFoundationRecord(pool,{user:user(hr),actor:hr,employeeId:employee.id,kind:'basis',data:{effective_from:'2026-01-01',continuity_start:'2026-01-01',anniversary_method:'calendar',leap_day_method:'feb28',schedule_mode:'roster',source_reference:'Test signed shift service basis',reason}});
+ await l.addFoundationRecord(pool,{user:user(hr),actor:hr,employeeId:employee.id,kind:'roster',data:{day:'2026-02-02',paid_hours:'12',policy_days:'1.5',source_reference:'Test signed payroll shift conversion',reason}});
+ const opening=await l.prepareOpening(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{code:'medical',amount:'8.5',policy_version_id:policy.id,period_start:'2026-01-01',period_end:'2026-12-31',as_of:'2026-10-01',source_reference:'Test remaining medical credit',payroll_reference:'Test medical Salary Unit register',reason}});await l.certifyOpening(pool,{user:user(certifier),actor:certifier,id:opening.id,reason});
+ const path=`/government/workflow/employees/${employee.id}/leave-types`;
+ assert.equal((await http(path,owner,{enabled_codes:['medical']})).status,403);
+ assert.equal((await http(path,hr,{enabled_codes:['annual']})).status,422);
+ const saved=await http(path,hr,{enabled_codes:['medical'],note:'New starter',medical_history:[{start_date:'2026-02-02',end_date:'2026-02-02',uncertified:true}]});
+ assert.equal(saved.status,201,JSON.stringify(saved.body));assert.equal(saved.body.status,'published');assert.equal(saved.body.approved_by,hr.id);
+ assert.equal(saved.body.medical_rule,'single_verified_shift_nonadjacent_scheduled_days');assert.equal(saved.body.reason,'Leave types set to Medical. Note: New starter');assert.equal(saved.body.medical_history[0].charge,'1.500000');
+ const paused=await http(path,hr,{enabled_codes:[]});
+ assert.equal(paused.status,201,JSON.stringify(paused.body));assert.deepEqual(paused.body.enabled_codes,[]);assert.equal(paused.body.reason,'Leave applications paused.');assert.deepEqual(paused.body.medical_history.map(h=>h.start_date),['2026-02-02']);
+ assert.equal((await w.configurationFor(pool,employee.id)).id,paused.body.id);
+ const audit=(await pool.query("SELECT after FROM audit_log WHERE action='hr.gov.workflow.published' ORDER BY created_at DESC LIMIT 1")).rows[0];assert.equal(audit.after.review_mode,'one_step');
+ });
  test('independent verified-shift activation reconciles historical 1.5-day use inside the ten-day Medical pool',async()=>{
  await l.publishPolicy(pool,{user:user(hr),actor:hr,id:policy.id,reason});await l.createCalendar(pool,{user:user(hr),actor:hr,data:{label:'Test medical shift calendar',effective_from:'2026-01-01',effective_to:'2027-12-31',holidays:[],source_reference:'Test shift holidays',reason}});
  await l.addFoundationRecord(pool,{user:user(hr),actor:hr,employeeId:employee.id,kind:'basis',data:{effective_from:'2026-01-01',continuity_start:'2026-01-01',anniversary_method:'calendar',leap_day_method:'feb28',schedule_mode:'roster',source_reference:'Test signed shift service basis',reason}});
@@ -67,7 +83,7 @@ describe('government preparation lifecycle and verified appointment correction',
  assert.equal((await http(`/government/drafts/configuration/${row.id}/lifecycle`,owner,{reason,action:'discard',expected_revision:0})).status,403);
  assert.equal((await http(`/government/drafts/configuration/${row.id}/lifecycle`,hr,{reason,action:'discard',expected_revision:0})).status,200);
  const list=await http('/government/workflow/administration',hr);assert.equal(list.status,200);assert.equal(list.body.configs.find(c=>c.id===row.id).discarded,true);
- assert.equal((await http(`/government/workflow/configurations/${row.id}/publish`,certifier,{reason})).status,409);
+ await assert.rejects(w.publishConfiguration(pool,{user:user(certifier),actor:certifier,id:row.id,reason}),e=>e.status===409);
  });
  test('concurrent approval and discard serialize so deleted preparation cannot become published',async()=>{
  const row=await configuration(),results=await Promise.allSettled([lifecycle('configuration',row.id,'discard',0),w.publishConfiguration(pool,{user:user(certifier),actor:certifier,id:row.id,reason})]);

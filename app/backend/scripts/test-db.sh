@@ -7,7 +7,9 @@ set -euo pipefail
 # sessions) cannot remove each other's database. TEST_DB_PORT pins a port.
 CONTAINER=ron-hr-test-db-$$
 
-cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }
+# -v removes the container's anonymous data volume too; without it every run left
+# a full Postgres data directory behind and the host ran out of inodes.
+cleanup() { docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 cleanup
 

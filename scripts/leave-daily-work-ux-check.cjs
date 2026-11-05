@@ -85,7 +85,7 @@ const assert = require('node:assert/strict');
   await page.getByRole('button', { name: '← Details and access', exact: true }).click();
   await page.getByRole('heading', { name: 'Payroll ID and login', exact: true }).waitFor();
   await employeeNav.getByRole('button', { name: 'Balances', exact: true }).click();
-  await page.getByRole('button', { name: 'Leave access & schedules', exact: true }).click();
+  await page.getByRole('button', { name: 'Leave types & balance schedules', exact: true }).click();
   await page.getByRole('heading', { name: 'Employee leave maintenance' }).waitFor();
   assert.ok(calls.some(c => c.path.endsWith('/administration') && c.query.includes('employee_id=employee')));
   await page.getByRole('button', { name: '← Balances', exact: true }).click();

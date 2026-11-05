@@ -75,7 +75,7 @@ export async function employeeReadiness(client,employeeId){
  if(!policy)issues.push('Publish a current policy.');
  const medicalSpecialOnly=period?.is_teacher||period?.employment_category==='temporary';
  const commonCodes=medicalSpecialOnly?['medical','special']:['recreation','medical','special'];
- if(!config||!commonCodes.every(c=>config.enabled_codes.includes(c)))issues.push(`Review and activate the ${medicalSpecialOnly?'Medical and Special types':'three common types'} under Applications & jobs.`);
+ if(!config||!commonCodes.every(c=>config.enabled_codes.includes(c)))issues.push(`Tick ${medicalSpecialOnly?'Medical and Special':'Recreation, Medical and Special'} under Leave types in the employee's record.`);
  if(period?.is_teacher&&config?.enabled_codes.includes('recreation'))issues.push('Teacher Recreation must use the independently determined Education case route, not ordinary Recreation activation.');
  for(const code of commonCodes){
   const entitlement=context.entitlements.find(e=>e.code===code&&e.period_start===facts.period_start&&e.period_end===facts.period_end&&e.as_of<=date);

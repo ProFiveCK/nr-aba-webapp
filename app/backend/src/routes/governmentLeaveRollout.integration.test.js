@@ -56,7 +56,7 @@ describe('government rollout readiness and release evidence',{skip:skipWithoutDa
  async function http(path,by=owner,body=null){const session=await auth.createSession(by.id),token=auth.buildTokenPayload(by,session.tokenId,session.expiresAt),r=await fetch(base+path,{method:body?'POST':'GET',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});return {status:r.status,body:await r.json()};}
  test('readiness explains incomplete activation and authority without changing balances',async()=>{
   const before=(await pool.query('SELECT count(*)::int AS n FROM hr_gov_ledger')).rows[0].n;
-  const state=await rollout.previewWave(pool,user(hr),[employee.id]);assert.equal(state.ready,0);assert.ok(state.employees[0].issues.some(i=>i.includes('activate')));assert.ok(state.employees[0].issues.some(i=>i.includes('officeholder')));
+  const state=await rollout.previewWave(pool,user(hr),[employee.id]);assert.equal(state.ready,0);assert.ok(state.employees[0].issues.some(i=>i.includes('under Leave types')));assert.ok(state.employees[0].issues.some(i=>i.includes('officeholder')));
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_ledger')).rows[0].n,before);
  });
  test('a verified common cohort passes and independent review is immutable and idempotent',async()=>{

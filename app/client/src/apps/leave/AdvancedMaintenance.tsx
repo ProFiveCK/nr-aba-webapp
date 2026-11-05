@@ -5,7 +5,7 @@ import { GovernmentPayroll } from './GovernmentPayroll';
 import type { OrgDepartment } from './types';
 
 const tools = [
-    { id: 'accrual', title: 'Leave access and balance schedules', detail: 'Review employee activation and the approved schedules that post due balances.' },
+    { id: 'accrual', title: 'Leave types and balance schedules', detail: 'See recent leave type changes and the schedules that post due balances.' },
     { id: 'accounts', title: 'Bulk employee accounts', detail: 'Prepare employee logins, activation and account lifecycle work.' },
     { id: 'payroll', title: 'Payroll reconciliation', detail: 'Prepare approved instructions and record Salary Unit receipts.' },
 ];

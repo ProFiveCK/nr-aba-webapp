@@ -661,7 +661,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM hr_gov_credit_transfers WHERE code='recreation'")).rows[0].n,0);
   const {employeeReadiness}=await import('../services/governmentLeaveRollout.js');
   const readiness=await employeeReadiness(pool,employee.id);assert.equal(readiness.ready,true,readiness.issues.join(' '));
-  await assert.rejects(submit(application('recreation')),/not activated/);
+  await assert.rejects(submit(application('recreation')),/not switched on/);
   await assert.rejects(jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{code:'recreation',source_reference:'Synthetic excluded Annual job attempt',reason}}),/opening/);
   const medical=await submit(application('medical'));await evidence(medical.id);await decide(medical.id);assert.equal((await w.getRequest(pool,medical.id)).status,'approved');assert.ok((await w.getRequest(pool,medical.id)).final_pdf.length>100);
   const special=await submit(application('special','2026-11-05'));await evidence(special.id);await decide(special.id);assert.equal((await w.getRequest(pool,special.id)).status,'approved');
@@ -800,7 +800,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  });
  test('activation is independent and typed, preserves oversized historical balances, and pauses new submissions',async()=>{
   const draft=await w.prepareConfiguration(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{enabled_codes:[],medical_rule:'single_calendar_date_nonadjacent_scheduled_days',medical_history:[],source_reference:'Synthetic emergency pause',legacy_resolution_reference:'Reviewed baseline unchanged',reason}});
-  await assert.rejects(w.publishConfiguration(pool,{user:user(hr),actor:hr,id:draft.id,reason}),e=>e.status===403);await w.publishConfiguration(pool,{user:user(certifier),actor:certifier,id:draft.id,reason});await assert.rejects(submit(),/not activated/);
+  await assert.rejects(w.publishConfiguration(pool,{user:user(hr),actor:hr,id:draft.id,reason}),e=>e.status===403);await w.publishConfiguration(pool,{user:user(certifier),actor:certifier,id:draft.id,reason});await assert.rejects(submit(),/not switched on/);
   const special=(await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='special');await l.correctLedger(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{entitlement_id:special.id,amount:'2',effective_date:'2026-10-07',event_key:randomUUID(),source_reference:'Preserved signed historical transition credit',reason}});
   await assert.rejects(configure(['special']),/exceeds the standard/);assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='special').balance,'5.000000');
  });

@@ -1,6 +1,5 @@
 import {serviceCorrectionIssue} from './employeeServiceCorrections.js';
 import {assertDraftUsable} from './governmentLeaveDrafts.js';
-import {firstAdminJobReview} from './governmentLeaveInitialAdmin.js';
 import {configurationReviewMode} from './governmentLeaveAdministration.js';
 import {recreationPeriodCredit} from '../lib/governmentLeaveAccrual.js';
 import {assertCutoverResolved} from './governmentLeaveCutover.js';
@@ -20,24 +19,15 @@ export async function prepareJobPlan(pool,{user,actor,employeeId,data,client:exi
     const context=await ledger.loadContext(client,employeeId),facts=serviceFacts(context,today());
     if(facts.issues.length)fail(facts.issues.join(' '));
     if(!context.entitlements.some(e=>e.code===data.code&&e.period_start===facts.period_start))fail('Certify the current opening first.');
-    const initialReview=await firstAdminJobReview(client,actor.id,employeeId,data.code);
-    const previousPayrollEnd=data.previous_payroll_end||null;
-    if(previousPayrollEnd){
-      dayNumber(previousPayrollEnd);
-      if(data.code!=='recreation'||!initialReview)fail('Payroll continuity is available only for the reviewed first Recreation schedule after initial staff transfer.');
-      const {rows:[previous]}=await client.query("SELECT to_char(max(period_end),'YYYY-MM-DD') AS last_credited FROM hr_accrual_runs");
-      if(previous.last_credited!==previousPayrollEnd)fail('Confirm the latest recorded payroll credit before carrying its accrual period forward.');
-    }
     if(data.code==='recreation') {
       if(!data.payroll_anchor||!data.first_post_end||!['appointment','qualification'].includes(data.temporary_start))fail('Confirm the actual payroll anchor, first posting and temporary-service accrual treatment.');
       if((dayNumber(data.first_post_end)-dayNumber(data.payroll_anchor))%14!==0)fail('First posting must align to the confirmed fourteen-day payroll cycle.');
       const account=context.entitlements.find(e=>e.code==='recreation'&&e.period_start===facts.period_start);
       if(data.first_post_end<account.as_of)fail('First posting cannot precede the cutover.');
-      if(previousPayrollEnd&&(previousPayrollEnd>account.as_of||dayNumber(data.first_post_end)!==dayNumber(previousPayrollEnd)+14))fail('The first continuous accrual must follow the last credited payroll by fourteen days and include the transferred opening.');
     }
     const method=data.code==='recreation'?'26_cycle_cumulative_floor_calendar_proration':'service_anniversary_reset';
-    const {rows:[plan]}=await client.query(`INSERT INTO hr_gov_job_plans(employee_id,code,service_basis_id,first_post_end,payroll_anchor,temporary_start,method,source_reference,prepared_by,reason,snapshot_hash,initial_setup_review_id,previous_payroll_end)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,[employeeId,data.code,facts.basis.id,data.code==='recreation'?data.first_post_end:null,data.code==='recreation'?data.payroll_anchor:null,data.code==='recreation'?data.temporary_start:null,method,data.source_reference,actor.id,data.reason,fingerprint(context),initialReview,previousPayrollEnd]);
+    const {rows:[plan]}=await client.query(`INSERT INTO hr_gov_job_plans(employee_id,code,service_basis_id,first_post_end,payroll_anchor,temporary_start,method,source_reference,prepared_by,reason,snapshot_hash)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[employeeId,data.code,facts.basis.id,data.code==='recreation'?data.first_post_end:null,data.code==='recreation'?data.payroll_anchor:null,data.code==='recreation'?data.temporary_start:null,method,data.source_reference,actor.id,data.reason,fingerprint(context)]);
     await recordAudit({client,actor,action:'hr.gov.jobs.prepared',entityType:'hr_gov_job_plan',entityId:plan.id,after:plan});return plan;
   };
   return existingClient?work(existingClient):withTransaction(pool,work);
@@ -48,7 +38,7 @@ export async function approveJobPlan(pool,{user,actor,id,reason,client:existingC
     await assertCentral(client,user);const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_job_plans WHERE id=$1',[id]);if(!ref)fail('Job plan not found.');
     await ledger.lockEmployee(client,ref.employee_id);const {rows:[plan]}=await client.query("SELECT *,to_char(previous_payroll_end,'YYYY-MM-DD') AS previous_payroll_end FROM hr_gov_job_plans WHERE id=$1 FOR UPDATE",[id]);
     if(plan.status==='published')return plan;await assertDraftUsable(client,'job',plan.id);
-    const reviewMode=await configurationReviewMode(client,{user,actor,preparedBy:plan.prepared_by,initialReview:!!plan.initial_setup_review_id&&await firstAdminJobReview(client,actor.id,plan.employee_id,plan.code)===plan.initial_setup_review_id});
+    const reviewMode=await configurationReviewMode(client,{user,actor,preparedBy:plan.prepared_by});
     if(plan.previous_payroll_end){
       const {rows:[previous]}=await client.query("SELECT to_char(max(period_end),'YYYY-MM-DD') AS last_credited FROM hr_accrual_runs");
       if(previous.last_credited!==plan.previous_payroll_end)fail('The last credited payroll changed. Review the continuity schedule again.');

@@ -71,7 +71,7 @@ try{
  assert.equal(batch.snapshot.lines.length,28000);
  await parallel(2,2,async()=>measured('payroll_export_2_concurrent',()=>get(`/api/hr/government/payroll/registers/${batch.id}/export`,hrToken,b=>assert.equal(b.snapshot.lines.length,28000))));
  const denied=await fetch(`${base}/api/hr/government/employees/${people[1].id}`,{headers:{Authorization:`Bearer ${people[0].token}`}});assert.equal(denied.status,404);
- const unauthorized=await fetch(`${base}/api/hr/government/rollout/operations`,{headers:{Authorization:`Bearer ${people[0].token}`}});assert.equal(unauthorized.status,403);
+ const unauthorized=await fetch(`${base}/api/hr/government/payroll/registers`,{headers:{Authorization:`Bearer ${people[0].token}`}});assert.equal(unauthorized.status,403);
  const summary=Object.fromEntries(Object.entries(samples).map(([key,values])=>{values.sort((a,b)=>a-b);return [key,{requests:values.length,p50_ms:Math.round(values[Math.floor(values.length*.5)]),p95_ms:Math.round(values[Math.min(values.length-1,Math.floor(values.length*.95))]),max_ms:Math.round(values.at(-1))}];}));
  const limits={password_login_100_in_60_seconds:2000,mixed_100_concurrent:2000,mixed_200_concurrent:2000,audited_writes_30_concurrent:2000,own_foundations_50_concurrent:2000,directory_30_concurrent:2000,approval_register_20_concurrent:2000,payroll_28000_lines:15000,payroll_export_2_concurrent:10000};
  const passed=Object.entries(summary).every(([key,value])=>value.p95_ms<=limits[key]);

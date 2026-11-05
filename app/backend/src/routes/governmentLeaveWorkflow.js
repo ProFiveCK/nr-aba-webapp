@@ -15,10 +15,7 @@ import {isCentralHr,employeeReadSql,employeeScopeSql,managerScopeSql} from '../s
 import {linkedEmployee} from '../services/employeeDirectory.js';
 import * as workflow from '../services/governmentLeaveWorkflow.js';
 import {approvalRouteSettings,publishApprovalRoute,APPROVAL_OFFICES} from '../services/governmentLeaveApprovalRoutes.js';
-import {previewCommissioning,prepareCommissioning,applyCommissioning} from '../services/governmentLeaveCommissioning.js';
-import {previewInitialFoundations,applyInitialFoundations,recordInitialCredit} from '../services/governmentLeaveInitialFoundations.js';
 import * as jobs from '../services/governmentLeaveJobs.js';
-import { previewBalanceSetup, applyBalanceSetup } from '../services/governmentLeaveBalanceSetup.js';
 import {governmentEvidenceUpload} from '../services/governmentLeaveUpload.js';
 import {governmentLeaveMedicalSummary,medicalTrackingTotals} from '../services/governmentLeaveMedicalSummary.js';
 const router=express.Router();
@@ -40,22 +37,6 @@ router.get('/me',async(req,res)=>{
   const medicalTracking=config?.enabled_codes.includes('medical')?medicalTrackingTotals(await governmentLeaveMedicalSummary(pool,{employeeId:employee.id,config})):null;
   res.json({employee_id:employee.id,enabled_codes:config?.enabled_codes||[],medical_rule:config?.medical_rule||null,medical_tracking:medicalTracking,regime:employee.leave_policy_regime,policy:policy?{id:policy.id,label:policy.label,recreation_notice_days:policy.rules.recreation_notice_days}:null});
 });
-const commissioningFields=[reason,reference,date('cutover_date'),body('initial_admin_setup').optional().isBoolean({strict:true}),body('employees').isArray({min:1,max:50}),body('employees.*.employee_id').isUUID(),body('employees.*.medical_history').isArray({max:50}),body('employees.*.medical_history.*.start_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.end_date').custom(value=>{dayNumber(value);return true;}),body('employees.*.medical_history.*.uncertified').isBoolean(),body('history_confirmed').equals('true'),...['payroll_reference','transition_reference','history_reference'].map(name=>body(name).isString().trim().isLength({min:5,max:500}))];
-router.get('/commissioning',central,async(req,res)=>{
- const {rows}=await pool.query('SELECT r.*,c.recorded_at AS applied_at FROM hr_gov_commissioning_reviews r LEFT JOIN hr_gov_commissioning_receipts c ON c.review_id=r.id ORDER BY r.recorded_at DESC,r.id DESC LIMIT 20');res.json({reviews:rows});
-});
-router.post('/commissioning/initial-credit',central,[body('employee_id').isUUID(),body('leave_type_id').isUUID()],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await recordInitialCredit(pool,args(req)));});
-router.post('/balance-setup/preview',central,async(req,res)=>{res.json(await previewBalanceSetup(pool,args(req)));});
-router.get('/balance-setup/schedule',central,async(_req,res)=>{
- const {rows:[saved]}=await pool.query("SELECT to_char(accrual_anchor_date,'YYYY-MM-DD') AS payroll_anchor,(SELECT to_char(max(period_end),'YYYY-MM-DD') FROM hr_accrual_runs) AS previous_payroll_end FROM reviewer_settings WHERE id=TRUE");
- res.json(saved||{payroll_anchor:null,previous_payroll_end:null});
-});
-router.post('/balance-setup/apply',central,async(req,res)=>{res.json(await applyBalanceSetup(pool,args(req)));});
-router.post('/commissioning/foundations/preview',central,async(req,res)=>{res.json(await previewInitialFoundations(pool,args(req)));});
-router.post('/commissioning/foundations/apply',central,async(req,res)=>{res.json(await applyInitialFoundations(pool,args(req)));});
-router.post('/commissioning/preview',central,commissioningFields,async(req,res)=>{if(!handleValidation(req,res))return;res.json(await previewCommissioning(pool,args(req)));});
-router.post('/commissioning',central,[...commissioningFields,body('snapshot_hash').isHexadecimal().isLength({min:64,max:64})],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await prepareCommissioning(pool,args(req)));});
-router.post('/commissioning/:id/apply',central,[id,reason,body('snapshot_hash').isHexadecimal().isLength({min:64,max:64})],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await applyCommissioning(pool,args(req)));});
 router.get('/approval-route',central,[query('department_id').optional().isUUID()],async(req,res)=>{
  if(!handleValidation(req,res))return;res.json(await approvalRouteSettings(pool,req.query.department_id));
 });
@@ -71,7 +52,7 @@ router.get('/administration',central,[query('employee_id').optional().isUUID()],
   const offices=(await pool.query("SELECT a.*,e.display_name,w.office_id AS closed_office_id,to_char(a.effective_from,'YYYY-MM-DD') AS effective_from,to_char(COALESCE(w.effective_to,a.effective_to),'YYYY-MM-DD') AS effective_to FROM hr_gov_consent_offices a JOIN hr_employees e ON e.id=a.approver_employee_id LEFT JOIN hr_gov_consent_withdrawals w ON w.office_id=a.id ORDER BY a.recorded_at DESC LIMIT 100")).rows;
   const plans=(await pool.query("SELECT p.*,e.display_name,to_char(first_post_end,'YYYY-MM-DD') AS first_post_end,to_char(payroll_anchor,'YYYY-MM-DD') AS payroll_anchor FROM hr_gov_job_plans p JOIN hr_employees e ON e.id=p.employee_id WHERE ($1::uuid IS NULL OR p.employee_id=$1) ORDER BY p.recorded_at DESC LIMIT 100",[employeeId])).rows;
   const alerts=(await pool.query('SELECT j.*,e.display_name FROM hr_gov_job_posts j JOIN hr_employees e ON e.id=j.employee_id WHERE j.capped AND ($1::uuid IS NULL OR j.employee_id=$1) ORDER BY recorded_at DESC LIMIT 50',[employeeId])).rows;
-  res.json({configs:await decorateDrafts(pool,'configuration',configs),offices,plans:await decorateDrafts(pool,'job',plans),alerts});
+  res.json({configs,offices,plans:await decorateDrafts(pool,'job',plans),alerts});
 });
 router.post('/employees/:id/leave-types',central,[id,body('enabled_codes').isArray({max:3}),body('enabled_codes.*').isIn(COMMON_CODES),body('note').optional({values:'null'}).isString().isLength({max:1000}),body('medical_history').optional().isArray({max:50}),body('medical_history.*.start_date').custom(value=>{dayNumber(value);return true;}),body('medical_history.*.end_date').custom(value=>{dayNumber(value);return true;}),body('medical_history.*.uncertified').isBoolean()],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await workflow.saveLeaveTypes(pool,args(req)));});
 router.get('/consent-offices',central,[query('page').optional().isInt({min:1,max:100000}),query('page_size').optional().isInt({min:1,max:50}),query('search').optional().isString().isLength({max:100}),query('department_id').optional().isUUID(),query('scope').optional().isIn(['government','department']),query('level').optional().isIn(['hr_verifier','relevant_secretary','minister']),query('timing').optional().isIn(['current','upcoming','ended'])],async(req,res)=>{
@@ -87,7 +68,7 @@ router.get('/consent-offices',central,[query('page').optional().isInt({min:1,max
 });
 router.post('/consent-offices',central,[reason,reference,body('level').isIn(['relevant_secretary','hr_verifier','minister']),body('department_id').optional({nullable:true,checkFalsy:true}).isUUID(),body('approver_employee_id').isUUID(),date('effective_from'),optionalDate('effective_to')],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await workflow.assignConsentOffice(pool,args(req)));});
 router.post('/consent-offices/:id/close',central,[id,reason,date('effective_to')],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await workflow.closeConsentOffice(pool,args(req)));});
-router.post('/employees/:id/job-plans',central,[id,reason,reference,body('code').isIn(COMMON_CODES),body('calculation_confirmed').equals('true'),optionalDate('first_post_end'),optionalDate('payroll_anchor'),optionalDate('previous_payroll_end'),body('temporary_start').optional().isIn(['appointment','qualification'])],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await jobs.prepareJobPlan(pool,args(req)));});
+router.post('/employees/:id/job-plans',central,[id,reason,reference,body('code').isIn(COMMON_CODES),body('calculation_confirmed').equals('true'),optionalDate('first_post_end'),optionalDate('payroll_anchor'),body('temporary_start').optional().isIn(['appointment','qualification'])],async(req,res)=>{if(!handleValidation(req,res))return;res.status(201).json(await jobs.prepareJobPlan(pool,args(req)));});
 router.post('/job-plans/:id/approve',central,[id,reason],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await jobs.approveJobPlan(pool,{...args(req),reason:req.body.reason}));});
 router.post('/employees/:id/run-jobs',central,[id,optionalDate('as_of')],async(req,res)=>{if(!handleValidation(req,res))return;res.json(await jobs.runEmployeeJobs(pool,{...args(req),asOf:req.body.as_of||workflow.today()}));});
 router.post('/preview',apply,applicationFields,async(req,res)=>{

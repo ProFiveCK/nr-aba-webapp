@@ -24,7 +24,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  async function configure(codes=['recreation','medical','special'],history=[]){const row=await w.prepareConfiguration(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{enabled_codes:codes,medical_rule:'single_calendar_date_nonadjacent_scheduled_days',medical_history:history,source_reference:'Synthetic medical rule and cutover history approval',legacy_resolution_reference:'Synthetic legacy leave reconciled register',reason}});await w.publishConfiguration(pool,{user:user(certifier),actor:certifier,id:row.id,reason});return row;}
  const application=(code='recreation',start='2026-11-02',end=start)=>({request_id:randomUUID(),code,start_date:start,end_date:end,reason,medical_mode:code==='medical'?'exemption':'not_applicable'});
  async function submit(data=application(),documents=[]){return w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data,documents});}
- async function decide(id,changes={},actor=null){const view=await w.requestView(pool,user(hr),id),stage=view.stages[view.stage_index];const by=actor||officers[stage.level].account;return w.decideRequest(pool,{user:user(by),actor:by,id,data:{stage_id:stage.id,binding_id:stage.binding?.id||randomUUID(),event_key:randomUUID(),decision:'approved',note:reason,evidence_reviewed:true,certificate_reviewed:true,justification_accepted:true,source_reference:'Synthetic registered-practitioner and HR verified source',covers_start:'2026-01-01',covers_end:'2026-12-31',...changes}});}
+ async function decide(id,changes={},actor=null){const view=await w.requestView(pool,user(hr),id),stage=view.stages[view.stage_index];const by=actor||officers[stage.level].account;return w.decideRequest(pool,{user:user(by),actor:by,id,data:{stage_id:stage.id,binding_id:stage.binding?.id||randomUUID(),event_key:randomUUID(),decision:'approved',note:reason,evidence_reviewed:true,certificate_reviewed:true,justification_accepted:true,source_reference:'Synthetic registered-practitioner and HR verified source',covers_start:'2026-01-01',covers_end:'2026-12-31',notice_waived:true,...changes}});}
  async function grant(id){let result;for(let i=0;i<5;i++){const r=await w.getRequest(pool,id);if(r.status!=='pending')return r;result=await decide(id);}return result;}
  async function call(path,data,by=owner,method=data?'POST':'GET'){const session=await auth.createSession(by.id),token=auth.buildTokenPayload(by,session.tokenId,session.expiresAt);const response=await fetch(base+'/api/hr/government/workflow'+path,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});return {status:response.status,body:response.headers.get('content-type')?.includes('json')?await response.json():await response.arrayBuffer(),cache:response.headers.get('cache-control')};}
  // These dated fixtures exercise workflow, routing and accounting. Notice is
@@ -84,7 +84,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   // Short notice no longer stops the application; every approver must expressly waive it.
   const result=await call('/requests',input);assert.equal(result.status,201);
   assert.equal((await w.requestView(pool,user(hr),result.body.id)).short_notice.required_days,14);
-  await assert.rejects(()=>decide(result.body.id,{certification_confirmed:true}),/waive the notice/);
+  await assert.rejects(()=>decide(result.body.id,{certification_confirmed:true,notice_waived:false}),/waive the notice/);
   assert.equal((await w.getRequest(pool,result.body.id)).status,'pending');
   await decide(result.body.id,{certification_confirmed:true,notice_waived:true});
   assert.equal((await w.getRequest(pool,result.body.id)).status,'approved');
@@ -153,7 +153,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  test('each intermediate approval confirms the decision to its actor and notifies the next officer',async()=>{
   const r=await submit();await notificationDelivery();
   const view=await w.requestView(pool,user(hr),r.id),stage=view.stages[0];
-  const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason};
+  const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason,notice_waived:true};
   const args={user:user(officers.division.account),actor:officers.division.account,id:r.id,data};
   await w.decideRequest(pool,args);await w.decideRequest(pool,args);
   const {messages,result}=await notificationDelivery();assert.equal(result.sent,2);
@@ -807,9 +807,9 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  test('all required offices act in order; no administrator bypass; final grant posts once and PDF remains frozen',async()=>{
   const data=application(),r=await submit(data);assert.equal((await submit(data)).id,r.id);await assert.rejects(submit({...data,reason:'Changed submitted reason text'}),/request key/);
   assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').held,'1.000000');await assert.rejects(decide(r.id,{},hr),e=>e.status===403);
-  const initial=await w.requestView(pool,user(hr),r.id),final=initial.stages.at(-1);await assert.rejects(w.decideRequest(pool,{user:user(officers.chief_secretary.account),actor:officers.chief_secretary.account,id:r.id,data:{stage_id:final.id,binding_id:final.binding.id,event_key:randomUUID(),decision:'approved',note:reason}}),/stage changed/);
+  const initial=await w.requestView(pool,user(hr),r.id),final=initial.stages.at(-1);await assert.rejects(w.decideRequest(pool,{user:user(officers.chief_secretary.account),actor:officers.chief_secretary.account,id:r.id,data:{stage_id:final.id,binding_id:final.binding.id,event_key:randomUUID(),decision:'approved',note:reason,notice_waived:true}}),/stage changed/);
   for(let i=0;i<4;i++)await decide(r.id);assert.equal((await w.getRequest(pool,r.id)).status,'pending');assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'20.000000');
-  const last=await w.requestView(pool,user(hr),r.id),stage=last.stages[last.stage_index],decision={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason};
+  const last=await w.requestView(pool,user(hr),r.id),stage=last.stages[last.stage_index],decision={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason,notice_waived:true};
   await w.decideRequest(pool,{user:user(officers.chief_secretary.account),actor:officers.chief_secretary.account,id:r.id,data:decision});await w.decideRequest(pool,{user:user(officers.chief_secretary.account),actor:officers.chief_secretary.account,id:r.id,data:decision});
   const granted=await w.getRequest(pool,r.id);assert.equal(granted.status,'approved');assert.equal((await l.loadContext(pool,employee.id)).entitlements.find(e=>e.code==='recreation').balance,'19.000000');assert.ok(granted.final_pdf.subarray(0,5).toString()==='%PDF-');
   const bytes=Buffer.from(granted.final_pdf);await pool.query("UPDATE hr_employees SET display_name='Changed later profile' WHERE id=$1",[employee.id]);assert.deepEqual((await w.getRequest(pool,r.id)).final_pdf,bytes);await assert.rejects(pool.query("UPDATE hr_gov_requests SET charge=99 WHERE id=$1",[r.id]),/immutable/);

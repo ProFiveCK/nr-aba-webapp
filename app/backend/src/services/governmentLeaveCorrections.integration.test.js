@@ -38,7 +38,7 @@ describe('government preparation lifecycle and verified appointment correction',
  const config=await w.prepareConfiguration(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{enabled_codes:['recreation'],medical_rule:'single_calendar_date_nonadjacent_scheduled_days',medical_history:[],source_reference:'Test reviewed medical rule',legacy_resolution_reference:'Test all historical leave reconciled',reason}});await w.publishConfiguration(pool,{user:user(certifier),actor:certifier,id:config.id,reason});
  const officers={};for(const level of w.routeLevels('recreation')){const by=level==='hr_verifier'?certifier:await account({hr_access:true,hr_leave_approve:true}),staff=(await pool.query("INSERT INTO hr_employees(display_name,reviewer_id,department_id,division_id) VALUES($1,$2,$3,$4) RETURNING *",[`Test ${level}`,by.id,dept.id,div.id])).rows[0];officers[level]=by;
  if(['division','department','chief_secretary'].includes(level))await pool.query("INSERT INTO hr_approval_assignments(level,department_id,division_id,approver_employee_id,effective_from,reason) VALUES($1,$2,$3,$4,'2026-01-01',$5)",[level,level==='chief_secretary'?null:dept.id,level==='division'?div.id:null,staff.id,reason]);else await w.assignConsentOffice(pool,{user:user(hr),actor:hr,data:{level,department_id:level==='relevant_secretary'?dept.id:null,approver_employee_id:staff.id,effective_from:'2026-01-01',source_reference:'Test signed office',reason}});}
- const request=await w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:{request_id:randomUUID(),code:'recreation',start_date:'2026-11-16',end_date:'2026-11-16',reason,medical_mode:'not_applicable'}}),before=await w.requestView(pool,user(hr),request.id),stage=before.stages[0];
+ const request=await w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:{request_id:randomUUID(),code:'recreation',start_date:'2026-12-14',end_date:'2026-12-14',reason,medical_mode:'not_applicable'}}),before=await w.requestView(pool,user(hr),request.id),stage=before.stages[0];
  const correction=await prepare({start_date:'2026-01-01',employment_category:'contract',is_intern:false,work_pattern_id:pattern.id});await c.approveServiceCorrection(pool,{user:user(certifier),actor:certifier,id:correction.id,reason});
  const accountAfter=(await l.loadContext(pool,employee.id)).entitlements[0];assert.equal(accountAfter.balance,'20.000000');assert.equal(accountAfter.held,'1.000000');assert.match((await w.requestView(pool,user(hr),request.id)).stages[0].issue,/Appointment facts/);
  await assert.rejects(w.decideRequest(pool,{user:user(officers.division),actor:officers.division,id:request.id,data:{stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason}}),/Appointment facts/);
@@ -47,6 +47,17 @@ describe('government preparation lifecycle and verified appointment correction',
 
  async function http(path,by,data){const session=await auth.createSession(by.id),token=auth.buildTokenPayload(by,session.tokenId,session.expiresAt);const r=await fetch(base+'/api/hr'+path,{method:data?'POST':'GET',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});return{status:r.status,body:await r.json()};}
 
+ test('service starts from the appointment dates on the employee record, without a separate basis form',async()=>{
+ assert.equal((await l.loadContext(pool,employee.id)).bases.length,0);
+ const added=await http(`/directory/${employee.id}/service-periods`,hr,{start_date:'2025-01-01',end_date:'2025-12-31',employment_category:'temporary',counts_for_service:true,reason});
+ assert.equal(added.status,201,JSON.stringify(added.body));
+ let bases=(await l.loadContext(pool,employee.id)).bases;
+ assert.deepEqual(bases.map(b=>[b.effective_from,b.continuity_start,b.anniversary_method,b.leap_day_method,b.schedule_mode]),[['2025-01-01','2025-01-01','calendar','feb28','weekly']]);
+ assert.equal((await l.syncServiceStart(pool,{employeeId:employee.id})).id,bases[0].id);
+ const correction=await prepare({start_date:'2026-02-01',employment_category:'permanent',is_intern:false});await c.approveServiceCorrection(pool,{user:user(certifier),actor:certifier,id:correction.id,reason});
+ bases=(await l.loadContext(pool,employee.id)).bases;
+ assert.equal(bases.length,2);assert.equal(bases[0].continuity_start,'2025-01-01');assert.equal(bases[1].continuity_start,'2026-02-01');assert.ok(bases[1].effective_from>=bases[1].continuity_start);
+ });
  test('one HR officer saves leave types in one step; the Medical rule follows the work schedule and earlier absences are kept',async()=>{
  await l.publishPolicy(pool,{user:user(hr),actor:hr,id:policy.id,reason});
  await l.addFoundationRecord(pool,{user:user(hr),actor:hr,employeeId:employee.id,kind:'basis',data:{effective_from:'2026-01-01',continuity_start:'2026-01-01',anniversary_method:'calendar',leap_day_method:'feb28',schedule_mode:'roster',source_reference:'Test signed shift service basis',reason}});

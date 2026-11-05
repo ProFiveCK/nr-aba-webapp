@@ -1,7 +1,7 @@
 import {withTransaction} from '../lib/transaction.js';
 import {ServiceError} from '../lib/serviceError.js';
 import {recordAudit} from './auditService.js';
-import {central,lockEmployee} from './governmentLeave.js';
+import {central,lockEmployee,syncServiceStart} from './governmentLeave.js';
 import {assertCentral} from './governmentLeaveWorkflow.js';
 import {managementReason} from './employeeManagement.js';
 import {EMPLOYMENT_CATEGORIES} from './employeeDirectory.js';
@@ -53,7 +53,7 @@ export async function approveServiceCorrection(pool,{user,actor,id,reason}){
  await validatePeriod(client,row.employee_id,row.period_id,row.proposed);const p=row.proposed;
  await client.query('UPDATE hr_employee_service_periods SET start_date=$2,end_date=$3,employment_category=$4,is_teacher=$5,is_intern=$6,counts_for_service=$7,work_pattern_id=$8,appointment_reference=$9 WHERE id=$1',[row.period_id,p.start_date,p.end_date,p.employment_category,p.is_teacher,p.is_intern,p.counts_for_service,p.work_pattern_id,p.appointment_reference]);
  const {rows:[after]}=await client.query("UPDATE hr_employee_service_corrections SET status='approved',approved_by=$2,approval_reason=$3,approved_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id,approvalReason]);
- await recordAudit({client,actor,action:'hr.employee.service_period.corrected',entityType:'hr_employee',entityId:row.employee_id,before,after:{...after,preserved_balances:true,pending_applications_require_review:true}});return after;
+ await recordAudit({client,actor,action:'hr.employee.service_period.corrected',entityType:'hr_employee',entityId:row.employee_id,before,after:{...after,preserved_balances:true,pending_applications_require_review:true}});await syncServiceStart(client,{employeeId:row.employee_id,actor});return after;
  });
 }
 export async function discardServiceCorrection(pool,{user,actor,id,reason,action='discard'}){

@@ -1339,6 +1339,11 @@ export async function initSchema() {
 
     await initParentApproverSchema(client);
     await initGovernmentLeaveSchema(client);
+    // Employees added before service starts came from the record still need one; this is a no-op once they have it.
+    const { syncServiceStart } = await import('./services/governmentLeave.js');
+    const { rows: withoutService } = await client.query(`SELECT e.id FROM hr_employees e WHERE NOT EXISTS (SELECT 1 FROM hr_gov_service_bases b WHERE b.employee_id = e.id)
+      AND (e.join_date IS NOT NULL OR EXISTS (SELECT 1 FROM hr_employee_service_periods p WHERE p.employee_id = e.id))`);
+    for (const { id } of withoutService) await syncServiceStart(client, { employeeId: id });
     await backfillCapabilities(client);
     await materialiseRoleFloor(client);
 

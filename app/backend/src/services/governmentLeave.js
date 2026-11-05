@@ -9,7 +9,7 @@ import {withTransaction} from '../lib/transaction.js';
 import {recordAudit} from './auditService.js';
 import {managementReason} from './employeeManagement.js';
 import {isCentralHr,canAccessEmployee} from './hrAccess.js';
-import {DEFAULT_RULES,validateRules,dayNumber,units,decimal,fingerprint,segmentsFingerprint,calculateEvaluation,serviceFacts} from '../lib/governmentLeaveRules.js';
+import {DEFAULT_RULES,validateRules,dayNumber,isoDay,units,decimal,fingerprint,segmentsFingerprint,calculateEvaluation,serviceFacts} from '../lib/governmentLeaveRules.js';
 export {DEFAULT_RULES};
 const fail=(message,status=409)=>{throw new ServiceError(status,message);};
 const audit=(client,actor,action,id,after)=>recordAudit({client,actor,action,entityType:'hr_government_leave',entityId:id,after});
@@ -35,6 +35,26 @@ export async function loadContext(client,employeeId){
    (COALESCE((SELECT sum(l.amount) FROM hr_gov_ledger l WHERE l.entitlement_id=e.id),0)-(COALESCE((SELECT sum(h.amount) FROM hr_gov_reservations h JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE h.entitlement_id=e.id AND r.status='held'),0)+COALESCE((SELECT sum(h.amount) FROM hr_gov_case_credit_holds h JOIN hr_gov_requests cr ON cr.id=h.request_id WHERE h.entitlement_id=e.id AND cr.status='pending' AND h.determination_id=(SELECT id FROM hr_gov_case_determinations cd WHERE cd.request_id=cr.id ORDER BY version DESC LIMIT 1)),0)))::text AS available
    FROM hr_gov_entitlements e WHERE e.employee_id=$1 ORDER BY e.period_start,e.id`,[employeeId])];for(const query of queries)results.push(await query());
  const keys=['policies','calendars','periods','bases','exclusions','patterns','pattern_approvals','rosters','entitlements'];return Object.fromEntries([['employee',employee],...keys.map((key,i)=>[key,results[i].rows])]);
+}
+const dayAfter=date=>isoDay(dayNumber(date)+1);
+// Service counts from the start of the employee's current unbroken run of appointments,
+// or from the employment start date on their record when no appointment is recorded.
+export async function serviceStartFromRecord(client,employeeId){
+ const {rows:periods}=await client.query("SELECT to_char(start_date,'YYYY-MM-DD') AS start_date,to_char(end_date,'YYYY-MM-DD') AS end_date FROM hr_employee_service_periods p WHERE employee_id=$1 AND counts_for_service IS DISTINCT FROM FALSE ORDER BY p.start_date DESC,p.id DESC",[employeeId]);
+ if(!periods.length)return (await client.query("SELECT to_char(join_date,'YYYY-MM-DD') AS join_date FROM hr_employees WHERE id=$1",[employeeId])).rows[0]?.join_date||null;
+ let start=periods[0].start_date;
+ for(const period of periods.slice(1)){if(period.end_date&&dayAfter(period.end_date)<start)break;start=period.start_date;}
+ return start;
+}
+// Keeps the service basis in step with the employee record, so HR never enters it separately.
+// A changed start applies from today; dates already calculated keep the start they used.
+export async function syncServiceStart(client,{employeeId,actor=null}){
+ const start=await serviceStartFromRecord(client,employeeId);if(!start)return null;
+ const {rows:[latest]}=await client.query("SELECT *,to_char(effective_from,'YYYY-MM-DD') AS effective_from,to_char(continuity_start,'YYYY-MM-DD') AS continuity_start FROM hr_gov_service_bases b WHERE employee_id=$1 ORDER BY b.effective_from DESC,b.id DESC LIMIT 1",[employeeId]);
+ if(latest?.continuity_start===start)return latest;
+ const from=latest?[start,new Date(Date.now()+12*3600000).toISOString().slice(0,10),dayAfter(latest.effective_from)].sort().at(-1):start;
+ const {rows:[row]}=await client.query("INSERT INTO hr_gov_service_bases(employee_id,effective_from,continuity_start,anniversary_method,leap_day_method,schedule_mode,source_reference,recorded_by,reason) VALUES ($1,$2,$3,$4,$5,$6,'Employee record',$7,'Service counts from the start date on the employee record.') RETURNING *",[employeeId,from,start,latest?.anniversary_method||'calendar',latest?.leap_day_method||'feb28',latest?.schedule_mode||'weekly',actor?.id||null]);
+ await audit(client,actor,'hr.gov.basis.recorded',row.id,row);return row;
 }
 export async function evaluate(client,employeeId,input,options={}){
  const context=await loadContext(client,employeeId);if(context.employee.leave_policy_regime!=='government')fail('Enroll this employee in the government regime before evaluation.');

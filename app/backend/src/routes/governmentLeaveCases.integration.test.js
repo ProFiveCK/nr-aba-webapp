@@ -19,7 +19,7 @@ describe('government event cases, financial commitments and amendments',{skip:sk
  async function configure(codes=['recreation','medical','special'],history=[]){const row=await w.prepareConfiguration(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{enabled_codes:codes,medical_rule:'single_calendar_date_nonadjacent_scheduled_days',medical_history:history,source_reference:'Synthetic medical rule and cutover history approval',legacy_resolution_reference:'Synthetic legacy leave reconciled register',reason}});await w.publishConfiguration(pool,{user:user(certifier),actor:certifier,id:row.id,reason});return row;}
  const application=(code='recreation',start='2026-11-02',end=start)=>({request_id:randomUUID(),code,start_date:start,end_date:end,reason,medical_mode:code==='medical'?'exemption':'not_applicable'});
  async function submit(data=application(),documents=[]){return w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data,documents});}
- async function decide(id,changes={},actor=null){const view=await w.requestView(pool,user(hr),id),stage=view.stages[view.stage_index];const by=actor||officers[stage.level].account;return w.decideRequest(pool,{user:user(by),actor:by,id,data:{stage_id:stage.id,binding_id:stage.binding?.id||randomUUID(),event_key:randomUUID(),decision:'approved',note:reason,discretion_confirmed:true,evidence_reviewed:true,certificate_reviewed:true,justification_accepted:true,source_reference:'Synthetic registered-practitioner and HR verified source',covers_start:'2026-01-01',covers_end:'2026-12-31',...changes}});}
+ async function decide(id,changes={},actor=null){const view=await w.requestView(pool,user(hr),id),stage=view.stages[view.stage_index];const by=actor||officers[stage.level].account;return w.decideRequest(pool,{user:user(by),actor:by,id,data:{stage_id:stage.id,binding_id:stage.binding?.id||randomUUID(),event_key:randomUUID(),decision:'approved',note:reason,discretion_confirmed:true,evidence_reviewed:true,certificate_reviewed:true,justification_accepted:true,source_reference:'Synthetic registered-practitioner and HR verified source',covers_start:'2026-01-01',covers_end:'2026-12-31',notice_waived:true,...changes}});}
  async function grant(id){let result;for(let i=0;i<7;i++){const r=await w.getRequest(pool,id);if(r.status!=='pending')return r;result=await decide(id);}return result;}
  async function call(path,data,by=owner,method=data?'POST':'GET'){const session=await auth.createSession(by.id),token=auth.buildTokenPayload(by,session.tokenId,session.expiresAt);const response=await fetch(base+'/api/hr/government/workflow'+path,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});return {status:response.status,body:response.headers.get('content-type')?.includes('json')?await response.json():await response.arrayBuffer(),cache:response.headers.get('cache-control')};}
  beforeEach(async()=>{
@@ -170,14 +170,14 @@ describe('government event cases, financial commitments and amendments',{skip:sk
  });
  test('the current approver amends pending dates: days and hold are recalculated, documents kept, approval restarts',async()=>{
   await simpleRoute();const supervisor=officers.division.account;
-  const old=await w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:application('recreation','2026-11-16','2026-11-18'),documents:[doc],simpleApproval:true});
-  const amend=(by,data={})=>call('/requests/'+old.id+'/amend',{request_id:randomUUID(),start_date:'2026-11-16',end_date:'2026-11-17',reason,...data},by);
+  const old=await w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:application('recreation','2026-12-14','2026-12-16'),documents:[doc],simpleApproval:true});
+  const amend=(by,data={})=>call('/requests/'+old.id+'/amend',{request_id:randomUUID(),start_date:'2026-12-14',end_date:'2026-12-15',reason,...data},by);
   assert.equal((await amend(owner)).status,403);assert.equal((await amend(officers.department.account)).status,403);
-  assert.equal((await amend(supervisor,{end_date:'2026-11-18'})).status,400);
+  assert.equal((await amend(supervisor,{end_date:'2026-12-16'})).status,400);
   const amended=await amend(supervisor);assert.equal(amended.status,201,JSON.stringify(amended.body));
   const held=async()=>(await pool.query("SELECT COALESCE(sum(h.amount),0)::numeric AS n FROM hr_gov_reservations h JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE r.status='held' AND r.employee_id=$1",[employee.id])).rows[0].n;
   assert.equal((await w.getRequest(pool,old.id)).status,'cancelled');assert.equal(Number(await held()),2);
-  const view=await w.requestView(pool,user(supervisor),amended.body.id);assert.equal(view.end_date,'2026-11-17');assert.equal(Number(view.charge),2);assert.equal(view.documents.length,1);assert.equal(view.stage_index,0);assert.equal(view.short_notice,null);
+  const view=await w.requestView(pool,user(supervisor),amended.body.id);assert.equal(view.end_date,'2026-12-15');assert.equal(Number(view.charge),2);assert.equal(view.documents.length,1);assert.equal(view.stage_index,0);assert.equal(view.short_notice,null);
   assert.equal((await decide(amended.body.id,{certification_confirmed:true})).status,'approved');assert.equal(Number(await held()),0);
  });
  test('pending simplification is audited and preserves requests, decisions, stages and balance holds',async()=>{

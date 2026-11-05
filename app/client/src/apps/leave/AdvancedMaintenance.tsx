@@ -6,7 +6,7 @@ import type { OrgDepartment } from './types';
 
 const tools = [
     { id: 'accrual', title: 'Leave types and balance schedules', detail: 'See recent leave type changes and the schedules that post due balances.' },
-    { id: 'accounts', title: 'Bulk employee accounts', detail: 'Prepare employee logins, activation and account lifecycle work.' },
+    { id: 'accounts', title: 'Bulk employee accounts', detail: 'Set up logins for many employees at once.' },
     { id: 'payroll', title: 'Payroll reconciliation', detail: 'Prepare approved instructions and record Salary Unit receipts.' },
 ];
 export function AdvancedMaintenance({ tool, departments }: { tool: string | null; departments: OrgDepartment[] }) {

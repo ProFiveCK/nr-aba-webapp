@@ -1,6 +1,5 @@
 import {assertDraftUsable} from './governmentLeaveDrafts.js';
 import {applyRecreationForecast} from './governmentLeaveForecast.js';
-import {initialAdminReview} from './governmentLeaveInitialAdmin.js';
 import {resolvedPublishedPoliciesSql,validateReplacementFields,approvePolicyReplacement} from './governmentLeavePolicyTransitions.js';
 import {randomUUID} from 'node:crypto';
 import {assertCentral} from './governmentLeaveWorkflow.js';
@@ -197,27 +196,31 @@ export async function addFoundationRecord(pool,{user,actor,employeeId,kind,data,
   else fail('Unknown foundation record.',400);
   await audit(client,actor,`hr.gov.${kind}.certified`,row.id,row);return row;
  };
- return (existingClient?work(existingClient):withTransaction(pool,work)).catch(err=>{if(err.code==='23505')fail('A certified record already exists for these dates or this pattern. Prepare a successor.');if(err.code==='23514'||err.code==='23503')fail('Verify the dates, units and referenced employee/pattern.',400);throw err;});
+ return (existingClient?work(existingClient):withTransaction(pool,work)).catch(err=>{if(err.code==='23505')fail('A record already exists for these dates or this schedule. Replace it instead.');if(err.code==='23514'||err.code==='23503')fail('Verify the dates, units and referenced employee/pattern.',400);throw err;});
 }
 async function openingSnapshot(client,employeeId){const context=await loadContext(client,employeeId);const {rows:historical}=await client.query('SELECT b.id,b.leave_type_id,t.name AS leave_type_name,b.year,b.balance,b.pending FROM hr_leave_balances b JOIN hr_leave_types t ON t.id=b.leave_type_id WHERE b.employee_id=$1 ORDER BY b.year,b.leave_type_id',[employeeId]);return {context,historical,hash:fingerprint({context,historical})};}
 export async function prepareOpening(pool,{client:existingClient=null,user,actor,employeeId,data}){
  central(user);const reason=managementReason(data.reason);try{if(units(data.amount)<0n)fail('Opening must be nonnegative.',400);}catch(err){if(err.status)throw err;fail(err.message,400);}
- const work=async client=>{await lockEmployee(client,employeeId);const snapshot=await openingSnapshot(client,employeeId);if(snapshot.context.employee.leave_policy_regime!=='government')fail('Enroll the employee before preparing openings.');
-  const policy=snapshot.context.policies.find(p=>p.id===data.policy_version_id&&p.effective_from<=data.as_of&&p.effective_to>=data.as_of);if(!policy)fail('Select a published policy covering the opening date.');
+ const work=async client=>{await lockEmployee(client,employeeId);const snapshot=await openingSnapshot(client,employeeId);if(snapshot.context.employee.leave_policy_regime!=='government')fail('Finish setting up this employee before adding opening balances.');
+  const policy=snapshot.context.policies.find(p=>p.id===data.policy_version_id&&p.effective_from<=data.as_of&&p.effective_to>=data.as_of);if(!policy)fail('Choose a leave policy that covers the opening balance date.');
   const facts=serviceFacts(snapshot.context,data.as_of);if(facts.issues.length)fail(facts.issues.join(' '));
-  if(data.period_start!==facts.period_start||data.period_end!==facts.period_end)fail('Opening period must match the certified service year.');
+  if(data.period_start!==facts.period_start||data.period_end!==facts.period_end)fail('The opening balance dates must match the employee’s service year.');
   if(dayNumber(data.as_of)<dayNumber(data.period_start)||dayNumber(data.as_of)>dayNumber(data.period_end))fail('Opening date must be inside its entitlement period.',400);
   const {rows:[row]}=await client.query(`INSERT INTO hr_gov_openings(employee_id,code,policy_version_id,period_start,period_end,as_of,amount,source_reference,payroll_reference,snapshot_hash,historical_snapshot,prepared_by,reason)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,[employeeId,data.code,policy.id,data.period_start,data.period_end,data.as_of,decimal(units(data.amount)),data.source_reference,data.payroll_reference,snapshot.hash,JSON.stringify(snapshot.historical),actor.id,reason]);await audit(client,actor,'hr.gov.opening.prepared',row.id,row);return row;
  };
  return existingClient?work(existingClient):withTransaction(pool,work);
 }
+// One HR officer adds an opening balance and it is available at once; the audit log records who did it.
+export async function saveOpening(pool,{user,actor,employeeId,data}){
+ return withTransaction(pool,async client=>{const opening=await prepareOpening(pool,{client,user,actor,employeeId,data});return certifyOpening(pool,{client,user,actor,id:opening.id,reason:data.reason});});
+}
+// Applies an opening balance saved before openings took effect straight away.
 export async function certifyOpening(pool,{client:existingClient=null,user,actor,id,reason}){
  central(user);reason=managementReason(reason);
  const work=async client=>{const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_openings WHERE id=$1',[id]);if(!ref)fail('Opening not found.',404);await lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT *,to_char(as_of,\'YYYY-MM-DD\') AS as_of FROM hr_gov_openings WHERE id=$1 FOR UPDATE',[id]);await assertDraftUsable(client,'opening',id);if(row.status==='certified')return row;
-  if(row.prepared_by===actor.id&&!initialAdminReview(client,actor.id,row.employee_id))fail('A different central HR officer must certify the reviewed opening.',403);
-  if((await openingSnapshot(client,row.employee_id)).hash!==row.snapshot_hash)fail('Employee, policy, calendar or balances changed after preview. Prepare a new opening.');
-  if((await client.query("SELECT 1 FROM hr_gov_entitlements WHERE employee_id=$1 AND code=$2 AND daterange(period_start,period_end,'[]') && daterange($3,$4,'[]')",[row.employee_id,row.code,row.period_start,row.period_end])).rowCount)fail('This entitlement period is already certified. Use an audited correction.');
+  if((await openingSnapshot(client,row.employee_id)).hash!==row.snapshot_hash)fail('This employee’s details or balances changed after the opening balance was saved. Add a new one.');
+  if((await client.query("SELECT 1 FROM hr_gov_entitlements WHERE employee_id=$1 AND code=$2 AND daterange(period_start,period_end,'[]') && daterange($3,$4,'[]')",[row.employee_id,row.code,row.period_start,row.period_end])).rowCount)fail('This leave year already has an opening balance. Use Correct balance instead.');
   const {rows:[entitlement]}=await client.query('INSERT INTO hr_gov_entitlements(employee_id,code,policy_version_id,period_start,period_end,as_of,opening_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',[row.employee_id,row.code,row.policy_version_id,row.period_start,row.period_end,row.as_of,row.id]);
   await postMovement(client,{entitlementId:entitlement.id,kind:'opening',amount:row.amount,effectiveDate:row.as_of,eventKey:`opening:${row.id}`,sourceReference:row.source_reference,actor,reason});
   const {rows:[after]}=await client.query("UPDATE hr_gov_openings SET status='certified',certified_by=$2,certified_at=NOW(),certification_reason=$3 WHERE id=$1 RETURNING *",[id,actor.id,reason]);await audit(client,actor,'hr.gov.opening.certified',id,{...after,entitlement_id:entitlement.id});return after;
@@ -226,7 +229,7 @@ export async function certifyOpening(pool,{client:existingClient=null,user,actor
 }
 export async function postMovement(client,{entitlementId,kind,amount,effectiveDate,eventKey,sourceReference,actor,reason,reversesId=null,excludeCaseRequestId=null,forecastReservationId=null}){
  const value=units(amount);const {rows:[account]}=await client.query('SELECT *,to_char(as_of,\'YYYY-MM-DD\') AS as_of,to_char(period_end,\'YYYY-MM-DD\') AS period_end FROM hr_gov_entitlements WHERE id=$1 FOR UPDATE',[entitlementId]);if(!account)fail('Entitlement not found.',404);
- if(effectiveDate<account.as_of||effectiveDate>account.period_end)fail('A movement must be within the certified period and on/after its opening date.');
+ if(effectiveDate<account.as_of||effectiveDate>account.period_end)fail('The date must be inside the leave year and on or after the opening balance date.');
  const payload={entitlement_id:entitlementId,kind,amount:decimal(value),effective_date:effectiveDate,source_reference:sourceReference,reverses_id:reversesId};
  const {rows:[existing]}=await client.query('SELECT *,to_char(effective_date,\'YYYY-MM-DD\') AS effective_date FROM hr_gov_ledger WHERE event_key=$1',[eventKey]);
  if(existing){if(fingerprint(Object.fromEntries(Object.keys(payload).map(k=>[k,existing[k]])))!==fingerprint(payload))fail('The event key was already used for a different posting.');return existing;}

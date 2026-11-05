@@ -3,10 +3,7 @@ import {isStandardLwop} from '../lib/governmentLeaveStandardLwop.js';
 import {evidenceReviewInput} from '../lib/governmentLeaveEvidence.js';
 import {divisionPlacementIssue} from './organisationHierarchy.js';
 import {creditLimit} from './governmentLeaveCarryover.js';
-import {initialAdminReview} from './governmentLeaveInitialAdmin.js';
-import {assertDraftUsable} from './governmentLeaveDrafts.js';
 import {serviceCorrectionIssue} from './employeeServiceCorrections.js';
-import {configurationReviewMode} from './governmentLeaveAdministration.js';
 import {assertCutoverResolved,legacyTransferFor} from './governmentLeaveCutover.js';
 import {withTransaction} from '../lib/transaction.js';
 import {ServiceError} from '../lib/serviceError.js';
@@ -75,43 +72,9 @@ async function annualPoolIssue(client,account,history,policy) {
 export function readyConfiguration(context,codes) {
   if(context.employee.status!=='active'||context.employee.leave_policy_regime!=='government')fail('Choose an active government employee.');
   const facts=serviceFacts(context,today());if(facts.issues.length)fail(facts.issues.join(' '));
-  for(const code of codes)if(!context.entitlements.some(e=>e.code===code&&e.period_start===facts.period_start&&e.period_end===facts.period_end&&e.as_of<=today()))fail(`Certify the ${code} opening for this service year first.`);
+  for(const code of codes)if(!context.entitlements.some(e=>e.code===code&&e.period_start===facts.period_start&&e.period_end===facts.period_end&&e.as_of<=today()))fail(`Add the ${code} opening balance for this service year first.`);
   const policy=context.policies.find(p=>p.effective_from<=today()&&p.effective_to>=today());if(!policy)fail('Publish an effective policy first.');
   for(const code of codes){const account=context.entitlements.find(e=>e.code===code&&e.period_start===facts.period_start);const limit=policy.rules[code==='recreation'?'recreation_cap_days':`${code}_annual_days`];if(units(account.balance)>creditLimit(account,limit))fail('A balance exceeds the standard government quantum/cap. Resolve the signed transition before activation; historical balances are preserved.');}
-}
-export async function prepareConfiguration(pool,{user,actor,employeeId,data,client:existingClient=null}) {
-  ledger.central(user);
-  const work=async client=>{
-    await assertCentral(client,user);await ledger.lockEmployee(client,employeeId);
-    const context=await ledger.loadContext(client,employeeId);
-    if(!Array.isArray(data.enabled_codes)||new Set(data.enabled_codes).size!==data.enabled_codes.length||data.enabled_codes.some(c=>!COMMON_CODES.includes(c)))fail('Select distinct common leave codes.',400);
-    if(data.enabled_codes.length){await assertCutoverResolved(client,employeeId,{activation:true});readyConfiguration(context,data.enabled_codes);}
-    const history=cleanHistory(data.medical_history||[],context,data.medical_rule),medical=context.entitlements.find(e=>e.code==='medical'&&e.period_start<=today()&&e.period_end>=today());
-    for(const code of data.enabled_codes.filter(code=>['medical','special'].includes(code))) {
-      const account=context.entitlements.find(e=>e.code===code&&e.period_start<=today()&&e.period_end>=today());
-      const policy=context.policies.find(p=>p.effective_from<=today()&&p.effective_to>=today()),issue=await annualPoolIssue(client,account,code==='medical'?history:[],policy);
-      if(issue)fail(issue);
-    }
-    if(history.filter(h=>h.uncertified).length>3)fail('Resolve medical history exceeding three uncertified exemptions.',400);
-    if(!['single_calendar_date_nonadjacent_scheduled_days','single_verified_shift_nonadjacent_scheduled_days'].includes(data.medical_rule))fail('Explicitly approve the supported medical day and adjacency definition.',400);
-    for(let i=0;i<history.length;i++)for(let j=i+1;j<history.length;j++)if(history[i].start_date<=history[j].end_date&&history[i].end_date>=history[j].start_date)fail('Resolve overlapping historical medical records.',400);
-    const {rows:[row]}=await client.query(`INSERT INTO hr_gov_workflow_configs(employee_id,enabled_codes,medical_rule,medical_history,medical_period_start,medical_as_of,source_reference,legacy_resolution_reference,snapshot_hash,prepared_by,reason)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[employeeId,data.enabled_codes,data.medical_rule,JSON.stringify(history),medical?.period_start||null,medical?.as_of||null,data.source_reference,data.legacy_resolution_reference,fingerprint(context),actor.id,reasonText(data.reason)]);
-    await audit(client,actor,'hr.gov.workflow.prepared',row.id,{employee_id:employeeId,enabled_codes:row.enabled_codes});return row;
-  };return existingClient?work(existingClient):withTransaction(pool,work);
-}
-export async function publishConfiguration(pool,{user,actor,id,reason,client:existingClient=null,oneStep=false}) {
-  ledger.central(user);
-  const work=async client=>{
-    await assertCentral(client,user);const {rows:[ref]}=await client.query('SELECT employee_id FROM hr_gov_workflow_configs WHERE id=$1',[id]);if(!ref)fail('Configuration not found.',404);
-    await ledger.lockEmployee(client,ref.employee_id);const {rows:[row]}=await client.query('SELECT * FROM hr_gov_workflow_configs WHERE id=$1 FOR UPDATE',[id]);
-    if(row.status==='published')return row;await assertDraftUsable(client,'configuration',row.id);
-    const reviewMode=oneStep?'one_step':await configurationReviewMode(client,{user,actor,preparedBy:row.prepared_by,initialReview:!!initialAdminReview(client,actor.id,row.employee_id)});
-    const context=await ledger.loadContext(client,row.employee_id);if(fingerprint(context)!==row.snapshot_hash)fail('The employee foundations changed. Prepare a fresh configuration.');
-    if(row.enabled_codes.length){await assertCutoverResolved(client,row.employee_id,{activation:true});readyConfiguration(context,row.enabled_codes);}
-    const {rows:[after]}=await client.query("UPDATE hr_gov_workflow_configs SET status='published',approved_by=$2,approved_at=NOW() WHERE id=$1 RETURNING *",[id,actor.id]);
-    await audit(client,actor,'hr.gov.workflow.published',id,{employee_id:row.employee_id,enabled_codes:row.enabled_codes,reason:reasonText(reason),review_mode:reviewMode});return after;
-  };return existingClient?work(existingClient):withTransaction(pool,work);
 }
 const LEAVE_TYPE_NAMES={recreation:'Recreation',medical:'Medical',special:'Special'};
 // Saving new leave types keeps the earlier Medical absences already recorded for the same Medical year.
@@ -131,11 +94,23 @@ export async function saveLeaveTypes(pool,{user,actor,employeeId,data}) {
     // Rostered staff can work long shifts, so a single Medical absence is one shift rather than one calendar date.
     const medicalRule=basis?.schedule_mode==='roster'?'single_verified_shift_nonadjacent_scheduled_days':'single_calendar_date_nonadjacent_scheduled_days';
     const reason=`${types.length?`Leave types set to ${types.map(code=>LEAVE_TYPE_NAMES[code]).join(', ')}.`:'Leave applications paused.'}${note?` Note: ${note}`:''}`;
-    const medicalHistory=data.medical_history??await keptMedicalHistory(client,employeeId,context);
-    const config=await prepareConfiguration(pool,{client,user,actor,employeeId,data:{enabled_codes:types,medical_rule:medicalRule,medical_history:medicalHistory,source_reference:'Leave types',legacy_resolution_reference:'Leave types',reason}});
-    return publishConfiguration(pool,{client,user,actor,id:config.id,reason,oneStep:true});
+    data={enabled_codes:types,medical_rule:medicalRule,medical_history:data.medical_history??await keptMedicalHistory(client,employeeId,context),source_reference:'Leave types',legacy_resolution_reference:'Leave types',reason};
+    if(data.enabled_codes.length){await assertCutoverResolved(client,employeeId,{activation:true});readyConfiguration(context,data.enabled_codes);}
+    const history=cleanHistory(data.medical_history||[],context,data.medical_rule),medical=context.entitlements.find(e=>e.code==='medical'&&e.period_start<=today()&&e.period_end>=today());
+    for(const code of data.enabled_codes.filter(code=>['medical','special'].includes(code))) {
+      const account=context.entitlements.find(e=>e.code===code&&e.period_start<=today()&&e.period_end>=today());
+      const policy=context.policies.find(p=>p.effective_from<=today()&&p.effective_to>=today()),issue=await annualPoolIssue(client,account,code==='medical'?history:[],policy);
+      if(issue)fail(issue);
+    }
+    if(history.filter(h=>h.uncertified).length>3)fail('Enter no more than three earlier Medical absences without a certificate.',400);
+    for(let i=0;i<history.length;i++)for(let j=i+1;j<history.length;j++)if(history[i].start_date<=history[j].end_date&&history[i].end_date>=history[j].start_date)fail('Two earlier Medical absences overlap. Fix the dates.',400);
+    const {rows:[row]}=await client.query(`INSERT INTO hr_gov_workflow_configs(employee_id,enabled_codes,medical_rule,medical_history,medical_period_start,medical_as_of,source_reference,legacy_resolution_reference,snapshot_hash,prepared_by,reason)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[employeeId,data.enabled_codes,data.medical_rule,JSON.stringify(history),medical?.period_start||null,medical?.as_of||null,data.source_reference,data.legacy_resolution_reference,fingerprint(context),actor.id,reasonText(data.reason)]);
+    const {rows:[after]}=await client.query("UPDATE hr_gov_workflow_configs SET status='published',approved_by=$2,approved_at=NOW() WHERE id=$1 RETURNING *",[row.id,actor.id]);
+    await audit(client,actor,'hr.gov.workflow.published',row.id,{employee_id:employeeId,enabled_codes:row.enabled_codes,reason,review_mode:'one_step'});return after;
   });
 }
+
 export async function assignConsentOffice(pool,{user,actor,data}) {
   ledger.central(user);
   return withTransaction(pool,async client=>{
@@ -146,7 +121,7 @@ export async function assignConsentOffice(pool,{user,actor,data}) {
     if(data.effective_to&&data.effective_to<data.effective_from)fail('Office dates are reversed.',400);
     if(['relevant_secretary','minister'].includes(data.level)&&!data.department_id||data.level==='hr_verifier'&&data.department_id)fail('Secretary is department-specific; HR verifier is government-wide.',400);
     if((await client.query("SELECT 1 FROM hr_gov_consent_offices a LEFT JOIN hr_gov_consent_withdrawals w ON w.office_id=a.id WHERE level=$1 AND department_id IS NOT DISTINCT FROM $2::uuid AND daterange(effective_from,COALESCE(w.effective_to,a.effective_to),'[]') && daterange($3,$4,'[]')",[data.level,data.department_id||null,data.effective_from,data.effective_to||null])).rowCount)fail('An effective consent office already covers these dates.');
-    const {rows:[row]}=await client.query('INSERT INTO hr_gov_consent_offices(level,department_id,approver_employee_id,effective_from,effective_to,source_reference,recorded_by,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[data.level,data.department_id||null,employee.id,data.effective_from,data.effective_to||null,data.source_reference,actor.id,reasonText(data.reason)]);
+    const {rows:[row]}=await client.query('INSERT INTO hr_gov_consent_offices(level,department_id,approver_employee_id,effective_from,effective_to,source_reference,recorded_by,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[data.level,data.department_id||null,employee.id,data.effective_from,data.effective_to||null,data.source_reference||'Recorded in the leave app',actor.id,reasonText(data.reason)]);
     await audit(client,actor,'hr.gov.consent_office.assigned',row.id,row);return row;
   });
 }

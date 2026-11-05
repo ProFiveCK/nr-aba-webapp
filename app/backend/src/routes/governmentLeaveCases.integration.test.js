@@ -16,7 +16,7 @@ describe('government event cases, financial commitments and amendments',{skip:sk
  after(async()=>{if(server)await new Promise(resolve=>server.close(resolve));await pool?.end();});
  async function account(permissions,type='staff'){return(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions,account_type) VALUES($1,'Synthetic workflow actor','user','x',$2,$3) RETURNING *",[`${randomUUID()}@example.test`,permissions,type])).rows[0];}
  async function opening(code,amount){const o=await l.prepareOpening(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{code,amount,policy_version_id:policy.id,period_start:'2026-01-01',period_end:'2026-12-31',as_of:'2026-10-01',source_reference:'Synthetic reviewed HR register',payroll_reference:'Synthetic Salary Unit reconciliation',reason}});await l.certifyOpening(pool,{user:user(certifier),actor:certifier,id:o.id,reason});}
- async function configure(codes=['recreation','medical','special'],history=[]){const row=await w.prepareConfiguration(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{enabled_codes:codes,medical_rule:'single_calendar_date_nonadjacent_scheduled_days',medical_history:history,source_reference:'Synthetic medical rule and cutover history approval',legacy_resolution_reference:'Synthetic legacy leave reconciled register',reason}});await w.publishConfiguration(pool,{user:user(certifier),actor:certifier,id:row.id,reason});return row;}
+ async function configure(codes=['recreation','medical','special'],history=[]){return w.saveLeaveTypes(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{enabled_codes:codes,medical_history:history}});}
  const application=(code='recreation',start='2026-11-02',end=start)=>({request_id:randomUUID(),code,start_date:start,end_date:end,reason,medical_mode:code==='medical'?'exemption':'not_applicable'});
  async function submit(data=application(),documents=[]){return w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data,documents});}
  async function decide(id,changes={},actor=null){const view=await w.requestView(pool,user(hr),id),stage=view.stages[view.stage_index];const by=actor||officers[stage.level].account;return w.decideRequest(pool,{user:user(by),actor:by,id,data:{stage_id:stage.id,binding_id:stage.binding?.id||randomUUID(),event_key:randomUUID(),decision:'approved',note:reason,discretion_confirmed:true,evidence_reviewed:true,certificate_reviewed:true,justification_accepted:true,source_reference:'Synthetic registered-practitioner and HR verified source',covers_start:'2026-01-01',covers_end:'2026-12-31',notice_waived:true,...changes}});}
@@ -180,21 +180,6 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   const view=await w.requestView(pool,user(supervisor),amended.body.id);assert.equal(view.end_date,'2026-12-15');assert.equal(Number(view.charge),2);assert.equal(view.documents.length,1);assert.equal(view.stage_index,0);assert.equal(view.short_notice,null);
   assert.equal((await decide(amended.body.id,{certification_confirmed:true})).status,'approved');assert.equal(Number(await held()),0);
  });
- test('pending simplification is audited and preserves requests, decisions, stages and balance holds',async()=>{
-  const pending=await submit(application('medical','2026-11-04'));await simpleRoute();
-  const repair=(await import('../services/governmentLeavePendingSimplification.js')).simplifyPendingApprovals;
-  const before=(await w.getRequest(pool,pending.id)).application_snapshot,stages=(await pool.query('SELECT * FROM hr_gov_request_stages ORDER BY id')).rows,ledger=(await pool.query('SELECT * FROM hr_gov_ledger ORDER BY id')).rows;
-  const dry=await repair(pool);assert.equal(dry.applications.length,1);assert.equal((await w.requestView(pool,user(hr),pending.id)).simple_approval,false);
-  await assert.rejects(repair(pool,{apply:true,expected:[]}),/changed/);await repair(pool,{apply:true,expected:dry.manifest});
-  const view=await w.requestView(pool,user(officers.division.account),pending.id);assert.equal(view.simple_approval,true);assert.equal(view.status,'pending');assert.equal(view.stages.length,1);assert.equal(view.evidence_review_required,false);assert.equal(view.private_access,true);
-  assert.deepEqual((await w.getRequest(pool,pending.id)).application_snapshot,before);assert.deepEqual((await pool.query('SELECT * FROM hr_gov_request_stages ORDER BY id')).rows,stages);assert.deepEqual((await pool.query('SELECT * FROM hr_gov_ledger ORDER BY id')).rows,ledger);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_decisions')).rows[0].n,0);
-  await decide(pending.id,{certification_confirmed:true});assert.equal((await w.getRequest(pool,pending.id)).status,'approved');
- });
- test('pending simplification refuses to reinterpret decisions already recorded',async()=>{
-  const pending=await caseSubmit(event('official'));await decide(pending.id);await simpleRoute();
-  const repair=(await import('../services/governmentLeavePendingSimplification.js')).simplifyPendingApprovals;
-  await assert.rejects(repair(pool),/review history/);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_request_route_corrections')).rows[0].n,0);
- });
  test('extended LWOP has the same Supervisor route with an explicit basis and zero pay',async()=>{
   await simpleRoute();const r=await c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:event('lwop','2026-11-02','2027-11-02'),simpleApproval:true});
   await assert.rejects(decide(r.id,{certification_confirmed:true}),/beyond twelve months/);
@@ -229,35 +214,6 @@ describe('government event cases, financial commitments and amendments',{skip:sk
  test('longer-than-twelve-month LWOP keeps its exceptional review rather than silently using the short route',async()=>{
   await simpleRoute();const r=await caseSubmit(event('lwop','2026-11-02','2027-11-02'),owner,[]),view=await w.requestView(pool,user(hr),r.id);
   assert.equal(view.standard_lwop,false);assert.equal(view.stages.length,5);assert.equal(view.can_prepare,true);
- });
- test('maintenance repairs the exact stuck LWOP pattern using existing certified approvals without rewriting history',async()=>{
-  const repair=(await import('../services/governmentLeaveRouteRepair.js')).repairApprovedLwopRoute;
-  const r=await caseSubmit(event('lwop','2026-11-02','2026-11-06'),owner,[]);await decide(r.id,{certification_confirmed:true});const route=await simpleRoute();
-  const originals=(await pool.query('SELECT * FROM hr_gov_request_stages WHERE request_id=$1 ORDER BY ordinal',[r.id])).rows,decisions=(await pool.query('SELECT * FROM hr_gov_decisions WHERE request_id=$1',[r.id])).rows,snapshot=(await w.getRequest(pool,r.id)).application_snapshot;
-  const preview=await repair(pool,{id:r.id,expectedRouteId:route.id});assert.equal(preview.result,'approved');assert.equal(preview.new_approval_decisions,0);assert.equal((await w.getRequest(pool,r.id)).status,'pending');
-  await repair(pool,{id:r.id,expectedRouteId:route.id,apply:true});const saved=await w.getRequest(pool,r.id);assert.equal(saved.status,'approved');assert.equal(saved.stage_index,0);assert.deepEqual(saved.application_snapshot,snapshot);
-  assert.deepEqual((await pool.query('SELECT * FROM hr_gov_request_stages WHERE request_id=$1 ORDER BY ordinal',[r.id])).rows,originals);assert.deepEqual((await pool.query('SELECT * FROM hr_gov_decisions WHERE request_id=$1',[r.id])).rows,decisions);
-  const view=await w.requestView(pool,user(hr),r.id);assert.equal(view.stages.length,1);assert.equal(view.stages[0].label,'Supervisor');assert.equal(view.standard_lwop,true);assert.equal(view.approval_route.id,route.id);
-  assert.equal((await repair(pool,{id:r.id,expectedRouteId:route.id,apply:true})).already_repaired,true);assert.equal((await l.loadContext(pool,employee.id)).exclusions.length,1);
-  const list=await call('/requests?mode=all&status=approved',null,hr);assert.equal(list.status,200);assert.equal(list.body.requests.find(item=>item.id===r.id).unassigned_stages,0);
-  await assert.rejects(pool.query("UPDATE hr_gov_request_route_corrections SET reason='changed' WHERE request_id=$1",[r.id]),/immutable/);
- });
- test('route repair refuses missing certification, incomplete approvals and mismatched routes',async()=>{
-  const repair=(await import('../services/governmentLeaveRouteRepair.js')).repairApprovedLwopRoute;
-  const r=await caseSubmit(event('lwop','2026-11-02','2026-11-06'),owner,[]),route=await simpleRoute();
-  await assert.rejects(repair(pool,{id:r.id,expectedRouteId:route.id,apply:true}),/recorded approvals/);
-  await decide(r.id);await assert.rejects(repair(pool,{id:r.id,expectedRouteId:route.id,apply:true}),/certification/);
-  await assert.rejects(repair(pool,{id:r.id,expectedRouteId:randomUUID(),apply:true}),/route changed/);
-  assert.equal((await w.getRequest(pool,r.id)).status,'pending');assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_request_route_corrections')).rows[0].n,0);
- });
- test('repair rejects changed employment and audit failure rolls back the correction, grant and service effects',async()=>{
-  const repair=(await import('../services/governmentLeaveRouteRepair.js')).repairApprovedLwopRoute;
-  const r=await caseSubmit(event('lwop','2026-11-02','2026-11-06'),owner,[]);await decide(r.id,{certification_confirmed:true});const route=await simpleRoute();
-  await pool.query("UPDATE hr_employee_service_periods SET employment_category='temporary' WHERE employee_id=$1",[employee.id]);await assert.rejects(repair(pool,{id:r.id,expectedRouteId:route.id,apply:true}),/permanent/);
-  await pool.query("UPDATE hr_employee_service_periods SET employment_category='permanent' WHERE employee_id=$1",[employee.id]);
-  await pool.query("CREATE FUNCTION reject_route_repair_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.gov.request.route_corrected' THEN RAISE EXCEPTION 'synthetic repair audit failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER reject_route_repair_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_route_repair_audit()");
-  try{await assert.rejects(repair(pool,{id:r.id,expectedRouteId:route.id,apply:true}),/synthetic repair audit failure/);}finally{await pool.query('DROP TRIGGER reject_route_repair_audit ON audit_log; DROP FUNCTION reject_route_repair_audit()');}
-  const saved=await w.getRequest(pool,r.id);assert.equal(saved.status,'pending');assert.equal(saved.final_pdf,null);assert.equal((await w.stagesFor(pool,r.id)).length,5);assert.equal((await l.loadContext(pool,employee.id)).exclusions.length,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_request_route_corrections')).rows[0].n,0);
  });
  test('event application has no fake balance; evidence and independent determination are mandatory; final PDF is immutable',async()=>{
   const data=event('official','2026-11-02','2026-11-06'),r=await caseSubmit(data);assert.equal((await caseSubmit(data)).id,r.id);const before=(await l.loadContext(pool,employee.id)).entitlements.map(e=>e.balance);
@@ -401,28 +357,6 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   await oldService();const r=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:'Synthetic financial request'},hr);await determine(r.id,financial('100'));await grant(r.id);const bytes=Buffer.from((await w.getRequest(pool,r.id)).final_pdf);
   const a=await caseSubmit({...event('amendment','2026-10-07'),related_request_id:r.id,assisted_reference:'Synthetic cancel financial commitment'},hr,[]);await determine(a.id,{...generic,original_request_id:r.id,action:'cancel_grant',salary_correction_reference:'Synthetic actual Salary Unit commitment cancellation'});await grant(a.id);assert.deepEqual((await w.getRequest(pool,r.id)).final_pdf,bytes);
   const next=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:'Synthetic replacement benefit request'},hr);await determine(next.id,financial('100'));await grant(next.id);
- });
- test('benefit baseline changes require independent sourced reconciliation and preserve previous commitments',async()=>{
-  await oldService();const r=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:'Synthetic first financial request'},hr);await determine(r.id,financial('104'));await grant(r.id);
-  const next=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:'Synthetic corrected financial request'},hr),corrected={...financial('5'),prior_consumed:'5',prior_history_reference:'Synthetic corrected historic payout register'};
-  await assert.rejects(determine(next.id,corrected),/historical benefit baseline changed/);
-  const module=await import('../services/governmentLeaveBenefitReconciliation.js'),row=await module.prepareBenefitReconciliation(pool,{user:user(hr),actor:hr,data:{reconciliation_id:randomUUID(),employee_id:employee.id,prior_units:'5',history_reference:corrected.prior_history_reference,transition_reference:corrected.transition_resolution_reference,source_reference:reason,reason}});
-  const drafts=await import('../services/governmentLeaveDrafts.js');await drafts.changeDraftState(pool,{user:user(hr),actor:hr,kind:'benefit_reconciliation',id:row.id,data:{action:'discard',expected_revision:0,reason}});
-  await assert.rejects(module.approveBenefitReconciliation(pool,{user:user(certifier),actor:certifier,id:row.id,data:{snapshot_hash:row.snapshot_hash,reason}}),/discarded/);
-  await drafts.changeDraftState(pool,{user:user(hr),actor:hr,kind:'benefit_reconciliation',id:row.id,data:{action:'restore',expected_revision:1,reason}});
-  await assert.rejects(module.approveBenefitReconciliation(pool,{user:user(hr),actor:hr,id:row.id,data:{snapshot_hash:row.snapshot_hash,reason}}),/different central/);
-  await module.approveBenefitReconciliation(pool,{user:user(certifier),actor:certifier,id:row.id,data:{snapshot_hash:row.snapshot_hash,reason}});await determine(next.id,corrected);await grant(next.id);
-  assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_benefit_bases WHERE employee_id=$1',[employee.id])).rows[0].n,1);
-  assert.equal((await pool.query('SELECT sum(units)::text AS n FROM hr_gov_benefit_commitments WHERE employee_id=$1',[employee.id])).rows[0].n,'109.000000');
-  const tooMuch=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:'Synthetic remaining exhausted'},hr);await assert.rejects(determine(tooMuch.id,{...corrected,requested_units:'1'}),/exceed/);
- });
- test('reviewed benefit service correction keeps the original register and all previously committed units',async()=>{
-  await oldService();const first=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:reason},hr);await determine(first.id,financial('100'));await grant(first.id);
-  const originalBasis=(await pool.query('SELECT id FROM hr_gov_benefit_bases WHERE employee_id=$1',[employee.id])).rows[0].id;
-  await l.addFoundationRecord(pool,{user:user(hr),actor:hr,employeeId:employee.id,kind:'basis',data:{effective_from:'2026-10-07',continuity_start:'2010-01-01',anniversary_method:'calendar',leap_day_method:'feb28',schedule_mode:'weekly',source_reference:reason,reason}});
-  const next=await caseSubmit({...event('furlough','2026-10-07'),assisted_reference:reason},hr),facts=financial('14');await assert.rejects(determine(next.id,facts),/service basis changed/);
-  const module=await import('../services/governmentLeaveBenefitReconciliation.js'),row=await module.prepareBenefitReconciliation(pool,{user:user(hr),actor:hr,data:{reconciliation_id:randomUUID(),employee_id:employee.id,prior_units:'0',history_reference:facts.prior_history_reference,transition_reference:facts.transition_resolution_reference,source_reference:reason,reason}});await module.approveBenefitReconciliation(pool,{user:user(certifier),actor:certifier,id:row.id,data:{snapshot_hash:row.snapshot_hash,reason}});await determine(next.id,facts);await grant(next.id);
-  const register=(await pool.query('SELECT count(*)::int AS n,sum(units)::text AS used FROM hr_gov_benefit_commitments WHERE employee_id=$1 AND basis_id=$2',[employee.id,originalBasis])).rows[0];assert.equal(register.n,2);assert.equal(register.used,'114.000000');
  });
  test('actual HTTP case routes enforce applicant ownership and central determinations without trusting injected pay or charges',async()=>{
   const session=await auth.createSession(owner.id),token=auth.buildTokenPayload(owner,session.tokenId,session.expiresAt),f=new FormData(),data=event();for(const [key,val] of Object.entries(data))f.set(key,val);f.set('employee_id',officers.division.employee.id);f.set('charge','999');f.set('salary_percent','999');f.append('documents',new Blob([doc.file_data],{type:'application/pdf'}),'synthetic-case.pdf');

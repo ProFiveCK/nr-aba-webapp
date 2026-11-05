@@ -1,7 +1,6 @@
-import {initGovernmentLeaveInitialSetupSchema} from './governmentLeaveInitialSetup.js';
+import {initGovernmentLeaveInitialSetupSchema,initGovernmentLeaveRolloutSchema} from './governmentLeaveRetiredSchema.js';
 import {initGovernmentLeaveDraftSchema} from './governmentLeaveDrafts.js';
 import {initEmployeeServiceCorrectionSchema} from './employeeServiceCorrections.js';
-import {initGovernmentLeaveRolloutSchema} from './governmentLeaveRollout.js';
 import {initGovernmentLeavePayrollSchema} from './governmentLeavePayrollSchema.js';
 import {initGovernmentLeaveWorkflowSchema} from './governmentLeaveWorkflowSchema.js';
 // Additive government subledger; legacy IDs, balances and applications stay intact.

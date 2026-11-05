@@ -31,7 +31,7 @@ export function validateRules(rules){
 }
 // A verified basis defines the continuity group. A later break requires a successor basis.
 export function serviceFacts(context,asAt){
- const basis=context.bases.filter(b=>b.effective_from<=asAt).at(-1);if(!basis)return {issues:['HR must certify the continuous-service basis.']};
+ const basis=context.bases.filter(b=>b.effective_from<=asAt).at(-1);if(!basis)return {issues:['Record the employee’s appointment start date under Details and access.']};
  const start=basis.continuity_start,first=dayNumber(start),finish=dayNumber(asAt),issues=[];
  if(finish-first>18300)throw new Error('Service history exceeds the supported 50-year window.');
  for(const item of context.exclusions)if(item.kind==='continuity_break'&&item.start_date<=asAt&&item.end_date>=start)issues.push('A recorded continuity break requires a new certified service basis.');

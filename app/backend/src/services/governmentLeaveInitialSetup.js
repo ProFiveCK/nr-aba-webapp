@@ -166,7 +166,7 @@ async function loadSource(client, startDate, tables = null, includeHashes = true
     if (employee.current_service_period?.employment_category === 'unknown') missing.push('Employment category determination');
     if (employee.current_service_period?.counts_for_service == null) missing.push('Credited-service determination');
     if (!employee.current_service_period?.work_pattern_id) missing.push('Verified work pattern');
-    if (!employee.has_service_basis) missing.push('Certified continuous-service basis');
+    if (!employee.has_service_basis) missing.push('Appointment start date');
     if (!employee.reviewer_id) missing.push('Verified login link');
     return { ...employee, missing_facts: missing, balances: byEmployee.get(employee.id) || [], placement: placementFor(employee, departments, divisions) };
   });

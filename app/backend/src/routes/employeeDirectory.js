@@ -8,6 +8,7 @@ import { requirePermission } from '../services/authService.js';
 import { PERMISSIONS } from '../config.js';
 import { ServiceError } from '../lib/serviceError.js';
 import { withTransaction } from '../lib/transaction.js';
+import { syncServiceStart } from '../services/governmentLeave.js';
 import payrollEmployeeImportRouter from './payrollEmployeeImport.js';
 import { createManagedEmployee, createWorkPattern, listLinkableAccounts, updateManagedEmployee } from '../services/employeeManagement.js';
 import {
@@ -112,7 +113,11 @@ router.post('/:id/service-periods', centralHr, [employeeId, reason, dateOnly('st
   body('appointment_reference').optional({ nullable: true }).isString().isLength({ max: 200 }),
 ], async (req, res) => {
   if (!handleValidation(req, res)) return;
-  res.status(201).json(await addServicePeriod(pool, { employeeId: req.params.id, period: req.body, actor: actor(req), reason: req.body.reason }));
+  res.status(201).json(await withTransaction(pool, async client => {
+    const period = await addServicePeriod(pool, { client, employeeId: req.params.id, period: req.body, actor: actor(req), reason: req.body.reason });
+    await syncServiceStart(client, { employeeId: req.params.id, actor: actor(req) });
+    return period;
+  }));
 });
 
 router.post('/:id/service-periods/:periodId/close', centralHr, [employeeId, param('periodId').isUUID(), reason, dateOnly('end_date', true)], async (req, res) => {

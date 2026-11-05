@@ -25,7 +25,7 @@ test('missing pattern/roster fails closed; verified 12-hour and off-duty roster 
 test('LWOP pauses credited thresholds without resetting continuity; breaks and unknown credit require review',()=>{
  const c=context();c.exclusions=[{start_date:'2026-02-01',end_date:'2026-02-28',kind:'lwop'}];assert.equal(serviceFacts(c,'2026-05-01').milestone(3),'2026-04-29');assert.equal(serviceFacts(c,'2026-05-01').credited_days,92);
  c.bases[0].anniversary_method='pause_exclusions';assert.equal(serviceFacts(c,'2026-05-01').period_end,'2027-01-28');assert.match(calculateEvaluation(c,input('medical','2026-02-10')).issues.join(),/overlaps recorded LWOP/);
- c.exclusions[0].kind='continuity_break';assert.match(serviceFacts(c,'2026-05-01').issues.join(),/new service start/);c.periods[0].counts_for_service=null;assert.match(serviceFacts(c,'2026-05-01').issues.join(),/counts for service/);
+ c.exclusions[0].kind='continuity_break';assert.match(serviceFacts(c,'2026-05-01').issues.join(),/Add their new appointment/);c.periods[0].counts_for_service=null;assert.match(serviceFacts(c,'2026-05-01').issues.join(),/counts for service/);
 });
 test('long exclusions and service-year splits are bounded, leap convention explicit and exact precision preserved',()=>{
  const c=context();c.exclusions=[{start_date:'2026-01-02',end_date:'2026-08-01',kind:'lwop'}];assert.equal(serviceFacts(c,'2026-10-27').milestone(3),'2026-10-30');

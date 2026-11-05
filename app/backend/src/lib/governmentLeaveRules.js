@@ -2,6 +2,7 @@ import {badRequest} from './serviceError.js';
 import { createHash } from 'node:crypto';
 import {holidaysMissingNotice} from './governmentLeaveCalendarRules.js';
 export const ENGINE_VERSION='gov-foundation-1';
+export const UNVERIFIED_ANNIVERSARY='Their appointment ends before the next leave year starts, so that leave year can’t be worked out yet.';
 export const CODES = ['recreation','medical','special','teacher_recreation','extended_medical','extended_medical_minister','maternity','paternity','adoption','official','lwop','long_service','furlough','recreation_encashment','recreation_separation','attendance','amendment','witness_republic','witness_other'];
 export const COMMON_CODES=['recreation','medical','special'];
 export const DEFAULT_RULES={ordinary_recreation_months:3,temporary_recreation_months:12,recreation_annual_days:'20',recreation_cap_days:'60',recreation_notice_days:14,medical_annual_days:'10',special_annual_days:'3',medical_uncertified_occasions:3};
@@ -34,7 +35,7 @@ export function serviceFacts(context,asAt){
  const basis=context.bases.filter(b=>b.effective_from<=asAt).at(-1);if(!basis)return {issues:['Record the employee’s appointment start date under Details and access.']};
  const start=basis.continuity_start,first=dayNumber(start),finish=dayNumber(asAt),issues=[];
  if(finish-first>18300)throw new Error('Service history exceeds the supported 50-year window.');
- for(const item of context.exclusions)if(item.kind==='continuity_break'&&item.start_date<=asAt&&item.end_date>=start)issues.push('A break in service was recorded. Set a new service start date.');
+ for(const item of context.exclusions)if(item.kind==='continuity_break'&&item.start_date<=asAt&&item.end_date>=start)issues.push('A break in service was recorded. Add their new appointment under Details and access; service then counts from it.');
  const periods=context.periods.filter(p=>!p.end_date||p.end_date>=start),covered=[];
  for(const p of periods)if(p.counts_for_service!=null)covered.push([Math.max(first,dayNumber(p.start_date)),p.end_date?dayNumber(p.end_date):first+18301]);
  covered.sort((a,b)=>a[0]-b[0]);let until=first-1;
@@ -51,7 +52,7 @@ export function serviceFacts(context,asAt){
  let year=0,periodStart=start,periodEnd=null;
  for(let candidate=1;candidate<=51;candidate++){
    const boundary=basis.anniversary_method==='calendar'?monthBoundary(start,candidate*12,basis.leap_day_method):milestone(candidate*12);
-   if(!boundary){issues.push('An anniversary crosses unverified future service.');break;}
+   if(!boundary){issues.push(UNVERIFIED_ANNIVERSARY);break;}
    if(boundary>asAt){periodEnd=isoDay(dayNumber(boundary)-1);break;}year=candidate;periodStart=boundary;
  }
  return {basis,issues:[...new Set(issues)],excluded_days:excludedBefore(finish),credited_days:finish-first-excludedBefore(finish),period_start:periodStart,period_end:periodEnd,completed_years:year,milestone};

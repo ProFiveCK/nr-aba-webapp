@@ -1128,8 +1128,8 @@ function UserManagementPanel() {
                     </label>
                     {linkChanged && <>
                         <p className="text-sm text-amber-900">{selectedEmployee?.reviewer_id && selectedEmployee.reviewer_id !== form.id ? `This will replace ${displacedAccount?.email || 'the current login'} on ${selectedEmployee.display_name}. ` : ''}{form.original_hr_employee_id ? 'The login will be removed from its previous employee record. ' : ''}Verify the person and login before saving.</p>
-                        <label className="block text-sm font-medium text-gray-700">Reason for staff login change
-                            <textarea required minLength={10} maxLength={1000} value={form.link_reason} onChange={e => setForm({ ...form, link_reason: e.target.value })} className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"/>
+                        <label className="block text-sm font-medium text-gray-700">Reason for staff login change (optional)
+                            <textarea maxLength={1000} value={form.link_reason} onChange={e => setForm({ ...form, link_reason: e.target.value })} className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"/>
                         </label>
                     </>}</>}
                     {!canLinkStaff && <p className="text-sm text-gray-500">Central HR permission is required to change staff login assignments.</p>}

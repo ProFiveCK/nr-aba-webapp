@@ -21,9 +21,15 @@ it('routine setup has an optional note while keeping the actual setup fields req
  expect(note).toBeDefined();expect(note).not.toContain('required');
 });
 it('a correction still requires its reason and retains a provided explanation',()=>{
- const html=renderToStaticMarkup(<ActionDialog title="Correct balance" defaultReason="Correction supported by the reviewed balance record." onClose={noop} onSave={save}><input name="amount" required/></ActionDialog>);
+ const html=renderToStaticMarkup(<ActionDialog title="Correct balance" reasonRequired defaultReason="Correction supported by the reviewed balance record." onClose={noop} onSave={save}><input name="amount" required/></ActionDialog>);
  expect(html).toContain('>Reason<');
  expect(html).toMatch(/name="reason"[^>]*required/);
  expect(html).toContain('Correction supported by the reviewed balance record.');
  expect(html).not.toContain('Add a note (optional)');
+});
+it('a routine change offers an optional reason',()=>{
+ const html=renderToStaticMarkup(<ActionDialog title="Add employee" onClose={noop} onSave={save}><input name="display_name" required/></ActionDialog>);
+ expect(html).toContain('Reason (optional)');
+ const reason=html.match(/<textarea[^>]*name="reason"[^>]*>/)?.[0];
+ expect(reason).toBeDefined();expect(reason).not.toContain('required');expect(reason).not.toContain('minLength');
 });

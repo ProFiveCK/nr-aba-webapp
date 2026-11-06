@@ -12,8 +12,9 @@ export function Field({ label, children }: { label: string; children: ReactEleme
     const id = useId();
     return <div className="leave-field min-w-0 space-y-2 text-sm font-medium text-gray-700"><label className="block" htmlFor={id}>{label}</label>{cloneElement(children, { id })}</div>;
 }
-export function ReasonField({defaultValue,label="Reason",maxLength=1000}:{defaultValue?:string;label?:string;maxLength?:number}={}) { return <Field label={label}><textarea name="reason" defaultValue={defaultValue} required minLength={10} maxLength={maxLength} rows={3} className={inputClass} placeholder="Why is this change needed? (at least 10 characters)" /></Field>; }
-export function ActionDialog({ title, description, onClose, onSave, children, defaultReason, reasonLabel, reasonMaxLength, automaticReason, saveLabel = 'Save' }: { title: string; description?: string; onClose: () => void; onSave: (data: FormData) => Promise<void>; children: ReactNode; defaultReason?:string; reasonLabel?:string; reasonMaxLength?:number; automaticReason?:string; saveLabel?: string }) {
+// Routine changes need no reason (the audit log records who made them). Corrections, offboarding and leave decisions still ask for one.
+export function ReasonField({defaultValue,label,maxLength=1000,required=false}:{defaultValue?:string;label?:string;maxLength?:number;required?:boolean}={}) { return <Field label={label||(required?'Reason':'Reason (optional)')}><textarea name="reason" defaultValue={defaultValue} required={required} minLength={required?10:undefined} maxLength={maxLength} rows={3} className={inputClass} placeholder={required?'Why is this change needed? (at least 10 characters)':'Add a note if it helps'} /></Field>; }
+export function ActionDialog({ title, description, onClose, onSave, children, defaultReason, reasonLabel, reasonMaxLength, automaticReason, reasonRequired = false, saveLabel = 'Save' }: { title: string; description?: string; onClose: () => void; onSave: (data: FormData) => Promise<void>; children: ReactNode; defaultReason?:string; reasonLabel?:string; reasonMaxLength?:number; automaticReason?:string; reasonRequired?:boolean; saveLabel?: string }) {
     const [busy, setBusy] = useState(false), [error, setError] = useState('');
     const saving = useRef(false), feedback = useRef<HTMLParagraphElement>(null);
     async function save(form: HTMLFormElement) {
@@ -32,7 +33,7 @@ export function ActionDialog({ title, description, onClose, onSave, children, de
     }
     return <Modal title={title} description={description} onClose={onClose} closeDisabled={busy} size="xl">
         <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); void save(e.currentTarget); }}>
-            <fieldset disabled={busy} className="min-w-0 space-y-4">{children}<>{automaticReason ? <details><summary className="cursor-pointer text-sm text-gray-600">Add a note (optional)</summary><div className="mt-3"><Field label="Note (optional)"><textarea name="setup_note" maxLength={800} rows={3} className={inputClass} /></Field></div></details> : <ReasonField defaultValue={defaultReason} label={reasonLabel} maxLength={reasonMaxLength} />}</></fieldset>
+            <fieldset disabled={busy} className="min-w-0 space-y-4">{children}<>{automaticReason ? <details><summary className="cursor-pointer text-sm text-gray-600">Add a note (optional)</summary><div className="mt-3"><Field label="Note (optional)"><textarea name="setup_note" maxLength={800} rows={3} className={inputClass} /></Field></div></details> : <ReasonField defaultValue={defaultReason} label={reasonLabel} maxLength={reasonMaxLength} required={reasonRequired} />}</></fieldset>
             {error && <p ref={feedback} tabIndex={-1} role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
             <div className="flex flex-col-reverse gap-2 border-t border-gray-100 pt-4 sm:flex-row sm:justify-end"><Button variant="secondary" disabled={busy} onClick={onClose}>Cancel</Button><Button type="submit" loading={busy}>{busy ? 'Saving…' : saveLabel}</Button></div>
         </form>

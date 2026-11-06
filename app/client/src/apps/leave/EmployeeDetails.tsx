@@ -33,7 +33,7 @@ export function EmployeeDetails({ profile, departments, patterns, central, onClo
     async function saved() { await onChanged(); setAction(null); }
     if (action) {
         const titles: Record<Action, string> = { details: 'Edit employee details', placement: 'Update organisation placement', service: 'Add appointment', correct_service: 'Correct appointment', close_service: 'End appointment', identifier: 'Record Payroll ID', link: 'Link a verified login', unlink: 'Unlink login' };
-        return <ActionDialog automaticReason={action==='placement'?'Recorded the employee’s selected department, parent unit and division placement.':undefined} title={titles[action]} description={employee.display_name} onClose={() => setAction(null)} onSave={async (data) => {
+        return <ActionDialog reasonRequired={action==='correct_service'} automaticReason={action==='placement'?'Recorded the employee’s selected department, parent unit and division placement.':undefined} title={titles[action]} description={employee.display_name} onClose={() => setAction(null)} onSave={async (data) => {
             const reason = value(data, 'reason'), base = `${ROOT}/${employee.id}`;
             if (action === 'details') await apiClient.put(`${base}/details`, { display_name: value(data,'display_name'), position_title: value(data,'position_title') || null, email: value(data,'email') || null, status: value(data,'status'), manager_id: value(data,'manager_id') || null, reason });
             if (action === 'placement') await apiClient.put(`${base}/organisation`, { department_id: value(data,'department_id'), division_id: value(data,'division_id') || null, reason });

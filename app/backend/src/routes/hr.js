@@ -27,10 +27,12 @@ import employeeOnboardingRouter from './employeeOnboarding.js';
 import governmentLeaveRouter from './governmentLeave.js';
 import { assertEmployeeScope,canAccessEmployee,employeeReadSql,employeeScopeSql,isCentralHr,managerScopeSql,activeScopeSql } from '../services/hrAccess.js';
 import employeeDirectoryRouter from './employeeDirectory.js';
+import { routineReason } from '../middleware/routineReason.js';
 import { linkedEmployee, setEmployeeAccount } from '../services/employeeDirectory.js';
 
 const router = express.Router();
 router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
+router.use(routineReason);
 router.use('/access-scopes',hrAccessRouter);
 router.use('/onboarding',employeeOnboardingRouter);
 router.use('/government',governmentLeaveRouter);

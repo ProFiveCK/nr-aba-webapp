@@ -69,14 +69,31 @@ async function annualPoolIssue(client,account,history,policy) {
   if(prior+units(account.balance)+units(usage.used)>creditLimit(account,policy.rules[`${account.code}_annual_days`],prior))return `${account.code==='medical'?'Medical':'Special'} opening/corrections and recorded usage exceed the single annual pool. Reconcile the historical cutover credit before activation or further application.`;
   return null;
 }
+const LEAVE_TYPE_NAMES={recreation:'Recreation',medical:'Medical',special:'Special'};
+// Someone still in their first service year has no earlier balance to bring across: Recreation starts at
+// zero and builds up each pay, and Medical and Special start with the standard yearly amount. Later years
+// still need HR to enter the balance carried over from payroll.
+async function startFirstServiceYear(client,{user,actor,employeeId,context,codes}) {
+  const facts=serviceFacts(context,today());
+  if(facts.issues.length||facts.completed_years!==0)return context;
+  const policy=context.policies.find(p=>p.effective_from<=facts.period_start&&p.effective_to>=facts.period_start);
+  const missing=codes.filter(code=>!context.entitlements.some(e=>e.code===code&&e.period_start===facts.period_start));
+  if(!policy||!missing.length)return context;
+  for(const code of missing) {
+    const amount=code==='recreation'?'0':policy.rules[`${code}_annual_days`];
+    const reason=`First service year: ${LEAVE_TYPE_NAMES[code]} started at ${amount} days.`;
+    const opening=await ledger.prepareOpening(null,{client,user,actor,employeeId,data:{code,amount,policy_version_id:policy.id,period_start:facts.period_start,period_end:facts.period_end,as_of:facts.period_start,source_reference:'New employee',payroll_reference:'Recorded in the leave app',reason}});
+    await ledger.certifyOpening(null,{client,user,actor,id:opening.id,reason});
+  }
+  return ledger.loadContext(client,employeeId);
+}
 export function readyConfiguration(context,codes) {
   if(context.employee.status!=='active'||context.employee.leave_policy_regime!=='government')fail('Choose an active government employee.');
   const facts=serviceFacts(context,today());if(facts.issues.length)fail(facts.issues.join(' '));
-  for(const code of codes)if(!context.entitlements.some(e=>e.code===code&&e.period_start===facts.period_start&&e.period_end===facts.period_end&&e.as_of<=today()))fail(`Add the ${code} opening balance for this service year first.`);
+  for(const code of codes)if(!context.entitlements.some(e=>e.code===code&&e.period_start===facts.period_start&&e.period_end===facts.period_end&&e.as_of<=today()))fail(`${LEAVE_TYPE_NAMES[code]} has no balance yet for the service year starting ${facts.period_start}. Add it under Opening balances, then turn it on.`);
   const policy=context.policies.find(p=>p.effective_from<=today()&&p.effective_to>=today());if(!policy)fail('Publish an effective policy first.');
   for(const code of codes){const account=context.entitlements.find(e=>e.code===code&&e.period_start===facts.period_start);const limit=policy.rules[code==='recreation'?'recreation_cap_days':`${code}_annual_days`];if(units(account.balance)>creditLimit(account,limit))fail('A balance exceeds the standard government quantum/cap. Resolve the signed transition before activation; historical balances are preserved.');}
 }
-const LEAVE_TYPE_NAMES={recreation:'Recreation',medical:'Medical',special:'Special'};
 // Saving new leave types keeps the earlier Medical absences already recorded for the same Medical year.
 async function keptMedicalHistory(client,employeeId,context) {
   const previous=await configurationFor(client,employeeId),medical=context.entitlements.find(e=>e.code==='medical'&&e.period_start<=today()&&e.period_end>=today());
@@ -89,13 +106,13 @@ export async function saveLeaveTypes(pool,{user,actor,employeeId,data}) {
   if(!Array.isArray(data.enabled_codes))fail('Choose the leave types this employee can apply for.',400);
   return withTransaction(pool,async client=>{
     await assertCentral(client,user);await ledger.lockEmployee(client,employeeId);
-    const context=await ledger.loadContext(client,employeeId),basis=serviceFacts(context,today()).basis;
+    let context=await ledger.loadContext(client,employeeId);const basis=serviceFacts(context,today()).basis;
     const types=COMMON_CODES.filter(code=>data.enabled_codes.includes(code)),note=typeof data.note==='string'?data.note.trim():'';
     // Rostered staff can work long shifts, so a single Medical absence is one shift rather than one calendar date.
     const medicalRule=basis?.schedule_mode==='roster'?'single_verified_shift_nonadjacent_scheduled_days':'single_calendar_date_nonadjacent_scheduled_days';
     const reason=`${types.length?`Leave types set to ${types.map(code=>LEAVE_TYPE_NAMES[code]).join(', ')}.`:'Leave applications paused.'}${note?` Note: ${note}`:''}`;
     data={enabled_codes:types,medical_rule:medicalRule,medical_history:data.medical_history??await keptMedicalHistory(client,employeeId,context),source_reference:'Leave types',legacy_resolution_reference:'Leave types',reason};
-    if(data.enabled_codes.length){await assertCutoverResolved(client,employeeId,{activation:true});readyConfiguration(context,data.enabled_codes);}
+    if(data.enabled_codes.length){await assertCutoverResolved(client,employeeId,{activation:true});context=await startFirstServiceYear(client,{user,actor,employeeId,context,codes:data.enabled_codes});readyConfiguration(context,data.enabled_codes);}
     const history=cleanHistory(data.medical_history||[],context,data.medical_rule),medical=context.entitlements.find(e=>e.code==='medical'&&e.period_start<=today()&&e.period_end>=today());
     for(const code of data.enabled_codes.filter(code=>['medical','special'].includes(code))) {
       const account=context.entitlements.find(e=>e.code===code&&e.period_start<=today()&&e.period_end>=today());

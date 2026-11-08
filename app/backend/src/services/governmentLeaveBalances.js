@@ -7,7 +7,7 @@ import { ServiceError } from '../lib/serviceError.js';
 
 // Use the same committed ledger and holds as application evaluation. Never
 // substitute retained balances or policy defaults for a certified account.
-const accountSql = `SELECT a.id,a.employee_id,a.code,
+export const accountSql = `SELECT a.id,a.employee_id,a.code,
   to_char(a.period_start,'YYYY-MM-DD') AS period_start,to_char(a.period_end,'YYYY-MM-DD') AS period_end,
   to_char(a.as_of,'YYYY-MM-DD') AS as_of,p.label AS policy_label,p.rules,
   COALESCE(l.days_in,0)::text AS days_in,COALESCE(l.days_out,0)::text AS days_out,

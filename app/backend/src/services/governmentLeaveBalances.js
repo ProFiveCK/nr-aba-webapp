@@ -1,3 +1,4 @@
+import {loadPaternityRequests} from './governmentLeavePaternity.js';
 import { withTransaction } from '../lib/transaction.js';
 import { employeeScopeSql } from './hrAccess.js';
 import { ledgerReadable, loadContext } from './governmentLeave.js';
@@ -104,6 +105,6 @@ export async function employeeLeaveAccount(pool, { user, employeeId, entitlement
       const evaluation=await applyRecreationForecast(client,context,{code:'recreation',input:{end_date:through},allocations:[{entitlement_id:account.id,amount:'0.000000'}],issues:[],warnings:[],snapshot_hash:'balance-forecast'},{asOf:date.as_of});
       account.forecast=evaluation.forecast.accounts[0];
     }
-    return { employee, accounts, movements, event_entitlements:context?parentalEntitlements(context,date.as_of):null, as_of: date.as_of, total: count.total, page, page_size: 50 };
+    return { employee, accounts, movements, event_entitlements:context?parentalEntitlements(context,date.as_of,await loadPaternityRequests(client,employeeId)):null, as_of: date.as_of, total: count.total, page, page_size: 50 };
   });
 }

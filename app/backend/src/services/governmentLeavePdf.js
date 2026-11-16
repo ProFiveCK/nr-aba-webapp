@@ -1,3 +1,4 @@
+import {paternityWorkingSegments} from '../lib/governmentLeavePaternity.js';
 import {PDFDocument,StandardFonts,rgb} from 'pdf-lib';
 import {generateLeaveApplicationPdf} from './leaveApplicationPdf.js';
 const printable=value=>String(value??'').replace(/[^\x20-\x7e\n]/g,'?');
@@ -30,7 +31,15 @@ export function governmentApprovalFormSnapshot(grant) {
  const names={recreation:'Annual',medical:mode==='certificate'?'Medical (with MC)':mode==='exemption'?'Medical (without MC)':'Medical (certificate status not recorded)',special:'Special',furlough:'Furlough',official:'Official',lwop:'Leave Without Pay',extended_medical:'Medical',extended_medical_minister:'Medical',maternity:'Maternity',paternity:'Paternity',adoption:'Adoption'};
  const leaveName=names[grant.code]||label(grant.code);
  const balances=grant.balances||[];
- return {id:grant.id,regime:'government',employee_name:grant.employee.name,department_code:grant.employee.department_name,division_code:grant.employee.division_name,leave_type_name:leaveName,start_date:grant.start_date,end_date:grant.end_date,days:grant.charge,...(grant.input?.duration_unit==='hours'?{duration_unit:'hours',hours:grant.input.hours}:{}),reason:grant.reason,applied_at:grant.submitted_at,approved_at:grant.granted_at,approved_by_name:grant.stages.at(-1)?.binding?.approver_name||'Recorded final approver',approval_snapshot_available:true,balances:balances.length?[{leave_type_name:leaveName,before:balances.reduce((n,b)=>n+Number(b.before),0),after:balances.reduce((n,b)=>n+Number(b.after),0)}]:[]};
+ const parental=['maternity','paternity','adoption'].includes(grant.code);
+ const approvedDays=grant.code==='paternity'?paternityWorkingSegments(grant.evaluation).length:parental?(Date.parse(grant.end_date)-Date.parse(grant.start_date))/86400000+1:grant.charge;
+ const paternity=grant.code==='paternity'?grant.paternity:null;
+ const annual=paternity?.periods||[];
+ const parentNote=grant.code==='paternity'?
+  annual.length?`Paternity: ${approvedDays} approved working days. Entitlement: 10 working days per service year. ${paternity.basis==='approval'?'Balance after approval':'Current balance'}: ${annual.map(p=>`${days(p.available_days)} days (${governmentPdfDate(p.period_start)}-${governmentPdfDate(p.period_end)})`).join('; ')}${paternity.basis==='approval'?'':` as at ${governmentPdfDate(paternity.as_of)}`}.`:
+  `Paternity: ${approvedDays} approved working days. Entitlement: 10 working days per service year. Balance not determined; HR to reconcile.`:
+  parental?`${leaveName}: ${approvedDays} approved calendar days. Separate event entitlement; no accrued balance deduction.`:null;
+ return {id:grant.id,regime:'government',employee_name:grant.employee.name,department_code:grant.employee.department_name,division_code:grant.employee.division_name,leave_type_name:leaveName,start_date:grant.start_date,end_date:grant.end_date,days:approvedDays,parental_note:parentNote,...(annual.length?{balance_column_label:paternity.basis==='approval'?'BALANCE AFTER APPROVAL':'CURRENT BALANCE'}:{}),...(grant.input?.duration_unit==='hours'?{duration_unit:'hours',hours:grant.input.hours}:{}),reason:grant.reason,applied_at:grant.submitted_at,approved_at:grant.granted_at,approved_by_name:grant.stages.at(-1)?.binding?.approver_name||'Recorded final approver',approval_snapshot_available:true,balances:annual.length?[{leave_type_name:leaveName,before:annual.reduce((n,p)=>n+p.available_days,0),after:annual.reduce((n,p)=>n+p.available_days,0)}]:balances.length?[{leave_type_name:leaveName,before:balances.reduce((n,b)=>n+Number(b.before),0),after:balances.reduce((n,b)=>n+Number(b.after),0)}]:[]};
 }
 export async function generateGovernmentLeavePdf(grant,{firstPageOnly=false}={}) {
   if(firstPageOnly){
@@ -72,7 +81,8 @@ export async function generateGovernmentLeavePdf(grant,{firstPageOnly=false}={})
   line(`Payroll ID: ${grant.employee.payroll_id||'Not recorded'}`);
   line(`Department: ${grant.employee.department_name||''} | Division: ${grant.employee.division_name||''}`);
   line(`Leave: ${grant.simple_approval&&grant.code==='extended_medical_minister'?'Further extended medical leave':label(grant.code)} | ${governmentPdfDate(grant.start_date)} to ${governmentPdfDate(grant.end_date)}`);
-  line(grant.standard_lwop?`Leave without pay | 0% salary | No paid leave balance deduction`:grant.case_determination?`Event case | Scheduled hours: ${grant.evaluation.scheduled_hours} | No annual balance assigned`:`Granted charge: ${grant.charge} policy days | Scheduled hours: ${grant.evaluation.scheduled_hours}`);
+  if(grant.code==='paternity'){for(const period of grant.paternity?.periods||[])line(`Paternity: 10 working days per service year | Approved: ${paternityWorkingSegments(grant.evaluation).length} working days | Remaining: ${period.available_days} working days | ${governmentPdfDate(period.period_start)} to ${governmentPdfDate(period.period_end)}`);}
+  else line(grant.standard_lwop?`Leave without pay | 0% salary | No paid leave balance deduction`:grant.case_determination?`Event case | Scheduled hours: ${grant.evaluation.scheduled_hours} | No annual balance assigned`:`Granted charge: ${grant.charge} policy days | Scheduled hours: ${grant.evaluation.scheduled_hours}`);
   if(grant.input?.duration_unit==='hours')line(`Hourly leave: ${grant.input.hours} hours`);
   line(`Submitted: ${timestamp(grant.submitted_at)} | Final grant: ${timestamp(grant.granted_at)}`,{size:9});
   if(grant.code==='medical'){heading('Medical leave - certificate and uncertified usage');for(const row of medicalPdfLines(grant))line(row,{size:9});}
@@ -98,7 +108,7 @@ export async function generateGovernmentLeavePdf(grant,{firstPageOnly=false}={})
   line(`Evaluator: ${grant.engine_version} | Regime: ${grant.regime}`,{size:9});
   line(`Calculation: ${grant.evaluation.snapshot_hash}`,{size:8});
   for(const policy of grant.evaluation.policy_versions)line(`Policy ${policy.id}: ${policy.label} | ${policy.source_reference}`,{size:8});
-  heading(grant.case_determination?'Dated schedule for payroll review (no annual balance debit)':'Daily absence charges');
+  heading(grant.code==='paternity'?'Dated work schedule for paternity leave':grant.case_determination?'Dated schedule for payroll review (no annual balance debit)':'Daily absence charges');
   for(const segment of grant.evaluation.segments)line(`${governmentPdfDate(segment.date)} | ${segment.charge} policy days | ${segment.scheduled_hours} scheduled hours${segment.leave_hours!=null?` | ${segment.leave_hours} leave hours`:''}${segment.holiday_exempt?' | Public holiday exempt':''}`,{size:8});
 
   pdf.setTitle(`Government leave - ${printable(grant.employee.name)}`);

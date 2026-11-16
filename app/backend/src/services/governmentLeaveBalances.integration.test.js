@@ -66,7 +66,7 @@ describe('current leave balances and movement accounts', { skip: skipWithoutData
     const before=(await pool.query('SELECT count(*)::int n FROM hr_gov_ledger')).rows[0].n;
     const result=await balances.employeeLeaveAccount(pool,{user:user(admin),employeeId:outside.id});
     assert.deepEqual(result.accounts,[]);assert.equal(result.event_entitlements.status,'review_required');
-    assert.deepEqual(result.event_entitlements.items.map(i=>[i.code,i.calendar_days]),[['paternity',14],['maternity',84],['adoption',84]]);
+    assert.deepEqual(result.event_entitlements.items.map(i=>[i.code,i.working_days??i.calendar_days]),[['paternity',10],['maternity',84],['adoption',84]]);
     assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_ledger')).rows[0].n,before);
     assert.equal((await balances.employeeLeaveAccount(pool,{user:user(admin),employeeId:legacy.id})).event_entitlements,null);
     await assert.rejects(balances.employeeLeaveAccount(pool,{user:user(scoped),employeeId:outside.id}),error=>error.status===404);

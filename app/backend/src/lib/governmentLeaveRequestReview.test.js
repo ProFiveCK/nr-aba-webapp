@@ -5,32 +5,32 @@ import {DEFAULT_RULES} from './governmentLeaveRules.js';
 import {determineCase,parentalLeavePeriod} from './governmentLeaveCaseRules.js';
 import {simpleCaseInput} from './governmentLeaveSimpleApproval.js';
 
-const context=(start='2010-01-01')=>({employee:{id:'synthetic',status:'active',leave_policy_regime:'government'},policies:[{id:'p',status:'published',evaluator_version:'gov-foundation-1',effective_from:'2026-01-01',effective_to:'2027-12-31',rules:DEFAULT_RULES}],calendars:[],periods:[{id:'s',start_date:start,end_date:null,employment_category:'permanent',counts_for_service:true,work_pattern_id:'w'}],bases:[{id:'b',effective_from:start,continuity_start:start,anniversary_method:'pause_exclusions',leap_day_method:'feb28',schedule_mode:'weekly'}],exclusions:[],rosters:[],patterns:[{id:'w',working_weekdays:[1,2,3,4,5],hours_per_day:7}],pattern_approvals:[{work_pattern_id:'w'}],entitlements:[]});
+const context=(start='2010-01-01')=>({employee:{id:'synthetic',status:'active',leave_policy_regime:'government'},policies:[{id:'p',status:'published',evaluator_version:'gov-foundation-1',effective_from:'2026-01-01',effective_to:'2027-12-31',rules:DEFAULT_RULES}],calendars:[{id:'c',effective_from:'2026-01-01',effective_to:'2027-12-31',holidays:[]}],periods:[{id:'s',start_date:start,end_date:null,employment_category:'permanent',counts_for_service:true,work_pattern_id:'w'}],bases:[{id:'b',effective_from:start,continuity_start:start,anniversary_method:'pause_exclusions',leap_day_method:'feb28',schedule_mode:'weekly'}],exclusions:[],rosters:[],patterns:[{id:'w',working_weekdays:[1,2,3,4,5],hours_per_day:7}],pattern_approvals:[{work_pattern_id:'w'}],entitlements:[]});
 const request=(code='paternity',end='2026-11-27')=>({id:'request',code,employee_id:'synthetic',status:'pending',start_date:'2026-11-12',end_date:end,charge:'0.000000',application_snapshot:{input:{request_id:'request',notice_date:'2026-11-13',case_details:{sex_eligibility:'male',event_kind:'birth',child_birth_date:'2026-11-12'}}}});
 const account=(id='a',overrides={})=>({id,code:'recreation',period_start:'2026-01-01',period_end:'2026-12-31',balance:'20',held:'5',available:'15',...overrides});
 const allocated=()=>({...request('recreation','2026-11-13'),charge:'2',application_snapshot:{evaluation:{allocations:[{entitlement_id:'a',amount:'2'}]}}});
 
-test('16 calendar days are distinct from zero balance charge; the review and final validator agree',()=>{
+test('12 working days are distinct from zero balance charge; the review and final validator agree',()=>{
  const c=context(),r=request(),before=structuredClone({c,r});
  const review=leaveRequestReview(c,r);
- assert.equal(review.parental.requested_days,16);assert.equal(review.parental.allowance_days,14);assert.equal(review.parental.valid,false);
- assert.equal(review.parental.expected_end,'2026-11-25');assert.match(review.issues[0],/16 calendar days.*14 calendar days/);
+ assert.equal(review.parental.requested_days,12);assert.equal(review.parental.allowance_days,10);assert.equal(review.parental.valid,false);
+ assert.equal(review.parental.expected_end,null);assert.match(review.issues[0],/10 working days per employee service year/);
  const input={...r.application_snapshot.input,code:r.code,start_date:r.start_date,end_date:r.end_date};
- assert.throws(()=>determineCase(c,input,simpleCaseInput(c,input,{},'Synthetic review'),{assignedApproval:true}),/calendar weeks/);
+ assert.throws(()=>determineCase(c,input,simpleCaseInput(c,input,{},'Synthetic review'),{assignedApproval:true}),/10 working days/);
  assert.deepEqual({c,r},before);
 });
-test('a full fortnight and employment cessation use the same period rule as approval',()=>{
+test('partial paternity requests use working days rather than a compulsory fortnight',()=>{
  const c=context(),r=request('paternity','2026-11-25');
  assert.equal(leaveRequestReview(c,r).parental.valid,true);
- r.end_date='2026-11-24';assert.equal(leaveRequestReview(c,r).parental.valid,false);
+ r.end_date='2026-11-24';assert.equal(leaveRequestReview(c,r).parental.valid,true);
  c.periods[0].end_date=r.end_date;
- assert.deepEqual(parentalLeavePeriod(c,r),{requested_days:13,allowance_days:14,allowed_days:13,expected_end:'2026-11-24',valid:true});
+ assert.throws(()=>parentalLeavePeriod(c,r),/service year is not determined/);
 });
 test('parental pay splits at six months; missing service produces unknown pay rather than full salary',()=>{
  const c=context('2026-05-20'),r=request('paternity','2026-11-25');
  const review=leaveRequestReview(c,r);
  assert.deepEqual(review.parental.pay_segments,[{start_date:'2026-11-12',end_date:'2026-11-19',salary_percent:'0'},{start_date:'2026-11-20',end_date:'2026-11-25',salary_percent:'100'}]);
- c.bases=[];const unknown=leaveRequestReview(c,r);assert.equal(unknown.parental.pay_segments.length,0);assert.ok(unknown.parental.pay_issue);
+ c.bases=[];const unknown=leaveRequestReview(c,r);assert.ok(unknown.issues.length);assert.equal(unknown.parental,null);
 });
 test('maternity pay preview uses the submitted pregnancy count and does not invent a rate when it is missing',()=>{
  const r=request('maternity','2027-02-03');r.application_snapshot.input.case_details={pregnancy_number:5};

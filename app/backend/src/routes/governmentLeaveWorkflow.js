@@ -1,3 +1,5 @@
+import {paternityRequestBalance} from '../services/governmentLeavePaternity.js';
+import {loadContext} from '../services/governmentLeave.js';
 import {generateGovernmentLeavePdf} from '../services/governmentLeavePdf.js';
 import {resolvedPublishedPoliciesSql} from '../services/governmentLeavePolicyTransitions.js';
 import express from 'express';
@@ -107,14 +109,14 @@ router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query
   const boundToMe=current=>`EXISTS(SELECT 1 FROM hr_gov_request_stages s JOIN LATERAL(SELECT reviewer_id FROM hr_gov_stage_bindings b WHERE b.stage_id=s.id ORDER BY recorded_at DESC,id DESC LIMIT 1)b ON TRUE WHERE s.request_id=r.id AND ${workflow.activeStageSql()}${current?' AND s.ordinal=r.stage_index':''} AND b.reviewer_id=$1 AND (e.status='active' OR r.application_snapshot->>'separation_case'='true') AND e.department_id=r.department_id AND e.division_id=r.division_id)`;
   const scope=mode==='all'?'($1::uuid IS NOT NULL)':mode==='mine'?'e.reviewer_id=$1':assignedOnly?`(${boundToMe(true)})`:`(${employeeScopeSql(req.user,'hr_report_read','$1')} OR ${boundToMe(false)})`;
   const where=`${scope} AND ($2='all' OR ${effectiveStatusSql()}=$2) AND ($4::uuid IS NULL OR r.employee_id=$4)`;
-  const selection=`SELECT r.id,r.employee_id,r.application_snapshot->'employee'->>'name' AS employee_name,r.code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge,r.application_snapshot->'input'->>'duration_unit' AS duration_unit,r.application_snapshot->'input'->>'hours' AS hours,r.status,(SELECT jsonb_build_object('request_id',ce.request_id,'action',ce.effect->>'action','effective_end',ce.effect->>'effective_end') FROM hr_gov_case_effects ce WHERE ce.original_request_id=r.id ORDER BY ce.version DESC LIMIT 1) AS amendment,r.submitted_at,r.stage_index,s.level AS current_level,s.label AS current_label,b.approver_name AS current_approver,
+  const selection=`SELECT r.id,r.employee_id,r.application_snapshot->'employee'->>'name' AS employee_name,r.code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge,CASE WHEN r.code='paternity' THEN (SELECT count(*)::int FROM jsonb_array_elements(COALESCE(r.grant_snapshot->'evaluation'->'segments',r.application_snapshot->'evaluation'->'segments','[]'::jsonb)) day WHERE (day->>'scheduled_hours')::numeric>0 AND COALESCE((day->>'holiday')::boolean,FALSE)=FALSE) ELSE NULL END AS requested_working_days,r.application_snapshot->'input'->>'duration_unit' AS duration_unit,r.application_snapshot->'input'->>'hours' AS hours,r.status,(SELECT jsonb_build_object('request_id',ce.request_id,'action',ce.effect->>'action','effective_end',ce.effect->>'effective_end') FROM hr_gov_case_effects ce WHERE ce.original_request_id=r.id ORDER BY ce.version DESC LIMIT 1) AS amendment,r.submitted_at,r.stage_index,s.level AS current_level,s.label AS current_label,b.approver_name AS current_approver,
     (SELECT count(*)::int FROM hr_gov_request_stages missing WHERE missing.request_id=r.id AND ${workflow.activeStageSql('missing')} AND NOT EXISTS(SELECT 1 FROM hr_gov_stage_bindings mb WHERE mb.stage_id=missing.id)) AS unassigned_stages,
     'workflow'::text AS record_source,NULL::text AS leave_type_name,NULL::jsonb AS recorded_application,r.medical_mode
     FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id LEFT JOIN hr_gov_request_stages s ON s.request_id=r.id AND s.ordinal=r.stage_index
     LEFT JOIN LATERAL(SELECT approver_name FROM hr_gov_stage_bindings b WHERE b.stage_id=s.id ORDER BY recorded_at DESC,id DESC LIMIT 1)b ON TRUE
     WHERE ${where}
     ${includeRecorded?`UNION ALL
-    SELECT a.id,a.employee_id,e.display_name,'recorded',to_char(a.start_date,'YYYY-MM-DD'),to_char(a.end_date,'YYYY-MM-DD'),a.days,NULL::text,NULL::text,a.status,NULL::jsonb,a.applied_at,0,NULL::text,NULL::text,NULL::text,0,'recorded',t.name,
+    SELECT a.id,a.employee_id,e.display_name,'recorded',to_char(a.start_date,'YYYY-MM-DD'),to_char(a.end_date,'YYYY-MM-DD'),a.days,NULL::int,NULL::text,NULL::text,a.status,NULL::jsonb,a.applied_at,0,NULL::text,NULL::text,NULL::text,0,'recorded',t.name,
       jsonb_build_object('id',a.id,'employee_id',a.employee_id,'employee_name',e.display_name,'leave_type_name',t.name,
         'start_date',to_char(a.start_date,'YYYY-MM-DD'),'end_date',to_char(a.end_date,'YYYY-MM-DD'),'days',a.days,'status',a.status,
         'reason',a.reason,'applied_at',a.applied_at,'reviewer_note',a.reviewer_note,
@@ -169,8 +171,12 @@ router.get('/requests/:id/pdf',[id],async(req,res)=>{
   if(!handleValidation(req,res))return;const view=await workflow.requestView(pool,req.user,req.params.id);
   if(!view.can_pdf)throw new ServiceError(404,'Granted personnel-file PDF not available.');
   const request=await workflow.getRequest(pool,req.params.id);
+  let grant=request.grant_snapshot;
+  if(grant?.code==='paternity'&&!grant.paternity){
+    try{grant={...grant,paternity:{...await paternityRequestBalance(pool,await loadContext(pool,request.employee_id),request),basis:'current_recorded_applications'}};}catch{grant={...grant,paternity:null};}
+  }
   // Refresh presentation from the immutable grant so existing approvals use current branding.
   // The stored decision, balances and original PDF remain unchanged.
-  res.set({'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="government-leave-${request.id}.pdf"`,'X-Content-Type-Options':'nosniff'}).send(request.grant_snapshot?Buffer.from(await generateGovernmentLeavePdf(request.grant_snapshot,{firstPageOnly:true})):request.final_pdf);
+  res.set({'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="government-leave-${request.id}.pdf"`,'X-Content-Type-Options':'nosniff'}).send(grant?Buffer.from(await generateGovernmentLeavePdf(grant,{firstPageOnly:true})):request.final_pdf);
 });
 export default router;

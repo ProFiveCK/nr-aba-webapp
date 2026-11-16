@@ -48,3 +48,23 @@ test('downloaded approval form is one A4 page while the full retained PDF and gr
  assert.match(text,/Full explanation is retained in the application record/);assert.doesNotMatch(text,/page 2|Daily absence charges|Calculation and policy references/);
  assert.equal(JSON.stringify(data),before);
 });
+
+
+test('paternity PDF uses approved working days and service-year remaining balance even for a zero-charge historic grant',async()=>{
+ const {generatedPdfText}=await import('../test-support/pdfText.js');
+ const data={...fixture('certificate'),code:'paternity',charge:'0',start_date:'2026-11-12',end_date:'2026-11-25'};
+ data.evaluation.segments=Array.from({length:14},(_,i)=>({date:new Date(Date.UTC(2026,10,12+i)).toISOString().slice(0,10),scheduled_hours:[0,6].includes(new Date(Date.UTC(2026,10,12+i)).getUTCDay())?0:7,holiday:false}));
+ const original=JSON.stringify(data);
+ assert.equal(governmentApprovalFormSnapshot(data).days,10);
+ assert.match(await generatedPdfText(await generateGovernmentLeavePdf(data,{firstPageOnly:true})),/10 approved working days.*Balance not determined/);
+ data.paternity={basis:'current_recorded_applications',as_of:'2026-11-16',periods:[{period_start:'2026-05-01',period_end:'2027-04-30',available_days:0}]};
+ const text=await generatedPdfText(await generateGovernmentLeavePdf(data,{firstPageOnly:true}));
+ assert.match(text,/10 approved working days/);assert.match(text,/10 working days per service year/);assert.match(text,/Current balance: 0 days/);assert.match(text,/CURRENT BALANCE/);
+ delete data.paternity;assert.equal(JSON.stringify(data),original);
+});
+test('Maternity and Adoption PDFs show calendar duration independently of a zero ledger charge',()=>{
+ for(const code of ['maternity','adoption']){
+  const data={...fixture('certificate'),code,charge:'0',start_date:'2026-11-02',end_date:'2027-01-24'};
+  const form=governmentApprovalFormSnapshot(data);assert.equal(form.days,84);assert.match(form.parental_note,/84 approved calendar days/);
+ }
+});

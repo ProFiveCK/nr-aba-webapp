@@ -236,8 +236,10 @@ export async function generateLeaveApplicationPdf(form,{firstPageOnly=false}={})
       margin + 4, explanationTop + 25, { size: 7.5, maxWidth: contentWidth - 8, italic: true, color: fill });
   }
 
+  const parentalLines=form.parental_note?wrap(form.parental_note,font,7,contentWidth-8):[];
+  parentalLines.forEach((line,index)=>text(line,margin+4,explanationTop+25+index*8,{size:7,color:fill}));
   if(form.duration_unit==='hours')text(`Hourly leave: ${Number(form.hours)} hours (${Number(form.days)} days from the leave balance)`, margin + 4, explanationTop + 25, {size:7.5,color:fill});
-  const sigTop = explanationTop + 36;
+  const sigTop = explanationTop + 36 + Math.max(0,parentalLines.length-1)*8;
   hLine(margin, contentRight, sigTop);
   text('Applicant signature', 350, sigTop + 11, { size: 7.5 });
   // A blank "/  /" only made sense on paper, for someone to hand-write a
@@ -266,7 +268,7 @@ export async function generateLeaveApplicationPdf(form,{firstPageOnly=false}={})
   vLine(group2X, tableTop, tableTop + headerRowH + subHeaderRowH);
   hLine(labelColRight, contentRight, tableTop + headerRowH);
   text('LEAVE APPLIED FOR', group1X + groupWidth / 2, tableTop + 8.5, { size: 6.8, bold: true, align: 'center' });
-  text('AVAILABLE CREDIT', group2X + groupWidth / 2, tableTop + 8.5, { size: 6.8, bold: true, align: 'center' });
+  text(form.balance_column_label||'AVAILABLE CREDIT', group2X + groupWidth / 2, tableTop + 8.5, { size: 6.8, bold: true, align: 'center' });
   for (let i = 0; i < 4; i++) {
     vLine(group1X + i * subColWidth, tableTop + headerRowH, tableTop + headerRowH + subHeaderRowH);
     vLine(group2X + i * subColWidth, tableTop + headerRowH, tableTop + headerRowH + subHeaderRowH);

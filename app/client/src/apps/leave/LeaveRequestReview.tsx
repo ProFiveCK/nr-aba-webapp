@@ -1,9 +1,11 @@
 import { formatDate, formatDateTime } from '../../lib/date';
 import { leaveDays } from './leaveBalances';
 
+export type PaternityBalance = { unit: 'working_days'; as_of: string; periods: {period_start: string; period_end: string; allowance_days: number; requested_days: number; approved_days: number; pending_days: number; available_days: number; available_before_request: number; available_after_approval: number}[] };
 export type LeaveReviewSummary = {
+    paternity?: PaternityBalance;
     checked_at: string; issues: string[];
-    parental: null | { requested_days: number; allowance_days: number; allowed_days: number; expected_end: string; valid: boolean;
+    parental: null | { requested_days: number; allowance_days: number; allowed_days: number; expected_end: string | null; unit?: 'working_days' | 'calendar_days'; valid: boolean;
         pay_segments: { start_date: string; end_date: string; salary_percent: string }[]; pay_issue: string | null };
     periods: { entitlement_id: string; period_start: string; period_end: string; request_charge: string; balance: string; available: string;
         request_held: string; other_held: string | null; available_before_request: string | null; available_after_approval: string | null }[];
@@ -15,10 +17,23 @@ export function LeaveRequestReview({ review, status }: { review: LeaveReviewSumm
     const excess = parental ? Math.max(0, parental.requested_days - parental.allowed_days) : 0;
     return <section aria-label="Request and entitlement summary" className="space-y-3 rounded-xl border border-blue-200 bg-blue-50 p-4">
         <h4 className="font-semibold">{parental ? 'Request and parental entitlement' : 'Request and leave balance'}</h4>
-        {parental ? <>
+        {review.paternity ? <>
+            <p className="text-sm text-gray-700">Paternity entitlement: <strong>10 working days per employee service year</strong>. Off-duty dates and public holidays do not use this entitlement.</p>
+            {review.paternity.periods.map(period => <div key={period.period_start} className="space-y-2">
+                <p className="text-xs text-gray-600">Service year: {formatDate(period.period_start)} to {formatDate(period.period_end)}</p>
+                <dl className="grid gap-3 sm:grid-cols-3">
+                    <div><dt className="text-sm text-gray-600">{pending ? 'Available before this application' : 'Currently available'}</dt><dd className="text-xl font-semibold">{days(pending ? period.available_before_request : period.available_days)}</dd></div>
+                    <div><dt className="text-sm text-gray-600">{pending ? 'Requested working days' : 'Approved working days'}</dt><dd className="text-xl font-semibold">{days(period.requested_days)}</dd></div>
+                    {pending && <div><dt className="text-sm text-gray-600">Available after approval</dt><dd className="text-xl font-semibold">{days(period.available_after_approval)}</dd></div>}
+                </dl>
+                <p className="text-sm text-gray-700">Recorded approved usage: <strong>{days(period.approved_days)}</strong> · Pending applications: <strong>{days(period.pending_days)}</strong>.</p>
+                {pending && period.available_after_approval < 0 && <p role="alert" className="text-sm font-semibold text-amber-900">This application exceeds the remaining paternity balance. Review the dates before approval.</p>}
+            </div>)}
+            <p className="text-sm text-gray-600">The entitlement renews each service year and does not accrue or carry forward. Balances reflect recorded applications; HR must reconcile any earlier leave taken outside this module.</p>
+        </> : parental ? <>
             <dl className="grid gap-3 sm:grid-cols-3">
-                <div><dt className="text-sm text-gray-600">Requested</dt><dd className="text-xl font-semibold tabular-nums">{parental.requested_days} <span className="text-sm font-normal">calendar days</span></dd></div>
-                <div><dt className="text-sm text-gray-600">{parental.allowed_days < parental.allowance_days ? 'Allowed to employment end' : 'Entitlement for this event'}</dt><dd className="text-xl font-semibold tabular-nums">{parental.allowed_days} <span className="text-sm font-normal">calendar days</span></dd></div>
+                <div><dt className="text-sm text-gray-600">Requested</dt><dd className="text-xl font-semibold tabular-nums">{parental.requested_days} <span className="text-sm font-normal">{parental.unit === 'working_days' ? 'working days' : 'calendar days'}</span></dd></div>
+                <div><dt className="text-sm text-gray-600">{parental.allowed_days < parental.allowance_days ? 'Allowed to employment end' : 'Entitlement for this event'}</dt><dd className="text-xl font-semibold tabular-nums">{parental.allowed_days} <span className="text-sm font-normal">{parental.unit === 'working_days' ? 'working days' : 'calendar days'}</span></dd></div>
                 <div><dt className="text-sm text-gray-600">Date check</dt><dd className={`font-semibold ${pending && !parental.valid ? 'text-amber-900' : 'text-gray-900'}`}>{pending ? excess ? `${excess} ${excess === 1 ? 'day' : 'days'} over entitlement` : parental.valid ? 'Within allowed period' : 'Dates need review' : 'Original application'}</dd></div>
             </dl>
             <p className="text-sm text-gray-700">Calendar days include weekends and public holidays. This is a separate parental entitlement; Recreation and Medical balances are unchanged.</p>

@@ -1,3 +1,4 @@
+import {PATERNITY_ANNUAL_DAYS,paternityWorkingSegments,paternityServiceYear} from './governmentLeavePaternity.js';
 import {ENGINE_VERSION,UNVERIFIED_ANNIVERSARY,dayNumber,isoDay,monthBoundary,serviceFacts,units,decimal,fingerprint} from './governmentLeaveRules.js';
 export const CASE_CODES=['teacher_recreation','extended_medical','extended_medical_minister','maternity','paternity','adoption','official','lwop','long_service','furlough','recreation_encashment','recreation_separation','witness_republic','witness_other','attendance','amendment'];
 export const FINANCIAL_CODES=['long_service','furlough','recreation_encashment','recreation_separation'];
@@ -16,6 +17,7 @@ export function caseFoundation(context,input){
  for(let n=start;n<=end;n++){
   const date=isoDay(n),policy=context.policies.find(p=>p.status==='published'&&p.effective_from<=date&&p.effective_to>=date),period=context.periods.find(p=>p.start_date<=date&&(!p.end_date||p.end_date>=date)),service=serviceFacts(context,date),calendar=context.calendars.find(c=>c.effective_from<=date&&c.effective_to>=date);
   requireFact(policy,`No published leave policy covers ${date}. Ask the leave administrator to check policy dates in Settings.`);
+  if(input.code==='paternity')requireFact(calendar,`Published public-holiday coverage is required for paternity working days on ${date}.`);
   requireFact(policy.evaluator_version===ENGINE_VERSION,`The policy covering ${date} uses an unsupported version. Contact the system administrator.`);
   const serviceIssues=service.issues.filter(issue=>issue!==UNVERIFIED_ANNIVERSARY);requireFact(period&&!serviceIssues.length,serviceIssues.join(' ')||'Verified appointment must cover every case date.');
   requireFact(!['unknown','casual','probationary'].includes(period.employment_category),'Resolve the legal employment category before an assisted application.');
@@ -60,11 +62,16 @@ export function validatePaySegments(input,segments){
 // Shared by the approval validator and the read-only review summary.
 export function parentalLeavePeriod(context,input){
  const start=dayNumber(input.start_date),requestedDays=dayNumber(input.end_date)-start+1;
- const allowanceDays=input.code==='paternity'?14:84;
+ if(input.code==='paternity'){
+  const evaluation=caseFoundation(context,input),working=paternityWorkingSegments(evaluation),years=new Map();
+  for(const day of working){const year=paternityServiceYear(context,day.date);years.set(year.period_start,(years.get(year.period_start)||0)+1);}
+  return {unit:'working_days',requested_days:working.length,allowance_days:PATERNITY_ANNUAL_DAYS,allowed_days:PATERNITY_ANNUAL_DAYS,expected_end:null,valid:working.length>0&&[...years.values()].every(days=>days<=PATERNITY_ANNUAL_DAYS)};
+ }
+ const allowanceDays=84;
  const appointment=context.periods.find(p=>p.start_date<=input.start_date&&(!p.end_date||p.end_date>=input.start_date));
  const standardEnd=isoDay(start+allowanceDays-1);
  const expectedEnd=appointment?.end_date&&appointment.end_date<standardEnd?appointment.end_date:standardEnd;
- return {requested_days:requestedDays,allowance_days:allowanceDays,allowed_days:dayNumber(expectedEnd)-start+1,expected_end:expectedEnd,
+ return {unit:'calendar_days',requested_days:requestedDays,allowance_days:allowanceDays,allowed_days:dayNumber(expectedEnd)-start+1,expected_end:expectedEnd,
   valid:requestedDays>0&&(input.code==='adoption'?requestedDays<=84:requestedDays===allowanceDays||appointment?.end_date===input.end_date&&requestedDays<allowanceDays)};
 }
 export function determineCase(context,input,data,{assignedApproval=false}={}){
@@ -82,7 +89,7 @@ export function determineCase(context,input,data,{assignedApproval=false}={}){
  let benefit=null,tasks=[],discretion=[];
  if(['maternity','paternity','adoption'].includes(input.code)){
   confirmed(facts,'parenthood_verified');requireFact(six,'Certified future service must establish the six-month milestone.');
-  requireFact(parentalLeavePeriod(context,input).valid,input.code==='adoption'?'Adoption leave cannot exceed twelve calendar weeks.':'Use calendar weeks, shortened only by the verified employment cessation date.');
+  requireFact(parentalLeavePeriod(context,input).valid,input.code==='paternity'?'Paternity leave allows up to 10 working days per employee service year.':input.code==='adoption'?'Adoption leave cannot exceed twelve calendar weeks.':'Use calendar weeks, shortened only by the verified employment cessation date.');
   if(input.code==='maternity'){
    requireFact(facts.sex_eligibility==='female','Verify the female-employee eligibility specified by the reference.');
    requireFact(Number.isInteger(facts.pregnancy_number)&&facts.pregnancy_number>=1&&facts.pregnancy_number<=30,'Verify the pregnancy count.');confirmed(facts,'certificate_complete');dayNumber(facts.expected_birth_date);

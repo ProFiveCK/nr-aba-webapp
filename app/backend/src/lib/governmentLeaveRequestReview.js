@@ -10,12 +10,14 @@ export function leaveRequestReview(context,request,holds=[],checkedAt=new Date()
  const summary={checked_at:checkedAt,issues,periods,parental:null};
  const input={...request.application_snapshot?.input,code:request.code,start_date:request.start_date,end_date:request.end_date};
  if(!COMMON_CODES.includes(request.code)){
-  const period=parentalLeavePeriod(context,input);
+  let period;
+  try{period=parentalLeavePeriod(context,input);}catch(error){issues.push(error.message);return summary;}
   const parental={...period,pay_segments:[],pay_issue:null};
   summary.parental=parental;
   if(request.status==='pending'&&!period.valid){
    const name=request.code==='paternity'?'Paternity':request.code==='maternity'?'Maternity':'Adoption';
-   issues.push(`${name} leave requests ${period.requested_days} calendar days. The allowed period is ${period.allowed_days} calendar days${request.code==='adoption'?' at most':''}, through ${period.expected_end}. Review the application dates before approval.`);
+   if(request.code==='paternity')issues.push('Paternity leave is limited to 10 working days per employee service year. Review the application dates and balance.');
+   else issues.push(`${name} leave requests ${period.requested_days} calendar days. The allowed period is ${period.allowed_days} calendar days${request.code==='adoption'?' at most':''}, through ${period.expected_end}. Review the application dates before approval.`);
   }
   // Historic approvals retain their granted pay; never recalculate a past decision from today's service records.
   if(request.status!=='pending'){

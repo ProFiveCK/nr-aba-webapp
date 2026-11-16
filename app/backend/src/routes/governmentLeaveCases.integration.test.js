@@ -56,22 +56,31 @@ describe('government event cases, financial commitments and amendments',{skip:sk
  }
  const financial=(amount='20',action='encashment')=>({...generic,requested_units:amount,action,duration_unit:'working_days',duration_unit_reference:'Synthetic signed benefit working-day determination',prior_consumed:'0',prior_history_reference:'Synthetic certified pre-portal usage and payout history',prior_history_reconciled:true,transition_resolution_reference:'Synthetic signed LSL to furlough prior-payment treatment',salary_valuation_reference:'Synthetic Salary Unit signed valuation',payable_amount:'1200.00',currency:'AUD'});
  async function simpleRoute(stages=[{level:'division',label:'Supervisor'}]){return (await import('../services/governmentLeaveApprovalRoutes.js')).publishApprovalRoute(pool,{user:user(hr),actor:hr,data:{department_id:department.id,stages,source_reference:'Synthetic configured leave approvals',reason}});}
- test('paternity review exposes a 16-day request and its 14-day allowance before the decision, within request authority',async()=>{
+ test('paternity review and PDF show working days and service-year balance; annual capacity includes pending applications',async()=>{
   await simpleRoute();
-  const data={...event('paternity','2026-11-12','2026-11-27'),case_details:{sex_eligibility:'male',event_kind:'birth',child_birth_date:'2026-11-12'}};
+  const details={sex_eligibility:'male',event_kind:'birth',child_birth_date:'2026-11-12'};
+  const data={...event('paternity','2026-11-12','2026-11-25'),case_details:details};
   const r=await c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data,documents:[doc],simpleApproval:true});
-  const before=(await pool.query('SELECT * FROM hr_gov_ledger ORDER BY id')).rows;
   const response=await call(`/requests/${r.id}`,null,officers.division.account);
   assert.equal(response.status,200);assert.equal(response.cache,'no-store');
   const summary=response.body.review_summary;
-  assert.equal(summary.parental.requested_days,16);assert.equal(summary.parental.allowance_days,14);assert.equal(summary.parental.valid,false);
-  assert.equal(summary.parental.expected_end,'2026-11-25');assert.match(summary.issues[0],/Review the application dates/);
+  assert.equal(summary.parental.requested_days,10);assert.equal(summary.parental.allowance_days,10);assert.equal(summary.parental.valid,true);
+  assert.equal(summary.paternity.periods[0].available_after_approval,0);
   assert.equal(summary.parental.pay_segments[0].salary_percent,'100');
   const outsider=await account({hr_access:true,hr_leave_approve:true});assert.equal((await call(`/requests/${r.id}`,null,outsider)).status,404);
-  assert.equal((await call(`/requests/${r.id}`,null,owner)).body.review_summary.parental.requested_days,16);
-  await assert.rejects(decide(r.id,{certification_confirmed:true,case_details:data.case_details}),/calendar weeks/);
-  assert.equal((await w.getRequest(pool,r.id)).status,'pending');assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_decisions WHERE request_id=$1',[r.id])).rows[0].n,0);
-  assert.deepEqual((await pool.query('SELECT * FROM hr_gov_ledger ORDER BY id')).rows,before);
+  await assert.rejects(c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:{...event('paternity','2026-12-01','2026-12-01'),case_details:details},documents:[doc],simpleApproval:true}),/10 working days per employee service year/);
+  await decide(r.id,{certification_confirmed:true,case_details:details});
+  const grant=await w.getRequest(pool,r.id);assert.equal(grant.grant_snapshot.paternity.periods[0].available_days,0);
+  const {generatedPdfText}=await import('../test-support/pdfText.js');
+  const pdf=await call(`/requests/${r.id}/pdf`,null,owner);assert.equal(pdf.status,200);
+  const text=await generatedPdfText(new Uint8Array(pdf.body));assert.match(text,/10 approved working days/);assert.match(text,/Balance after approval: 0 days/);
+ });
+ test('concurrent paternity submissions cannot reserve more than ten working days in one service year',async()=>{
+  await simpleRoute();
+  const submit=(start,end)=>c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:{...event('paternity',start,end),case_details:{sex_eligibility:'male',event_kind:'birth',child_birth_date:start}},documents:[doc],simpleApproval:true});
+  const results=await Promise.allSettled([submit('2026-11-02','2026-11-09'),submit('2026-11-16','2026-11-23')]);
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  assert.match(results.find(r=>r.status==='rejected').reason.message,/10 working days per employee service year/);
  });
  test('request balance summary includes other holds and keeps availability unchanged when a reservation becomes approved leave',async()=>{
   await simpleRoute();
@@ -275,7 +284,7 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   await assert.rejects(determine(r.id,{...parental,late_notice_authority_reference:null}),/late notice/);await determine(r.id,parental);
   for(let i=0;i<3;i++)await decide(r.id);await assert.rejects(decide(r.id,{discretion_confirmed:false}),/explicitly confirm/);await decide(r.id);
   const view=await w.requestView(pool,user(owner),r.id);assert.equal(view.tasks[0].kind,'return_confirmation');assert.equal(view.tasks[0].due_date,'2026-12-26');assert.equal(view.determination.pay_segments[0].salary_percent,'100.000000');
-  const invalid=await caseSubmit(event('paternity','2027-02-01','2027-02-10'));await assert.rejects(determine(invalid.id,{...generic,sex_eligibility:'male',parenthood_verified:true,certificate_complete:true,event_kind:'birth',event_date:'2027-02-01',late_notice_authority_reference:'Synthetic notice discretion'}),/calendar weeks/);
+  await assert.rejects(caseSubmit(event('paternity','2027-02-01','2027-02-16')),/10 working days/);
  });
  test('mid-leave six-month service requires split pay; fifth-pregnancy conflict requires a signed resolution',async()=>{
   await oldService('2026-06-01');const r=await caseSubmit(event('maternity','2026-11-01','2027-01-23')),facts={...parental,pregnancy_number:5};

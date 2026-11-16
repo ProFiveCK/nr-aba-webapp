@@ -45,13 +45,13 @@ export async function queueCurrentLeaveApprover(client, requestId) {
 export async function queueLeaveDecision(client, { requestId, eventKey, actorId, stage, decision, status }) {
   const { rows: [employee] } = await client.query(`SELECT e.reviewer_id FROM hr_gov_requests r
     JOIN hr_employees e ON e.id=r.employee_id WHERE r.id=$1`, [requestId]);
-  const recipients = new Set([actorId]);
+  const recipients = new Set();
   // Intermediate approvals are recommendations, not a final grant. Applicants
   // and previous approving officers receive the final outcome when it exists.
   if (status !== 'pending') {
     recipients.add(employee?.reviewer_id);
     const { rows } = await client.query('SELECT actor_id FROM hr_gov_decisions WHERE request_id=$1', [requestId]);
-    for (const row of rows) recipients.add(row.actor_id);
+    for (const row of rows) if (row.actor_id !== actorId) recipients.add(row.actor_id);
   }
   for (const recipientId of recipients) await enqueue(client, {
     key: `decision:${eventKey}:${recipientId}`, requestId, kind: 'decision', recipientId,
@@ -61,6 +61,12 @@ export async function queueLeaveDecision(client, { requestId, eventKey, actorId,
 }
 
 async function prepareNotification(client, notification) {
+  const payload = notification.payload;
+  const isApplicant = notification.recipient_id === payload.applicant_id;
+  // Older receipts may still be queued for retry. Keep their history, but do
+  // not send someone a copy of the decision they just recorded.
+  if (notification.kind === 'decision' && !isApplicant && notification.recipient_id === payload.actor_id)
+    return { skip: 'The acting approver does not receive their own decision confirmation.' };
   const workflow = await import('./governmentLeaveWorkflow.js');
   const request = await workflow.getRequest(client, notification.request_id);
   const { rows: [recipient] } = await client.query('SELECT email,display_name,status FROM reviewers WHERE id=$1', [notification.recipient_id]);
@@ -79,8 +85,6 @@ async function prepareNotification(client, notification) {
     return { to, subject: `Leave approval needed — ${applicant}`,
       text: `Hello ${recipient.display_name || 'there'},\n\nA leave application is waiting for your decision at ${stage.label || stage.level.replaceAll('_', ' ')}.\n\n${summary}\n\nReview the application: ${base}/leave/approvals\n` };
   }
-  const payload = notification.payload;
-  const isApplicant = notification.recipient_id === payload.applicant_id;
   if (isApplicant) {
     const { rows: [employee] } = await client.query('SELECT reviewer_id FROM hr_employees WHERE id=$1', [request.employee_id]);
     if (employee?.reviewer_id !== notification.recipient_id) return { skip: 'Applicant account link changed.' };

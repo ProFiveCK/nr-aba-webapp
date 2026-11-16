@@ -7,6 +7,8 @@ import { currentLeaveEntitlements } from './currentLeaveEntitlements';
 import { governmentLabel } from './governmentWorkflowTypes';
 import { reviewRecordLabel } from './reviewRecordNames';
 import { useAuth } from '../../contexts/useAuth';
+import { ParentalEntitlements } from './ParentalEntitlements';
+import type { ParentalEntitlementSummary } from './ParentalEntitlements';
 
 export type LeaveAccountBalance = {
     id: string; code: string; period_start: string; period_end: string; as_of: string;
@@ -21,7 +23,7 @@ type Movement = {
 };
 type Account = {
     employee: { id: string; display_name: string; leave_policy_regime: string; leave_entitled: boolean };
-    accounts: LeaveAccountBalance[]; movements: Movement[]; total: number; page_size: number; as_of: string;
+    accounts: LeaveAccountBalance[]; movements: Movement[]; event_entitlements?: ParentalEntitlementSummary | null; total: number; page_size: number; as_of: string;
 };
 import { leaveDays } from './leaveBalances';
 const movementLabels: Record<string, string> = {
@@ -53,14 +55,14 @@ export function LeaveAccount({ employeeId, refreshVersion = 0, initiallyExpanded
     const current = currentLeaveEntitlements(data?.accounts || [], data?.as_of);
     return <section className="space-y-4" aria-label="Leave balance account">
         <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><h3 className="text-lg font-semibold">{compact?'Leave balances':data ? `${reviewRecordLabel(data.employee.display_name)} · Balances & movements` : 'Balances & movements'}</h3>{!compact&&<p className="mt-1 text-sm text-gray-600">Credits minus deductions give the balance. Pending holds are then subtracted to show available days.</p>}</div>
+            <div><h3 className="text-lg font-semibold">{compact?'Leave balances':data ? `${reviewRecordLabel(data.employee.display_name)} · Balances & entitlements` : 'Balances & entitlements'}</h3>{!compact&&<p className="mt-1 text-sm text-gray-600">Credits minus deductions give the balance. Pending holds are then subtracted to show available days.</p>}</div>
             <Button variant="secondary" disabled={loading} onClick={() => setVersion(v => v + 1)}>{compact?'Refresh':'Refresh balances'}</Button>
         </div>
         {error && <p role="alert" className="app-panel p-4 text-sm text-red-700">{error}</p>}
         {loading ? <LoadingState label="Loading leave account…" /> : data && <>
             {data.employee.leave_policy_regime !== 'government' ? <p role="status" className="app-panel p-4 text-sm text-amber-900">{data.employee.leave_entitled === false ? 'No current leave entitlement is recorded. Ask HR to review any appointment changes.' : 'This employee’s leave setup needs review before current policy balances are available.'}{user?.permissions?.hr_admin && <> <Link className="font-semibold underline" to="/leave/settings?view=rollout">Review staff setup</Link>.</>}</p> : <>
-                <p className="text-sm text-gray-500">As at {formatDate(data.as_of)} · All figures are in days.</p>
-                {!current.length && <p className="app-panel p-4 text-sm text-gray-600">No balance yet. Ask HR to add this employee’s opening balance.</p>}
+                <p className="text-sm text-gray-500">As at {formatDate(data.as_of)} · Account balances are in days.</p>
+                {!current.length && <p className="app-panel p-4 text-sm text-gray-600">No accrued or annual balance is recorded. Parental entitlements do not require an opening balance.</p>}
                 <div className={compact?'grid grid-cols-3 gap-2 sm:gap-3':'grid gap-4 xl:grid-cols-3'}>{compact?current.map(balance=><article key={balance.id} className="app-panel leave-balance-card space-y-2 p-3"><h4 className="text-xs font-semibold sm:text-sm">{governmentLabel(balance.code)}</h4><p className="text-2xl font-semibold tabular-nums text-brand">{leaveDays(balance.available)} <span className="block text-xs font-normal text-gray-600">{balance.forecast?'posted days available':'days available'}</span></p><p className="text-xs text-gray-600">Pending: {leaveDays(balance.held)}</p>{balance.forecast&&<p className="border-t border-gray-100 pt-2 text-xs text-gray-600"><strong className="block text-brand">{leaveDays(balance.forecast.available)} days by {formatDate(balance.forecast.through_date)}</strong>Includes {leaveDays(balance.forecast.projected_accrual)} projected days</p>}</article>):current.map(balance => <article key={balance.id} className="app-panel space-y-3 p-4">
                     <div><h4 className="font-semibold">{governmentLabel(balance.code)}</h4><p className="text-xs text-gray-500">{formatDate(balance.period_start)} to {formatDate(balance.period_end)}</p></div>
                     <p className="text-3xl font-semibold tabular-nums text-brand">{leaveDays(balance.available)} <span className="text-sm font-normal text-gray-600">available</span></p>
@@ -69,6 +71,7 @@ export function LeaveAccount({ employeeId, refreshVersion = 0, initiallyExpanded
                     {balance.period_end < data.as_of && <p role="status" className="text-sm text-amber-800">Previous service year. HR must review renewal before these days can be used for new dates.</p>}
                     <Button variant="secondary" onClick={() => { setAccountId(balance.id); setPage(0); setExpanded(true); }}>View {governmentLabel(balance.code).toLowerCase()} movements</Button>
                 </article>)}</div>
+                {!compact&&data.event_entitlements&&<ParentalEntitlements summary={data.event_entitlements}/>}
             </>}
             <details className="app-panel p-4" open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}><summary className="cursor-pointer text-sm font-semibold">Leave movements — in & out ({data.total})</summary><div className="mt-4 space-y-4">
                 <div className="flex flex-wrap items-end justify-between gap-3"><div><h4 className="font-semibold">Leave movements — in & out</h4><p className="mt-1 text-sm text-gray-600">Newest recorded entries first. Running balances are separate for each leave type and service year.</p></div>

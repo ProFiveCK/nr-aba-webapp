@@ -33,6 +33,8 @@ Every new application uses the configured approval route for its department, or 
 
 The assigned approver opens the application, reviews the reason and supporting documents, confirms the application and chooses **Approve**, **Amend** or **Reject**. Comments are optional for approval; rejection requires a reason.
 
+Decision emails go to the employee and, for a final Government outcome, other officers who previously reviewed the application. The officer recording the decision does not receive a confirmation copy of their own action. Intermediate approval still notifies the next assigned approver. Already queued self-confirmations are retained as skipped, without being emailed.
+
 The review starts with the requested duration and the applicable balance or parental entitlement. Recreation, Medical and Special show the account years charged, this application's reservation, other pending reservations, and availability after approval without deducting the reservation twice. Parental leave shows calendar days, the event allowance, date discrepancies and a pay preview from recorded service; missing service is labelled undetermined. Dates that fail the existing parental period rule are flagged before certification and cannot be approved from the screen. A corrected pending parental application still follows the existing reject/cancel and reapply process. Approval history and email status remain collapsed below the decision section.
 
 **Amend** changes the dates (or the hours of hourly leave) of a pending Recreation, Medical or Special application. Give a reason. The days and balance hold are recalculated, the documents and the original notice date are kept, and the application starts its approvals again with the new dates; the original is kept as cancelled and linked. Other leave types are rejected and reapplied for instead.
@@ -95,5 +97,7 @@ Advanced maintenance contains recent leave type changes and balance schedules, b
 Approvals between HR officers (calendars, schedules, service basis, opening balances, leave access, balance schedules, appointment corrections) all use **Approve**. An appointment correction appears on the employee's Details and access only while it awaits approval.
 
 Staff balance browsing is under Employees → **Staff balances**. Accounts with only balance permission open that view directly and do not gain employee editing access. The primary navigation only shows destinations allowed by the account's permissions.
+
+An employee's **Balances** tab also shows Paternity, Maternity and Adoption under **Parental leave entitlements**, with the allowance for each eligible event and the current appointment/service readiness. These are separate from accrued and annual accounts: they do not need opening credits, accrue, or carry forward. The application still checks the parental event, evidence, actual dates and pay rules. Missing setup is shown as eligibility needing review; the displayed standard allowance does not assert that an individual application is eligible.
 
 Older links to Approvals, Overview, Staff, Staff balances and application follow-ups continue to open the corresponding destination. Employee filters are retained when a bookmarked Staff or Staff balances link is redirected.

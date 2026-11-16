@@ -569,7 +569,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  test('HTTP isolation: private reasons/files withheld from ordinary approvers, no clinical PDF bypass, paging and no client charge injection',async()=>{
   const data=application('medical','2026-11-02'),r=await submit(data);
   const outsider=await account({hr_access:true,hr_leave_approve:true,hr_report_read:true});assert.equal((await call(`/requests/${r.id}`,null,outsider)).status,404);
-  const approver=await call(`/requests/${r.id}`,null,officers.division.account);assert.equal(approver.status,200);assert.equal(approver.body.reason,null);assert.deepEqual(approver.body.documents,[]);assert.equal(approver.body.medical_review,undefined);assert.equal(approver.cache,'no-store');
+  const approver=await call(`/requests/${r.id}`,null,officers.division.account);assert.equal(approver.status,200);assert.equal(approver.body.reason,null);assert.deepEqual(approver.body.documents,[]);assert.equal(approver.body.medical_review,undefined);assert.equal(approver.body.review_summary,undefined);assert.equal(approver.cache,'no-store');
   const centralList=await call('/requests?mode=all&status=pending',null,hr);assert.equal(centralList.status,200);assert.equal(centralList.body.total,1);assert.equal(centralList.body.requests[0].id,r.id);
   assert.equal((await call(`/requests/${r.id}/documents/${randomUUID()}`,null,officers.division.account)).status,404);
   const mine=await call('/requests?mode=mine&status=all&page=1');assert.equal(mine.body.page_size,50);assert.equal(mine.body.requests.length,1);assert.equal(mine.body.requests[0].reason,undefined);

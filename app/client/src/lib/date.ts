@@ -53,7 +53,7 @@ export function parseAustralianDate(value: string): string {
     return isCalendarDate(iso) ? iso : '';
 }
 
-function isCalendarDate(iso: string): boolean {
+export function isCalendarDate(iso: string): boolean {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
     const [year, month, day] = iso.split('-').map(Number);
     if (year < 1 || month < 1 || month > 12 || day < 1) return false;

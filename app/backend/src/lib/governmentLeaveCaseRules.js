@@ -57,6 +57,16 @@ export function validatePaySegments(input,segments){
   return {start_date:segment.start_date,end_date:segment.end_date,salary_percent:decimal(rate)};
  }).map((s,i,array)=>{if(i===array.length-1)requireFact(cursor===isoDay(dayNumber(input.end_date)+1),'Pay segments must cover the final date.');return s;});
 }
+// Shared by the approval validator and the read-only review summary.
+export function parentalLeavePeriod(context,input){
+ const start=dayNumber(input.start_date),requestedDays=dayNumber(input.end_date)-start+1;
+ const allowanceDays=input.code==='paternity'?14:84;
+ const appointment=context.periods.find(p=>p.start_date<=input.start_date&&(!p.end_date||p.end_date>=input.start_date));
+ const standardEnd=isoDay(start+allowanceDays-1);
+ const expectedEnd=appointment?.end_date&&appointment.end_date<standardEnd?appointment.end_date:standardEnd;
+ return {requested_days:requestedDays,allowance_days:allowanceDays,allowed_days:dayNumber(expectedEnd)-start+1,expected_end:expectedEnd,
+  valid:requestedDays>0&&(input.code==='adoption'?requestedDays<=84:requestedDays===allowanceDays||appointment?.end_date===input.end_date&&requestedDays<allowanceDays)};
+}
 export function determineCase(context,input,data,{assignedApproval=false}={}){
  // The configured approver's recorded decision replaces role-specific signed
  // processing references. Actual historical and monetary sources remain required.
@@ -72,9 +82,7 @@ export function determineCase(context,input,data,{assignedApproval=false}={}){
  let benefit=null,tasks=[],discretion=[];
  if(['maternity','paternity','adoption'].includes(input.code)){
   confirmed(facts,'parenthood_verified');requireFact(six,'Certified future service must establish the six-month milestone.');
-  const expectedDays=input.code==='paternity'?14:84;
-  if(input.code==='adoption')requireFact(count<=84,'Adoption leave cannot exceed twelve calendar weeks.');
-  else {const endPeriod=context.periods.find(p=>p.start_date<=input.start_date&&(!p.end_date||p.end_date>=input.start_date));requireFact(count===expectedDays||(endPeriod.end_date===input.end_date&&count<expectedDays),'Use calendar weeks, shortened only by the verified employment cessation date.');}
+  requireFact(parentalLeavePeriod(context,input).valid,input.code==='adoption'?'Adoption leave cannot exceed twelve calendar weeks.':'Use calendar weeks, shortened only by the verified employment cessation date.');
   if(input.code==='maternity'){
    requireFact(facts.sex_eligibility==='female','Verify the female-employee eligibility specified by the reference.');
    requireFact(Number.isInteger(facts.pregnancy_number)&&facts.pregnancy_number>=1&&facts.pregnancy_number<=30,'Verify the pregnancy count.');confirmed(facts,'certificate_complete');dayNumber(facts.expected_birth_date);

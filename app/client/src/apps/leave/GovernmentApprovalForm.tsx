@@ -21,7 +21,8 @@ export function GovernmentApprovalForm({ request, stage, evidenceOnly = false, d
     const final = !evidenceOnly && stage?.ordinal === request.stages.length - 1;
     // Short notice does not stop an employee applying, but the approver must knowingly waive it.
     const shortNotice = !evidenceOnly ? request.short_notice : null;
-    const ready = certified && (!shortNotice || waived);
+    const periodBlocked = request.status === 'pending' && request.review_summary?.parental?.valid === false;
+    const ready = certified && (!shortNotice || waived) && !periodBlocked;
     return <form className="space-y-3 rounded-lg border border-blue-200 bg-blue-50 p-4" onSubmit={event => {
         event.preventDefault();
         if (!ready || disabled || saving.current) return;
@@ -34,6 +35,7 @@ export function GovernmentApprovalForm({ request, stage, evidenceOnly = false, d
     }}>
         <h4 className="font-semibold">{evidenceOnly ? 'Verify supporting evidence' : 'Certify and record your decision'}</h4>
         <p className="text-sm text-gray-700">{evidenceOnly ? 'Record the HR evidence review so the assigned approver can proceed.' : final ? `Approve this leave as ${stage?.label || label(stage?.level || 'assigned approver')}. ${request.code==='lwop'?"This is unpaid leave; paid leave balances stay unchanged.":"Approval records the leave and any balance changes."}` : 'Your decision will move this application to the next approval stage.'}</p>
+        {periodBlocked && <p className="text-sm font-medium text-amber-900">The dates do not match the parental entitlement shown above. Approval is unavailable until a corrected application is submitted.</p>}
         {verifiesEvidence && <p className="text-sm text-gray-700">{!evidenceOnly && stage?.level !== 'hr_verifier' ? 'Supporting evidence will be verified together with your decision. ' : ''}Confirm that the supporting information covers this application{request.code === 'medical' && request.medical_mode === 'certificate' ? `, including the registered-practitioner medical certificate for ${formatDate(request.start_date)} to ${formatDate(request.end_date)}` : request.code === 'special' ? ', including sufficient-cause justification for Special leave' : ''}.</p>}
         {!request.simple_approval && stage?.level === 'minister' && <p className="text-sm">Record the statutory Minister grant for the further medical period and explicit salary segments. Chief Secretary final processing follows this retained Minister decision.</p>}
         {!request.simple_approval && stage?.level === 'hr_verifier' && request.case && !request.standard_lwop && <p className="text-sm">Check the case details, pay periods and documents. The person who prepared the case cannot check it.</p>}

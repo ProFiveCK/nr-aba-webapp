@@ -1,4 +1,5 @@
 import {isSimpleApproval,approvalChecks} from '../lib/governmentLeaveSimpleApproval.js';
+import {REVIEW_CODES,leaveRequestReview} from '../lib/governmentLeaveRequestReview.js';
 import {isStandardLwop} from '../lib/governmentLeaveStandardLwop.js';
 import {evidenceReviewInput} from '../lib/governmentLeaveEvidence.js';
 import {divisionPlacementIssue} from './organisationHierarchy.js';
@@ -300,6 +301,12 @@ export async function requestView(client,user,id) {
   const canVerifyEvidence=separateEvidence&&!evidenceReview&&request.status==='pending'&&isCentralHr(user)&&privateAccess&&user.id!==request.submitted_by&&user.id!==employee.reviewer_id;
   const documents=privateAccess?(await client.query('SELECT id,file_name,content_type,byte_size,sha256 FROM hr_gov_request_documents WHERE request_id=$1',[id])).rows:[];
   const caseDetails=await cases.caseView(client,user,request,privateAccess),amendment=(await client.query('SELECT request_id,effect FROM hr_gov_case_effects WHERE original_request_id=$1 ORDER BY version DESC LIMIT 1',[id])).rows[0]||null;
+  if(privateAccess&&REVIEW_CODES.includes(request.code)){
+    const context=await ledger.loadContext(client,request.employee_id);
+    const {rows:holds}=await client.query(`SELECT h.entitlement_id,h.amount::text FROM hr_gov_reservations h
+      JOIN hr_gov_reservation_requests r ON r.id=h.request_id WHERE h.request_id=$1 AND r.status='held'`,[request.reservation_id]);
+    caseDetails.review_summary=leaveRequestReview(context,request,holds);
+  }
   const cancellationPending=(await client.query("SELECT 1 FROM hr_gov_case_links l JOIN hr_gov_requests r ON r.id=l.request_id WHERE l.original_request_id=$1 AND l.kind='amendment' AND r.status='pending'",[id])).rowCount>0;
   const forecast=request.application_snapshot.evaluation?.forecast;
   if(forecast)caseDetails.forecast={through_date:forecast.through_date,projected_accrual:forecast.projected_accrual,available:forecast.available,forecast_used:forecast.forecast_used};

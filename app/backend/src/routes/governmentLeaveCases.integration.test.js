@@ -56,6 +56,36 @@ describe('government event cases, financial commitments and amendments',{skip:sk
  }
  const financial=(amount='20',action='encashment')=>({...generic,requested_units:amount,action,duration_unit:'working_days',duration_unit_reference:'Synthetic signed benefit working-day determination',prior_consumed:'0',prior_history_reference:'Synthetic certified pre-portal usage and payout history',prior_history_reconciled:true,transition_resolution_reference:'Synthetic signed LSL to furlough prior-payment treatment',salary_valuation_reference:'Synthetic Salary Unit signed valuation',payable_amount:'1200.00',currency:'AUD'});
  async function simpleRoute(stages=[{level:'division',label:'Supervisor'}]){return (await import('../services/governmentLeaveApprovalRoutes.js')).publishApprovalRoute(pool,{user:user(hr),actor:hr,data:{department_id:department.id,stages,source_reference:'Synthetic configured leave approvals',reason}});}
+ test('paternity review exposes a 16-day request and its 14-day allowance before the decision, within request authority',async()=>{
+  await simpleRoute();
+  const data={...event('paternity','2026-11-12','2026-11-27'),case_details:{sex_eligibility:'male',event_kind:'birth',child_birth_date:'2026-11-12'}};
+  const r=await c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data,documents:[doc],simpleApproval:true});
+  const before=(await pool.query('SELECT * FROM hr_gov_ledger ORDER BY id')).rows;
+  const response=await call(`/requests/${r.id}`,null,officers.division.account);
+  assert.equal(response.status,200);assert.equal(response.cache,'no-store');
+  const summary=response.body.review_summary;
+  assert.equal(summary.parental.requested_days,16);assert.equal(summary.parental.allowance_days,14);assert.equal(summary.parental.valid,false);
+  assert.equal(summary.parental.expected_end,'2026-11-25');assert.match(summary.issues[0],/Review the application dates/);
+  assert.equal(summary.parental.pay_segments[0].salary_percent,'100');
+  const outsider=await account({hr_access:true,hr_leave_approve:true});assert.equal((await call(`/requests/${r.id}`,null,outsider)).status,404);
+  assert.equal((await call(`/requests/${r.id}`,null,owner)).body.review_summary.parental.requested_days,16);
+  await assert.rejects(decide(r.id,{certification_confirmed:true,case_details:data.case_details}),/calendar weeks/);
+  assert.equal((await w.getRequest(pool,r.id)).status,'pending');assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_decisions WHERE request_id=$1',[r.id])).rows[0].n,0);
+  assert.deepEqual((await pool.query('SELECT * FROM hr_gov_ledger ORDER BY id')).rows,before);
+ });
+ test('request balance summary includes other holds and keeps availability unchanged when a reservation becomes approved leave',async()=>{
+  await simpleRoute();
+  const first=await w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:application('recreation','2026-11-16'),simpleApproval:true});
+  await w.submitRequest(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:application('recreation','2026-11-18'),simpleApproval:true});
+  const pending=(await call(`/requests/${first.id}`,null,officers.division.account)).body.review_summary;
+  assert.equal(pending.periods.length,1);assert.equal(pending.periods[0].balance,'20.000000');
+  assert.equal(pending.periods[0].request_charge,'1.000000');assert.equal(pending.periods[0].request_held,'1.000000');
+  assert.equal(pending.periods[0].other_held,'1.000000');assert.equal(pending.periods[0].available_before_request,'19.000000');assert.equal(pending.periods[0].available_after_approval,'18.000000');
+  await decide(first.id,{certification_confirmed:true});
+  const approved=(await call(`/requests/${first.id}`,null,officers.division.account)).body.review_summary;
+  assert.equal(approved.periods[0].balance,'19.000000');assert.equal(approved.periods[0].available,'18.000000');
+  assert.equal(approved.periods[0].request_held,'0.000000');assert.equal(approved.periods[0].available_after_approval,null);
+ });
  // Legacy fixtures below retain coverage for historical workflow snapshots.
  for(const code of ['teacher_recreation','extended_medical','maternity','paternity','adoption','official','lwop','long_service','furlough','recreation_encashment','recreation_separation','witness_republic','witness_other','attendance'])test(`simple ${code}: assigned Supervisor completes review without HR stages`,async()=>{
   await simpleRoute();

@@ -62,6 +62,15 @@ describe('current leave balances and movement accounts', { skip: skipWithoutData
     assert.equal((await balances.staffLeaveBalances(pool, { user: user(scoped), search: 'Treasury' })).total, 2);
     assert.equal((await balances.staffLeaveBalances(pool, { user: user(admin), search: '%' })).total, 0);
   });
+  test('employee balances include parental event allowances even without any ledger account', async () => {
+    const before=(await pool.query('SELECT count(*)::int n FROM hr_gov_ledger')).rows[0].n;
+    const result=await balances.employeeLeaveAccount(pool,{user:user(admin),employeeId:outside.id});
+    assert.deepEqual(result.accounts,[]);assert.equal(result.event_entitlements.status,'review_required');
+    assert.deepEqual(result.event_entitlements.items.map(i=>[i.code,i.calendar_days]),[['paternity',14],['maternity',84],['adoption',84]]);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM hr_gov_ledger')).rows[0].n,before);
+    assert.equal((await balances.employeeLeaveAccount(pool,{user:user(admin),employeeId:legacy.id})).event_entitlements,null);
+    await assert.rejects(balances.employeeLeaveAccount(pool,{user:user(scoped),employeeId:outside.id}),error=>error.status===404);
+  });
   test('future openings never become current and previous service years remain distinct', async () => {
     const older = await entitlement(employee.id, '2025', '2025-01-01', '10');
     await entitlement(employee.id, '2099', '2099-01-01', '50');

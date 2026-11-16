@@ -150,38 +150,59 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   assert.equal((await call(`/requests/${r.id}/notifications`,null,owner)).status,403);
   assert.equal((await call(`/requests/${r.id}/notifications`,null,hr)).body.notifications[0].status,'sent');
  });
- test('each intermediate approval confirms the decision to its actor and notifies the next officer',async()=>{
+ test('each intermediate approval notifies the next officer once without emailing the acting approver',async()=>{
   const r=await submit();await notificationDelivery();
   const view=await w.requestView(pool,user(hr),r.id),stage=view.stages[0];
   const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason,notice_waived:true};
   const args={user:user(officers.division.account),actor:officers.division.account,id:r.id,data};
   await w.decideRequest(pool,args);await w.decideRequest(pool,args);
-  const {messages,result}=await notificationDelivery();assert.equal(result.sent,2);
-  assert.deepEqual(new Set(messages.map(m=>m.to)),new Set([officers.division.account.email,officers.department.account.email]));
-  assert.match(messages.find(m=>m.to===officers.division.account.email).text,/still pending further approval/);
-  assert.equal((await notificationQueue(r.id)).length,3);
+  const {messages,result}=await notificationDelivery();assert.equal(result.sent,1);
+  assert.deepEqual(messages.map(m=>m.to),[officers.department.account.email]);
+  assert.match(messages[0].subject,/Leave approval needed/);
+  assert.equal((await notificationQueue(r.id)).length,2);
  });
- test('final approval emails the applicant and all deciding approvers without claiming an intermediate grant',async()=>{
+ test('final approval emails the applicant without sending the deciding approver a duplicate confirmation',async()=>{
   await customRoute();const r=await submit();await notificationDelivery();await decide(r.id);
-  const {messages,result}=await notificationDelivery();assert.equal(result.sent,2);
-  assert.deepEqual(new Set(messages.map(m=>m.to)),new Set([owner.email,officers.department.account.email]));
+  const {messages,result}=await notificationDelivery();assert.equal(result.sent,1);
+  assert.deepEqual(messages.map(m=>m.to),[owner.email]);
   assert.ok(messages.every(m=>m.subject.includes('Leave approved')));
   assert.match(messages.find(m=>m.to===owner.email).text,/leave\/my-leave/);
  });
- test('rejection emails the applicant and the deciding approver and never notifies a later stage',async()=>{
+ test('rejection emails the applicant without emailing the deciding approver or a later stage',async()=>{
   const r=await submit();await notificationDelivery();await decide(r.id,{decision:'rejected'});
-  const {messages}=await notificationDelivery();assert.equal(messages.length,2);
-  assert.deepEqual(new Set(messages.map(m=>m.to)),new Set([owner.email,officers.division.account.email]));
+  const {messages}=await notificationDelivery();assert.equal(messages.length,1);
+  assert.deepEqual(messages.map(m=>m.to),[owner.email]);
   assert.ok(messages.every(m=>m.subject.includes('Leave rejected')));
  });
  test('final outcome reaches previous approvers after all stages complete',async()=>{
   const r=await submit();await grant(r.id);
   const {messages}=await notificationDelivery();
   const final=messages.filter(message=>message.subject.startsWith('Leave approved'));
-  assert.deepEqual(new Set(final.map(message=>message.to)),new Set([owner.email,...Object.values(officers).map(officer=>officer.account.email)]));
-  assert.ok(messages.filter(message=>message.subject.startsWith('Leave decision recorded')).every(message=>message.to!==owner.email));
-  assert.ok(messages.filter(message=>message.subject.startsWith('Leave decision recorded')).every(message=>message.text.includes('now approved')));
+  assert.deepEqual(new Set(final.map(message=>message.to)),new Set([owner.email,...Object.entries(officers).filter(([level])=>level!=='chief_secretary').map(([,officer])=>officer.account.email)]));
+  assert.equal(messages.filter(message=>message.subject.startsWith('Leave decision recorded')).length,0);
   assert.ok(!messages.some(message=>message.subject.startsWith('Leave approval needed')));
+ });
+ test('already queued acting-approver receipts are skipped while the applicant still receives the final outcome',async()=>{
+  await customRoute();const r=await submit();await notificationDelivery();
+  const stage=(await w.requestView(pool,user(hr),r.id)).stages[0];
+  await decide(r.id);
+  await pool.query(`INSERT INTO hr_gov_notifications(event_key,request_id,kind,recipient_id,stage_id,binding_id,payload)
+    VALUES($1,$2,'decision',$3,$4,$5,$6)`,[`retained-receipt:${randomUUID()}`,r.id,officers.department.account.id,stage.id,stage.binding.id,
+    {decision:'approved',status:'approved',actor_id:officers.department.account.id,applicant_id:owner.id,label:stage.label}]);
+  // A redundant receipt is skipped even if its old recipient can no longer receive mail.
+  await pool.query("UPDATE reviewers SET email='' WHERE id=$1",[officers.department.account.id]);
+  const {messages,result}=await notificationDelivery();
+  assert.equal(result.sent,1);assert.equal(result.skipped,1);assert.deepEqual(messages.map(m=>m.to),[owner.email]);
+  const receipt=(await notificationQueue(r.id)).find(n=>n.event_key.startsWith('retained-receipt:'));
+  assert.equal(receipt.status,'skipped');assert.match(receipt.last_error,/acting approver/);
+  assert.equal((await w.getRequest(pool,r.id)).status,'approved');
+ });
+ test('a rejection at a later stage still informs the applicant and earlier approver',async()=>{
+  const r=await submit();await notificationDelivery();await decide(r.id);await notificationDelivery();
+  await decide(r.id,{decision:'rejected'});
+  const {messages}=await notificationDelivery();
+  assert.deepEqual(new Set(messages.map(m=>m.to)),new Set([owner.email,officers.division.account.email]));
+  assert.ok(messages.every(m=>m.subject.startsWith('Leave rejected')));
  });
  test('SMTP failures and nonacceptance retain a pending notification for retry without changing the application',async()=>{
   const r=await submit();

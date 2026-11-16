@@ -45,23 +45,26 @@ describe('notifications follow the admin testing-mode switch', { skip: skipWitho
     await assert.rejects(() => notifications.notifyLeaveDecision(decision));
   });
 
-  test('legacy decision emails go separately to the applicant and deciding approver', async () => {
+  test('legacy approval and rejection emails go only to the applicant, without an approver confirmation copy', async () => {
     const messages = [];
     const original = mail.mailTransport.sendMail;
     mail.mailTransport.sendMail = async message => { messages.push(message); return { accepted: [message.to] }; };
     try {
-      const sent = await notifications.notifyLeaveDecision({ ...leave,
-        employee: { display_name: 'Ana', email: 'ana@test' }, decision: 'approved',
-        approver: { email: 'approver@test' }, decidedBy: 'Approver',
-      });
-      assert.deepEqual(sent, ['ana@test', 'approver@test']);
-      assert.match(messages[0].subject, /Your leave request was approved/);
-      assert.match(messages[1].subject, /Leave decision recorded/);
-      assert.match(messages[1].text, /leave\/approvals/);
+      for (const outcome of ['approved', 'rejected']) {
+        messages.length = 0;
+        const sent = await notifications.notifyLeaveDecision({ ...leave,
+          employee: { display_name: 'Ana', email: 'ana@test' }, decision: outcome,
+          approver: { email: 'approver@test' }, decidedBy: 'Approver', note: outcome === 'rejected' ? 'Reapply with revised dates.' : '',
+        });
+        assert.deepEqual(sent, ['ana@test']);
+        assert.equal(messages.length, 1);
+        assert.match(messages[0].subject, /Your leave request was (approved|not approved)/);
+        if (outcome === 'rejected') assert.match(messages[0].text, /Reapply with revised dates/);
+      }
     } finally { mail.mailTransport.sendMail = original; }
   });
 
-  test('a deciding approver still receives confirmation when the legacy applicant has no email', async () => {
+  test('a missing legacy applicant email does not redirect the outcome to the deciding approver', async () => {
     const messages = [];
     const original = mail.mailTransport.sendMail;
     mail.mailTransport.sendMail = async message => { messages.push(message); return { accepted: [message.to] }; };
@@ -69,8 +72,8 @@ describe('notifications follow the admin testing-mode switch', { skip: skipWitho
       const sent = await notifications.notifyLeaveDecision({ ...leave,
         decision: 'rejected', approver: { email: 'approver@test' },
       });
-      assert.deepEqual(sent, ['approver@test']);
-      assert.match(messages[0].text, /not approved/);
+      assert.deepEqual(sent, []);
+      assert.equal(messages.length, 0);
     } finally { mail.mailTransport.sendMail = original; }
   });
 

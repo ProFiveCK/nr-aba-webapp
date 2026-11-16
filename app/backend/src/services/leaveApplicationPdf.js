@@ -328,6 +328,10 @@ export async function generateLeaveApplicationPdf(form,{firstPageOnly=false}={})
   text('Section Head', pageWidth - (contentRight - 360) / 2, y + 10, { size: 7, align: 'center' });
 
   y += 24;
+  // Keep the recorded electronic approval beside the Section Head sign-off.
+  text(`Treasury approval: ${form.approved_by_name || 'Recorded approver'}  |  ${dateOnly(form.approved_at)}`, contentRight, y, { size: 7.5, italic: true, color: fill, align: 'right', maxWidth: contentWidth });
+
+  y += 20;
   field('State reason if NO:', margin, margin + 100, contentRight, y, '');
   y += 20;
   hLine(360, contentRight, y);
@@ -353,12 +357,6 @@ export async function generateLeaveApplicationPdf(form,{firstPageOnly=false}={})
   if (form.leave_type_name) text(form.leave_type_name, margin + 4, y + 9, { size: 7, color: fill });
   y += 27;
   field('Verified by:', margin, margin + 70, 260, y, '');
-
-  // Treasury's recorded decision is final. No handwritten signature is
-  // fabricated: Section Head, HR, applicant and Chief Secretary lines remain
-  // on the form exactly as the paper original shows them.
-  y += 20;
-  text(`Treasury approval: ${form.approved_by_name || 'Recorded approver'}  |  ${dateOnly(form.approved_at)}`, margin, y, { size: 7.5, italic: true, color: fill });
 
   // Centred as one block rather than pinned to the left margin, so it reads
   // as the form's final decision line rather than an afterthought — and

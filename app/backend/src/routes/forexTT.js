@@ -68,7 +68,7 @@ async function loadRequest(code, actor, { db = pool, lock = false } = {}) {
   if (!rows.length) return null;
   const r = rows[0];
   const isOwner = r.submitted_by === actor.id;
-  const isReviewer = actor.permissions?.review_forex_tt || actor.role === 'admin';
+  const isReviewer = actor.permissions?.review_forex_tt === true;
   if (!isOwner && !isReviewer) return null;
   return r;
 }
@@ -76,7 +76,7 @@ async function loadRequest(code, actor, { db = pool, lock = false } = {}) {
 // List all accessible FOREX TT requests (submitter sees own; reviewer/admin sees all)
 router.get('/', requireAuth(), async (req, res) => {
   try {
-    const canReview = req.user.permissions?.review_forex_tt || req.user.role === 'admin';
+    const canReview = req.user.permissions?.review_forex_tt === true;
     const { rows } = await pool.query(
       `SELECT id, request_id, status, version, department_code, division_code,
               submitted_by, form_data, created_at, updated_at
@@ -404,7 +404,7 @@ router.get('/attachments/:attachmentId', requireAuth(), async (req, res) => {
     }
     const a = rows[0];
     const isOwner = a.submitted_by === req.user.id;
-    const isReviewer = req.user.permissions?.review_forex_tt || req.user.role === 'admin';
+    const isReviewer = req.user.permissions?.review_forex_tt === true;
     if (!isOwner && !isReviewer) {
       res.status(403).json({ message: 'Forbidden.' });
       return;
@@ -464,7 +464,7 @@ router.patch(
       const request = await loadRequest(req.params.requestId, req.user, { db: client, lock: true });
       if (!request) return { fail: [404, 'Request not found.'] };
       const isOwner = request.submitted_by === req.user.id;
-      const isReviewer = req.user.permissions?.review_forex_tt || req.user.role === 'admin';
+      const isReviewer = req.user.permissions?.review_forex_tt === true;
 
       if (targetStatus === 'submitted' && !isOwner) {
         return { fail: [403, 'Only the submitter can submit this request.'] };

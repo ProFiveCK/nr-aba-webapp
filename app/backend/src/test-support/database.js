@@ -19,6 +19,20 @@ export const skipWithoutDatabase = TEST_DATABASE_URL
   : 'needs a database — run `npm run test:db`';
 
 /**
+ * Grants each `true` key of a fixture's access map as a capability, the only
+ * place access lives. Fixtures still describe an account's access as a map;
+ * writing it to reviewers.permissions instead would now grant nothing.
+ */
+export async function grantAccess(pool, reviewerId, access = {}) {
+  const keys = Object.entries(access || {}).filter(([, value]) => value === true).map(([key]) => key);
+  if (keys.length) {
+    await pool.query(
+      `INSERT INTO reviewer_capabilities (reviewer_id, capability) SELECT $1, unnest($2::text[])
+       ON CONFLICT (reviewer_id, capability) DO NOTHING`, [reviewerId, keys]);
+  }
+}
+
+/**
  * Connects, applies the real schema, and hands back the pool.
  *
  * `db.js` builds its pool from the environment when it is first imported, so

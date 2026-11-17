@@ -13,7 +13,8 @@ import {
   TEMP_PASSWORD_LENGTH,
   DEFAULT_BANK_PRESETS,
   ALL_CAPABILITIES,
-  ROLE_CAPABILITIES,
+  PERMISSIONS,
+  PREFERENCE_KEYS,
 } from '../config.js';
 import { activeScopeSql } from './hrAccess.js';
 import { employeeApiLimiter } from '../middleware/employeeApiLimit.js';
@@ -191,49 +192,41 @@ export async function setCapabilities(reviewerId, capabilities, grantedBy = null
 }
 
 export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS, capabilities = []) {
-  const permissions = parsePermissions(row.permissions);
-  // Granted capabilities. Explicit JSONB overrides above still win, so an
-  // administrator can revoke something a grant would otherwise allow.
-  for (const capability of capabilities) {
-    permissions[capability] ??= true;
-  }
-  // Defaults based on legacy role model for backward compatibility
-  if (row.account_type !== 'employee' && ['reviewer', 'admin'].includes(row.role)) {
-    permissions.review_aba ??= true;
-    permissions.notify_aba_submissions ??= row.notify_on_submission !== false;
-    // FOREX TT defaults for reviewers/admins
-    permissions.review_forex_tt ??= true;
-    permissions.notify_forex_tt_submissions ??= row.notify_on_submission !== false;
-  }
-  if (row.account_type !== 'employee' && row.status === 'active') {
-    // All active users may submit ABA batches and FOREX TT requests
-    permissions.submit_aba ??= true;
-    permissions.submit_forex_tt ??= true;
-  }
-  if (row.account_type !== 'employee' && row.role === 'admin') {
-    permissions.admin ??= true;
-  }
-  // Which apps an ordinary account can open is decided only by the
-  // capabilities granted to it, so somebody can be given Leave and nothing
-  // else. There used to be a floor here re-granting every role's apps on each
-  // request, which is why ABA could not be taken off a `user`: the checkbox
-  // was disabled and revoking it in the database changed nothing. What that
-  // floor used to give is now written down per account — see
-  // materialiseRoleFloor in db.js, which runs once before this matters.
+  // Access is exactly the capabilities granted to the account (its own rows in
+  // reviewer_capabilities plus those from its active HR scopes), which is what
+  // the account page shows and edits. Nothing else adds or removes any:
   //
-  // Administrators keep theirs implicitly. An administrator is the account
-  // that repairs the others, so it must not be possible to arrive at a
-  // database where every one of them has been narrowed out of the page that
-  // would grant the capability back.
-  if (row.account_type !== 'employee' && row.role === 'admin') {
-    for (const capability of ROLE_CAPABILITIES.admin) {
-      permissions[capability] ??= true;
-    }
+  // - The reviewers.permissions column used to grant (`true`) or deny
+  //   (`false`) any key, unseen by the account page, and kept doing so after a
+  //   role change. It now holds notification preferences only.
+  // - Roles used to add access at request time (review for reviewers, submit
+  //   for every active account, everything for administrators), so unticking
+  //   those boxes did nothing. Those grants were written down per account by
+  //   retireHiddenPermissions in db.js and are ordinary ticks from then on.
+  //
+  // Administrators cannot narrow themselves out of repairing access: the
+  // account page is gated by the Administrator role, not by a capability.
+  const permissions = {};
+  for (const capability of capabilities) {
+    if (capability !== PERMISSIONS.ADMIN) permissions[capability] = true;
   }
   if (row.account_type === 'employee') {
+    // Employee-only identities are fenced into Leave by requireAuth as well.
     for (const key of Object.keys(permissions)) {
       if (!key.startsWith('hr_')) delete permissions[key];
     }
+  } else {
+    const stored = parsePermissions(row.permissions);
+    for (const key of PREFERENCE_KEYS) {
+      if (typeof stored[key] === 'boolean') permissions[key] = stored[key];
+    }
+    if (['reviewer', 'admin'].includes(row.role)) {
+      permissions.notify_aba_submissions ??= row.notify_on_submission !== false;
+      permissions.notify_forex_tt_submissions ??= row.notify_on_submission !== false;
+    }
+    // Full administration is the Administrator role, nothing else, so the
+    // account page (role-gated) and capability checks name the same people.
+    if (row.role === 'admin') permissions[PERMISSIONS.ADMIN] = true;
   }
   return {
     id: row.id,

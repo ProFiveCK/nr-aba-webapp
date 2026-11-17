@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, beforeEach, describe, test } from 'node:test';
-import { connectTestDatabase, resetLeaveTables, skipWithoutDatabase } from '../test-support/database.js';
+import { connectTestDatabase, resetLeaveTables, skipWithoutDatabase, grantAccess } from '../test-support/database.js';
 
 describe('account administration staff reassignment', { skip: skipWithoutDatabase }, () => {
   let pool, auth, server, base, admin, other, login, previous, employee, former;
@@ -22,7 +22,8 @@ describe('account administration staff reassignment', { skip: skipWithoutDatabas
   });
   after(async () => { if (server) await new Promise(resolve => server.close(resolve)); await pool?.end(); });
   async function account(permissions = {}) {
-    return (await pool.query("INSERT INTO reviewers(email,role,password_hash,permissions) VALUES($1,'user','x',$2) RETURNING *", [`${randomUUID()}@example.test`, permissions])).rows[0];
+    // Full administration is the Administrator role now, not a grant.
+    const row=(await pool.query("INSERT INTO reviewers(email,role,password_hash,permissions) VALUES($1,$3,'x',$2) RETURNING *", [`${randomUUID()}@example.test`, permissions, permissions.admin ? 'admin' : 'user'])).rows[0];await grantAccess(pool,row.id,permissions);return row;
   }
   async function person(name, reviewer) {
     return (await pool.query('INSERT INTO hr_employees(display_name,reviewer_id,email) VALUES($1,$2,$3) RETURNING *', [name, reviewer?.id || null, reviewer?.email || null])).rows[0];

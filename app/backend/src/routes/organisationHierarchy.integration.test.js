@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {after,before,beforeEach,describe,test} from 'node:test';
-import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase} from '../test-support/database.js';
+import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase,grantAccess} from '../test-support/database.js';
 
 describe('Finance Treasury division hierarchy',{skip:skipWithoutDatabase},()=>{
  let pool,server,base,auth,admin,department,treasury,createOrganisationDivision,divisionPlacementIssue,assertEmployeeScope,employeeScopeSql,managerScopeSql;
  const reason='Synthetic approved initial organisation setup';
- async function account(permissions){return(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES($1,'Synthetic hierarchy account','user','x',$2) RETURNING *",[`${randomUUID()}@example.test`,permissions])).rows[0];}
+ async function account(permissions){const row=(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES($1,'Synthetic hierarchy account','user','x',$2) RETURNING *",[`${randomUUID()}@example.test`,permissions])).rows[0];await grantAccess(pool,row.id,permissions);return row;}
  async function call(path,data,by=admin,method=data?'POST':'GET'){
   const session=await auth.createSession(by.id),token=auth.buildTokenPayload(by,session.tokenId,session.expiresAt);
   const response=await fetch(base+path,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});

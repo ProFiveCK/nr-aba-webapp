@@ -2,7 +2,7 @@ import {describe,test,before,after,beforeEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {writeFile} from 'node:fs/promises';
-import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase} from '../test-support/database.js';
+import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase,grantAccess} from '../test-support/database.js';
 import {DEFAULT_RULES} from '../lib/governmentLeaveRules.js';
 
 describe('government event cases, financial commitments and amendments',{skip:skipWithoutDatabase},()=>{
@@ -14,7 +14,7 @@ describe('government event cases, financial commitments and amendments',{skip:sk
    const express=(await import('express')).default,errors=await import('../middleware/errors.js');errors.enableAsyncErrors();const app=express();app.use(express.json());app.use('/api/hr',(await import('./hr.js')).default);app.use(errors.notFoundHandler);app.use(errors.errorHandler);server=await new Promise(resolve=>{const running=app.listen(0,'127.0.0.1',()=>resolve(running));});base=`http://127.0.0.1:${server.address().port}`;
  });
  after(async()=>{if(server)await new Promise(resolve=>server.close(resolve));await pool?.end();});
- async function account(permissions,type='staff'){return(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions,account_type) VALUES($1,'Synthetic workflow actor','user','x',$2,$3) RETURNING *",[`${randomUUID()}@example.test`,permissions,type])).rows[0];}
+ async function account(permissions,type='staff'){const row=(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions,account_type) VALUES($1,'Synthetic workflow actor','user','x',$2,$3) RETURNING *",[`${randomUUID()}@example.test`,permissions,type])).rows[0];await grantAccess(pool,row.id,permissions);return row;}
  async function opening(code,amount){const o=await l.prepareOpening(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{code,amount,policy_version_id:policy.id,period_start:'2026-01-01',period_end:'2026-12-31',as_of:'2026-10-01',source_reference:'Synthetic reviewed HR register',payroll_reference:'Synthetic Salary Unit reconciliation',reason}});await l.certifyOpening(pool,{user:user(certifier),actor:certifier,id:o.id,reason});}
  async function configure(codes=['recreation','medical','special'],history=[]){return w.saveLeaveTypes(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{enabled_codes:codes,medical_history:history}});}
  const application=(code='recreation',start='2026-11-02',end=start)=>({request_id:randomUUID(),code,start_date:start,end_date:end,reason,medical_mode:code==='medical'?'exemption':'not_applicable'});

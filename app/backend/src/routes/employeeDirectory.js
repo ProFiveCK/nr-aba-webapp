@@ -158,8 +158,7 @@ router.get('/approval-assignments', centralHr, [query('page').optional().isInt({
   const where="($1='' OR position(lower($1) in lower(concat_ws(' ',e.display_name,d.name,v.name)))>0) AND ($2::uuid IS NULL OR a.department_id=$2) AND ($3::text IS NULL OR a.level=$3) AND ($4::text IS NULL OR ($4='current' AND a.effective_from<=(NOW() AT TIME ZONE 'Pacific/Nauru')::date AND (a.effective_to IS NULL OR a.effective_to>=(NOW() AT TIME ZONE 'Pacific/Nauru')::date)) OR ($4='upcoming' AND a.effective_from>(NOW() AT TIME ZONE 'Pacific/Nauru')::date) OR ($4='ended' AND a.effective_to<(NOW() AT TIME ZONE 'Pacific/Nauru')::date))";
   const { rows } = await pool.query(`SELECT a.*,e.display_name AS approver_name,d.name AS department_name,v.name AS division_name,
     e.status AS employee_status,r.status AS account_status,e.reviewer_id,
-    (COALESCE(r.permissions->>'hr_leave_approve','') <> 'false' AND (r.permissions->>'hr_leave_approve'='true'
-      OR EXISTS(SELECT 1 FROM reviewer_capabilities c WHERE c.reviewer_id=r.id AND c.capability='hr_leave_approve')
+    ((EXISTS(SELECT 1 FROM reviewer_capabilities c WHERE c.reviewer_id=r.id AND c.capability='hr_leave_approve')
       OR EXISTS(SELECT 1 FROM hr_access_scopes s WHERE s.reviewer_id=r.id AND 'hr_leave_approve'=ANY(s.capabilities)
         AND s.revoked_at IS NULL AND s.effective_from <= (NOW() AT TIME ZONE 'Pacific/Nauru')::date
         AND (s.effective_to IS NULL OR s.effective_to >= (NOW() AT TIME ZONE 'Pacific/Nauru')::date)

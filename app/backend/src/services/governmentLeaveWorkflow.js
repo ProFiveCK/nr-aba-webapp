@@ -38,7 +38,7 @@ export async function accountState(client,id,scope=null) {
   const parentId=scope?.division_id?(await client.query('SELECT parent_division_id FROM hr_divisions WHERE id=$1',[scope.division_id])).rows[0]?.parent_division_id:null;
   const permitted=scopes.filter(s=>scope&&s.department_id===scope.department_id&&(!s.division_id||s.division_id===scope.division_id||s.division_id===parentId));
   const capabilities=[...grants.map(g=>g.capability),...permitted.flatMap(s=>s.capabilities)];
-  return {user:reviewerSummary({...row,permissions:{...row.permissions}},undefined,capabilities),approval:row.permissions?.hr_leave_approve!==false&&(row.permissions?.hr_leave_approve===true||capabilities.includes('hr_leave_approve'))};
+  return {user:reviewerSummary(row,undefined,capabilities),approval:capabilities.includes('hr_leave_approve')};
 }
 export async function assertCentral(client,user) {
   const state=await accountState(client,user.id);

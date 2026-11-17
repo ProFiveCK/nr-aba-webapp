@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {after,before,beforeEach,describe,test} from 'node:test';
-import {connectTestDatabase,createEmployee,resetLeaveTables,skipWithoutDatabase,upsertLeaveType} from '../test-support/database.js';
+import {connectTestDatabase,createEmployee,resetLeaveTables,skipWithoutDatabase,upsertLeaveType,grantAccess} from '../test-support/database.js';
 
 describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDatabase},()=>{
   let pool,auth,access,central,staff,approver,owner,other,department,division,sibling,foreign,employee,peer,outsider,type,approved,pending,attachment,server,base;
@@ -13,7 +13,7 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});base=`http://127.0.0.1:${server.address().port}/api/hr`;
   });
   after(async()=>{if(server)await new Promise(resolve=>server.close(resolve));await pool?.end();});
-  const account=async(name,permissions={})=>(await pool.query(`INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES ($1,$2,'user','x',$3) RETURNING *`,[`scope-${randomUUID()}@example.test`,name,permissions])).rows[0];
+  const account=async(name,permissions={})=>{const row=(await pool.query(`INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES ($1,$2,'user','x',$3) RETURNING *`,[`scope-${randomUUID()}@example.test`,name,permissions])).rows[0];await grantAccess(pool,row.id,permissions);return row;};
   async function token(row){const session=await auth.createSession(row.id);return auth.buildTokenPayload(row,session.tokenId,session.expiresAt);}
   async function call(row,path,body,method=body?'POST':'GET',bearer){const res=await fetch(`${base}${path}`,{method,headers:{Authorization:`Bearer ${bearer||await token(row)}`,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return{status:res.status,body:(res.headers.get('content-type')||'').includes('json')?await res.json():await res.text(),cache:res.headers.get('cache-control')};}
   const grant=(row,caps,div=division.id,dept=department.id,extra={})=>access.grantHrScope(pool,{user:{id:central.id,permissions:{hr_admin:true}},actor:central,data:{reviewer_id:row.id,department_id:dept,division_id:div,capabilities:caps,effective_from:'2020-01-01',reason,...extra}});
@@ -186,13 +186,14 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
   });
   test('owners retain their documents; foreign manager links cannot bypass placement',async()=>{
     assert.equal((await call(owner,`/leaves/${approved.id}/payroll-form`)).status,200);assert.equal((await call(owner,`/leaves/${approved.id}/attachments/${attachment.id}`)).status,200);assert.equal((await call(other,`/leaves/${approved.id}/application.pdf`)).status,404);
-    const manager=await createEmployee(pool,{name:'Foreign manager'});await pool.query('UPDATE hr_employees SET reviewer_id=$2,department_id=$3 WHERE id=$1',[manager.id,approver.id,foreign.id]);await pool.query('UPDATE reviewers SET permissions=$2 WHERE id=$1',[approver.id,{hr_access:true,hr_leave_approve:true}]);await pool.query('UPDATE hr_employees SET manager_id=$2 WHERE id=$1',[employee.id,manager.id]);
+    const manager=await createEmployee(pool,{name:'Foreign manager'});await pool.query('UPDATE hr_employees SET reviewer_id=$2,department_id=$3 WHERE id=$1',[manager.id,approver.id,foreign.id]);await grantAccess(pool,approver.id,{hr_access:true,hr_leave_approve:true});await pool.query('UPDATE hr_employees SET manager_id=$2 WHERE id=$1',[employee.id,manager.id]);
     assert.equal((await call(approver,'/team')).body.length,0);assert.equal((await call(approver,`/leaves/${approved.id}/attachments/${attachment.id}`)).status,404);
     await pool.query('UPDATE hr_employees SET department_id=$2,division_id=$3 WHERE id=$1',[manager.id,department.id,division.id]);assert.equal((await call(approver,'/team')).body.length,1);
   });
-  test('scope assignment validates boundaries and denies central escalation, retains explicit overrides and audit',async()=>{
+  test('scope assignment validates boundaries and denies central escalation; revoking the scope removes the access; audited',async()=>{
     const data={reviewer_id:staff.id,department_id:department.id,capabilities:['hr_staff_manage'],effective_from:'2020-01-01',reason};assert.equal((await call(staff,'/access-scopes',data)).status,403);assert.equal((await call(central,'/access-scopes',{...data,department_id:foreign.id,division_id:division.id})).status,400);assert.equal((await call(central,'/access-scopes',{...data,capabilities:['hr_admin']})).status,422);
-    const scope=await grant(staff,['hr_staff_manage']);await pool.query('UPDATE reviewers SET permissions=$2 WHERE id=$1',[staff.id,{hr_staff_manage:false}]);assert.equal((await call(staff,'/directory')).status,403);
+    const scope=await grant(staff,['hr_staff_manage']);await pool.query('UPDATE reviewers SET permissions=$2 WHERE id=$1',[staff.id,{hr_staff_manage:false}]);assert.equal((await call(staff,'/directory')).status,200,'a stored denial no longer overrides a scope');
+    await access.revokeHrScope(pool,{user:{permissions:{hr_admin:true}},actor:central,scopeId:scope.id,reason});assert.equal((await call(staff,'/directory')).status,403);
     await assert.rejects(access.grantHrScope(pool,{user:{permissions:{hr_admin:true}},actor:{id:randomUUID()},data}),{code:'23503'});assert.equal((await call(central,'/access-scopes')).body.total,1);assert.equal((await pool.query("SELECT count(*)::int n FROM audit_log WHERE entity_id=$1 AND action='hr.access_scope.granted'",[scope.id])).rows[0].n,1);
   });
   test('a queued balance write rechecks placement after a concurrent transfer',async()=>{

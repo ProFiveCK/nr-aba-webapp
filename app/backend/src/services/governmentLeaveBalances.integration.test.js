@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { before, after, beforeEach, describe, test } from 'node:test';
-import { connectTestDatabase, resetLeaveTables, skipWithoutDatabase } from '../test-support/database.js';
+import { connectTestDatabase, resetLeaveTables, skipWithoutDatabase, grantAccess } from '../test-support/database.js';
 import { DEFAULT_RULES } from '../lib/governmentLeaveRules.js';
 
 describe('current leave balances and movement accounts', { skip: skipWithoutDatabase }, () => {
@@ -10,7 +10,7 @@ describe('current leave balances and movement accounts', { skip: skipWithoutData
   after(async () => { await pool?.end(); });
   const user = row => ({ ...row, permissions: row.permissions });
   async function reviewer(permissions) {
-    return (await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES($1,'Balance test','user','x',$2) RETURNING *", [`${randomUUID()}@example.test`, permissions])).rows[0];
+    const row=(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES($1,'Balance test','user','x',$2) RETURNING *", [`${randomUUID()}@example.test`, permissions])).rows[0];await grantAccess(pool,row.id,permissions);return row;
   }
   async function entitlement(id, year = '2026', asOf = `${year}-01-01`, amount = '20') {
     const opening = (await pool.query(`INSERT INTO hr_gov_openings(employee_id,code,policy_version_id,period_start,period_end,as_of,amount,source_reference,payroll_reference,snapshot_hash,historical_snapshot,status,prepared_by,reason)

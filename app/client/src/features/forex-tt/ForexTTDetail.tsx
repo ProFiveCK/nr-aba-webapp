@@ -30,7 +30,7 @@ export function ForexTTDetail({ request, reviewMode, onBack, onSaved, onSubmitte
 
   const isNew = !request.id;
   const isOwner = Number(detail?.submitted_by) === Number(user?.id);
-  const isReviewer = reviewMode || user?.permissions?.review_forex_tt || user?.role === 'admin';
+  const isReviewer = reviewMode || user?.permissions?.review_forex_tt === true;
 
   const load = () => {
     if (isNew) {

@@ -34,6 +34,7 @@ import {
   FRONTEND_BASE_URL,
   PASS_HASH_ROUNDS,
   PASSWORD_MIN_LENGTH,
+  PREFERENCE_KEYS,
   REPLY_TO,
   ROLE_CAPABILITIES,
   SIGNUP_APP_IDS,
@@ -49,35 +50,20 @@ import {
 
 const router = express.Router();
 
-function defaultPermissionsForRole(role) {
-  switch (role) {
-    case 'user':
-      return { submit_aba: true, submit_forex_tt: true };
-    case 'reviewer':
-      return {
-        review_aba: true,
-        review_forex_tt: true,
-        notify_aba_submissions: true,
-        notify_forex_tt_submissions: true,
-        public_health_review: true,
-      };
-    case 'public_health':
-      return { public_health_manage: true };
-    case 'admin':
-      return {
-        admin: true,
-        submit_aba: true,
-        review_aba: true,
-        notify_aba_submissions: true,
-        submit_forex_tt: true,
-        review_forex_tt: true,
-        notify_forex_tt_submissions: true,
-        public_health_manage: true,
-        public_health_review: true,
-      };
-    default:
-      return {};
+// The reviewers.permissions column holds notification preferences only; access
+// is granted through capabilities, which the account page shows and edits.
+function preferencePatch(value) {
+  if (value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ServiceError(400, 'permissions must be an object.');
   }
+  for (const [key, setting] of Object.entries(value)) {
+    if (!PREFERENCE_KEYS.includes(key)) {
+      throw new ServiceError(400, `"${key}" is not a notification preference. Grant access with capabilities instead.`);
+    }
+    if (typeof setting !== 'boolean') throw new ServiceError(400, `"${key}" must be true or false.`);
+  }
+  return value;
 }
 
 // ===== Signup Request =====
@@ -119,8 +105,6 @@ router.post('/admin/signup-requests/:id/approve', requireAuth(['admin']), async 
   if (!SIGNUP_ROLES.includes(requestedRole) && requestedRole !== 'admin') {
     return res.status(400).json({ message: 'Invalid role.' });
   }
-  const permissions = defaultPermissionsForRole(requestedRole);
-
   // Apps the person asked for, unless the admin overrode the selection.
   const approvedApps = Array.isArray(req.body.apps)
     ? req.body.apps.filter((a) => SIGNUP_APP_IDS.includes(a))
@@ -131,7 +115,7 @@ router.post('/admin/signup-requests/:id/approve', requireAuth(['admin']), async 
     const { rows: created } = await pool.query(
       `INSERT INTO reviewers (email, display_name, role, status, password_hash, must_change_password, department_code, permissions)
        VALUES ($1, $2, $3, 'active', $4, FALSE, $5, $6) RETURNING id`,
-      [reqData.email, reqData.name, requestedRole, reqData.password_hash, reqData.department_code, JSON.stringify(permissions)]
+      [reqData.email, reqData.name, requestedRole, reqData.password_hash, reqData.department_code, '{}']
     );
     const capabilities = new Set([
       ...(ROLE_CAPABILITIES[requestedRole] ?? []),
@@ -435,11 +419,12 @@ router.post(
     }
     let permissions = {};
     if (req.body.permissions !== undefined) {
-      if (req.body.permissions !== null && (typeof req.body.permissions !== 'object' || Array.isArray(req.body.permissions))) {
-        res.status(400).json({ message: 'permissions must be an object.' });
+      try {
+        permissions = preferencePatch(req.body.permissions) || {};
+      } catch (err) {
+        res.status(err.status || 400).json({ message: err.message });
         return;
       }
-      permissions = req.body.permissions || {};
     }
     let password = req.body.password || '';
     let generated = false;
@@ -476,16 +461,16 @@ router.post(
           console.error('Failed to send reviewer welcome email', err);
         }
       }
-      if (req.body.capabilities !== undefined) {
-        await setCapabilities(reviewer.id, req.body.capabilities, req.user.id);
-        await recordAudit({
-          actor: actorFrom(req),
-          action: 'reviewer.capabilities.set',
-          entityType: 'reviewer',
-          entityId: reviewer.id,
-          after: { capabilities: req.body.capabilities },
-        });
-      }
+      // Without an explicit choice the role's starting set is written down as
+      // ordinary grants; a role adds nothing at request time.
+      const granted = await setCapabilities(reviewer.id, req.body.capabilities ?? ROLE_CAPABILITIES[role] ?? [], req.user.id);
+      await recordAudit({
+        actor: actorFrom(req),
+        action: 'reviewer.capabilities.set',
+        entityType: 'reviewer',
+        entityId: reviewer.id,
+        after: { capabilities: granted },
+      });
       const allowedPresets = await reviewerAllowedPresets(reviewer.id);
       res.status(201).json({ reviewer: reviewerSummary(reviewer, allowedPresets, await loadCapabilities(reviewer.id)), temporary_password: generated ? password : undefined });
     } catch (err) {
@@ -511,9 +496,8 @@ router.put(
     body('division_code').optional({ nullable: true }).matches(/^\d{2}$/),
     body('notify_on_submission').optional().isBoolean(),
     body('permissions').optional().custom((value) => {
-      if (value === null) return true;
-      if (value && typeof value === 'object' && !Array.isArray(value)) return true;
-      throw new Error('permissions must be an object.');
+      preferencePatch(value);
+      return true;
     }),
     body('capabilities').optional().isArray(),
     body('capabilities.*').isIn(ALL_CAPABILITIES)

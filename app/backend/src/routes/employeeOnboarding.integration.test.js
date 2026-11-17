@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID,createHash} from 'node:crypto';
 import {after,before,beforeEach,describe,test} from 'node:test';
-import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase} from '../test-support/database.js';
+import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase,grantAccess} from '../test-support/database.js';
 
 describe('verified employee onboarding and lifecycle over real HTTP',{skip:skipWithoutDatabase},()=>{
   let pool,service,auth,central,hr,scoped,employee,department,server,base,alias;
@@ -13,8 +13,9 @@ describe('verified employee onboarding and lifecycle over real HTTP',{skip:skipW
     server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});base=`http://127.0.0.1:${server.address().port}`;
   });
   after(async()=>{if(server)await new Promise(resolve=>server.close(resolve));await pool?.end();});
-  async function account(name,permissions={},extra={}) {return (await pool.query(`INSERT INTO reviewers(email,display_name,role,password_hash,permissions,account_type)
-    VALUES ($1,$2,'user','x',$3,$4) RETURNING *`,[`${randomUUID()}@example.test`,name,permissions,extra.type||'staff'])).rows[0];}
+  // Full administration is the Administrator role now, not a grant.
+  async function account(name,permissions={},extra={}) {const row=(await pool.query(`INSERT INTO reviewers(email,display_name,role,password_hash,permissions,account_type)
+    VALUES ($1,$2,$5,'x',$3,$4) RETURNING *`,[`${randomUUID()}@example.test`,name,permissions,extra.type||'staff',permissions.admin?'admin':'user'])).rows[0];await grantAccess(pool,row.id,permissions);return row;}
   async function session(row){const s=await auth.createSession(row.id);return auth.buildTokenPayload(row,s.tokenId,s.expiresAt);}
   async function call(path,body,actor=central,method=body?'POST':'GET',token){const res=await fetch(base+path,{method,headers:{'Content-Type':'application/json',...(actor?{Authorization:`Bearer ${token||await session(actor)}`}:{})},body:body===undefined?undefined:JSON.stringify(body)});return{status:res.status,body:res.status===204?null:await res.json(),cache:res.headers.get('cache-control')};}
   async function person(name='Synthetic Employee',id=`000-${randomUUID()}`,email=null){const row=(await pool.query(`INSERT INTO hr_employees(display_name,department_id,department_code,email) VALUES ($1,$2,'Lifecycle',$3) RETURNING *`,[name,department.id,email])).rows[0];if(id)await pool.query(`INSERT INTO hr_employee_external_ids(employee_id,source,external_id,verified_by,reason) VALUES ($1,'techone_payroll',$2,$3,$4)`,[row.id,id,central.id,reason]);return row;}

@@ -1,7 +1,7 @@
 /** Existing personnel records must be linked explicitly, without reads creating duplicates. */
 import assert from 'node:assert/strict';
 import test, { after, before, beforeEach, describe } from 'node:test';
-import { connectTestDatabase, resetLeaveTables, createEmployee, upsertLeaveType, skipWithoutDatabase } from '../test-support/database.js';
+import { connectTestDatabase, resetLeaveTables, createEmployee, upsertLeaveType, skipWithoutDatabase, grantAccess } from '../test-support/database.js';
 import { createAccount, prepareRoutes, startApp } from '../test-support/http.js';
 
 describe('explicit employee links through the retained HR routes', { skip: skipWithoutDatabase }, () => {
@@ -11,14 +11,16 @@ describe('explicit employee links through the retained HR routes', { skip: skipW
     prepareRoutes();
     const { default: hrRouter } = await import('./hr.js');
     app = await startApp({ '/api/hr': hrRouter });
-    admin = await createAccount(pool, 'link-admin@example.test', { role: 'admin' });
+    // An administrator holds Leave administration through ticks, like any account.
+    admin = await createAccount(pool, 'link-admin@example.test', { role: 'admin', capabilities: ['hr_access', 'hr_admin', 'hr_staff_manage'] });
   });
   beforeEach(() => resetLeaveTables(pool));
   after(async () => { await app?.close(); await pool?.end(); });
   const count = async () => Number((await pool.query('SELECT count(*) AS n FROM hr_employees')).rows[0].n);
   const account = async (email, name) => {
     const value = await createAccount(pool, email);
-    await pool.query('UPDATE reviewers SET display_name=$2, permissions=$3 WHERE id=$1', [value.reviewer.id, name, { hr_access: true }]);
+    await pool.query('UPDATE reviewers SET display_name=$2 WHERE id=$1', [value.reviewer.id, name]);
+    await grantAccess(pool, value.reviewer.id, { hr_access: true });
     return value;
   };
   const link = (employeeId, reviewerId) => app.call('PUT', `/api/hr/employees/${employeeId}`, { token: admin.token, body: { reviewer_id: reviewerId } });

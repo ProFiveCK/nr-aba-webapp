@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {after,before,beforeEach,describe,test} from 'node:test';
-import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase,upsertLeaveType} from '../test-support/database.js';
+import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase,upsertLeaveType,grantAccess} from '../test-support/database.js';
 import {withTransaction} from '../lib/transaction.js';
 import {DEFAULT_RULES} from '../lib/governmentLeaveRules.js';
 describe('government policy/service/calendar and certified subledger',{skip:skipWithoutDatabase},()=>{
@@ -9,7 +9,7 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
  const reason='Synthetic HR and Salary Unit reconciliation verification.';
  before(async()=>{pool=await connectTestDatabase();s=await import('../services/governmentLeave.js');auth=await import('../services/authService.js');const express=(await import('express')).default,errors=await import('../middleware/errors.js');errors.enableAsyncErrors();const app=express();app.use(express.json());app.use('/api/hr',(await import('./hr.js')).default);app.use(errors.notFoundHandler);app.use(errors.errorHandler);server=await new Promise(resolve=>{const v=app.listen(0,'127.0.0.1',()=>resolve(v));});base=`http://127.0.0.1:${server.address().port}`;});
  after(async()=>{if(server)await new Promise(resolve=>server.close(resolve));if(pool)await pool.query("UPDATE hr_leave_types SET is_active=FALSE WHERE name='Synthetic Legacy Accrual'");await pool?.end();});
- async function account(permissions,type='staff'){return(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions,account_type) VALUES ($1,'Synthetic Actor','user','x',$2,$3) RETURNING *",[`${randomUUID()}@example.test`,permissions,type])).rows[0];}
+ async function account(permissions,type='staff'){const row=(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions,account_type) VALUES ($1,'Synthetic Actor','user','x',$2,$3) RETURNING *",[`${randomUUID()}@example.test`,permissions,type])).rows[0];await grantAccess(pool,row.id,permissions);return row;}
  const user=row=>({...row,permissions:row.permissions});
  const input=(code='recreation',start='2026-11-02',end=start)=>({code,start_date:start,end_date:end,notice_date:'2026-10-01',certificate_available:true,justification_available:true});
  async function call(path,body,row=central,method=body?'POST':'GET'){const session=await auth.createSession(row.id),token=auth.buildTokenPayload(row,session.tokenId,session.expiresAt);const response=await fetch(base+path,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});return {status:response.status,body:await response.json(),cache:response.headers.get('cache-control')};}
@@ -254,7 +254,7 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
   const filtered=await call(`/api/hr/government/balances?department_id=${department.id}&status=activation_required&sort=recreation&direction=desc`);
   assert.equal(filtered.status,200);assert.equal(filtered.body.total,1);assert.equal(filtered.body.departments[0].id,department.id);
   assert.equal((await call(`/api/hr/government/balances?department_id=${randomUUID()}`)).body.total,0);
-  await pool.query('UPDATE reviewers SET permissions=$2 WHERE id=$1',[scoped.id,{hr_access:true,hr_balance_manage:true}]);
+  await pool.query('DELETE FROM reviewer_capabilities WHERE reviewer_id=$1',[scoped.id]);await grantAccess(pool,scoped.id,{hr_access:true,hr_balance_manage:true});
   await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_balance_manage'],'2020-01-01',$3,$4)",[scoped.id,department.id,central.id,reason]);
   assert.equal((await call(path,undefined,scoped)).status,200);assert.equal((await call('/api/hr/government/balances',undefined,scoped)).body.total,1);
  });

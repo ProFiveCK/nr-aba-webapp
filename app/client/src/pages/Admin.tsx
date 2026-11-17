@@ -641,6 +641,16 @@ function UserManagementPanel() {
 
     const offeredKeys = useMemo(() => capabilityGroups.flatMap((g) => g.capabilities.map((c) => c.key)), [capabilityGroups]);
 
+    // Access the account holds through Leave HR scopes rather than its own
+    // ticks, named so the form does not look like the whole story.
+    const scopedOnly = useMemo(() => {
+        const account = form.id ? accounts.find((a) => a.id === form.id) : undefined;
+        if (!account) return [];
+        const explicit = new Set(account.explicit_capabilities ?? []);
+        const labels = new Map(capabilityGroups.flatMap((g) => g.capabilities.map((c) => [c.key, c.label] as const)));
+        return (account.capabilities ?? []).filter((key) => !explicit.has(key) && labels.has(key)).map((key) => labels.get(key) as string);
+    }, [form.id, accounts, capabilityGroups]);
+
     const applyPreset = (presetId: string) => {
         const preset = presetById(presetId);
         if (!preset) {
@@ -949,10 +959,11 @@ function UserManagementPanel() {
                                                 </td>
                                                 <td className="px-3 py-2">
                                                     <div className="flex max-w-xs flex-wrap gap-1">
-                                                        {account.role === 'admin' ? (
-                                                            <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">All apps</span>
-                                                        ) : accessGroups.length === 0 ? (
-                                                            <span className="text-xs text-gray-400">No app access</span>
+                                                        {account.role === 'admin' && (
+                                                            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">Administrator</span>
+                                                        )}
+                                                        {accessGroups.length === 0 ? (
+                                                            account.role !== 'admin' && <span className="text-xs text-gray-400">No app access</span>
                                                         ) : (
                                                             accessGroups.map((group) => {
                                                                 const detail = group.granted.map((c) => c.label);
@@ -1220,7 +1231,14 @@ function UserManagementPanel() {
                             <div className="space-y-3">
                                 <p className="text-xs text-gray-500">
                                     Tick everything this person does, in any combination. Choosing a job above fills these in.
+                                    These ticks are all of their access: a role adds nothing on top.
                                 </p>
+                                {form.role === 'admin' && (
+                                    <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                                        The Administrator role manages accounts and settings. Leave administration, medical
+                                        evidence and every app still need their own ticks below, and can be removed.
+                                    </p>
+                                )}
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     {capabilityGroups.map((group) => (
                                         <div key={group.app} className="rounded-md border border-gray-200 bg-white p-3">
@@ -1241,6 +1259,12 @@ function UserManagementPanel() {
                                         </div>
                                     ))}
                                 </div>
+                                {scopedOnly.length > 0 && (
+                                    <p className="text-xs text-gray-600">
+                                        Also held through Leave HR access assignments: {scopedOnly.join(', ')}. Change
+                                        those in the Leave app's HR access settings.
+                                    </p>
+                                )}
                                 {!capabilityGroups.length && (
                                     <p className="text-sm text-gray-500">Capability catalogue unavailable.</p>
                                 )}

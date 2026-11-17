@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after, before, beforeEach, describe } from 'node:test';
-import { connectTestDatabase, createEmployee, resetLeaveTables, skipWithoutDatabase } from '../test-support/database.js';
+import { connectTestDatabase, createEmployee, resetLeaveTables, skipWithoutDatabase, grantAccess } from '../test-support/database.js';
 
 describe('central HR management screens and bounded APIs', { skip: skipWithoutDatabase }, () => {
   let pool, management, directory, auth, actor, department, division, server, base;
@@ -20,8 +20,8 @@ describe('central HR management screens and bounded APIs', { skip: skipWithoutDa
     department=(await pool.query("INSERT INTO hr_departments(name) VALUES ('Finance') RETURNING *")).rows[0];
     division=(await pool.query("INSERT INTO hr_divisions(department_id,name) VALUES ($1,'Treasury') RETURNING *",[department.id])).rows[0];
   });
-  async function account(permissions={},name='Synthetic Account') {return (await pool.query(`INSERT INTO reviewers(email,display_name,role,password_hash,permissions)
-    VALUES ($1,$2,'user','x',$3) RETURNING *`,[`management-${randomUUID()}@example.test`,name,permissions])).rows[0];}
+  async function account(permissions={},name='Synthetic Account') {const row=(await pool.query(`INSERT INTO reviewers(email,display_name,role,password_hash,permissions)
+    VALUES ($1,$2,'user','x',$3) RETURNING *`,[`management-${randomUUID()}@example.test`,name,permissions])).rows[0];await grantAccess(pool,row.id,permissions);return row;}
   async function token(row=actor) {const s=await auth.createSession(row.id);return auth.buildTokenPayload(row,s.tokenId,s.expiresAt);}
   async function call(path='',body,method=body?'POST':'GET',row=actor) {const response=await fetch(`${base}${path}`,{method,headers:{Authorization:`Bearer ${await token(row)}`,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return {status:response.status,body:await response.json(),cache:response.headers.get('cache-control')};}
   const create=(extra={})=>management.createManagedEmployee(pool,{data:{display_name:'New Employee',external_id:'000001-A',department_id:department.id,division_id:division.id,...extra},actor,reason});

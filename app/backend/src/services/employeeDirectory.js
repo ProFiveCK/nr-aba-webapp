@@ -312,8 +312,7 @@ export async function previewApprovalChain(pool, employeeId, onDate) {
        (EXISTS (SELECT 1 FROM reviewer_capabilities c WHERE c.reviewer_id = e.reviewer_id AND c.capability = 'hr_leave_approve')
          OR EXISTS (SELECT 1 FROM hr_access_scopes s WHERE s.reviewer_id=e.reviewer_id AND 'hr_leave_approve'=ANY(s.capabilities)
            AND s.revoked_at IS NULL AND s.effective_from <= $1 AND (s.effective_to IS NULL OR s.effective_to >= $1)
-           AND s.department_id=$3 AND (s.division_id IS NULL OR s.division_id=$2))) AS has_approval_grant,
-       r.permissions->>'hr_leave_approve' AS approval_override
+           AND s.department_id=$3 AND (s.division_id IS NULL OR s.division_id=$2))) AS has_approval_grant
      FROM hr_approval_assignments a JOIN hr_employees e ON e.id = a.approver_employee_id
      LEFT JOIN reviewers r ON r.id = e.reviewer_id
      WHERE a.effective_from <= $1 AND (a.effective_to IS NULL OR a.effective_to >= $1)
@@ -330,7 +329,7 @@ export async function previewApprovalChain(pool, employeeId, onDate) {
     else if (!assignment) issue = 'Exactly one effective approver must be assigned.';
     else if (assignment.approver_employee_id === employeeId) issue = 'Self-approval requires an authorised substitute.';
     else if (assignment.employee_status !== 'active' || assignment.account_status !== 'active') issue = 'Approver or account is inactive.';
-    else if (assignment.approval_override === 'false' || (!assignment.has_approval_grant && assignment.approval_override !== 'true')) issue = 'Approver needs an explicit leave approval grant.';
+    else if (!assignment.has_approval_grant) issue = 'Approver needs an explicit leave approval grant.';
     return { level, assignment_id: assignment?.id || null, approver_employee_id: assignment?.approver_employee_id || null,
       approver_name: assignment?.approver_name || null, issue };
   });

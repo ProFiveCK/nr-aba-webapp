@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
-import { connectTestDatabase, createEmployee, resetLeaveTables, skipWithoutDatabase } from '../test-support/database.js';
+import { connectTestDatabase, createEmployee, resetLeaveTables, skipWithoutDatabase, grantAccess } from '../test-support/database.js';
 
 describe('organisation browsing across more than fifty departments', { skip: skipWithoutDatabase }, () => {
   let pool, server, base, auth, central, limited, centralToken, limitedToken, dates, beforeRows, ownerToken;
@@ -14,7 +14,7 @@ describe('organisation browsing across more than fifty departments', { skip: ski
     'hr_gov_requests', 'hr_gov_service_bases', 'hr_gov_job_plans', 'hr_gov_job_posts', 'hr_onboarding_batches', 'hr_onboarding_rows', 'hr_employee_account_links', 'reviewer_capabilities', 'audit_log'];
   const snapshot = () => Promise.all(tables.map(async table => (await pool.query(`SELECT to_jsonb(t) AS row FROM ${table} t ORDER BY to_jsonb(t)::text`)).rows));
   async function account(permissions) {
-    return (await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES($1,'Synthetic browse officer','user','x',$2) RETURNING *", [`${randomUUID()}@example.test`, permissions])).rows[0];
+    const row=(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES($1,'Synthetic browse officer','user','x',$2) RETURNING *", [`${randomUUID()}@example.test`, permissions])).rows[0];await grantAccess(pool,row.id,permissions);return row;
   }
   async function token(user) {
     const session = await auth.createSession(user.id);

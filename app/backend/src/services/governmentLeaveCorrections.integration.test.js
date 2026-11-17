@@ -1,7 +1,7 @@
 import {describe,test,before,after,beforeEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase} from '../test-support/database.js';
+import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase,grantAccess} from '../test-support/database.js';
 import {DEFAULT_RULES} from '../lib/governmentLeaveRules.js';
 describe('government preparation lifecycle and verified appointment correction',{skip:skipWithoutDatabase},()=>{
  let pool,l,w,d,c,directory,hr,certifier,owner,employee,period,policy,server,base,auth;
@@ -9,7 +9,7 @@ describe('government preparation lifecycle and verified appointment correction',
  const user=row=>({...row,permissions:row.permissions});
  before(async()=>{pool=await connectTestDatabase();l=await import('./governmentLeave.js');w=await import('./governmentLeaveWorkflow.js');d=await import('./governmentLeaveDrafts.js');c=await import('./employeeServiceCorrections.js');directory=await import('./employeeDirectory.js');auth=await import('./authService.js');const express=(await import('express')).default,errors=await import('../middleware/errors.js');errors.enableAsyncErrors();const app=express();app.use(express.json());app.use('/api/hr',(await import('../routes/hr.js')).default);app.use(errors.notFoundHandler);app.use(errors.errorHandler);server=await new Promise(resolve=>{const running=app.listen(0,'127.0.0.1',()=>resolve(running));});base=`http://127.0.0.1:${server.address().port}`;});
  after(async()=>{if(server)await new Promise(resolve=>server.close(resolve));await pool?.end();});
- async function account(permissions){return(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES($1,'Test HR officer','user','x',$2) RETURNING *",[`${randomUUID()}@example.test`,permissions])).rows[0];}
+ async function account(permissions){const row=(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES($1,'Test HR officer','user','x',$2) RETURNING *",[`${randomUUID()}@example.test`,permissions])).rows[0];await grantAccess(pool,row.id,permissions);return row;}
  beforeEach(async()=>{await resetLeaveTables(pool);await pool.query('TRUNCATE hr_gov_policy_versions,hr_gov_calendars,hr_gov_pattern_approvals CASCADE');hr=await account({hr_access:true,hr_admin:true});certifier=await account({hr_access:true,hr_admin:true});owner=await account({hr_access:true,hr_leave_apply:true});employee=(await pool.query("INSERT INTO hr_employees(display_name,reviewer_id,leave_policy_regime) VALUES('Test correction employee',$1,'government') RETURNING *",[owner.id])).rows[0];period=await directory.addServicePeriod(pool,{employeeId:employee.id,actor:hr,reason,period:{start_date:'2026-01-01',employment_category:'permanent',counts_for_service:true}});policy=await l.createPolicy(pool,{user:user(hr),actor:hr,data:{label:'Test corrected policy',effective_from:'2026-01-01',effective_to:'2027-12-31',rules:DEFAULT_RULES,source_reference:'Test policy source',reason}});});
  async function configuration(){return w.saveLeaveTypes(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{enabled_codes:[],medical_history:[]}});}
  const lifecycle=(kind,id,action,expected_revision,by=hr)=>d.changeDraftState(pool,{user:user(by),actor:by,kind,id,data:{action,expected_revision,reason}});

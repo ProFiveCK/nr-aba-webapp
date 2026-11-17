@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import {initOrganisationHierarchySchema,initParentApproverSchema} from './services/organisationHierarchy.js';
 import { initGovernmentLeaveSchema } from './services/governmentLeaveSchema.js';
 import dotenv from 'dotenv';
-import { ALL_CAPABILITIES, ROLE_CAPABILITIES } from './config.js';
+import { ALL_CAPABILITIES, PERMISSIONS, PREFERENCE_KEYS, ROLE_CAPABILITIES } from './config.js';
 
 dotenv.config();
 
@@ -110,6 +110,145 @@ async function backfillCapabilities(client) {
      ON CONFLICT (id) DO UPDATE SET capabilities_backfilled_at = NOW()`
   );
   console.info(`[schema] backfilled ${granted} capability grants across ${reviewers.length} accounts`);
+}
+
+/**
+ * Makes reviewer_capabilities (plus active HR scopes) the only source of
+ * access, without changing what any account can do on the day it runs.
+ *
+ * Before this, three things decided an account's access and the account page
+ * showed one of them:
+ * - its ticked capabilities;
+ * - the reviewers.permissions JSONB, where `true` granted and `false` denied
+ *   any key, and which survived role changes (a reviewer approved through
+ *   signup kept FOREX TT review after being made a `user` with every box
+ *   unticked);
+ * - its role, which added review to reviewers, submit to every active account
+ *   and everything to administrators, so unticking those did nothing.
+ *
+ * This computes each account's effective access exactly as reviewerSummary
+ * used to, then:
+ * - writes every grant that did not come from an HR scope as an ordinary
+ *   capability row, and deletes rows a denial was cancelling;
+ * - applies a denial of a scoped Leave capability to the scope rows
+ *   themselves, so the scope says what it really grants (a scope left with
+ *   nothing is revoked); a denial of hr_access revokes the account's scopes,
+ *   since an active scope always implies it;
+ * - removes access keys from the JSONB, leaving notification preferences.
+ *
+ * One deliberate change: full administration (the `admin` key) now comes from
+ * the Administrator role alone. A non-administrator who held it loses the
+ * staff-account provisioning it unlocked, and the audit entry records that.
+ *
+ * Runs once, guarded by reviewer_settings.hidden_permissions_retired_at.
+ */
+async function retireHiddenPermissions(client) {
+  const { rows: flag } = await client.query(
+    'SELECT hidden_permissions_retired_at FROM reviewer_settings WHERE id = TRUE'
+  );
+  if (flag.length && flag[0].hidden_permissions_retired_at) return;
+
+  const today = "(NOW() AT TIME ZONE 'Pacific/Nauru')::date";
+  const accessKeys = new Set(Object.values(PERMISSIONS).filter((key) => !PREFERENCE_KEYS.includes(key)));
+  const legacyAdminGrants = [...ALL_CAPABILITIES, PERMISSIONS.ADMIN];
+  const { rows: reviewers } = await client.query('SELECT id, role, status, permissions, account_type FROM reviewers ORDER BY id FOR UPDATE');
+  let changedAccounts = 0;
+  let narrowedScopes = 0;
+
+  for (const reviewer of reviewers) {
+    let stored = reviewer.permissions;
+    if (typeof stored === 'string') {
+      try { stored = JSON.parse(stored); } catch { stored = {}; }
+    }
+    stored = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+    const staff = reviewer.account_type !== 'employee';
+    const explicit = (await client.query(
+      'SELECT capability FROM reviewer_capabilities WHERE reviewer_id = $1 ORDER BY capability', [reviewer.id]
+    )).rows.map((row) => row.capability);
+    const activeScopes = (await client.query(
+      `SELECT capabilities FROM hr_access_scopes WHERE reviewer_id = $1 AND revoked_at IS NULL
+         AND effective_from <= ${today} AND (effective_to IS NULL OR effective_to >= ${today})`, [reviewer.id]
+    )).rows;
+    const scoped = new Set(activeScopes.flatMap((scope) => scope.capabilities));
+    if (activeScopes.length) scoped.add(PERMISSIONS.HR_ACCESS);
+
+    // reviewerSummary as it was, for an active account (so a deactivated
+    // account gets back on reactivation exactly what it would have before).
+    const roleImplied = new Set();
+    if (staff) {
+      roleImplied.add(PERMISSIONS.SUBMIT_ABA).add(PERMISSIONS.SUBMIT_FOREX_TT);
+      if (['reviewer', 'admin'].includes(reviewer.role)) roleImplied.add(PERMISSIONS.REVIEW_ABA).add(PERMISSIONS.REVIEW_FOREX_TT);
+      if (reviewer.role === 'admin') legacyAdminGrants.forEach((key) => roleImplied.add(key));
+    }
+    const effective = { ...stored };
+    for (const key of [...explicit, ...scoped, ...roleImplied]) effective[key] ??= true;
+    const held = (key) => effective[key] === true && (staff || key.startsWith('hr_'));
+
+    const target = ALL_CAPABILITIES.filter((key) =>
+      held(key) && (explicit.includes(key) || stored[key] === true || roleImplied.has(key)));
+    const removed = explicit.filter((key) => !target.includes(key));
+    const added = target.filter((key) => !explicit.includes(key));
+    const lostAdmin = held(PERMISSIONS.ADMIN) && reviewer.role !== 'admin';
+    const gainedAdmin = staff && reviewer.role === 'admin' && stored[PERMISSIONS.ADMIN] === false;
+
+    if (removed.length) {
+      await client.query('DELETE FROM reviewer_capabilities WHERE reviewer_id = $1 AND capability = ANY($2::text[])', [reviewer.id, removed]);
+    }
+    for (const capability of added) {
+      await client.query(
+        `INSERT INTO reviewer_capabilities (reviewer_id, capability) VALUES ($1, $2)
+         ON CONFLICT (reviewer_id, capability) DO NOTHING`, [reviewer.id, capability]);
+    }
+
+    // Denials of scoped Leave access move onto the scopes, current and future.
+    const denied = new Set(Object.keys(stored).filter((key) => stored[key] === false && key.startsWith('hr_')));
+    const scopeChanges = [];
+    if (denied.size) {
+      const { rows: scopes } = await client.query(
+        `SELECT * FROM hr_access_scopes WHERE reviewer_id = $1 AND revoked_at IS NULL
+           AND (effective_to IS NULL OR effective_to >= ${today}) ORDER BY id FOR UPDATE`, [reviewer.id]);
+      for (const scope of scopes) {
+        const remaining = denied.has(PERMISSIONS.HR_ACCESS) ? [] : scope.capabilities.filter((key) => !denied.has(key));
+        if (remaining.length === scope.capabilities.length) continue;
+        const reason = 'Access migration: an explicit denial on the account now applies to this assignment.';
+        const { rows: [after] } = remaining.length
+          ? await client.query('UPDATE hr_access_scopes SET capabilities = $2 WHERE id = $1 RETURNING *', [scope.id, remaining])
+          : await client.query('UPDATE hr_access_scopes SET revoked_at = NOW(), revoke_reason = $2 WHERE id = $1 RETURNING *', [scope.id, reason]);
+        await client.query(
+          `INSERT INTO audit_log (action, entity_type, entity_id, before, after, metadata)
+           VALUES ('hr.access_scope.migrated', 'hr_access_scope', $1, $2, $3, $4)`,
+          [scope.id, JSON.stringify(scope), JSON.stringify(after), JSON.stringify({ migration: 'retire_hidden_permissions', denied: [...denied] })]);
+        scopeChanges.push(scope.id);
+        narrowedScopes += 1;
+      }
+    }
+
+    const preferences = Object.fromEntries(Object.entries(stored).filter(([key]) => !accessKeys.has(key)));
+    const jsonChanged = JSON.stringify(preferences) !== JSON.stringify(stored);
+    if (jsonChanged) {
+      await client.query('UPDATE reviewers SET permissions = $2::jsonb WHERE id = $1', [reviewer.id, JSON.stringify(preferences)]);
+    }
+    if (removed.length || added.length || jsonChanged || scopeChanges.length || lostAdmin || gainedAdmin) {
+      changedAccounts += 1;
+      await client.query(
+        `INSERT INTO audit_log (action, entity_type, entity_id, before, after, metadata)
+         VALUES ('reviewer.permissions.migrated', 'reviewer', $1, $2, $3, $4)`,
+        [reviewer.id,
+          JSON.stringify({ capabilities: explicit, permissions: stored }),
+          JSON.stringify({ capabilities: [...target].sort(), permissions: preferences }),
+          JSON.stringify({
+            migration: 'retire_hidden_permissions', added, removed, scopes_changed: scopeChanges,
+            admin_capability_removed: lostAdmin, admin_now_from_role: gainedAdmin,
+          })]);
+      if (lostAdmin) console.warn(`[schema] account ${reviewer.id} held full administration without the Administrator role; it now needs that role`);
+    }
+  }
+
+  await client.query(
+    `INSERT INTO reviewer_settings (id, hidden_permissions_retired_at) VALUES (TRUE, NOW())
+     ON CONFLICT (id) DO UPDATE SET hidden_permissions_retired_at = NOW()`
+  );
+  console.info(`[schema] moved hidden access onto capabilities for ${changedAccounts} of ${reviewers.length} accounts; ${narrowedScopes} HR scope(s) narrowed`);
 }
 
 const { Pool } = pg;
@@ -401,6 +540,10 @@ export async function initSchema() {
     await client.query(`
       ALTER TABLE reviewer_settings
         ADD COLUMN IF NOT EXISTS role_floor_materialised_at TIMESTAMPTZ
+    `);
+    await client.query(`
+      ALTER TABLE reviewer_settings
+        ADD COLUMN IF NOT EXISTS hidden_permissions_retired_at TIMESTAMPTZ
     `);
     await client.query(`
       ALTER TABLE reviewer_settings
@@ -1346,6 +1489,7 @@ export async function initSchema() {
     for (const { id } of withoutService) await syncServiceStart(client, { employeeId: id });
     await backfillCapabilities(client);
     await materialiseRoleFloor(client);
+    await retireHiddenPermissions(client);
 
     await client.query('COMMIT');
   } catch (error) {

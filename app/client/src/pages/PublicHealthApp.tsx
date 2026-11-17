@@ -17,8 +17,9 @@ type Tab = 'participants' | 'periods' | 'settings' | 'review';
  */
 export function PublicHealthApp() {
   const { user } = useAuth();
-  const isManager = user?.role === 'public_health' || user?.role === 'admin';
-  const isReviewer = user?.role === 'reviewer' || user?.role === 'admin';
+  // The server checks these capabilities, not the role.
+  const isManager = user?.permissions?.public_health_manage === true;
+  const isReviewer = user?.permissions?.public_health_review === true;
 
   const tabs: { id: Tab; label: string; show: boolean }[] = [
     { id: 'participants', label: 'Participants', show: isManager },

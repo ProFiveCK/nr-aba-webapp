@@ -1,7 +1,7 @@
 import {describe,test,before,after,beforeEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID,createHash} from 'node:crypto';
-import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase} from '../test-support/database.js';
+import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase,grantAccess} from '../test-support/database.js';
 import {DEFAULT_RULES,fingerprint} from '../lib/governmentLeaveRules.js';
 import {payrollCsv} from '../lib/governmentLeavePayrollRules.js';
 
@@ -15,7 +15,7 @@ describe('government Payroll registers',{skip:skipWithoutDatabase},()=>{
   const express=(await import('express')).default,errors=await import('../middleware/errors.js');errors.enableAsyncErrors();const app=express();app.use(express.json());app.use('/api/hr',(await import('./hr.js')).default);app.use(errors.errorHandler);server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});base=`http://127.0.0.1:${server.address().port}/api/hr/government/payroll`;
  });
  after(async()=>{await new Promise(resolve=>server.close(resolve));await pool.end();});
- async function account(permissions){return(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES($1,'Synthetic Payroll reviewer','user','x',$2) RETURNING *",[`${randomUUID()}@example.test`,permissions])).rows[0];}
+ async function account(permissions){const row=(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES($1,'Synthetic Payroll reviewer','user','x',$2) RETURNING *",[`${randomUUID()}@example.test`,permissions])).rows[0];await grantAccess(pool,row.id,permissions);return row;}
  async function opening(code,amount){const row=await l.prepareOpening(pool,{...args({code,amount,policy_version_id:policy.id,period_start:'2026-01-01',period_end:'2026-12-31',as_of:'2026-10-01',source_reference:'Synthetic opening source',payroll_reference:'Synthetic Salary Unit opening source',reason}),employeeId:employee.id});await l.certifyOpening(pool,{...args({},certifier),id:row.id,reason});}
  beforeEach(async()=>{
   await resetLeaveTables(pool);await pool.query('TRUNCATE hr_gov_initial_setups,hr_gov_payroll_batches,hr_gov_handovers,hr_gov_policy_versions,hr_gov_calendars,hr_gov_pattern_approvals CASCADE');

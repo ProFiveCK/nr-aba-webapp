@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { before, after, beforeEach, describe, test } from 'node:test';
-import { connectTestDatabase, createEmployee, resetLeaveTables, skipWithoutDatabase, upsertLeaveType } from '../test-support/database.js';
+import { connectTestDatabase, createEmployee, resetLeaveTables, skipWithoutDatabase, upsertLeaveType, grantAccess } from '../test-support/database.js';
 
 describe('read-only employee leave arrangements', { skip: skipWithoutDatabase }, () => {
   let pool, service, auth, actor, employee, department, division, server, base;
@@ -37,8 +37,8 @@ describe('read-only employee leave arrangements', { skip: skipWithoutDatabase },
     } finally { await pool.end(); }
   });
   async function account(permissions = {}, type = 'staff') {
-    return (await pool.query(`INSERT INTO reviewers(email,display_name,role,account_type,password_hash,permissions,onboarding_state)
-      VALUES($1,'Synthetic officer','user',$2,'x',$3,'ready') RETURNING *`, [`${randomUUID()}@example.test`, type, permissions])).rows[0];
+    const row=(await pool.query(`INSERT INTO reviewers(email,display_name,role,account_type,password_hash,permissions,onboarding_state)
+      VALUES($1,'Synthetic officer','user',$2,'x',$3,'ready') RETURNING *`, [`${randomUUID()}@example.test`, type, permissions])).rows[0];await grantAccess(pool,row.id,permissions);return row;
   }
   const summary = (user = actor, client = pool) => service.employeeLeaveArrangements(client, { user, employeeId: employee.id });
   async function request(user, id = employee.id) {
@@ -287,7 +287,7 @@ describe('read-only employee leave arrangements', { skip: skipWithoutDatabase },
     assert.equal(route.stages[0].approver_name, officer.display_name);
     assert.equal(route.stages[0].issue, null);
     assert.equal(route.ready, true);
-    await pool.query("UPDATE reviewers SET permissions='{}' WHERE id=$1", [officerLogin.id]);
+    await pool.query('DELETE FROM reviewer_capabilities WHERE reviewer_id=$1', [officerLogin.id]);
     route = (await summary()).government.route;
     assert.match(route.stages[0].issue, /capability/);
     assert.equal(route.ready, false);

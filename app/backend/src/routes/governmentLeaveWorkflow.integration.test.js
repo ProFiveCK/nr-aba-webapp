@@ -2,7 +2,7 @@ import {describe,test,before,after,beforeEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {writeFile} from 'node:fs/promises';
-import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase} from '../test-support/database.js';
+import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase,grantAccess} from '../test-support/database.js';
 import {DEFAULT_RULES} from '../lib/governmentLeaveRules.js';
 
 // Only a local, deliberately unreachable SMTP server; notification tests
@@ -19,7 +19,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
    const express=(await import('express')).default,errors=await import('../middleware/errors.js');errors.enableAsyncErrors();const app=express();app.use(express.json());app.use('/api/hr',(await import('./hr.js')).default);app.use(errors.notFoundHandler);app.use(errors.errorHandler);server=await new Promise(resolve=>{const running=app.listen(0,'127.0.0.1',()=>resolve(running));});base=`http://127.0.0.1:${server.address().port}`;
  });
  after(async()=>{if(server)await new Promise(resolve=>server.close(resolve));await pool?.end();});
- async function account(permissions,type='staff'){return(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions,account_type) VALUES($1,'Synthetic workflow actor','user','x',$2,$3) RETURNING *",[`${randomUUID()}@example.test`,permissions,type])).rows[0];}
+ async function account(permissions,type='staff'){const row=(await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions,account_type) VALUES($1,'Synthetic workflow actor','user','x',$2,$3) RETURNING *",[`${randomUUID()}@example.test`,permissions,type])).rows[0];await grantAccess(pool,row.id,permissions);return row;}
  async function opening(code,amount){const o=await l.prepareOpening(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{code,amount,policy_version_id:policy.id,period_start:'2026-01-01',period_end:'2026-12-31',as_of:'2026-10-01',source_reference:'Synthetic reviewed HR register',payroll_reference:'Synthetic Salary Unit reconciliation',reason}});await l.certifyOpening(pool,{user:user(certifier),actor:certifier,id:o.id,reason});}
  async function configure(codes=['recreation','medical','special'],history=[]){return w.saveLeaveTypes(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{enabled_codes:codes,medical_history:history}});}
  const application=(code='recreation',start='2026-11-02',end=start)=>({request_id:randomUUID(),code,start_date:start,end_date:end,reason,medical_mode:code==='medical'?'exemption':'not_applicable'});
@@ -234,7 +234,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   assert.equal(delivery.messages[0].to,officers.department.account.email);
  });
  test('revoked approval authority suppresses an unsent approval request',async()=>{
-  const r=await submit();await pool.query("UPDATE reviewers SET permissions=permissions||'{\"hr_leave_approve\":false}'::jsonb WHERE id=$1",[officers.division.account.id]);
+  const r=await submit();await pool.query("DELETE FROM reviewer_capabilities WHERE reviewer_id=$1 AND capability='hr_leave_approve'",[officers.division.account.id]);
   const delivery=await notificationDelivery();assert.equal(delivery.messages.length,0);assert.equal(delivery.result.skipped,1);
   assert.match((await notificationQueue(r.id))[0].last_error,/capability/);
  });
@@ -348,7 +348,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  test('an authorised approver certifies, verifies and grants in one retry-safe transaction',async()=>{
   await customRoute();
   const approver=officers.department.account;
-  await pool.query('UPDATE reviewers SET permissions=permissions || $2::jsonb WHERE id=$1',[approver.id,JSON.stringify({hr_admin:true,hr_evidence_read:true})]);
+  await grantAccess(pool,approver.id,{hr_admin:true,hr_evidence_read:true});
   const r=await submit(application('special')),view=await call(`/requests/${r.id}`,null,approver),stage=view.body.stages[0];
   assert.equal(view.body.can_verify_evidence,true);
   const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason,certification_confirmed:true,verify_evidence:true,verification_comment:reason};
@@ -369,11 +369,11 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   const view=await w.requestView(pool,user(hr),r.id),stage=view.stages[0];
   const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason,certification_confirmed:true,verify_evidence:true,verification_comment:reason};
   assert.equal((await call(`/requests/${r.id}/decisions`,data,approver)).status,403);
-  await pool.query('UPDATE reviewers SET permissions=permissions || $2::jsonb WHERE id=$1',[approver.id,JSON.stringify({hr_admin:true,hr_evidence_read:true})]);
+  await grantAccess(pool,approver.id,{hr_admin:true,hr_evidence_read:true});
   assert.equal((await call(`/requests/${r.id}`,null,approver)).body.can_verify_evidence,true);
-  await pool.query('UPDATE reviewers SET permissions=permissions || $2::jsonb WHERE id=$1',[approver.id,JSON.stringify({hr_admin:false})]);
+  await pool.query("DELETE FROM reviewer_capabilities WHERE reviewer_id=$1 AND capability='hr_admin'",[approver.id]);
   assert.equal((await call(`/requests/${r.id}/decisions`,data,approver)).status,403);
-  await pool.query('UPDATE reviewers SET permissions=permissions || $2::jsonb WHERE id=$1',[approver.id,JSON.stringify({hr_admin:true})]);
+  await grantAccess(pool,approver.id,{hr_admin:true});
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM hr_gov_evidence_reviews WHERE request_id=$1',[r.id])).rows[0].n,0);
   assert.equal((await w.getRequest(pool,r.id)).status,'pending');
   assert.equal((await call(`/requests/${r.id}/decisions`,data,approver)).status,200);
@@ -382,7 +382,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  });
  test('combined approval retains a valid HR review completed while the application was open',async()=>{
   await customRoute();const approver=officers.department.account;
-  await pool.query('UPDATE reviewers SET permissions=permissions || $2::jsonb WHERE id=$1',[approver.id,JSON.stringify({hr_admin:true,hr_evidence_read:true})]);
+  await grantAccess(pool,approver.id,{hr_admin:true,hr_evidence_read:true});
   const r=await submit(application('special')),stage=(await w.requestView(pool,user(hr),r.id)).stages[0];
   await evidence(r.id);
   const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason,certification_confirmed:true,verify_evidence:true,verification_comment:reason};
@@ -393,7 +393,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  test('a failed final grant rolls back the combined evidence review and preserves the balance hold',async()=>{
   await customRoute([{level:'division',label:'Division approver'},{level:'department',label:'Head of Department'}]);
   const approver=officers.department.account;
-  await pool.query('UPDATE reviewers SET permissions=permissions || $2::jsonb WHERE id=$1',[approver.id,JSON.stringify({hr_admin:true,hr_evidence_read:true})]);
+  await grantAccess(pool,approver.id,{hr_admin:true,hr_evidence_read:true});
   const r=await submit(application('special'));await decide(r.id);
   await pool.query("UPDATE reviewers SET status='inactive' WHERE id=$1",[officers.division.account.id]);
   const stage=(await w.requestView(pool,user(hr),r.id)).stages[1];
@@ -508,7 +508,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   await customRoute(undefined,null);const effective=await routes.approvalRouteSettings(pool,department.id);assert.equal(effective.latest,null);assert.equal(effective.effective.configured,true);
   const r=await submit(application('medical','2026-11-02')),hrEntry=await pool.query('SELECT reviewer_id FROM hr_employees WHERE id=$1',[employee.id]);assert.equal(hrEntry.rows[0].reviewer_id,owner.id);
   await assert.rejects(evidence(r.id,hr,{evidence_reviewed:false}),/confirm the source/);await evidence(r.id);
-  await pool.query("UPDATE reviewers SET permissions=permissions||'{\"hr_admin\":false}'::jsonb WHERE id=$1",[hr.id]);await assert.rejects(decide(r.id),/verifier.*authority changed/);
+  await pool.query("DELETE FROM reviewer_capabilities WHERE reviewer_id=$1 AND capability='hr_admin'",[hr.id]);await assert.rejects(decide(r.id),/verifier.*authority changed/);
  });
  test('short-route certificate review checks complete coverage and self-review, and evidence audit failure rolls back',async()=>{
   await customRoute();const r=await submit({...application('medical','2026-11-02'),medical_mode:'certificate'},[{file_name:'synthetic.pdf',content_type:'application/pdf',byte_size:5,sha256:'synthetic-certificate',file_data:Buffer.from('%PDF-')}]);
@@ -571,11 +571,11 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  test('placement transfer, revoked capability and calendar successor cannot silently change a pending grant',async()=>{
   const r=await submit();const old=await l.loadContext(pool,employee.id),calendar=old.calendars[0];await l.createCalendar(pool,{user:user(hr),actor:hr,data:{label:'Corrected synthetic calendar',effective_from:calendar.effective_from,effective_to:calendar.effective_to,holidays:[{date:'2026-11-02',name:'Synthetic added holiday'}],supersedes_id:calendar.id,source_reference:'Synthetic corrected gazette',reason}});
   await assert.rejects(decide(r.id),/no chargeable|calculation changed/);await w.cancelRequest(pool,{user:user(hr),actor:hr,id:r.id,reason});
-  const second=await submit(application('special','2026-11-03'));await pool.query("UPDATE reviewers SET permissions=permissions||'{\"hr_leave_approve\":false}' WHERE id=$1",[officers.division.account.id]);await assert.rejects(decide(second.id),/capability/);
-  await pool.query("UPDATE reviewers SET permissions=permissions||'{\"hr_leave_approve\":true}' WHERE id=$1",[officers.division.account.id]);await pool.query('UPDATE hr_employees SET division_id=NULL WHERE id=$1',[employee.id]);await assert.rejects(decide(second.id),/Placement changed/);await assert.rejects(w.requestView(pool,user(officers.division.account),second.id),/Request not found/);assert.equal((await call('/requests?mode=queue',null,officers.division.account)).body.total,0);
+  const second=await submit(application('special','2026-11-03'));await pool.query("DELETE FROM reviewer_capabilities WHERE reviewer_id=$1 AND capability='hr_leave_approve'",[officers.division.account.id]);await assert.rejects(decide(second.id),/capability/);
+  await grantAccess(pool,officers.division.account.id,{hr_leave_approve:true});await pool.query('UPDATE hr_employees SET division_id=NULL WHERE id=$1',[employee.id]);await assert.rejects(decide(second.id),/Placement changed/);await assert.rejects(w.requestView(pool,user(officers.division.account),second.id),/Request not found/);assert.equal((await call('/requests?mode=queue',null,officers.division.account)).body.total,0);
  });
  test('self-approval uses a signed substitute but Chief Secretary cannot be replaced with HOD delegation',async()=>{
-  await pool.query('UPDATE hr_approval_assignments SET approver_employee_id=$1 WHERE level=\'division\'',[employee.id]);await pool.query("UPDATE reviewers SET permissions=permissions||'{\"hr_leave_approve\":true}' WHERE id=$1",[owner.id]);owner.permissions.hr_leave_approve=true;
+  await pool.query('UPDATE hr_approval_assignments SET approver_employee_id=$1 WHERE level=\'division\'',[employee.id]);await grantAccess(pool,owner.id,{hr_leave_approve:true});owner.permissions.hr_leave_approve=true;
   const r=await submit(),view=await w.requestView(pool,user(hr),r.id);assert.match(view.stages[0].issue,/Self-approval/);await assert.rejects(decide(r.id,{},owner),/Self-approval/);
   await w.rebindStage(pool,{user:user(hr),actor:hr,id:r.id,stageId:view.stages[0].id,data:{substitute_employee_id:officers.department.employee.id,source_reference:'Signed case-specific authorised division substitute',reason}});await decide(r.id,{},officers.department.account);
   await assert.rejects(w.rebindStage(pool,{user:user(hr),actor:hr,id:r.id,stageId:view.stages.at(-1).id,data:{substitute_employee_id:officers.department.employee.id,source_reference:'Attempted unsupported HOD delegation',reason}}),/Chief Secretary must/);

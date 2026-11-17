@@ -171,14 +171,20 @@ export const CAPABILITY_CATALOGUE = [
   {
     app: 'admin',
     label: 'Administration',
+    // Full administration is not a tick: it comes from the Administrator role
+    // alone, so the account page and every check that needs it agree on who
+    // the administrators are. See reviewerSummary.
     capabilities: [
       { key: PERMISSIONS.TOOLS_ACCESS, label: 'Open the Tools app' },
-      { key: PERMISSIONS.ADMIN, label: 'Full administration' },
     ],
   },
 ];
 
 export const ALL_CAPABILITIES = CAPABILITY_CATALOGUE.flatMap((g) => g.capabilities.map((c) => c.key));
+
+// Per-account notification preferences. These are the only keys the
+// reviewers.permissions column may still hold; it no longer grants access.
+export const PREFERENCE_KEYS = [PERMISSIONS.NOTIFY_ABA_SUBMISSIONS, PERMISSIONS.NOTIFY_FOREX_TT_SUBMISSIONS];
 
 // Apps a person can request on the public signup form, and what approving that
 // request grants. Requesting access is per-app; the admin still sets the role.
@@ -202,9 +208,9 @@ export function capabilitiesForApps(appIds = []) {
   return [...wanted];
 }
 
-// What each legacy role grants. Used to seed capabilities for existing accounts
-// and for newly created ones, and retained as a floor in reviewerSummary so a
-// user can never end up with less access than their role implies.
+// The starting capabilities for an account given a role. Written as explicit
+// grants when an account is created or a signup approved; a role never grants
+// anything at request time, so each one stays visible and removable.
 export const ROLE_CAPABILITIES = {
   user: [PERMISSIONS.ABA_ACCESS, PERMISSIONS.FOREX_TT_ACCESS],
   banking: [PERMISSIONS.BANKING_ACCESS],

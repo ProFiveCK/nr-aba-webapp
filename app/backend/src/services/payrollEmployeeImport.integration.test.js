@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after, before, beforeEach, describe } from 'node:test';
-import { connectTestDatabase, createEmployee, resetLeaveTables, skipWithoutDatabase, upsertLeaveType } from '../test-support/database.js';
+import { connectTestDatabase, createEmployee, resetLeaveTables, skipWithoutDatabase, upsertLeaveType, grantAccess } from '../test-support/database.js';
 
 describe('audited Payroll employee imports', { skip: skipWithoutDatabase }, () => {
   let pool, imports, directory, auth, actor, department, server, base;
@@ -36,6 +36,7 @@ describe('audited Payroll employee imports', { skip: skipWithoutDatabase }, () =
     await resetLeaveTables(pool);
     actor = (await pool.query(`INSERT INTO reviewers (email,display_name,role,password_hash,permissions)
       VALUES ($1,'Synthetic HR','user','x','{"hr_admin":true,"hr_access":true}') RETURNING *`, [`hr-${randomUUID()}@example.test`])).rows[0];
+    await grantAccess(pool, actor.id, { hr_admin: true, hr_access: true });
     department = (await pool.query("INSERT INTO hr_departments(name) VALUES ('Finance') RETURNING *")).rows[0];
   });
   async function token(row = actor) {

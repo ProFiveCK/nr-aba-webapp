@@ -12,12 +12,17 @@ import test, { after, before, beforeEach, describe } from 'node:test';
 import {
   connectTestDatabase,
   createEmployee,
+  grantAccess,
   readBalance,
   resetLeaveTables,
   skipWithoutDatabase,
   upsertLeaveType,
 } from '../test-support/database.js';
 import * as legacy from '../test-support/legacyLeave.js';
+import { ALL_CAPABILITIES } from '../config.js';
+
+// What an existing administrator holds after the access migration: every tick.
+const everything = Object.fromEntries(ALL_CAPABILITIES.map((key) => [key, true]));
 
 describe('leave service', { skip: skipWithoutDatabase }, () => {
   let pool;
@@ -275,6 +280,7 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
         `INSERT INTO reviewers (email, display_name, role, password_hash, permissions, status)
          VALUES ('self-approver@test', 'Ana', 'admin', 'x', '{"hr_admin": true}', 'active') RETURNING id`
       );
+      await grantAccess(pool, self.id, everything);
       await pool.query('UPDATE hr_employees SET reviewer_id = $1 WHERE id = $2', [self.id, ana.id]);
       const { application } = await apply();
 
@@ -382,6 +388,7 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
           `INSERT INTO reviewers (email, display_name, role, password_hash, permissions, status)
            VALUES ($1, $1, 'user', 'x', $2, 'active') RETURNING *`, [email, permissions]
         );
+        await grantAccess(pool, reviewer.id, permissions);
         await pool.query('UPDATE hr_employees SET reviewer_id = $1 WHERE id = $2', [reviewer.id, employeeId]);
         const { tokenId, expiresAt } = await auth.createSession(reviewer.id);
         return { id: reviewer.id, token: auth.buildTokenPayload(reviewer, tokenId, expiresAt) };
@@ -516,6 +523,7 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
          VALUES ('kpi@test','KPI','admin','x','{"hr_admin":true}','active')
          ON CONFLICT (email) DO NOTHING`);
       const { rows: [admin] } = await pool.query("SELECT * FROM reviewers WHERE email='kpi@test'");
+      await grantAccess(pool, admin.id, everything);
       const { tokenId, expiresAt } = await auth.createSession(admin.id);
       const token = auth.buildTokenPayload(admin, tokenId, expiresAt);
 
@@ -675,6 +683,7 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
         // must not be given the admin role as well.
         [email, JSON.stringify(permissions), permissions.hr_admin ? 'admin' : 'user']);
       const { rows: [account] } = await pool.query('SELECT * FROM reviewers WHERE email = $1', [email]);
+      await grantAccess(pool, account.id, permissions.hr_admin ? everything : permissions);
       if (scope) {
         const {rows:departments}=await pool.query('SELECT id FROM hr_departments');
         for (const department of departments) await pool.query(`INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,reason)

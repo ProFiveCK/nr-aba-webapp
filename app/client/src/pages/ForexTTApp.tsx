@@ -7,8 +7,8 @@ import { useAppSections } from '../components/appChrome';
 export function ForexTTApp() {
   const { user } = useAuth();
   const perms = user?.permissions || {};
-  const canReview = perms.review_forex_tt === true || user?.role === 'admin';
-  const canSubmit = perms.submit_forex_tt === true || user?.role === 'admin';
+  const canReview = perms.review_forex_tt === true;
+  const canSubmit = perms.submit_forex_tt === true;
 
   const sections = [
     ...(canSubmit ? [{ to: '/forex-tt/submit', label: 'My FOREX TTs' }] : []),

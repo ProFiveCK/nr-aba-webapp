@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after, before, beforeEach, describe } from 'node:test';
-import { connectTestDatabase, createEmployee, resetLeaveTables, skipWithoutDatabase, upsertLeaveType } from '../test-support/database.js';
+import { connectTestDatabase, createEmployee, resetLeaveTables, skipWithoutDatabase, upsertLeaveType, grantAccess } from '../test-support/database.js';
 
 describe('employee directory and enterprise approval foundation', { skip: skipWithoutDatabase }, () => {
   let pool, directory, auth, actor, server, base;
@@ -43,6 +43,7 @@ describe('employee directory and enterprise approval foundation', { skip: skipWi
       `INSERT INTO reviewers (email, display_name, role, account_type, password_hash, permissions)
        VALUES ($1,$2,$3,$4,'x',$5) RETURNING *`, [`employee-test-${randomUUID()}@example.test`, name, role, type, permissions]
     );
+    await grantAccess(pool, row.id, permissions);
     return row;
   }
   async function tokenFor(row) {
@@ -159,7 +160,8 @@ describe('employee directory and enterprise approval foundation', { skip: skipWi
     assert.equal(patched.body.reviewer.permissions.submit_forex_tt, undefined);
     login = (await pool.query('SELECT * FROM reviewers WHERE id = $1', [login.id])).rows[0];
     assert.equal(auth.reviewerSummary({ ...login, permissions: { submit_aba: true } }, [], ['hr_access']).permissions.submit_aba, undefined);
-    assert.equal(auth.reviewerSummary(actor).permissions.submit_aba, true, 'legacy staff access is preserved');
+    assert.equal(auth.reviewerSummary(actor).permissions.submit_aba, undefined, 'a staff account holds only what is ticked');
+    assert.equal(auth.reviewerSummary(actor, [], ['submit_aba']).permissions.submit_aba, true, 'a ticked finance capability still works for staff');
     await pool.query("UPDATE hr_employees SET status = 'inactive' WHERE id = $1", [employee.id]);
     assert.equal((await call(refreshed.body.token, '/api/hr/public-holidays')).status, 403,
       'employee deactivation blocks every authenticated endpoint without waiting for token expiry');

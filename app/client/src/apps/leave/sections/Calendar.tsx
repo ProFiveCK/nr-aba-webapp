@@ -4,7 +4,6 @@ import { apiClient } from '../../../lib/api';
 import { useAuth } from '../../../contexts/useAuth';
 import { useToast } from '../../../contexts/useToast';
 import { Button, EmptyState, LoadingState } from '../../../components/Ui';
-import { formatDate } from '../types';
 import { toIsoDate } from '../../../lib/date';
 import { useHolidays } from '../calendarDays';
 import { governmentLabel } from '../governmentWorkflowTypes';
@@ -38,8 +37,11 @@ function monthBounds(offset: number) {
     return { from: toIsoDate(start), to: toIsoDate(end), start, end };
 }
 
+/** A member of the caller's team, shown on the team calendar whether or not they are away. */
+export interface TeamMember { employee_id: string; name: string; own?: boolean }
+
 const EMPTY_TITLES: Record<CalendarView, string> = {
-    team: 'Nobody in your team has approved or submitted leave this month',
+    team: 'Your login is not linked to a team yet, so there is no team calendar to show',
     mine: 'You have no approved or submitted leave this month',
     scope: 'No approved or submitted leave this month',
 };
@@ -49,12 +51,13 @@ export function Calendar() {
     const { addToast } = useToast();
     const [params, setParams] = useSearchParams();
     const permissions = user?.permissions || {};
-    // Responsible for others: managers through their reporting line, HR through a scope or centrally.
-    const manages = permissions.hr_admin === true || permissions.hr_officer === true || permissions.hr_leave_approve === true;
-    const canFilterUnits = permissions.hr_admin === true || permissions.hr_officer === true;
+    // Everyone gets their team and their own leave. Only HR looks wider: central
+    // HR across every department, an HR officer across the units assigned to them.
     const central = permissions.hr_admin === true;
-    // Central HR covers every department, so its wider view is named for that.
-    const views: [CalendarView, string][] = [['team', 'My team'], ['mine', 'My leave'], ...(manages ? [['scope', central ? 'All departments' : 'People I manage'] as [CalendarView, string]] : [])];
+    const officer = permissions.hr_officer === true;
+    const canFilterUnits = central || officer;
+    const views: [CalendarView, string][] = [['team', 'Team calendar'], ['mine', 'My leave'],
+        ...(canFilterUnits ? [['scope', central ? 'All departments' : 'My HR units'] as [CalendarView, string]] : [])];
     const requested = params.get('view');
     const view: CalendarView = views.some(([id]) => id === requested) ? requested as CalendarView : 'team';
     const departmentId = view === 'scope' ? params.get('department') || '' : '';
@@ -65,6 +68,7 @@ export function Calendar() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [units, setUnits] = useState<OrgUnit[]>([]);
+    const [team, setTeam] = useState<{ name: string | null; members: TeamMember[] } | null>(null);
     const loadVersion = useRef(0);
     const holidays = useHolidays();
 
@@ -79,6 +83,16 @@ export function Calendar() {
             .catch(() => undefined);
         return () => { live = false; };
     }, [view, canFilterUnits]);
+
+    useEffect(() => {
+        if (view !== 'team' || team) return;
+        let live = true;
+        apiClient.get<{ name: string | null; members: TeamMember[] }>('/hr/calendar/team')
+            .then((roster) => { if (live) setTeam(roster); })
+            // Without the roster the calendar still shows who is away; only the available rows are missing.
+            .catch(() => undefined);
+        return () => { live = false; };
+    }, [view, team]);
 
     const load = useCallback(async () => {
         const requestVersion = ++loadVersion.current;
@@ -128,11 +142,13 @@ export function Calendar() {
         <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-4 app-panel p-5 sm:p-6">
                 <div>
-                    <h2 className="text-lg font-semibold text-gray-900">Leave calendar — {monthLabel}</h2>
+                    <h2 className="text-lg font-semibold text-gray-900">
+                        {view === 'team' ? `Team calendar${team?.name ? ` — ${team.name}` : ''}` : view === 'mine' ? 'My leave' : central ? 'All departments' : 'My HR units'} · {monthLabel}
+                    </h2>
                     <p className="mt-1 text-sm text-gray-600">
-                        {view === 'team' ? 'Who in your team is away. Colleagues’ leave shows dates only, not the type of leave.'
+                        {view === 'team' ? 'Everyone in your team and when they are away. Colleagues’ leave shows dates only, not the type of leave.'
                             : view === 'mine' ? 'Your own approved and submitted leave.'
-                                : central ? 'Leave across every department. Choose a department or division to narrow it.' : 'Leave for the people you manage or administer.'}
+                                : central ? 'Leave across every department. Choose a department or division to narrow it.' : 'Leave in the departments and divisions you look after as an HR officer.'}
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -185,7 +201,8 @@ export function Calendar() {
             ) : error ? (
                 <div className="app-panel p-5"><p role="alert" className="text-sm text-red-700">{error}</p><button type="button" className="toolbar-button mt-3" onClick={() => void load()}>Try again</button></div>
             ) : (
-                <CalendarMonth entries={entries} start={bounds.start} end={bounds.end} view={view} holidays={holidays} />
+                <CalendarMonth entries={entries} start={bounds.start} end={bounds.end} view={view} holidays={holidays}
+                    members={view === 'team' ? team?.members : undefined} />
             )}
         </div>
     );
@@ -281,8 +298,10 @@ function leaveLabel(entry: CalendarEntry) {
     return entry.own && entry.leave_code ? governmentLabel(entry.leave_code) : entry.leave_type_name;
 }
 
-export function CalendarMonth({ entries, start, end, view = 'scope', holidays = new Map(), today = new Date() }: {
+export function CalendarMonth({ entries, start, end, view = 'scope', holidays = new Map(), today = new Date(), members }: {
     entries: CalendarEntry[]; start: Date; end: Date; view?: CalendarView; holidays?: Map<string, string>;
+    /** The team calendar lists everyone in the team, away or not. */
+    members?: TeamMember[];
     /** Injected for tests; the real calendar marks the actual date. */
     today?: Date;
 }) {
@@ -299,16 +318,15 @@ export function CalendarMonth({ entries, start, end, view = 'scope', holidays = 
 
     // Keep each status separate so overlapping entries remain visible.
     const byPerson = useMemo(() => {
-        const map = new Map<string, { id: string; name: string; days: Set<number>; pendingDays: Set<number>; studyDays: Set<number>; types: Set<string> }>();
+        type Row = { id: string; name: string; own: boolean; days: Set<number>; pendingDays: Set<number>; studyDays: Set<number>; types: Set<string> };
+        const blank = (id: string, name: string, own = false): Row =>
+            ({ id, name, own, days: new Set<number>(), pendingDays: new Set<number>(), studyDays: new Set<number>(), types: new Set<string>() });
+        const map = new Map<string, Row>();
+        // Team members with no leave still get a row: an empty row means available.
+        for (const member of members ?? []) map.set(member.employee_id, blank(member.employee_id, member.name, member.own === true));
         for (const entry of entries) {
-            const record = map.get(entry.employee_id || entry.employee_name) ?? {
-                id: entry.employee_id || entry.employee_name,
-                name: entry.employee_name,
-                days: new Set<number>(),
-                pendingDays: new Set<number>(),
-                studyDays: new Set<number>(),
-                types: new Set<string>(),
-            };
+            const record = map.get(entry.employee_id || entry.employee_name)
+                ?? blank(entry.employee_id || entry.employee_name, entry.employee_name, entry.own === true);
             record.types.add(leaveLabel(entry));
             const studying = entry.kind === 'study_leave';
             const target = studying ? record.studyDays : entry.status === 'pending' ? record.pendingDays : record.days;
@@ -323,8 +341,9 @@ export function CalendarMonth({ entries, start, end, view = 'scope', holidays = 
             }
             map.set(entry.employee_id || entry.employee_name, record);
         }
-        return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-    }, [entries, start, end]);
+        // Your own row first, then everyone else by name.
+        return [...map.values()].sort((a, b) => Number(b.own) - Number(a.own) || a.name.localeCompare(b.name));
+    }, [entries, members, start, end]);
 
     return (
         <div className="space-y-5">
@@ -356,7 +375,7 @@ export function CalendarMonth({ entries, start, end, view = 'scope', holidays = 
                             {byPerson.map((person) => (
                                 <tr key={person.id}>
                                     <td className="sticky left-0 whitespace-nowrap bg-white px-3 py-2 font-medium text-gray-900">
-                                        {person.name}
+                                        {person.name}{person.own && <span className="font-normal text-gray-500"> (you)</span>}
                                         <span className="mt-1 block max-w-56 truncate text-xs font-normal text-gray-500">
                                             {[...person.types].join(', ')}
                                         </span>
@@ -404,26 +423,6 @@ export function CalendarMonth({ entries, start, end, view = 'scope', holidays = 
                 </p>
             )}
 
-            {entries.length > 0 && (
-                <div className="app-panel p-5 text-sm sm:p-6">
-                    <h3 className="mb-4 text-lg font-semibold text-gray-900">Leave this month</h3>
-                    <ul className="divide-y divide-gray-100 text-gray-600">
-                        {entries.map((entry) => (
-                            <li key={`${entry.kind || 'leave'}-${entry.id}`} className="py-3 first:pt-0 last:pb-0">
-                                <div className="mb-1 flex flex-wrap items-center gap-2">
-                                    <span className="font-medium text-gray-900">{entry.employee_name}</span>
-                                    <span className={`rounded px-2 py-0.5 text-xs font-medium ${entry.kind === 'study_leave' ? 'bg-amber-100 text-amber-900' : entry.status === 'pending' ? 'border border-dashed border-violet-600 bg-violet-100 text-violet-900' : 'bg-brand/10 text-brand'}`}>
-                                        {entry.kind === 'study_leave' ? 'Study leave' : entry.status === 'pending' ? 'Submitted — awaiting approval' : 'Approved leave'}
-                                    </span>
-                                </div>
-                                {entry.kind === 'study_leave'
-                                    ? `Study leave from ${formatDate(entry.start_date)}${entry.end_date ? ` to ${formatDate(entry.end_date)}` : ', return date not set'}`
-                                    : `${leaveLabel(entry)}, ${formatDate(entry.start_date)} to ${entry.end_date ? formatDate(entry.end_date) : 'return date not set'}${Number(entry.days) > 0 ? ` (${entry.days} days)` : ''}`}
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            )}
         </div>
     );
 }

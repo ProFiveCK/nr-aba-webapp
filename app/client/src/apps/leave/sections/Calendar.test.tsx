@@ -13,16 +13,13 @@ const pending = {
 it('shows submitted dates and a status badge without marking them approved', () => {
     const html = renderToStaticMarkup(<CalendarMonth entries={[pending]} start={start} end={end} />);
     const table = html.match(/<tbody[^>]*>(.*?)<\/tbody>/)?.[1] || '';
-    const list = html.match(/<li[^>]*>(.*?)<\/li>/)?.[1] || '';
     expect(table).toContain('Ana: Submitted — awaiting approval on 1 November 2026');
     expect(table).toContain('Ana: Submitted — awaiting approval on 2 November 2026');
     expect(table).not.toContain('on 3 November');
     expect(table).not.toContain('October 2026');
     expect(table).toContain('border-dashed');
     expect(table).not.toContain('flex-1 bg-brand');
-    expect(list).toContain('Submitted — awaiting approval');
-    expect(list).not.toContain('Approved leave');
-    expect(list).toContain('30/10/2026 to 02/11/2026');
+    expect(html).not.toContain('Leave this month');
 });
 
 it('keeps overlapping approved, submitted and open-ended study leave visible', () => {
@@ -39,14 +36,12 @@ it('keeps overlapping approved, submitted and open-ended study leave visible', (
     expect(firstCell).toContain('bg-brand');
     expect(firstCell).toContain('border-dashed');
     expect(firstCell).toContain('bg-amber-500');
-    expect(html).toContain('return date not set');
 });
 
 it('shows approved dates after a submitted application is approved', () => {
     const html = renderToStaticMarkup(<CalendarMonth entries={[{ ...pending, status: 'approved' }]} start={start} end={end} />);
     expect(html).toContain('Ana: Approved leave on 1 November 2026');
     expect(html).not.toContain('Ana: Submitted');
-    expect(html.match(/<li[^>]*>(.*?)<\/li>/)?.[1]).toContain('Approved leave');
 });
 
 it('does not display an uncalculated pending case as zero days', () => {
@@ -66,9 +61,29 @@ it('names your own government leave and keeps a colleague’s as On leave', () =
         { ...pending, id: 'theirs', employee_id: 'ben', employee_name: 'Ben', leave_type_name: 'On leave', own: false, leave_code: null },
     ];
     const html = renderToStaticMarkup(<CalendarMonth entries={entries} start={start} end={end} view="team" />);
-    expect(html).toContain('Maternity leave, 30/10/2026 to 02/11/2026');
-    expect(html).toContain('On leave, 30/10/2026 to 02/11/2026');
+    const table = html.match(/<tbody[^>]*>(.*?)<\/tbody>/)?.[1] || '';
+    expect(table).toMatch(/Ana<span[^>]*> \(you\)<\/span><span[^>]*>Maternity leave<\/span>/);
+    expect(table).toMatch(/Ben<span[^>]*>On leave<\/span>/);
+    expect(table.indexOf('Ana')).toBeLessThan(table.indexOf('Ben'));
     expect(html).not.toContain('Submitted government leave');
+});
+
+it('lists every team member on the team calendar, away or not, with your own row first', () => {
+    const members = [
+        { employee_id: 'zed', name: 'Zed' },
+        { employee_id: 'ben', name: 'Ben' },
+        { employee_id: 'yo', name: 'Yolanda', own: true },
+    ];
+    const entries = [{ ...pending, employee_id: 'ben', employee_name: 'Ben', leave_type_name: 'On leave' }];
+    const html = renderToStaticMarkup(<CalendarMonth entries={entries} start={start} end={end} view="team" members={members} />);
+    const table = html.match(/<tbody[^>]*>(.*?)<\/tbody>/)?.[1] || '';
+    expect(table.match(/<tr>/g)).toHaveLength(3);
+    expect(table.indexOf('Yolanda')).toBeLessThan(table.indexOf('Ben'));
+    expect(table.indexOf('Ben')).toBeLessThan(table.indexOf('Zed'));
+    expect(table).toContain('Ben: Submitted — awaiting approval on 1 November 2026');
+    expect(table).not.toContain('Zed:');
+    expect(renderToStaticMarkup(<CalendarMonth entries={[]} start={start} end={end} view="team" members={members} />))
+        .not.toContain('not linked to a team');
 });
 
 it('marks public holidays in the grid and lists them for the month', () => {
@@ -82,7 +97,7 @@ it('marks public holidays in the grid and lists them for the month', () => {
 
 it('says whose leave is missing when a view is empty', () => {
     expect(renderToStaticMarkup(<CalendarMonth entries={[]} start={start} end={end} view="team" />))
-        .toContain('Nobody in your team has approved or submitted leave this month');
+        .toContain('Your login is not linked to a team yet');
     expect(renderToStaticMarkup(<CalendarMonth entries={[]} start={start} end={end} view="mine" />))
         .toContain('You have no approved or submitted leave this month');
 });

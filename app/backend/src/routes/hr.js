@@ -23,7 +23,7 @@ import { parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js';
 
 import hrAccessRouter from './hrAccess.js';
-import { CALENDAR_VIEWS, MASKED_LEAVE_LABEL, calendarAudienceSql } from '../services/leaveCalendar.js';
+import { CALENDAR_VIEWS, MASKED_LEAVE_LABEL, calendarAudienceSql, teamRoster } from '../services/leaveCalendar.js';
 import employeeOnboardingRouter from './employeeOnboarding.js';
 import governmentLeaveRouter from './governmentLeave.js';
 import { assertEmployeeScope,canAccessEmployee,employeeReadSql,employeeScopeSql,isCentralHr,managerScopeSql,activeScopeSql,canReadEvidence,evidenceReadSql } from '../services/hrAccess.js';
@@ -1521,6 +1521,11 @@ router.get('/overview/breakdown',requirePermission(PERMISSIONS.HR_ADMIN),
 // ===== Calendar and reporting =====
 
 // Approved and submitted leave for one calendar audience (see leaveCalendar.js).
+// The caller's team, for the team calendar: its name and who is in it.
+router.get('/calendar/team', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res) => {
+  res.json(await teamRoster(pool, req.user.id));
+});
+
 router.get(
   '/calendar',
   requirePermission(PERMISSIONS.HR_ACCESS),

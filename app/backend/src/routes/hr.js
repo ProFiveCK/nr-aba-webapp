@@ -26,7 +26,7 @@ import hrAccessRouter from './hrAccess.js';
 import { CALENDAR_VIEWS, MASKED_LEAVE_LABEL, calendarAudienceSql } from '../services/leaveCalendar.js';
 import employeeOnboardingRouter from './employeeOnboarding.js';
 import governmentLeaveRouter from './governmentLeave.js';
-import { assertEmployeeScope,canAccessEmployee,employeeReadSql,employeeScopeSql,isCentralHr,managerScopeSql,activeScopeSql } from '../services/hrAccess.js';
+import { assertEmployeeScope,canAccessEmployee,employeeReadSql,employeeScopeSql,isCentralHr,managerScopeSql,activeScopeSql,canReadEvidence,evidenceReadSql } from '../services/hrAccess.js';
 import employeeDirectoryRouter from './employeeDirectory.js';
 import { routineReason } from '../middleware/routineReason.js';
 import { linkedEmployee, setEmployeeAccount } from '../services/employeeDirectory.js';
@@ -194,7 +194,7 @@ async function approvedLeaveForm(req, id) {
 
 const leaveFormAccess = requirePermission(
   PERMISSIONS.HR_ACCESS, PERMISSIONS.HR_LEAVE_APPROVE,
-  PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_REPORT_READ, PERMISSIONS.HR_EVIDENCE_READ, PERMISSIONS.HR_ADMIN
+  PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_REPORT_READ, PERMISSIONS.HR_ADMIN
 );
 
 router.get(
@@ -265,9 +265,9 @@ router.get(
     if (!rows.length) return missing();
     const attachment = rows[0];
 
-    // Evidence has its own grant. Owners and verified direct managers retain
-    // their application access; a past decision does not confer permanent access.
-    if (!(await canAccessEmployee(pool,req.user,attachment.employee_id,'hr_evidence_read',{owner:true,manager:true}))) return missing();
+    // Evidence follows the right to decide this person's leave, plus the owner.
+    // A past decision does not confer permanent access.
+    if (!(await canReadEvidence(pool,req.user,attachment.employee_id))) return missing();
 
     res.set('Cache-Control', 'no-store');
     res.set('Content-Type', attachment.content_type || 'application/octet-stream');
@@ -330,7 +330,7 @@ router.get('/approvals',requirePermission(PERMISSIONS.HR_LEAVE_APPROVE,PERMISSIO
   const status=req.query.status==='approved'?'approved':'pending';
   const {rows}=await pool.query(`SELECT a.id,a.employee_id,a.leave_type_id,a.start_date,a.end_date,a.days,a.reason,a.status,
     a.applied_at,a.reviewed_at,a.reviewer_note,t.name AS leave_type_name,e.display_name AS employee_name,e.department_code,
-    CASE WHEN (${employeeScopeSql(req.user,'hr_evidence_read','$2')} OR ${managerScopeSql(req.user,'$2')}) THEN ${ATTACHMENT_SUMMARY_SQL.replace(/ AS attachments$/, '')} ELSE '[]'::json END AS attachments FROM hr_leave_applications a JOIN hr_leave_types t ON t.id=a.leave_type_id
+    CASE WHEN ${evidenceReadSql(req.user,'$2')} THEN ${ATTACHMENT_SUMMARY_SQL.replace(/ AS attachments$/, '')} ELSE '[]'::json END AS attachments FROM hr_leave_applications a JOIN hr_leave_types t ON t.id=a.leave_type_id
     JOIN hr_employees e ON e.id=a.employee_id WHERE a.status=$1
     AND (${employeeScopeSql(req.user,'hr_leave_approve','$2')} OR ${managerScopeSql(req.user,'$2')})
     ORDER BY ${status==='pending'?'a.applied_at':'a.reviewed_at DESC'} ${status==='approved'?'LIMIT 20':''}`,[status,req.user.id]);
@@ -1538,7 +1538,7 @@ router.get(
          JOIN hr_leave_types t ON t.id = a.leave_type_id
          JOIN hr_employees e ON e.id = a.employee_id
         WHERE a.status IN ('pending', 'approved')
-          AND NOT EXISTS(SELECT 1 FROM hr_gov_legacy_transfers tr JOIN hr_gov_requests gr ON gr.id=tr.request_id WHERE tr.legacy_request_id=a.id AND gr.status='approved')
+          AND NOT EXISTS(SELECT 1 FROM hr_gov_legacy_transfers tr JOIN hr_gov_requests gr ON gr.id=tr.request_id WHERE tr.legacy_request_id=a.id AND gr.status IN ('pending','approved'))
           AND a.start_date <= $2 AND a.end_date >= $1
           AND ${audience.where}
         ORDER BY a.start_date, e.display_name`,

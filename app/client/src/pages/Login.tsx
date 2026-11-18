@@ -191,14 +191,16 @@ export function Login() {
         }
 
         try {
-            await apiClient.post('/auth/signup', {
+            const result = await apiClient.post<{ message?: string }>('/auth/signup', {
                 email: signupEmail.trim(),
                 name: signupName.trim(),
                 password: signupPassword,
                 department_code: trimmedDept,
                 requested_apps: signupApps,
             });
-            setSuccessMessage('Signup request submitted! Please wait for admin approval.');
+            // The request reaches an administrator only after the person opens
+            // the confirmation link emailed to them.
+            setSuccessMessage(result?.message || 'Check your email for a link to confirm your address. Your request goes to an administrator once you open it.');
             // Clear form
             setSignupName('');
             setSignupEmail('');

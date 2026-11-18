@@ -14,7 +14,7 @@ import {PERMISSIONS} from '../config.js';
 import {withTransaction} from '../lib/transaction.js';
 import {ServiceError} from '../lib/serviceError.js';
 import {COMMON_CODES,dayNumber} from '../lib/governmentLeaveRules.js';
-import {isCentralHr,employeeReadSql,employeeScopeSql,managerScopeSql} from '../services/hrAccess.js';
+import {isCentralHr,employeeReadSql,employeeScopeSql,managerScopeSql,evidenceReadSql} from '../services/hrAccess.js';
 import {linkedEmployee} from '../services/employeeDirectory.js';
 import * as workflow from '../services/governmentLeaveWorkflow.js';
 import {approvalRouteSettings,publishApprovalRoute,APPROVAL_OFFICES} from '../services/governmentLeaveApprovalRoutes.js';
@@ -126,7 +126,7 @@ router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query
         'start_date',to_char(a.start_date,'YYYY-MM-DD'),'end_date',to_char(a.end_date,'YYYY-MM-DD'),'days',a.days,'status',a.status,
         'reason',a.reason,'applied_at',a.applied_at,'reviewer_note',a.reviewer_note,
         'can_decide',e.reviewer_id IS DISTINCT FROM $1 AND e.leave_policy_regime<>'government' AND NOT EXISTS(SELECT 1 FROM reviewers owner WHERE owner.id=e.reviewer_id AND owner.account_type='employee'),
-        'attachments',CASE WHEN (${employeeScopeSql(req.user,'hr_evidence_read','$1')} OR ${managerScopeSql(req.user,'$1')}) THEN
+        'attachments',CASE WHEN ${evidenceReadSql(req.user,'$1')} THEN
           COALESCE((SELECT jsonb_agg(jsonb_build_object('id',att.id,'file_name',att.file_name,'content_type',att.content_type,'byte_size',att.byte_size,'created_at',att.created_at) ORDER BY att.created_at) FROM hr_leave_attachments att WHERE att.application_id=a.id),'[]'::jsonb) ELSE '[]'::jsonb END),
       CASE WHEN t.name='Sick (with MC)' THEN 'certificate' WHEN t.name='Sick (without MC)' THEN 'exemption' ELSE NULL END
     FROM hr_leave_applications a JOIN hr_employees e ON e.id=a.employee_id JOIN hr_leave_types t ON t.id=a.leave_type_id

@@ -12,7 +12,7 @@ import {withTransaction} from '../lib/transaction.js';
 import {ServiceError} from '../lib/serviceError.js';
 import {recordAudit} from './auditService.js';
 import {reviewerSummary} from './authService.js';
-import {isCentralHr,canAccessEmployee,activeScopeSql} from './hrAccess.js';
+import {isCentralHr,canAccessEmployee,canReadEvidence,activeScopeSql} from './hrAccess.js';
 import * as ledger from './governmentLeave.js';
 import {COMMON_CODES,leaveDurationInput,calculateEvaluation,fingerprint,segmentsFingerprint,dayNumber,serviceFacts,units,ENGINE_VERSION} from '../lib/governmentLeaveRules.js';
 import {medicalAssessment,singleMedicalShiftCharge} from '../lib/governmentLeaveWorkflowRules.js';
@@ -274,7 +274,7 @@ export async function canReadRequest(client,user,request) {
   return false;
 }
 export async function privateRead(client,user,request) {
-  if(await canAccessEmployee(client,user,request.employee_id,'hr_evidence_read',{owner:true}))return true;
+  if(await canReadEvidence(client,user,request.employee_id))return true;
   // Evidence access follows this application's valid assigned officers. It
   // does not grant employee-register access or evidence from other requests.
   if(!request.application_snapshot)request=await getRequest(client,request.id);

@@ -192,6 +192,89 @@ export function Calendar() {
 const pendingDayClass = 'border border-dashed border-violet-600 bg-violet-100';
 
 /** The caller's own government leave names its type; everything else keeps the server's label. */
+type DayStatus = 'approved' | 'pending' | 'study';
+const STATUS_LABEL: Record<DayStatus, string> = { approved: 'Approved leave', pending: 'Submitted — awaiting approval', study: 'Study leave' };
+const STATUS_DOT: Record<DayStatus, string> = { approved: 'bg-brand', pending: pendingDayClass, study: 'bg-amber-500' };
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/**
+ * The month as a seven-column calendar for phones, where a 31-column table
+ * cannot fit. Each day shows how many people are away; choosing a day lists
+ * them underneath.
+ */
+function PhoneMonth({ people, days, start, monthLabel }: {
+    people: { id: string; name: string; days: Set<number>; pendingDays: Set<number>; studyDays: Set<number> }[];
+    days: { day: number; weekend: boolean; holiday?: string }[];
+    start: Date;
+    monthLabel: string;
+}) {
+    const awayOn = (day: number) => people.flatMap((person) => {
+        const statuses: DayStatus[] = [];
+        if (person.days.has(day)) statuses.push('approved');
+        if (person.pendingDays.has(day)) statuses.push('pending');
+        if (person.studyDays.has(day)) statuses.push('study');
+        return statuses.length ? [{ id: person.id, name: person.name, statuses }] : [];
+    });
+    const today = new Date();
+    const isThisMonth = today.getFullYear() === start.getFullYear() && today.getMonth() === start.getMonth();
+    // Today when someone is away today, otherwise the first day anyone is.
+    const firstBusy = days.find(({ day }) => awayOn(day).length)?.day ?? 1;
+    const [chosen, setChosen] = useState<number>(isThisMonth && awayOn(today.getDate()).length ? today.getDate() : firstBusy);
+    const day = Math.min(chosen, days.length);
+    const leading = (start.getDay() + 6) % 7;
+    const selected = awayOn(day);
+    const holiday = days[day - 1]?.holiday;
+    const dayLabel = `${day} ${start.toLocaleDateString('en-GB', { month: 'long' })}`;
+
+    return (
+        <div className="app-panel p-3 md:hidden">
+            <div className="grid grid-cols-7 gap-1 text-center text-xs" role="group" aria-label={`Days in ${monthLabel}`}>
+                {WEEKDAYS.map((name) => <div key={name} className="py-1 font-medium text-gray-500" aria-hidden="true">{name}</div>)}
+                {Array.from({ length: leading }, (_, i) => <div key={`blank-${i}`} aria-hidden="true" />)}
+                {days.map(({ day: d, weekend, holiday: name }) => {
+                    const away = awayOn(d);
+                    const kinds = (['approved', 'pending', 'study'] as DayStatus[]).filter((kind) => away.some((a) => a.statuses.includes(kind)));
+                    return (
+                        <button
+                            key={d}
+                            type="button"
+                            onClick={() => setChosen(d)}
+                            aria-pressed={d === day}
+                            aria-label={`${d} ${start.toLocaleDateString('en-GB', { month: 'long' })}${name ? `, ${name} (public holiday)` : ''}: ${away.length ? `${away.length} ${away.length === 1 ? 'person' : 'people'} away` : 'nobody away'}`}
+                            className={`flex min-h-12 flex-col items-center justify-start gap-1 rounded-md border py-1 ${d === day ? 'border-brand ring-1 ring-brand' : 'border-transparent'} ${name ? 'bg-rose-50 text-rose-700' : weekend ? 'bg-gray-50 text-gray-400' : 'bg-white text-gray-900'}`}
+                        >
+                            <span className={name ? 'font-semibold' : ''}>{d}</span>
+                            {away.length > 0 && (
+                                <span className="flex items-center gap-0.5" aria-hidden="true">
+                                    {kinds.map((kind) => <span key={kind} className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[kind]}`} />)}
+                                    <span className="ml-0.5 text-[10px] text-gray-600">{away.length}</span>
+                                </span>
+                            )}
+                        </button>
+                    );
+                })}
+            </div>
+            <div className="mt-3 border-t border-gray-100 pt-3 text-sm" aria-live="polite">
+                <h4 className="font-semibold text-gray-900">{dayLabel}{holiday ? ` — ${holiday}` : ''}</h4>
+                {selected.length ? (
+                    <div role="list" className="mt-2 space-y-1.5">
+                        {selected.map((person) => (
+                            <div role="listitem" key={person.id} className="flex flex-wrap items-center gap-2">
+                                <span className="font-medium text-gray-900">{person.name}</span>
+                                {person.statuses.map((status) => (
+                                    <span key={status} className="inline-flex items-center gap-1 text-xs text-gray-600">
+                                        <span className={`h-2 w-2 rounded-full ${STATUS_DOT[status]}`} aria-hidden="true" />{STATUS_LABEL[status]}
+                                    </span>
+                                ))}
+                            </div>
+                        ))}
+                    </div>
+                ) : <p className="mt-1 text-gray-600">Nobody is away.</p>}
+            </div>
+        </div>
+    );
+}
+
 function leaveLabel(entry: CalendarEntry) {
     return entry.own && entry.leave_code ? governmentLabel(entry.leave_code) : entry.leave_type_name;
 }
@@ -243,7 +326,8 @@ export function CalendarMonth({ entries, start, end, view = 'scope', holidays = 
                 <div className="app-panel p-4">
                     <EmptyState title={EMPTY_TITLES[view]} />
                 </div>
-            ) : (
+            ) : (<>
+                <PhoneMonth key={start.toISOString()} people={byPerson} days={days} start={start} monthLabel={monthLabel} />
                 <div className="hidden overflow-x-auto app-panel md:block">
                     <table className="min-w-[1100px] text-sm"><caption className="sr-only">Approved leave, submitted leave awaiting approval and study leave for {monthLabel}</caption>
                         <thead className="bg-gray-50 text-xs text-gray-500">
@@ -291,7 +375,7 @@ export function CalendarMonth({ entries, start, end, view = 'scope', holidays = 
                         </tbody>
                     </table>
                 </div>
-            )}
+            </>)}
 
             {byPerson.length > 0 && (
                 <p className="flex flex-wrap items-center gap-4 px-1 text-xs text-gray-600">

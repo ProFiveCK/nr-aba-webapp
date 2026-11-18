@@ -140,7 +140,7 @@ const authIpLimiter = rateLimit({
   message: { message: 'Too many sign-in attempts from your network. Please try again later.' },
   skipSuccessfulRequests: true,
 });
-for (const route of ['login', 'google', 'signup', 'forgot-password', 'reset-password', 'activate-leave']) {
+for (const route of ['login', 'google', 'signup', 'verify-signup', 'forgot-password', 'reset-password', 'activate-leave']) {
   app.use(`/api/auth/${route}`, authIpLimiter, authLimiter);
 }
 

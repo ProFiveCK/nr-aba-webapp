@@ -37,6 +37,10 @@ describe('migrateLegacyHash', () => {
         expect(replaced).toEqual([]);
     });
 
+    it('leaves a sign-up confirmation link alone', () => {
+        expect(rewritesTo('/', '#verify-signup=abc123')).toEqual([]);
+    });
+
     // Anywhere but the root, the URL is already a route; a stray hash there
     // is a fragment, not navigation to translate.
     it('does nothing once the user is already inside an app', () => {

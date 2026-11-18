@@ -102,6 +102,8 @@ export const PERMISSIONS = {
   HR_ADMIN: 'hr_admin',
   HR_BALANCE_MANAGE: 'hr_balance_manage',
   HR_REPORT_READ: 'hr_report_read',
+  // Retired: supporting evidence now follows the right to decide the leave.
+  // Kept so the earlier hidden-permissions migration still recognises the key.
   HR_EVIDENCE_READ: 'hr_evidence_read',
   ABA_ACCESS: 'aba_access',
   BANKING_ACCESS: 'banking_access',
@@ -164,7 +166,6 @@ export const CAPABILITY_CATALOGUE = [
       { key: PERMISSIONS.HR_STAFF_MANAGE, label: 'Manage staff within assigned HR scope' },
       { key: PERMISSIONS.HR_BALANCE_MANAGE, label: 'Manage balances within assigned HR scope' },
       { key: PERMISSIONS.HR_REPORT_READ, label: 'Read reports within assigned HR scope' },
-      { key: PERMISSIONS.HR_EVIDENCE_READ, label: 'Read supporting evidence within assigned HR scope' },
       { key: PERMISSIONS.HR_ADMIN, label: 'Central HR administration across government' },
     ],
   },

@@ -33,10 +33,10 @@ it('shows submitted dates as awaiting approval, never in the approved colour', (
 it('draws a period as one continuous bar, rounded only where it starts and ends', () => {
     const approved = { ...pending, status: 'approved' as const, start_date: '2026-11-04', end_date: '2026-11-06' };
     const html = render({ entries: [approved] });
-    expect(cell(html, 'Ana: Approved leave on 4 November 2026')).toMatch(/ml-1 rounded-l-md/);
-    expect(cell(html, 'Ana: Approved leave on 4 November 2026')).not.toMatch(/rounded-r-md/);
+    expect(cell(html, 'Ana: Approved leave on 4 November 2026')).toMatch(/ml-0.5 rounded-l /);
+    expect(cell(html, 'Ana: Approved leave on 4 November 2026')).not.toMatch(/rounded-r/);
     expect(cell(html, 'Ana: Approved leave on 5 November 2026')).not.toMatch(/rounded/);
-    expect(cell(html, 'Ana: Approved leave on 6 November 2026')).toMatch(/mr-1 rounded-r-md/);
+    expect(cell(html, 'Ana: Approved leave on 6 November 2026')).toMatch(/mr-0.5 rounded-r/);
 });
 
 it('keeps overlapping approved, awaiting and open-ended study leave visible', () => {
@@ -47,7 +47,7 @@ it('keeps overlapping approved, awaiting and open-ended study leave visible', ()
     expect(both).toContain('border-violet-400');
     expect(both).toContain('bg-amber-400');
     expect(html).toContain('Ana: Study leave on 30 November 2026');
-    expect(body(html).match(/<tr class="border-b/g)).toHaveLength(1);
+    expect(body(html).match(/scope="row"/g)).toHaveLength(1);
 });
 
 it('draws study leave the same way in the team calendar and in all departments', () => {
@@ -65,13 +65,14 @@ it('names your own leave, says only when a colleague is away, and gives Central 
         { ...pending, id: 'theirs', employee_id: 'ben', employee_name: 'Ben', leave_code: null },
     ];
     const team = body(render({ entries, view: 'team' }));
-    expect(team).toMatch(/Me<span[^>]*> \(you\)<\/span><\/span><span[^>]*>Maternity leave 30 Oct – 2 Nov<\/span>/);
-    expect(team).toContain('Requested 30 Oct – 2 Nov');
+    // Dates live in the name's tooltip; nothing is printed under the names.
+    expect(team).toMatch(/title="Maternity leave 30 Oct – 2 Nov"[^>]*>Me<span[^>]*> \(you\)<\/span><\/th>/);
+    expect(team).toContain('title="Requested 30 Oct – 2 Nov"');
     expect(team.indexOf('Me<')).toBeLessThan(team.indexOf('Ben<'));
     expect(team).not.toContain('government leave');
 
     const all = body(render({ view: 'all', entries: [{ ...pending, status: 'approved' as const, leave_code: 'medical', leave_type_name: 'Approved government leave' }] }));
-    expect(all).toContain('>Medical 30 Oct – 2 Nov<');
+    expect(all).toContain('title="Medical 30 Oct – 2 Nov"');
 });
 
 it('lists every team member, away or not, grouped by division with your own group and row first', () => {
@@ -82,7 +83,7 @@ it('lists every team member, away or not, grouped by division with your own grou
         { employee_id: 'ray', name: 'Ray', department_name: 'Finance', division_name: 'Treasury' },
     ];
     const table = body(render({ view: 'team', members }));
-    expect(table.match(/<tr class="border-b/g)).toHaveLength(4);
+    expect(table.match(/scope="row"/g)).toHaveLength(4);
     const order = ['Treasury', 'Yolanda', 'Ray', 'Accounting', 'Ana', 'Zed'].map((text) => table.indexOf(text));
     expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(table).not.toContain('Zed:');
@@ -98,17 +99,28 @@ it('groups all departments by department and division', () => {
     expect(table.indexOf('Finance · Accounting')).toBeLessThan(table.indexOf('Health'));
 });
 
-it('marks public holidays in the grid and lists them for the month', () => {
+it('marks public holidays in the grid, named on hover, without a list below', () => {
     const holidays = new Map([['2026-11-02', 'Synthetic Holiday'], ['2026-12-25', 'Next Month Holiday']]);
     const html = render({ holidays });
     expect(html).toContain('(Synthetic Holiday, public holiday)');
-    expect(html).toContain('2 Nov — Synthetic Holiday');
+    expect(html).toContain('title="Synthetic Holiday"');
     expect(html).toContain('Public holiday');
     expect(html).not.toContain('Next Month Holiday');
+    expect(html).not.toContain('Public holidays:');
+});
+
+it('keeps the grid compact: one line per person, bounded height, sticky dates and names', () => {
+    const html = render();
+    expect(html).toContain('max-h-[calc(100vh-15rem)]');
+    expect(html).toMatch(/<th[^>]*sticky top-0[^>]*aria-current|<th[^>]*class="sticky top-0/);
+    const row = body(html).match(/<th scope="row"[^>]*>(.*?)<\/th>/)?.[1] || '';
+    expect(row).toBe('Ana');
+    expect(html).not.toContain('Colleagues’ leave shows');
 });
 
 it('says why a view is empty', () => {
     expect(render({ entries: [], view: 'team' })).toContain('Your login is not linked to a team yet');
+    expect(render({ entries: [], view: 'department' })).toContain('Your login is not linked to a department yet');
     expect(render({ entries: [], view: 'all' })).toContain('No approved or submitted leave this month');
 });
 
@@ -129,7 +141,7 @@ it('gives phones a month grid that counts who is away and lists them for the cho
     const ben = { ...pending, id: 'ben', employee_id: 'ben', employee_name: 'Ben', status: 'approved' as const,
         start_date: '2026-11-02', end_date: '2026-11-03' };
     const html = render({ entries: [pending, ben] });
-    const phone = html.match(/<div class="app-panel p-3 md:hidden">(.*?)<\/div><div class="app-panel hidden overflow-x-auto/)?.[1] || '';
+    const phone = html.match(/<div class="p-3 md:hidden">(.*?)<\/div><div class="hidden max-h/)?.[1] || '';
     expect(phone).toContain('aria-label="1 November: 1 person away"');
     expect(phone).toContain('aria-label="2 November: 2 people away"');
     expect(phone).toContain('aria-label="3 November: 1 person away"');

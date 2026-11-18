@@ -8,7 +8,7 @@ import { ActionDialog, DirectoryPicker, Field, PlacementFields, inputClass } fro
 import { value } from './managementForm';
 import type { OrgDepartment } from './types';
 
-type Assignment = { id: string; account_name: string; account_email: string; account_status: string; department_name: string; division_name: string | null; capabilities: string[]; effective_from: string; effective_to: string | null; revoked_at: string | null; reason: string; revoke_reason: string | null };
+type Assignment = { id: string; account_name: string; account_email: string; account_status: string; department_name: string; division_name: string | null; effective_from: string; effective_to: string | null; revoked_at: string | null; reason: string; revoke_reason: string | null };
 export function HrAccessManagement({ departments }: { departments: OrgDepartment[] }) {
     const [data, setData] = useState<{ assignments: Assignment[]; total: number; page_size: number }>({ assignments: [], total: 0, page_size: 50 });
     const [page, setPage] = useState(0), [version, setVersion] = useState(0), [search, setSearch] = useState(''), [query, setQuery] = useState(''), [error, setError] = useState('');

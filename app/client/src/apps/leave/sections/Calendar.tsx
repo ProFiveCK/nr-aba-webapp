@@ -12,13 +12,11 @@ interface CalendarEntry {
     id: string;
     employee_id?: string;
     employee_name: string;
-    department_code: string | null;
     department_name?: string | null;
     division_name?: string | null;
     leave_type_name: string;
     start_date: string;
     end_date: string | null;
-    days: string | null;
     status: 'pending' | 'approved';
     kind?: 'leave' | 'study_leave';
     /** The caller's own leave. */
@@ -132,10 +130,7 @@ export function Calendar() {
     return (
         <div className="space-y-3">
             <div className="app-panel flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-                <h2 className="text-base font-semibold text-gray-900">
-                    {view === 'all' ? 'All departments' : `${view === 'team' ? 'Team' : 'Department'} calendar`}
-                    {view !== 'all' && roster?.name && <span className="font-normal text-gray-500"> · {roster.name}</span>}
-                </h2>
+                <h2 className="sr-only">Leave calendar</h2>
                 <nav aria-label="Calendar views" className="flex rounded-lg border border-gray-200 p-0.5">
                     {views.map(([id, label]) => (
                         <button key={id} type="button" aria-current={view === id ? 'page' : undefined}
@@ -172,7 +167,10 @@ export function Calendar() {
             ) : error ? (
                 <div className="app-panel p-5"><p role="alert" className="text-sm text-red-700">{error}</p><button type="button" className="toolbar-button mt-3" onClick={() => void load()}>Try again</button></div>
             ) : (
-                <CalendarMonth entries={entries} start={bounds.start} end={bounds.end} view={view} holidays={holidays} members={roster?.members} />
+                <CalendarMonth entries={entries} start={bounds.start} end={bounds.end} view={view} holidays={holidays} members={roster?.members}
+                    heading={view === 'all'
+                        ? [department?.name, department?.divisions.find((d) => d.id === divisionId)?.name].filter(Boolean).join(' · ') || 'All departments'
+                        : roster?.name ?? undefined} />
             )}
         </div>
     );
@@ -233,8 +231,10 @@ interface PersonRow {
     periods: string[];
 }
 
-export function CalendarMonth({ entries, start, end, view = 'team', holidays = new Map(), today = new Date(), members }: {
+export function CalendarMonth({ entries, start, end, view = 'team', holidays = new Map(), today = new Date(), members, heading }: {
     entries: CalendarEntry[]; start: Date; end: Date; view?: CalendarView; holidays?: Map<string, string>;
+    /** The team, department or units shown, named above the grid. */
+    heading?: string;
     /** Injected for tests; the real calendar marks the actual date. */
     today?: Date;
     /** The team calendar lists everyone in the team, away or not. */
@@ -295,12 +295,10 @@ export function CalendarMonth({ entries, start, end, view = 'team', holidays = n
     return (
         <div className="app-panel overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-gray-200 px-4 py-2 text-xs text-gray-600">
-                <p role="status" className="min-w-0 truncate">
-                    {todayDay === null ? `${people.length} ${view === 'all' ? 'people on leave' : 'people'}`
-                        : awayToday.length
-                            ? <><span className="font-semibold text-gray-900">Away today ({awayToday.length}):</span> {awayToday.map((p) => p.name).join(', ')}</>
-                            : <span className="font-semibold text-gray-900">Nobody is away today</span>}
-                </p>
+                <h3 className="min-w-0 truncate text-sm font-semibold text-gray-900">
+                    {heading || (view === 'department' ? 'Your department' : view === 'all' ? 'All departments' : 'Your team')}
+                    <span className="ml-1.5 text-xs font-normal text-gray-500">· {people.length} {people.length === 1 ? 'person' : 'people'}{view === 'all' ? ' on leave' : ''}</span>
+                </h3>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     {STATUSES.map((status) => <span key={status} className="inline-flex items-center gap-1"><Swatch status={status} className="h-2.5 w-2.5 rounded-sm" />{STATUS_LABEL[status]}</span>)}
                     {monthHolidays.length > 0 && <span className="inline-flex items-center gap-1"><span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm bg-rose-200" />Public holiday</span>}
@@ -317,7 +315,7 @@ export function CalendarMonth({ entries, start, end, view = 'team', holidays = n
                     <thead>
                         <tr>
                             <th scope="col" className="sticky left-0 top-0 z-30 border-b border-gray-200 bg-white px-3 text-left text-xs font-medium text-gray-500">
-                                {view === 'all' ? `${people.length} on leave` : `${people.length} people`}
+                                <span className="sr-only">Person</span>
                             </th>
                             {days.map(({ day, weekday, weekend, holiday }) => (
                                 <th key={day} scope="col" aria-current={day === todayDay ? 'date' : undefined}
@@ -373,6 +371,14 @@ export function CalendarMonth({ entries, start, end, view = 'team', holidays = n
                     ))}
                 </table>
             </div>
+
+            {todayDay !== null && (
+                <p role="status" className="truncate border-t border-gray-200 px-4 py-2 text-xs text-gray-600">
+                    {awayToday.length
+                        ? <><span className="font-semibold text-gray-900">Away today ({awayToday.length}):</span> {awayToday.map((p) => p.name).join(', ')}</>
+                        : <span className="font-semibold text-gray-900">Nobody is away today</span>}
+                </p>
+            )}
         </div>
     );
 }

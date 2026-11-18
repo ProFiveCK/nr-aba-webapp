@@ -65,16 +65,15 @@ export async function canReadEvidence(client, user, employeeId) {
   return canAccessEmployee(client,user,employeeId,'hr_leave_approve',{owner:true,manager:true});
 }
 
-/** Legacy manager access requires explicit assignment and the same division or its parent unit. */
-export function managerScopeSql(user, parameter = '$1', alias = 'e', includeSelf = false) {
-  if (user?.permissions?.hr_leave_approve !== true && !includeSelf) return 'FALSE';
+/** An approver's direct reports in the same division or the division under it. */
+export function managerScopeSql(user, parameter = '$1', alias = 'e') {
+  if (user?.permissions?.hr_leave_approve !== true) return 'FALSE';
   return `EXISTS (SELECT 1 FROM hr_employees me WHERE me.reviewer_id=${parameter} AND me.status='active'
-    AND (${includeSelf ? `${alias}.id=me.id OR ` : ''}(${user?.permissions?.hr_leave_approve === true ? 'TRUE' : 'FALSE'} AND ${alias}.manager_id=me.id
-      AND me.department_id IS NOT NULL AND me.department_id=${alias}.department_id
-      AND (me.division_id IS NOT DISTINCT FROM ${alias}.division_id OR me.division_id=(SELECT v.parent_division_id FROM hr_divisions v WHERE v.id=${alias}.division_id)))))`;
+    AND ${alias}.manager_id=me.id AND me.department_id IS NOT NULL AND me.department_id=${alias}.department_id
+    AND (me.division_id IS NOT DISTINCT FROM ${alias}.division_id OR me.division_id=(SELECT v.parent_division_id FROM hr_divisions v WHERE v.id=${alias}.division_id)))`;
 }
-export function employeeReadSql(user, parameter = '$1', alias = 'e', includeSelf = false) {
-  return `(${employeeScopeSql(user,HR_OFFICER,parameter,alias)} OR ${managerScopeSql(user,parameter,alias,includeSelf)})`;
+export function employeeReadSql(user, parameter = '$1', alias = 'e') {
+  return `(${employeeScopeSql(user,HR_OFFICER,parameter,alias)} OR ${managerScopeSql(user,parameter,alias)})`;
 }
 
 export async function canAccessEmployee(client, user, employeeId, capability, { owner = false, manager = false } = {}) {

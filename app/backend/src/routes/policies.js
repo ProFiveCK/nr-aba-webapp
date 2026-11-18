@@ -9,19 +9,23 @@ import { actorFrom } from '../services/auditService.js';
 import { requireAuth, requirePermission } from '../services/authService.js';
 import {
   addPolicyFile,
+  createCategory,
   createPolicy,
+  deleteCategory,
   deletePolicy,
   discardDraft,
   getPolicy,
   getPolicyVersion,
   importWordDocument,
   listPolicies,
+  moveCategory,
   policyMeta,
   publishDraft,
   readPolicyFile,
   restorePolicy,
   retirePolicy,
   saveDraft,
+  updateCategory,
   updatePolicyDetails,
 } from '../services/policies.js';
 
@@ -44,6 +48,27 @@ router.get('/', signedIn, async (req, res) => {
 
 router.post('/', canEdit, async (req, res) => {
   res.status(201).json(await createPolicy(actor(req), req.body ?? {}));
+});
+
+// The library's structure: publishers maintain it, everyone browses it
+// through /meta. Registered before '/:id' so "categories" is never read as a
+// document id.
+router.post('/categories', canPublish, async (req, res) => {
+  res.status(201).json(await createCategory(actor(req), req.body ?? {}));
+});
+
+router.patch('/categories/:categoryId', canPublish, async (req, res) => {
+  res.json(await updateCategory(actor(req), req.params.categoryId, req.body ?? {}));
+});
+
+router.post('/categories/:categoryId/move', canPublish, async (req, res) => {
+  await moveCategory(actor(req), req.params.categoryId, req.body ?? {});
+  res.status(204).end();
+});
+
+router.delete('/categories/:categoryId', canPublish, async (req, res) => {
+  await deleteCategory(actor(req), req.params.categoryId);
+  res.status(204).end();
 });
 
 // Registered before '/:id' so "files" is never read as a document id.

@@ -317,7 +317,7 @@ function EditorWorkspace({ policy }: { policy: PolicyDocument }) {
 
             <Card>
                 <label className="block">
-                    <span className="mb-1 block font-medium text-gray-700">What this version changes <span className="font-normal text-gray-500">(for the version history)</span></span>
+                    <span className="mb-1 block font-medium text-gray-700">What this version changes <span className="font-normal text-gray-500">(optional, shown in the version history)</span></span>
                     <input value={summary} maxLength={500} onChange={(e) => { setSummary(e.target.value); setDirty(true); }}
                         placeholder={policy.published ? 'For example: Adds the second signature for payments over $10,000.' : 'First version.'}
                         className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20" />

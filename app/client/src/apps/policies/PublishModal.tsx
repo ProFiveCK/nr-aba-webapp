@@ -17,9 +17,9 @@ export function PublishModal({ policy, draft, onClose, onPublished }: {
     onPublished: (published: PolicyDocument) => void;
 }) {
     const today = todayIsoDate();
-    const [summary, setSummary] = useState(draft.change_summary ?? (policy.published ? '' : 'First version.'));
-    // Keep a review date still ahead; otherwise suggest a year from today.
-    const [reviewDue, setReviewDue] = useState(policy.review_due && policy.review_due > today ? policy.review_due : aYearAfter(today));
+    const [summary, setSummary] = useState(draft.change_summary ?? '');
+    // The document's own review date, if it has one; a review is optional.
+    const [reviewDue, setReviewDue] = useState(policy.review_due ?? '');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
 
@@ -44,15 +44,21 @@ export function PublishModal({ policy, draft, onClose, onPublished }: {
                 : 'This version goes into force now, for everyone signed in to the portal.'}>
             <form onSubmit={submit} className="space-y-4">
                 <label className="block">
-                    <span className="mb-1 block font-medium text-gray-700">What this version changes</span>
-                    <textarea required maxLength={500} rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} className={field}
-                        placeholder="For example: Adds the second signature for payments over $10,000." />
-                    <span className="mt-1 block text-xs text-gray-500">Shown in the version history, so readers can see what changed and when.</span>
+                    <span className="mb-1 block font-medium text-gray-700">What this version changes <span className="font-normal text-gray-500">(optional)</span></span>
+                    <textarea maxLength={500} rows={2} value={summary} onChange={(e) => setSummary(e.target.value)} className={field}
+                        placeholder={policy.published ? 'For example: Adds the second signature for payments over $10,000.' : 'For example: First version.'} />
+                    <span className="mt-1 block text-xs text-gray-500">Shown in the version history.</span>
                 </label>
-                <label className="block sm:max-w-xs">
-                    <span className="mb-1 block font-medium text-gray-700">Next review</span>
-                    <AustralianDateInput value={reviewDue} min={today} onChange={(e) => setReviewDue(e.target.value)} className={field} />
-                </label>
+                <div>
+                    <label className="block sm:max-w-xs">
+                        <span className="mb-1 block font-medium text-gray-700">Next review <span className="font-normal text-gray-500">(optional)</span></span>
+                        <AustralianDateInput value={reviewDue} min={today} onChange={(e) => setReviewDue(e.target.value)} className={field} />
+                    </label>
+                    <div className="mt-1 flex gap-3 text-xs">
+                        <button type="button" onClick={() => setReviewDue(aYearAfter(today))} className="font-medium text-brand hover:underline">A year from today</button>
+                        {reviewDue && <button type="button" onClick={() => setReviewDue('')} className="font-medium text-gray-500 hover:underline">No review date</button>}
+                    </div>
+                </div>
                 {error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-rose-700">{error}</p>}
                 <ModalActions>
                     <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>

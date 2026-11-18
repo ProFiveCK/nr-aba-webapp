@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { apiClient } from '../../lib/api';
 import { LoadingState } from '../../components/Ui';
+import { PolicyCategories } from './PolicyCategories';
 import { PolicyLibrary } from './PolicyLibrary';
 import { PolicyPage } from './PolicyPage';
 import type { PolicyMeta } from './types';
@@ -36,6 +37,7 @@ export function PoliciesApp() {
         <div className="text-sm leading-6">
             <Routes>
                 <Route index element={<PolicyLibrary meta={meta} onMetaChanged={loadMeta} />} />
+                {meta.can_publish && <Route path="categories" element={<PolicyCategories meta={meta} onMetaChanged={loadMeta} />} />}
                 <Route path=":id" element={<PolicyPage meta={meta} onMetaChanged={loadMeta} />} />
                 <Route path=":id/versions/:versionId" element={<PolicyPage meta={meta} onMetaChanged={loadMeta} />} />
                 {meta.can_edit && (

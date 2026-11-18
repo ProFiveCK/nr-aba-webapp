@@ -1,4 +1,4 @@
-import type { PolicyMeta } from './types';
+import type { PolicyCategory, PolicyMeta } from './types';
 
 /**
  * Section addresses for a page's headings, so a link can point straight at a
@@ -51,4 +51,30 @@ export function aYearAfter(iso: string): string {
 export function portalLinkTarget(href: string | null): string | null {
     if (!href || !href.startsWith('/') || href.startsWith('//') || href.startsWith('/api/')) return null;
     return href;
+}
+
+export interface CategoryBranch extends PolicyCategory {
+    sections: PolicyCategory[];
+}
+
+/** The flat category list as manuals, each with its sections, in their set order. */
+export function categoryTree(categories: PolicyCategory[]): CategoryBranch[] {
+    const order = (a: PolicyCategory, b: PolicyCategory) => a.sort_order - b.sort_order || a.name.localeCompare(b.name);
+    return categories.filter((c) => !c.parent_id).sort(order).map((manual) => ({
+        ...manual,
+        sections: categories.filter((c) => c.parent_id === manual.id).sort(order),
+    }));
+}
+
+/** "Finance Manual › Payments", or just "Finance Manual" for a manual. */
+export function categoryPath(tag: { name: string; parent_name?: string | null }): string {
+    return tag.parent_name ? `${tag.parent_name} › ${tag.name}` : tag.name;
+}
+
+/** A category from the list, named with its manual. */
+export function categoryLabel(categories: PolicyCategory[], id: string): string {
+    const category = categories.find((c) => c.id === id);
+    if (!category) return '';
+    const manual = category.parent_id ? categories.find((c) => c.id === category.parent_id) : null;
+    return categoryPath({ name: category.name, parent_name: manual?.name });
 }

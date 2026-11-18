@@ -61,12 +61,18 @@ describe('policies and procedures', { skip: skipWithoutDatabase }, () => {
     await pool.query("UPDATE reviewers SET account_type = 'employee', onboarding_state = 'ready' WHERE id = $1", [staffOnly.reviewer.id]);
     await pool.query("INSERT INTO hr_employees (display_name, reviewer_id, status) VALUES ('Policy Staff', $1, 'active')", [staffOnly.reviewer.id]);
   });
+  async function reset() {
+    await pool.query('DELETE FROM policy_documents');
+    await pool.query('DELETE FROM policy_categories WHERE parent_id IS NOT NULL');
+    await pool.query('DELETE FROM policy_categories');
+  }
+
   after(async () => {
-    await pool?.query('DELETE FROM policy_documents');
+    if (pool) await reset();
     await app?.close();
     await pool?.end();
   });
-  beforeEach(() => pool.query('DELETE FROM policy_documents'));
+  beforeEach(reset);
 
   test('a document reaches readers only once published, and each version is kept', async () => {
     const created = await register();
@@ -136,16 +142,29 @@ describe('policies and procedures', { skip: skipWithoutDatabase }, () => {
     assert.equal((await as(editor)('GET', `/${created.id}`)).json.draft.body_html, '<p>Mine</p>');
   });
 
-  test('what is saved is cleaned, and an empty or unexplained draft is not published', async () => {
+  test('what is saved is cleaned, and an empty draft is not published', async () => {
     const created = await register();
-    const empty = await as(publisher)('POST', `/${created.id}/publish`, { revision: created.draft.revision, change_summary: 'x' });
+    const empty = await as(publisher)('POST', `/${created.id}/publish`, { revision: created.draft.revision });
     assert.equal(empty.status, 400);
     const saved = await as(editor)('PUT', `/${created.id}/draft`, {
       body_html: '<p onclick="steal()">Safe<script>alert(1)</script></p>', revision: created.draft.revision,
     });
     assert.equal(saved.json.draft.body_html, '<p>Safe</p>');
-    const unexplained = await as(publisher)('POST', `/${created.id}/publish`, { revision: saved.json.draft.revision, change_summary: ' ' });
-    assert.equal(unexplained.status, 400);
+  });
+
+  test('publishing numbers the version itself; a note and a review date are optional', async () => {
+    const created = await register({ review_due: '2027-06-30' });
+    let current = (await as(editor)('PUT', `/${created.id}/draft`, { body_html: '<p>One</p>', revision: created.draft.revision })).json;
+    let published = await as(publisher)('POST', `/${created.id}/publish`, { revision: current.draft.revision });
+    assert.equal(published.status, 200, JSON.stringify(published.json));
+    assert.equal(published.json.published.version_no, 1);
+    assert.equal(published.json.versions[0].change_summary, null);
+    assert.equal(published.json.review_due, '2027-06-30', 'leaving the review date out keeps it');
+
+    current = (await as(editor)('PUT', `/${created.id}/draft`, { body_html: '<p>Two</p>', revision: null })).json;
+    published = await as(publisher)('POST', `/${created.id}/publish`, { revision: current.draft.revision, change_summary: '', review_due: null });
+    assert.equal(published.json.published.version_no, 2);
+    assert.equal(published.json.review_due, null, 'a blank review date clears it');
   });
 
   test("files reach readers only through a published version of their own document", async () => {
@@ -200,7 +219,7 @@ describe('policies and procedures', { skip: skipWithoutDatabase }, () => {
   test('search looks through the published text and shows where it matched', async () => {
     const pay = await register();
     await writeAndPublish(pay.id, '<p>Every payment needs two signatures before the cheque is released.</p>');
-    const leave = await register({ code: 'HR-POL-001', title: 'Annual leave', doc_type: 'policy', category: 'Human resources' });
+    const leave = await register({ code: 'HR-POL-001', title: 'Annual leave', doc_type: 'policy' });
     await writeAndPublish(leave.id, '<p>Staff apply for leave in the portal.</p>');
 
     const found = (await as(reader)('GET', '/?q=signatures')).json;
@@ -208,7 +227,6 @@ describe('policies and procedures', { skip: skipWithoutDatabase }, () => {
     assert.match(found[0].snippet, /⟦signatures⟧/);
     assert.deepEqual((await as(reader)('GET', '/?q=HR-POL')).json.map((d) => d.code), ['HR-POL-001'], 'codes match in part');
     assert.deepEqual((await as(reader)('GET', '/?type=policy')).json.map((d) => d.code), ['HR-POL-001']);
-    assert.deepEqual((await as(reader)('GET', '/meta')).json.categories, ['Human resources']);
   });
 
   test('a withdrawn document leaves the library but keeps its history', async () => {
@@ -219,7 +237,9 @@ describe('policies and procedures', { skip: skipWithoutDatabase }, () => {
     assert.equal(withdrawn.status, 200);
     assert.equal((await as(reader)('GET', '/')).json.length, 0);
     assert.equal((await as(reader)('GET', `/${created.id}`)).status, 404);
-    assert.equal((await as(editor)('GET', '/')).json[0].retired_at !== null, true, 'editors still see it');
+    assert.equal((await as(editor)('GET', '/')).json.length, 0, 'it leaves the library for editors too');
+    assert.deepEqual((await as(editor)('GET', '/?state=withdrawn')).json.map((d) => d.code), ['FIN-SOP-001'], 'editors find it under Withdrawn');
+    assert.equal((await as(reader)('GET', '/?state=withdrawn')).json.length, 0, 'readers have no such view');
     assert.equal((await as(editor)('PUT', `/${created.id}/draft`, { body_html: '<p>x</p>', revision: null })).status, 400);
     assert.equal((await as(editor)('DELETE', `/${created.id}`)).status, 400, 'a published document is never deleted');
 
@@ -248,5 +268,93 @@ describe('policies and procedures', { skip: skipWithoutDatabase }, () => {
     const clash = await as(editor)('POST', '/', { code: 'fin-sop-001', title: 'Copy', doc_type: 'policy' });
     assert.equal(clash.status, 409);
     assert.match(clash.json.message, /already the code of "Releasing payments"/);
+  });
+
+  /** Creates a category as the publisher and returns its id. */
+  async function category(name, parentId = null) {
+    const res = await as(publisher)('POST', '/categories', { name, parent_id: parentId });
+    assert.equal(res.status, 201, JSON.stringify(res.json));
+    return res.json.id;
+  }
+
+  test('publishers keep the structure: manuals hold sections, two levels at most', async () => {
+    assert.equal((await as(editor)('POST', '/categories', { name: 'Mine' })).status, 403, 'editors pick categories, they do not make them');
+    const finance = await category('Finance Manual');
+    const payments = await category('Payments', finance);
+    const procurement = await category('Procurement', finance);
+    const hr = await category('HR Manual');
+
+    assert.equal((await as(publisher)('POST', '/categories', { name: 'Petty cash', parent_id: payments })).status, 400, 'no third level');
+    assert.equal((await as(publisher)('POST', '/categories', { name: 'payments', parent_id: finance })).status, 409, 'one name once per manual');
+    await category('Payments', hr);
+    assert.equal((await as(publisher)('PATCH', `/categories/${finance}`, { name: 'Finance Manual', parent_id: hr })).status, 400,
+      'a manual with sections stays a manual');
+
+    assert.equal((await as(publisher)('POST', `/categories/${procurement}/move`, { direction: 'up' })).status, 204);
+    const listed = (await as(publisher)('GET', '/meta')).json.categories;
+    assert.deepEqual(listed.filter((c) => c.parent_id === finance).map((c) => c.name), ['Procurement', 'Payments']);
+    assert.deepEqual(listed.filter((c) => !c.parent_id).map((c) => c.name), ['Finance Manual', 'HR Manual']);
+
+    const renamed = await as(publisher)('PATCH', `/categories/${procurement}`, { name: 'Purchasing', parent_id: null });
+    assert.equal(renamed.status, 200, 'a section can become a manual of its own');
+    assert.equal((await lastAudit(pool, 'policy.category.updated', procurement)).before.name, 'Procurement');
+  });
+
+  test('documents are tagged from the list and browsed by manual or section', async () => {
+    const finance = await category('Finance Manual');
+    const payments = await category('Payments', finance);
+    const unused = await category('Procurement', finance);
+    const hr = await category('HR Manual');
+    const leave = await category('Leave', hr);
+
+    const a = await register({ code: 'FIN-SOP-001', category_ids: [payments] });
+    const b = await register({ code: 'HR-POL-001', title: 'Conduct', category_ids: [hr] });
+    const c = await register({ code: 'HR-SOP-002', title: 'Leave pay', category_ids: [payments, leave] });
+    await writeAndPublish(a.id, '<p>A</p>');
+    await writeAndPublish(b.id, '<p>B</p>');
+    assert.deepEqual(c.categories.map((t) => [t.parent_name, t.name]), [['Finance Manual', 'Payments'], ['HR Manual', 'Leave']]);
+
+    const codes = async (who, query) => (await as(who)('GET', `/?${query}`)).json.map((d) => d.code);
+    assert.deepEqual(await codes(reader, `category=${finance}`), ['FIN-SOP-001'], 'a manual includes its sections');
+    assert.deepEqual(await codes(reader, `category=${hr}`), ['HR-POL-001']);
+    assert.deepEqual(await codes(editor, `category=${hr}`), ['HR-POL-001', 'HR-SOP-002'], 'editors also see what is not yet published');
+
+    const counts = async (who) => Object.fromEntries((await as(who)('GET', '/meta')).json.categories.map((t) => [t.name, t.document_count]));
+    assert.deepEqual(await counts(reader), { 'Finance Manual': 1, Payments: 1, 'HR Manual': 1 }, 'readers see only what holds something for them');
+    assert.deepEqual(await counts(editor), { 'Finance Manual': 2, Payments: 2, Procurement: 0, 'HR Manual': 2, Leave: 1 });
+    const loose = await register({ code: 'LOOSE-1', title: 'Untagged' });
+    await writeAndPublish(loose.id, '<p>No category.</p>');
+    const readerMeta = (await as(reader)('GET', '/meta')).json;
+    assert.deepEqual([readerMeta.document_count, readerMeta.uncategorised_count], [3, 1]);
+    assert.deepEqual(await codes(reader, 'category=none'), ['LOOSE-1'], 'documents in no category have a view of their own');
+
+    assert.equal((await as(editor)('POST', '/', { code: 'X-1', title: 'X', doc_type: 'policy', category_ids: ['11111111-2222-4333-8444-555555555555'] })).status, 400);
+    assert.equal((await as(publisher)('DELETE', `/categories/${payments}`)).status, 400, 'a category in use stays');
+    assert.equal((await as(publisher)('DELETE', `/categories/${finance}`)).status, 400, 'a manual with sections stays');
+    assert.equal((await as(publisher)('DELETE', `/categories/${unused}`)).status, 204);
+
+    const retagged = await as(editor)('PATCH', `/${c.id}`, { code: 'HR-SOP-002', title: 'Leave pay', doc_type: 'procedure', category_ids: [leave] });
+    assert.deepEqual(retagged.json.categories.map((t) => t.name), ['Leave']);
+    const audit = await lastAudit(pool, 'policy.details_updated', c.id);
+    assert.deepEqual([audit.before.categories, audit.after.categories], [['Leave', 'Payments'], ['Leave']]);
+  });
+
+  test('free-text categories from the first release become managed ones', async () => {
+    const { initPolicySchema } = await import('../services/policySchema.js');
+    const one = await register({ code: 'OLD-1' });
+    const two = await register({ code: 'OLD-2' });
+    const three = await register({ code: 'OLD-3' });
+    await pool.query('ALTER TABLE policy_documents ADD COLUMN category TEXT');
+    try {
+      await pool.query("UPDATE policy_documents SET category = CASE code WHEN 'OLD-1' THEN ' Payments ' WHEN 'OLD-2' THEN 'payments' ELSE NULL END");
+      const client = await pool.connect();
+      try { await initPolicySchema(client); } finally { client.release(); }
+    } finally {
+      await pool.query('ALTER TABLE policy_documents DROP COLUMN IF EXISTS category');
+    }
+    const { rows: made } = await pool.query('SELECT name, parent_id FROM policy_categories');
+    assert.deepEqual(made, [{ name: 'Payments', parent_id: null }]);
+    const tagged = async (doc) => (await as(editor)('GET', `/${doc.id}`)).json.categories.map((t) => t.name);
+    assert.deepEqual([await tagged(one), await tagged(two), await tagged(three)], [['Payments'], ['Payments'], []]);
   });
 });

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { aYearAfter, fileSize, headingAnchors, portalLinkTarget, snippetParts } from './policyContent';
+import { aYearAfter, categoryLabel, categoryTree, fileSize, headingAnchors, portalLinkTarget, snippetParts } from './policyContent';
 
 it('gives each heading a readable section address, numbering repeats', () => {
     expect(headingAnchors(['Purpose', 'Who approves?', 'Purpose', 'Café rules', '***']))
@@ -34,4 +34,17 @@ it('shows file sizes the way people read them', () => {
     expect(fileSize(900)).toBe('900 B');
     expect(fileSize(20_480)).toBe('20 KB');
     expect(fileSize(3_250_000)).toBe('3.1 MB');
+});
+
+it('arranges categories as manuals holding their sections, in their set order', () => {
+    const c = (id: string, name: string, parent_id: string | null, sort_order: number) => ({ id, name, parent_id, sort_order, document_count: 0 });
+    const tree = categoryTree([c('p', 'Payments', 'f', 2), c('h', 'HR Manual', null, 2), c('f', 'Finance Manual', null, 1), c('r', 'Procurement', 'f', 1), c('l', 'Leave', 'h', 1)]);
+    expect(tree.map((m) => [m.name, m.sections.map((s) => s.name)])).toEqual([
+        ['Finance Manual', ['Procurement', 'Payments']],
+        ['HR Manual', ['Leave']],
+    ]);
+    const all = tree.flatMap((m) => [m, ...m.sections]);
+    expect(categoryLabel(all, 'p')).toBe('Finance Manual › Payments');
+    expect(categoryLabel(all, 'h')).toBe('HR Manual');
+    expect(categoryLabel(all, 'missing')).toBe('');
 });

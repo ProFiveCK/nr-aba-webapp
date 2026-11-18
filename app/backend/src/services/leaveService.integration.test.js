@@ -836,7 +836,7 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
                 study_leave_start = '2026-10-01', study_leave_end = NULL WHERE id = $1`, [ana.id]);
       const window = '/calendar?from=2026-10-01&to=2026-10-31';
 
-      const admin = await callAs({ hr_admin: true }, window);
+      const admin = await callAs({ hr_admin: true }, `${window}&view=all`);
       const entry = admin.body.find((row) => row.employee_name === 'Ana');
       assert.equal(entry.kind, 'study_leave');
       assert.equal(entry.leave_type_name, 'Study leave');

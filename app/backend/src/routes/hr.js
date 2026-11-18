@@ -23,7 +23,7 @@ import { parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js';
 
 import hrAccessRouter from './hrAccess.js';
-import { CALENDAR_VIEWS, MASKED_LEAVE_LABEL, calendarAudienceSql, teamRoster } from '../services/leaveCalendar.js';
+import { CALENDAR_VIEWS, MASKED_LEAVE_LABEL, calendarAudienceSql, teamRoster, unitNamesSql } from '../services/leaveCalendar.js';
 import employeeOnboardingRouter from './employeeOnboarding.js';
 import governmentLeaveRouter from './governmentLeave.js';
 import { assertEmployeeScope,canAccessEmployee,employeeReadSql,employeeScopeSql,isCentralHr,managerScopeSql,activeScopeSql,canReadEvidence,evidenceReadSql } from '../services/hrAccess.js';
@@ -1520,12 +1520,12 @@ router.get('/overview/breakdown',requirePermission(PERMISSIONS.HR_ADMIN),
 
 // ===== Calendar and reporting =====
 
-// Approved and submitted leave for one calendar audience (see leaveCalendar.js).
 // The caller's team, for the team calendar: its name and who is in it.
 router.get('/calendar/team', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res) => {
   res.json(await teamRoster(pool, req.user.id));
 });
 
+// Approved and submitted leave for one calendar view (see leaveCalendar.js).
 router.get(
   '/calendar',
   requirePermission(PERMISSIONS.HR_ACCESS),
@@ -1533,12 +1533,12 @@ router.get(
     query('department_id').optional().isUUID(), query('division_id').optional().isUUID()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
-    const audience = calendarAudienceSql(req.user, req.query.view || 'scope', { userParam: '$3', departmentParam: '$4', divisionParam: '$5' });
+    const audience = calendarAudienceSql(req.user, req.query.view || 'team', { userParam: '$3', departmentParam: '$4', divisionParam: '$5' });
     const params = [req.query.from, req.query.to, req.user.id, req.query.department_id || null, req.query.division_id || null];
     const { rows: applications } = await pool.query(
       `SELECT a.id, a.employee_id, a.start_date, a.end_date, a.days, a.status,
               CASE WHEN ${audience.masked} THEN '${MASKED_LEAVE_LABEL}' ELSE t.name END AS leave_type_name,
-              e.display_name AS employee_name, e.department_code, 'leave' AS kind, ${audience.own} AS own
+              e.display_name AS employee_name, e.department_code, ${unitNamesSql('e')}, 'leave' AS kind, ${audience.own} AS own
          FROM hr_leave_applications a
          JOIN hr_leave_types t ON t.id = a.leave_type_id
          JOIN hr_employees e ON e.id = a.employee_id
@@ -1549,13 +1549,13 @@ router.get(
         ORDER BY a.start_date, e.display_name`,
       params
     );
-    // Study leave is a period away recorded on the staff record, not an application.
+    // Study leave is a period away recorded on the staff record, not an
+    // application. It is not private, so every view shows it as study leave.
     const { rows: studyLeave } = await pool.query(
       `SELECT 'study-' || e.id AS id, e.id AS employee_id, e.study_leave_start AS start_date, e.study_leave_end AS end_date,
-              NULL::numeric AS days, 'approved' AS status,
-              CASE WHEN ${audience.masked} THEN '${MASKED_LEAVE_LABEL}' ELSE 'Study leave' END AS leave_type_name,
-              e.display_name AS employee_name, e.department_code,
-              CASE WHEN ${audience.masked} THEN 'leave' ELSE 'study_leave' END AS kind, ${audience.own} AS own
+              NULL::numeric AS days, 'approved' AS status, 'Study leave' AS leave_type_name,
+              e.display_name AS employee_name, e.department_code, ${unitNamesSql('e')},
+              'study_leave' AS kind, ${audience.own} AS own
          FROM hr_employees e
         WHERE e.status = 'active' AND e.leave_entitled = FALSE AND e.ineligible_reason = 'study_leave'
           AND e.study_leave_start <= $2 AND (e.study_leave_end IS NULL OR e.study_leave_end >= $1)

@@ -603,6 +603,27 @@ assert.equal((await call(`/requests/${r.id}/pdf`,null,officers.chief_secretary.a
   // Per-request salary acknowledgement was retired: Salary Unit receipts are recorded per payroll register.
   assert.equal((await call(`/requests/${r.id}/salary-acknowledgement`,{reference:'Synthetic Salary Unit register',reason},hr)).status,404);
  });
+ test('team calendar shows colleagues in the same unit as On leave, the own view names the leave, other units see nothing',async()=>{
+  const r=await submit(application('medical','2026-11-04'));
+  const teammate=await account({hr_access:true,hr_leave_apply:true});
+  await pool.query("INSERT INTO hr_employees(display_name,reviewer_id,department_id,division_id) VALUES('Synthetic teammate',$1,$2,$3)",[teammate.id,department.id,division.id]);
+  const otherDepartment=(await pool.query("INSERT INTO hr_departments(name) VALUES($1) RETURNING *",[`Synthetic other unit ${randomUUID()}`])).rows[0];
+  const stranger=await account({hr_access:true,hr_leave_apply:true});
+  await pool.query("INSERT INTO hr_employees(display_name,reviewer_id,department_id) VALUES('Synthetic stranger',$1,$2)",[stranger.id,otherDepartment.id]);
+  const path=view=>`/calendar?from=2026-11-01&to=2026-11-30&view=${view}`;
+  const team=(await call(path('team'),null,teammate)).body.entries;
+  assert.equal(team.length,1);assert.equal(team[0].id,r.id);assert.equal(team[0].leave_type_name,'On leave');assert.equal(team[0].own,false);assert.equal(team[0].leave_code,null);
+  for(const field of ['reason','documents','medical_mode','code'])assert.equal(team[0][field],undefined);
+  const mine=(await call(path('mine'))).body.entries;
+  assert.equal(mine.length,1);assert.equal(mine[0].own,true);assert.equal(mine[0].leave_code,'medical');assert.equal(mine[0].leave_type_name,'Submitted government leave');
+  assert.equal((await call(path('team'))).body.entries[0].leave_code,'medical','the applicant sees their own leave named in the team view too');
+  assert.equal((await call(path('mine'),null,teammate)).body.entries.length,0);
+  assert.equal((await call(path('team'),null,stranger)).body.entries.length,0,'another department is not your team');
+  assert.equal((await call('/calendar?from=2026-11-01&to=2026-11-30',null,teammate)).body.entries.length,0,'the default view still covers only who you manage');
+  assert.equal((await call(path('everyone'),null,teammate)).status,422);
+  const filtered=await call(`${path('scope')}&department_id=${otherDepartment.id}`,null,hr);
+  assert.equal(filtered.body.entries.length,0);assert.equal((await call(`${path('scope')}&department_id=${department.id}`,null,hr)).body.entries[0].leave_code,null,'HR sees dates in scope, not the leave type');
+ });
  test('calendar shows submitted leave with status, preserves scope and removes rejected or cancelled applications',async()=>{
   const r=await submit();
   const outside=await account({hr_access:true});

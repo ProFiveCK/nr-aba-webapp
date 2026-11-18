@@ -59,3 +59,30 @@ it('uses an empty state that covers submitted as well as approved leave', () => 
     const html = renderToStaticMarkup(<CalendarMonth entries={[]} start={start} end={end} />);
     expect(html).toContain('No approved or submitted leave this month');
 });
+
+it('names your own government leave and keeps a colleague’s as On leave', () => {
+    const entries = [
+        { ...pending, id: 'mine', status: 'approved' as const, own: true, leave_code: 'maternity' },
+        { ...pending, id: 'theirs', employee_id: 'ben', employee_name: 'Ben', leave_type_name: 'On leave', own: false, leave_code: null },
+    ];
+    const html = renderToStaticMarkup(<CalendarMonth entries={entries} start={start} end={end} view="team" />);
+    expect(html).toContain('Maternity leave, 30/10/2026 to 02/11/2026');
+    expect(html).toContain('On leave, 30/10/2026 to 02/11/2026');
+    expect(html).not.toContain('Submitted government leave');
+});
+
+it('marks public holidays in the grid and lists them for the month', () => {
+    const holidays = new Map([['2026-11-02', 'Synthetic Holiday'], ['2026-12-25', 'Next Month Holiday']]);
+    const html = renderToStaticMarkup(<CalendarMonth entries={[pending]} start={start} end={end} holidays={holidays} />);
+    expect(html).toContain('(Synthetic Holiday, public holiday)');
+    expect(html).toContain('2 Nov — Synthetic Holiday');
+    expect(html).toContain('Public holiday');
+    expect(html).not.toContain('Next Month Holiday');
+});
+
+it('says whose leave is missing when a view is empty', () => {
+    expect(renderToStaticMarkup(<CalendarMonth entries={[]} start={start} end={end} view="team" />))
+        .toContain('Nobody in your team has approved or submitted leave this month');
+    expect(renderToStaticMarkup(<CalendarMonth entries={[]} start={start} end={end} view="mine" />))
+        .toContain('You have no approved or submitted leave this month');
+});

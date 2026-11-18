@@ -82,6 +82,23 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     assert.deepEqual(response.body.map(a=>a.id).sort(),[approved.id,pending.id,crossing.id].sort());
     for(const row of response.body){assert.equal(row.employee_id,employee.id);assert.equal(row.reason,undefined);assert.equal(row.attachments,undefined);}
   });
+  test('team and own calendar views: same division only, colleagues read On leave, own leave keeps its type',async()=>{
+    const mate=await account('Division colleague',{hr_access:true,hr_leave_apply:true});
+    const colleague=await createEmployee(pool,{name:'Division Colleague'});
+    await pool.query("UPDATE hr_employees SET department_id=$2,division_id=$3,reviewer_id=$4,leave_entitled=FALSE,ineligible_reason='study_leave',study_leave_start='2026-09-01' WHERE id=$1",[colleague.id,department.id,division.id,mate.id]);
+    const path=view=>`/calendar?from=2026-10-01&to=2026-10-31&view=${view}`;
+    const team=(await call(mate,path('team'))).body;
+    assert.deepEqual(team.filter(a=>a.employee_id===employee.id).map(a=>a.id).sort(),[approved.id,pending.id].sort());
+    assert.ok(team.every(a=>a.employee_id===employee.id||a.employee_id===colleague.id),'sibling divisions and other departments are not the team');
+    for(const row of team.filter(a=>a.employee_id===employee.id)){assert.equal(row.leave_type_name,'On leave');assert.equal(row.own,false);assert.equal(row.reason,undefined);}
+    const ownStudy=team.find(a=>a.employee_id===colleague.id);assert.equal(ownStudy.kind,'study_leave');assert.equal(ownStudy.own,true);
+    const ownerTeam=(await call(owner,path('team'))).body;
+    const study=ownerTeam.find(a=>a.employee_id===colleague.id);assert.equal(study.kind,'leave','a colleague’s study leave is not named either');assert.equal(study.leave_type_name,'On leave');
+    assert.ok(ownerTeam.filter(a=>a.employee_id===employee.id).every(a=>a.leave_type_name==='T:Scope Leave'&&a.own===true));
+    const mine=(await call(owner,path('mine'))).body;assert.deepEqual(mine.map(a=>a.employee_id),[employee.id,employee.id]);
+    assert.equal((await call(other,path('team'))).body.some(a=>a.employee_id===employee.id),false);
+    assert.equal((await call(mate,path('nobody'))).status,422);
+  });
   test('whole-department scope includes siblings, excludes unverified placement and other departments',async()=>{
     await grant(staff,['hr_staff_manage'],null);assert.equal((await call(staff,'/directory')).body.total,2);assert.equal((await call(staff,'/org-units')).body[0].divisions.length,2);
   });

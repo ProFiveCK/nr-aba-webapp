@@ -101,6 +101,27 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     assert.equal((await call(other,path('team'))).body.some(a=>a.employee_id===employee.id),false);
     assert.equal((await call(mate,path('nobody'))).status,422);
   });
+  test('a team covers the divisions under yours, and the team list names everyone in it and nobody else',async()=>{
+    const child=(await pool.query("INSERT INTO hr_divisions(department_id,name,parent_division_id) VALUES ($1,'Treasury Systems',$2) RETURNING *",[department.id,division.id])).rows[0];
+    const childAccount=await account('Child division member',{hr_access:true,hr_leave_apply:true});
+    const childEmployee=await createEmployee(pool,{name:'Child Division Member'});
+    await pool.query('UPDATE hr_employees SET department_id=$2,division_id=$3,reviewer_id=$4 WHERE id=$1',[childEmployee.id,department.id,child.id,childAccount.id]);
+    const childLeave=await application(childEmployee);
+    const team=(await call(owner,'/calendar?from=2026-10-01&to=2026-10-31&view=team')).body;
+    assert.ok(team.some(a=>a.id===childLeave.id),'Treasury sees the division under it');
+    assert.equal(team.find(a=>a.id===childLeave.id).leave_type_name,'On leave');
+    assert.equal(team.some(a=>a.employee_id===peer.id),false,'a sibling division is not the team');
+    const childTeam=(await call(childAccount,'/calendar?from=2026-10-01&to=2026-10-31&view=team')).body;
+    assert.deepEqual(childTeam.map(a=>a.employee_id),[childEmployee.id],'the team does not reach up to the parent unit');
+
+    const roster=(await call(owner,'/calendar/team')).body;
+    assert.equal(roster.name,'Treasury');
+    assert.deepEqual(roster.members.map(m=>m.name).sort(),['Child Division Member','Treasury Person']);
+    assert.equal(roster.members.find(m=>m.name==='Treasury Person').own,true);
+    for(const member of roster.members)assert.deepEqual(Object.keys(member).sort(),['employee_id','name','own'],'names only, no leave or record details');
+    assert.deepEqual((await call(childAccount,'/calendar/team')).body.members.map(m=>m.name),['Child Division Member']);
+    assert.deepEqual((await call(central,'/calendar/team')).body,{name:null,members:[]},'a login with no staff record has no team');assert.equal((await call(staff,'/calendar/team')).status,403,'the Leave app is still required');
+  });
   test('a record carried into the government workflow shows once, while its new request is pending or approved',async()=>{
     // Submitted requests cannot be edited, so each status gets its own carried record.
     const review=randomUUID();

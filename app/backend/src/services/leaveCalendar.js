@@ -3,18 +3,23 @@ import { employeeReadSql } from './hrAccess.js';
 /**
  * The leave calendar's three audiences.
  *
+ * - `team`: everyone in the caller's own team (their division and the
+ *   divisions under it, or their whole department when they have no
+ *   division), open to every member of staff so a team can plan around each
+ *   other. Only dates and status are shared: anyone else's leave reads
+ *   "On leave", never its type, so sick or medical leave is not disclosed.
  * - `mine`: the caller's own leave, with its real leave type.
- * - `team`: everyone in the caller's own unit (their division, or their whole
- *   department when they have no division), open to every member of staff so
- *   a team can plan around each other. Only dates and status are shared:
- *   anyone else's leave reads "On leave", never its type, so sick or medical
- *   leave is not disclosed to colleagues.
- * - `scope`: the people the caller is responsible for (direct reports, an HR
- *   scope, or everyone for central HR) plus themselves. This was the only
- *   view before, and stays the default for existing callers.
+ * - `scope`: the people the caller looks after as HR (an HR officer's units,
+ *   or every department for central HR, plus direct reports) and themselves.
+ *   It stays the server default for callers that name no view.
  */
 export const CALENDAR_VIEWS = ['mine', 'team', 'scope'];
 export const MASKED_LEAVE_LABEL = 'On leave';
+
+/** Whether employee `other` is in the team of employee `me`. */
+const teamMatchSql = (me, other) => `${me}.department_id IS NOT NULL AND ${me}.department_id=${other}.department_id
+  AND (${me}.division_id IS NULL OR ${me}.division_id=${other}.division_id
+    OR ${me}.division_id=(SELECT v.parent_division_id FROM hr_divisions v WHERE v.id=${other}.division_id))`;
 
 /**
  * SQL for one view. `where` limits the rows; `own` is true for the caller's
@@ -31,8 +36,7 @@ export function calendarAudienceSql(user, view, { userParam, departmentParam, di
   if (view === 'mine') {
     audience = own;
   } else if (view === 'team') {
-    audience = `(${own} OR (${alias}.status='active' AND EXISTS(${me} AND me.department_id IS NOT NULL
-      AND me.department_id=${alias}.department_id AND (me.division_id IS NULL OR me.division_id=${alias}.division_id))))`;
+    audience = `(${own} OR (${alias}.status='active' AND EXISTS(${me} AND ${teamMatchSql('me', alias)})))`;
   } else {
     audience = employeeReadSql(user, userParam, alias, true);
   }
@@ -41,4 +45,23 @@ export function calendarAudienceSql(user, view, { userParam, departmentParam, di
     own,
     masked: view === 'team' ? `NOT ${own}` : 'FALSE',
   };
+}
+
+/**
+ * The caller's team for the team calendar: its name and every active member,
+ * so people with no leave show as available. Names only; no leave details.
+ */
+export async function teamRoster(pool, reviewerId) {
+  const { rows: [me] } = await pool.query(
+    `SELECT e.id, e.display_name, e.department_id, d.name AS department_name, v.name AS division_name
+       FROM hr_employees e LEFT JOIN hr_departments d ON d.id = e.department_id LEFT JOIN hr_divisions v ON v.id = e.division_id
+      WHERE e.reviewer_id = $1 AND e.status = 'active' ORDER BY e.id LIMIT 1`, [reviewerId]);
+  if (!me) return { name: null, members: [] };
+  if (!me.department_id) return { name: null, members: [{ employee_id: me.id, name: me.display_name, own: true }] };
+  const { rows } = await pool.query(
+    `SELECT o.id AS employee_id, o.display_name AS name, o.id = me.id AS own
+       FROM hr_employees o JOIN hr_employees me ON me.id = $1
+      WHERE o.status = 'active' AND (o.id = me.id OR (${teamMatchSql('me', 'o')}))
+      ORDER BY lower(o.display_name)`, [me.id]);
+  return { name: me.division_name || me.department_name, members: rows };
 }

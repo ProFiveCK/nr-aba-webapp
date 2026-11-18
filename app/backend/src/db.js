@@ -251,6 +251,45 @@ async function retireHiddenPermissions(client) {
   console.info(`[schema] moved hidden access onto capabilities for ${changedAccounts} of ${reviewers.length} accounts; ${narrowedScopes} HR scope(s) narrowed`);
 }
 
+/**
+ * "Read supporting evidence" is no longer a separate grant: evidence follows
+ * the right to decide the leave. Removes the tick from every account and the
+ * right from every HR assignment, revoking an assignment that held nothing
+ * else, and records each change. Safe to run on every start: once nothing
+ * holds the key there is nothing to do.
+ */
+async function retireEvidenceGrant(client) {
+  const key = PERMISSIONS.HR_EVIDENCE_READ;
+  const { rows: grants } = await client.query(
+    'DELETE FROM reviewer_capabilities WHERE capability = $1 RETURNING reviewer_id', [key]);
+  for (const { reviewer_id: reviewerId } of grants) {
+    await client.query(
+      `INSERT INTO audit_log (action, entity_type, entity_id, metadata)
+       VALUES ('reviewer.capability.retired', 'reviewer', $1, $2)`,
+      [reviewerId, JSON.stringify({ capability: key, reason: 'Evidence now follows the right to decide leave.' })]);
+  }
+  const { rows: scopes } = await client.query(
+    // Revoked assignments are history and stay as they were.
+    'SELECT * FROM hr_access_scopes WHERE $1 = ANY(capabilities) AND revoked_at IS NULL ORDER BY id FOR UPDATE', [key]);
+  for (const scope of scopes) {
+    const remaining = scope.capabilities.filter((capability) => capability !== key);
+    // An assignment that held only evidence is revoked with its rights as they were.
+    const { rows: [after] } = remaining.length
+      ? await client.query('UPDATE hr_access_scopes SET capabilities = $2 WHERE id = $1 RETURNING *', [scope.id, remaining])
+      : await client.query(
+        `UPDATE hr_access_scopes SET revoked_at = NOW(),
+           revoke_reason = 'Supporting evidence is no longer a separate right; it follows leave decisions.'
+         WHERE id = $1 RETURNING *`, [scope.id]);
+    await client.query(
+      `INSERT INTO audit_log (action, entity_type, entity_id, before, after, metadata)
+       VALUES ('hr.access_scope.migrated', 'hr_access_scope', $1, $2, $3, $4)`,
+      [scope.id, JSON.stringify(scope), JSON.stringify(after), JSON.stringify({ migration: 'retire_evidence_grant' })]);
+  }
+  if (grants.length || scopes.length) {
+    console.info(`[schema] retired the supporting-evidence grant from ${grants.length} account(s) and ${scopes.length} HR scope(s)`);
+  }
+}
+
 const { Pool } = pg;
 
 const useSSL = process.env.DB_SSL === 'true';
@@ -739,6 +778,23 @@ export async function initSchema() {
     // Which apps the person asked for. Supersedes requested_role as the thing
     // being requested; the role is what the approving admin assigns.
     await client.query("ALTER TABLE signup_requests ADD COLUMN IF NOT EXISTS requested_apps TEXT[] NOT NULL DEFAULT '{}'");
+    // A request reaches the administrators only once the person proves the
+    // address is theirs by opening the link emailed to it. Only a hash of the
+    // link's token is stored. Requests made before this check existed are
+    // treated as confirmed, once, when the column is added, so nothing already
+    // waiting for an administrator disappears from the list.
+    const { rowCount: hasVerifiedColumn } = await client.query(
+      `SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'signup_requests' AND column_name = 'email_verified_at'`
+    );
+    await client.query(`ALTER TABLE signup_requests
+      ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS verification_token_hash TEXT,
+      ADD COLUMN IF NOT EXISTS verification_expires_at TIMESTAMPTZ`);
+    if (!hasVerifiedColumn) {
+      await client.query('UPDATE signup_requests SET email_verified_at = COALESCE(created_at, NOW()) WHERE email_verified_at IS NULL');
+    }
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_signup_requests_verification_token
+      ON signup_requests (verification_token_hash) WHERE verification_token_hash IS NOT NULL`);
 
     // Password reset tokens for self-service password reset
     await client.query(`
@@ -1490,6 +1546,7 @@ export async function initSchema() {
     await backfillCapabilities(client);
     await materialiseRoleFloor(client);
     await retireHiddenPermissions(client);
+    await retireEvidenceGrant(client);
 
     await client.query('COMMIT');
   } catch (error) {

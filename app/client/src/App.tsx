@@ -7,6 +7,7 @@ import { ConfirmProvider } from './contexts/ConfirmContext';
 import { Login } from './pages/Login';
 import { Layout } from './components/Layout';
 import { EmployeeActivation } from './components/EmployeeActivation';
+import { SignupVerification } from './components/SignupVerification';
 import { ResetPasswordModal } from './components/ResetPasswordModal';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { Dashboard } from './pages/Dashboard';
@@ -71,6 +72,14 @@ function AppContent() {
     window.history.replaceState(null,'',window.location.pathname+window.location.search);
     return token || null;
   });
+  // The link in the sign-up confirmation email.
+  const [signupToken,setSignupToken] = useState<string | null>(()=>{
+    const hash=window.location.hash;
+    if(!hash.startsWith('#verify-signup='))return null;
+    const token=hash.substring('#verify-signup='.length);
+    window.history.replaceState(null,'',window.location.pathname+window.location.search);
+    return token || null;
+  });
   const [resetToken, setResetToken] = useState<string | null>(() => {
     const hash = window.location.hash;
     if (hash.startsWith('#reset-password=')) {
@@ -129,6 +138,7 @@ function AppContent() {
     />
   );
 
+  if(signupToken) return <SignupVerification token={signupToken} onDone={()=>setSignupToken(null)} />;
   if(activationToken) return <EmployeeActivation token={activationToken} onDone={()=>{setActivationToken(null);if(isAuthenticated)logout();}} />;
 
   if (isLoading) {

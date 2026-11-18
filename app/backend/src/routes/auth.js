@@ -22,7 +22,7 @@ import {
   resolveGoogleIdentity,
 } from '../services/googleAuthService.js';
 import { clearLoginAttempts, isAccountLocked, recordLoginAttempt } from '../services/loginAttempts.js';
-import { notifyAdminsOfSignupRequest, sendMail } from '../services/mailService.js';
+import { notifyAdminsOfSignupRequest, sendMail, sendSignupVerificationEmail } from '../services/mailService.js';
 import { lowerEmail } from '../utils/helpers.js';
 import { actorFrom, recordAudit } from '../services/auditService.js';
 import {
@@ -59,6 +59,18 @@ function auditSignIn(req, action, { reviewer = null, email = null, method = 'pas
 
 // ===== Authentication =====
 
+const SIGNUP_VERIFICATION_HOURS = 24;
+const sha256Hex = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
+
+async function sendVerification(email, name, token) {
+  try {
+    const sent = await sendSignupVerificationEmail({ email, name }, token, SIGNUP_VERIFICATION_HOURS);
+    if (sent?.skipped) console.warn('Sign-up confirmation email not sent (%s); the request cannot be confirmed until mail is working.', sent.reason);
+  } catch (err) {
+    console.error('Failed to send sign-up confirmation email', err);
+  }
+}
+
 router.post(
   '/signup',
   [
@@ -92,15 +104,29 @@ router.post(
         return;
       }
 
+      // The request waits, unseen by administrators, until the person opens
+      // the link sent to this address. Only a hash of the token is stored.
+      const token = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + SIGNUP_VERIFICATION_HOURS * 60 * 60 * 1000);
+      const submitted = { message: 'Check your email. We sent a link to confirm your address; your request goes to an administrator once you open it.' };
+
       const { rows: existingRequests } = await pool.query(
-        'SELECT id, status FROM signup_requests WHERE email = $1',
+        `SELECT id, status, email_verified_at, created_at > NOW() - INTERVAL '2 minutes' AS recent
+           FROM signup_requests WHERE email = $1`,
         [email]
       );
 
       if (existingRequests.length) {
         const existing = existingRequests[0];
-        if (existing.status === 'pending') {
+        if (existing.status === 'pending' && existing.email_verified_at) {
           res.status(409).json({ message: 'A signup request is already pending for this email.' });
+          return;
+        }
+        // An unconfirmed request can be replaced: whoever owns the address
+        // must not be locked out by someone who typed it first. A replacement
+        // is refused for a short while so the form cannot flood a mailbox.
+        if (existing.status === 'pending' && existing.recent) {
+          res.status(200).json(submitted);
           return;
         }
 
@@ -115,32 +141,72 @@ router.post(
                  created_at = NOW(),
                  reviewed_at = NULL,
                  reviewer_id = NULL,
-                 review_comment = NULL
+                 review_comment = NULL,
+                 email_verified_at = NULL,
+                 verification_token_hash = $7,
+                 verification_expires_at = $8
            WHERE email = $1`,
-          [email, name, passwordHash, departmentCode, requestedRole, requestedApps]
+          [email, name, passwordHash, departmentCode, requestedRole, requestedApps, sha256Hex(token), expiresAt]
         );
-        notifyAdminsOfSignupRequest({ email, name, departmentCode, requestedRole }).catch((err) => {
-          console.error('Failed to notify admins of signup request', err);
-        });
-        res.status(200).json({ message: 'Signup request resubmitted. Await admin approval.' });
+        await sendVerification(email, name, token);
+        res.status(200).json(submitted);
         return;
       }
 
       await pool.query(
-        `INSERT INTO signup_requests (email, name, password_hash, department_code, requested_role, requested_apps)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [email, name, passwordHash, departmentCode, requestedRole, requestedApps]
+        `INSERT INTO signup_requests (email, name, password_hash, department_code, requested_role, requested_apps,
+                                      verification_token_hash, verification_expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [email, name, passwordHash, departmentCode, requestedRole, requestedApps, sha256Hex(token), expiresAt]
       );
-      notifyAdminsOfSignupRequest({ email, name, departmentCode, requestedRole }).catch((err) => {
-        console.error('Failed to notify admins of signup request', err);
-      });
-      res.status(201).json({ message: 'Signup request submitted. Await admin approval.' });
+      await sendVerification(email, name, token);
+      res.status(201).json(submitted);
     } catch (err) {
       console.error('Failed to submit signup request', err);
       res.status(500).json({ message: 'Unable to submit signup request.' });
     }
   }
 );
+// Public: the link in the confirmation email. Confirming the address is what
+// sends the request to the administrators. A link works once, before it expires.
+router.post(
+  '/verify-signup',
+  [body('token').isString()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    const invalid = { message: 'This confirmation link is invalid or has expired. Fill in the sign-up form again to get a new one.' };
+    const token = String(req.body.token);
+    if (!/^[a-f0-9]{64}$/.test(token)) {
+      res.status(400).json(invalid);
+      return;
+    }
+    const { rows: [request] } = await pool.query(
+      `UPDATE signup_requests
+          SET email_verified_at = NOW(), verification_token_hash = NULL, verification_expires_at = NULL
+        WHERE verification_token_hash = $1 AND status = 'pending' AND email_verified_at IS NULL
+          AND verification_expires_at > NOW()
+        RETURNING id, email, name, department_code, requested_role`,
+      [sha256Hex(token)]
+    );
+    if (!request) {
+      res.status(400).json(invalid);
+      return;
+    }
+    await recordAudit({
+      actor: { id: null, email: request.email, ip: req.ip },
+      action: 'signup.email_verified',
+      entityType: 'signup_request',
+      entityId: request.id,
+    });
+    notifyAdminsOfSignupRequest({
+      email: request.email, name: request.name, departmentCode: request.department_code, requestedRole: request.requested_role,
+    }).catch((err) => {
+      console.error('Failed to notify admins of signup request', err);
+    });
+    res.json({ message: 'Thank you. Your email is confirmed and your request has gone to an administrator for approval.' });
+  }
+);
+
 // Public: lets the login page decide whether to render the Google button.
 // OAuth client IDs are public by design; no secret is exposed here.
 router.get('/config', (_req, res) => {
@@ -402,7 +468,6 @@ router.post(
 );
 
 // ===== Password Reset (Self-Service) =====
-const sha256Hex = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 
 router.post(
   '/forgot-password',

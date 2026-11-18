@@ -86,3 +86,21 @@ it('says whose leave is missing when a view is empty', () => {
     expect(renderToStaticMarkup(<CalendarMonth entries={[]} start={start} end={end} view="mine" />))
         .toContain('You have no approved or submitted leave this month');
 });
+
+it('gives phones a month grid that counts who is away and lists them for the chosen day', () => {
+    const approved = { ...pending, id: 'approved', employee_id: 'ben', employee_name: 'Ben', status: 'approved' as const,
+        start_date: '2026-11-02', end_date: '2026-11-03' };
+    const html = renderToStaticMarkup(<CalendarMonth entries={[pending, approved]} start={start} end={end} />);
+    const phone = html.match(/<div class="app-panel p-3 md:hidden">(.*?)<\/div><div class="hidden overflow-x-auto/)?.[1] || '';
+    expect(phone).toContain('aria-label="1 November: 1 person away"');
+    expect(phone).toContain('aria-label="2 November: 2 people away"');
+    expect(phone).toContain('aria-label="3 November: 1 person away"');
+    expect(phone).toContain('aria-label="4 November: nobody away"');
+    // 1 November 2026 is a Sunday, so six blank cells lead the Monday-first grid.
+    expect(phone.match(/<div aria-hidden="true"><\/div>/g)?.length).toBe(6);
+    // The first busy day is chosen and lists who is away and how.
+    expect(phone).toContain('aria-pressed="true" aria-label="1 November');
+    expect(phone).toMatch(/<h4[^>]*>1 November<\/h4>/);
+    expect(phone).toContain('Ana');
+    expect(phone).toContain('Submitted — awaiting approval');
+});

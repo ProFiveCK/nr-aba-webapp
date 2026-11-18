@@ -60,7 +60,7 @@ describe('account access has one source', { skip: skipWithoutDatabase }, () => {
     const adminPermissions = await permissionsOf(administrator);
     assert.equal(adminPermissions.admin, true);
     assert.equal(adminPermissions.hr_admin, undefined, 'Leave administration is a tick, not part of the role');
-    assert.equal(adminPermissions.hr_evidence_read, undefined, 'medical evidence is a tick, not part of the role');
+    assert.equal(adminPermissions.hr_evidence_read, undefined, 'medical evidence is not part of the role');
 
     const user = await createAccount(pool, unique('ticked-admin'), { departmentCode: '12' });
     await pool.query("INSERT INTO reviewer_capabilities (reviewer_id, capability) VALUES ($1, 'admin')", [user.reviewer.id]);
@@ -102,7 +102,7 @@ describe('account access has one source', { skip: skipWithoutDatabase }, () => {
   test('approving a signup writes no hidden access', async () => {
     const email = unique('signup');
     const { rows: [request] } = await pool.query(
-      `INSERT INTO signup_requests (email, name, password_hash, requested_role, requested_apps) VALUES ($1, 'Signup Person', 'x', 'reviewer', '{}') RETURNING id`, [email]);
+      `INSERT INTO signup_requests (email, name, password_hash, requested_role, requested_apps, email_verified_at) VALUES ($1, 'Signup Person', 'x', 'reviewer', '{}', NOW()) RETURNING id`, [email]);
     const res = await app.call('POST', `/api/admin/signup-requests/${request.id}/approve`, { token: admin.token, body: {} });
     assert.equal(res.status, 200);
     const { rows: [row] } = await pool.query('SELECT id, permissions FROM reviewers WHERE email = $1', [email]);
@@ -164,5 +164,29 @@ describe('account access has one source', { skip: skipWithoutDatabase }, () => {
     await pool.query('UPDATE reviewers SET permissions = $2::jsonb WHERE id = $1', [reviewer, JSON.stringify({ review_aba: false })]);
     await initSchema();
     assert.deepEqual(await explicit(reviewer), ['review_aba', 'review_forex_tt', 'submit_aba', 'submit_forex_tt']);
+  });
+  test('supporting evidence is no longer a grant: ticks and scope rights are removed and recorded', async () => {
+    const holder = await createAccount(pool, unique('evidence'), { capabilities: ['hr_access'] });
+    // Written directly: the account page can no longer grant it.
+    await pool.query("INSERT INTO reviewer_capabilities (reviewer_id, capability) VALUES ($1, 'hr_evidence_read')", [holder.reviewer.id]);
+    const { rows: [department] } = await pool.query("INSERT INTO hr_departments (name) VALUES ($1) RETURNING id", [`Evidence ${randomUUID().slice(0, 8)}`]);
+    const scope = async (capabilities, revoked = false) => (await pool.query(
+      `INSERT INTO hr_access_scopes (reviewer_id, department_id, capabilities, effective_from, reason, revoked_at)
+       VALUES ($1, $2, $3, '2020-01-01', 'Synthetic scope for the evidence migration test.', $4) RETURNING id`,
+      [holder.reviewer.id, department.id, capabilities, revoked ? new Date() : null])).rows[0].id;
+    const mixed = await scope(['hr_leave_approve', 'hr_evidence_read']);
+    const only = await scope(['hr_evidence_read']);
+    const history = await scope(['hr_evidence_read', 'hr_report_read'], true);
+    const { initSchema } = await import('../db.js');
+    await initSchema();
+    assert.deepEqual(await explicit(holder.reviewer.id), ['hr_access']);
+    assert.ok(await lastAudit(pool, 'reviewer.capability.retired', holder.reviewer.id));
+    const byId = Object.fromEntries((await pool.query('SELECT id, capabilities, revoked_at FROM hr_access_scopes WHERE id = ANY($1::uuid[])',
+      [[mixed, only, history]])).rows.map((row) => [row.id, row]));
+    assert.deepEqual(byId[mixed].capabilities, ['hr_leave_approve']);
+    assert.equal(byId[mixed].revoked_at, null);
+    assert.notEqual(byId[only].revoked_at, null, 'an assignment that held only evidence is revoked');
+    assert.deepEqual(byId[history].capabilities, ['hr_evidence_read', 'hr_report_read'], 'revoked history is left as it was');
+    assert.equal((await edit(holder.reviewer.id, { capabilities: ['hr_access', 'hr_evidence_read'] })).status, 422, 'it can no longer be ticked');
   });
 });

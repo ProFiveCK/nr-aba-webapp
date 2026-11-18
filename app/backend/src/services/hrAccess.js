@@ -4,7 +4,21 @@ import { withTransaction } from '../lib/transaction.js';
 import { recordAudit } from './auditService.js';
 import { managementReason } from './employeeManagement.js';
 
-export const SCOPE_CAPABILITIES = ['hr_staff_manage','hr_leave_approve','hr_balance_manage','hr_report_read','hr_evidence_read'];
+export const SCOPE_CAPABILITIES = ['hr_staff_manage','hr_leave_approve','hr_balance_manage','hr_report_read'];
+
+/**
+ * Who may read an application's supporting evidence (medical certificates and
+ * the like): whoever may decide that person's leave. That is central HR, a
+ * scoped leave approver, or the verified direct manager. There is no separate
+ * evidence grant; the owner and the application's assigned officers are
+ * allowed where each read is made.
+ */
+export function evidenceReadSql(user, parameter = '$1', alias = 'e') {
+  return `(${employeeScopeSql(user,'hr_leave_approve',parameter,alias)} OR ${managerScopeSql(user,parameter,alias)})`;
+}
+export async function canReadEvidence(client, user, employeeId) {
+  return canAccessEmployee(client,user,employeeId,'hr_leave_approve',{owner:true,manager:true});
+}
 const TODAY = "(NOW() AT TIME ZONE 'Pacific/Nauru')::date";
 export const activeScopeSql = (alias = 's') => `${alias}.revoked_at IS NULL AND ${alias}.effective_from <= ${TODAY} AND (${alias}.effective_to IS NULL OR ${alias}.effective_to >= ${TODAY})`;
 export const isCentralHr = (user) => user?.permissions?.[PERMISSIONS.HR_ADMIN] === true;

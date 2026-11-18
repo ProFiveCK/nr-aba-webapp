@@ -80,10 +80,14 @@ router.get('/admin/signup-requests', requireAuth(['admin']), async (_req, res) =
             sr.reviewed_at,
             sr.reviewer_id,
             sr.review_comment,
+            sr.email_verified_at,
             rv.display_name AS reviewer_name,
             rv.email       AS reviewer_email
        FROM signup_requests sr
        LEFT JOIN reviewers rv ON rv.id = sr.reviewer_id
+      -- A request no one has confirmed from its mailbox is not shown: anyone
+      -- can type a colleague's address into the sign-up form.
+      WHERE sr.email_verified_at IS NOT NULL OR sr.status <> 'pending'
       ORDER BY sr.created_at DESC`
   );
   res.json(rows);
@@ -91,63 +95,77 @@ router.get('/admin/signup-requests', requireAuth(['admin']), async (_req, res) =
 
 // Approve signup request (admin only). The admin may override the requested role
 // by passing `role` in the body (e.g. correcting a wrong app selection).
-router.post('/admin/signup-requests/:id/approve', requireAuth(['admin']), async (req, res) => {
+router.post('/admin/signup-requests/:id/approve', requireAuth(['admin']), [param('id').isUUID()], async (req, res) => {
+  if (!handleValidation(req, res)) return;
   const requestId = req.params.id;
   const reviewerId = req.user.id;
   const { review_comment } = req.body || {};
-  // Get request
-  const { rows } = await pool.query('SELECT * FROM signup_requests WHERE id = $1', [requestId]);
-  if (!rows.length) return res.status(404).json({ message: 'Signup request not found.' });
-  const reqData = rows[0];
-  if (reqData.status !== 'pending') return res.status(400).json({ message: 'Request already processed.' });
+  const requestedRoleOverride = req.body.role;
 
-  const requestedRole = req.body.role || reqData.requested_role || 'user';
-  if (!SIGNUP_ROLES.includes(requestedRole) && requestedRole !== 'admin') {
-    return res.status(400).json({ message: 'Invalid role.' });
-  }
-  // Apps the person asked for, unless the admin overrode the selection.
-  const approvedApps = Array.isArray(req.body.apps)
-    ? req.body.apps.filter((a) => SIGNUP_APP_IDS.includes(a))
-    : (reqData.requested_apps || []);
-
-  // Create reviewer account
+  // The account, its access and the request's new status are saved together
+  // or not at all, so a failure cannot leave an account without its access or
+  // a request approved twice. The welcome email goes only after that commit.
+  let approved;
   try {
-    const { rows: created } = await pool.query(
-      `INSERT INTO reviewers (email, display_name, role, status, password_hash, must_change_password, department_code, permissions)
-       VALUES ($1, $2, $3, 'active', $4, FALSE, $5, $6) RETURNING id`,
-      [reqData.email, reqData.name, requestedRole, reqData.password_hash, reqData.department_code, '{}']
-    );
-    const capabilities = new Set([
-      ...(ROLE_CAPABILITIES[requestedRole] ?? []),
-      ...capabilitiesForApps(approvedApps),
-    ]);
-    await setCapabilities(created[0].id, [...capabilities], reviewerId);
-    await pool.query(
-      `UPDATE signup_requests SET status = 'approved', reviewed_at = NOW(), reviewer_id = $1, review_comment = $2, requested_role = $3 WHERE id = $4`,
-      [reviewerId, review_comment || null, requestedRole, requestId]
-    );
-    await recordAudit({
-      actor: actorFrom(req),
-      action: 'signup.approve',
-      entityType: 'reviewer',
-      entityId: created[0].id,
-      after: { email: reqData.email, role: requestedRole, capabilities: [...capabilities] },
-      metadata: { signup_request_id: requestId, comment: review_comment || null },
+    approved = await withTransaction(pool, async (client) => {
+      const { rows: [reqData] } = await client.query('SELECT * FROM signup_requests WHERE id = $1 FOR UPDATE', [requestId]);
+      if (!reqData) throw new ServiceError(404, 'Signup request not found.');
+      if (reqData.status !== 'pending') throw new ServiceError(400, 'Request already processed.');
+      if (!reqData.email_verified_at) {
+        throw new ServiceError(409, 'This person has not confirmed their email address yet.');
+      }
+      const requestedRole = requestedRoleOverride || reqData.requested_role || 'user';
+      if (!SIGNUP_ROLES.includes(requestedRole) && requestedRole !== 'admin') {
+        throw new ServiceError(400, 'Invalid role.');
+      }
+      // Apps the person asked for, unless the admin overrode the selection.
+      const approvedApps = Array.isArray(req.body.apps)
+        ? req.body.apps.filter((a) => SIGNUP_APP_IDS.includes(a))
+        : (reqData.requested_apps || []);
+
+      const { rows: [created] } = await client.query(
+        `INSERT INTO reviewers (email, display_name, role, status, password_hash, must_change_password, department_code, permissions)
+         VALUES ($1, $2, $3, 'active', $4, FALSE, $5, $6) RETURNING id`,
+        [reqData.email, reqData.name, requestedRole, reqData.password_hash, reqData.department_code, '{}']
+      );
+      const capabilities = await setCapabilities(created.id, [
+        ...(ROLE_CAPABILITIES[requestedRole] ?? []),
+        ...capabilitiesForApps(approvedApps),
+      ], reviewerId, client);
+      await client.query(
+        `UPDATE signup_requests SET status = 'approved', reviewed_at = NOW(), reviewer_id = $1, review_comment = $2, requested_role = $3 WHERE id = $4`,
+        [reviewerId, review_comment || null, requestedRole, requestId]
+      );
+      await recordAudit({
+        client,
+        actor: actorFrom(req),
+        action: 'signup.approve',
+        entityType: 'reviewer',
+        entityId: created.id,
+        after: { email: reqData.email, role: requestedRole, capabilities },
+        metadata: { signup_request_id: requestId, comment: review_comment || null },
+      });
+      return reqData;
     });
-    // Send email to user
-    await sendMail({
-      to: reqData.email,
-      subject: 'Your Naoero Treasury account is approved',
-      text: `Hello ${reqData.name},\n\nYour account request has been approved. You may now sign in at ${FRONTEND_BASE_URL} using your email and password.\n\n${WORKFLOW_GUIDE_TEXT}\n\nIf you have questions, reply to this email.`
-    });
-    res.json({ message: 'Signup request approved and user notified.' });
   } catch (err) {
+    if (err instanceof ServiceError) throw err;
     if (err.code === '23505') {
       return res.status(409).json({ message: 'Account with this email already exists.' });
     }
     console.error('Failed to approve signup request', err);
-    res.status(500).json({ message: 'Unable to approve signup request.' });
+    return res.status(500).json({ message: 'Unable to approve signup request.' });
   }
+
+  try {
+    await sendMail({
+      to: approved.email,
+      subject: 'Your Naoero Treasury account is approved',
+      text: `Hello ${approved.name},\n\nYour account request has been approved. You may now sign in at ${FRONTEND_BASE_URL} using your email and password.\n\n${WORKFLOW_GUIDE_TEXT}\n\nIf you have questions, reply to this email.`
+    });
+  } catch (err) {
+    console.error('Account approved but the approval email could not be sent', err);
+  }
+  res.json({ message: 'Signup request approved and user notified.' });
 });
 
 // Reject signup request (admin only)
@@ -396,7 +414,8 @@ router.post(
     if (!handleValidation(req, res)) return;
     const email = lowerEmail(req.body.email);
     const displayName = req.body.display_name?.trim() || null;
-    const role = req.body.role || 'reviewer';
+    // The least access is the safe default; the page always sends a role.
+    const role = req.body.role || 'user';
     const status = req.body.status || 'active';
     const departmentCode = req.body.department_code ? String(req.body.department_code).trim() : null;
     const divisionCodeRaw = req.body.division_code ? String(req.body.division_code).trim() : null;
@@ -707,7 +726,7 @@ router.delete(
     try {
       await client.query('BEGIN');
       const { rows: targetRows } = await client.query(
-        'SELECT id, email, display_name, role, status FROM reviewers WHERE id = $1',
+        'SELECT id, email, display_name, role, status FROM reviewers WHERE id = $1 FOR UPDATE',
         [targetId]
       );
       if (!targetRows.length) {
@@ -716,12 +735,15 @@ router.delete(
         return;
       }
       const target = targetRows[0];
-      if (target.role === 'admin') {
-        const { rows: adminCountRows } = await client.query(
-          "SELECT COUNT(*) AS count FROM reviewers WHERE role = 'admin'"
-        );
-        const adminCount = Number(adminCountRows[0]?.count ?? 0);
-        if (adminCount <= 1) {
+      // Same rule and lock as demoting or deactivating: at least one active
+      // administrator must remain, and two administrators cannot remove each
+      // other at the same moment. Inactive administrators cannot sign in, so
+      // they do not count.
+      if (target.role === 'admin' && target.status === 'active') {
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('reviewer-admins'))");
+        const { rows: [others] } = await client.query(
+          "SELECT count(*)::int AS n FROM reviewers WHERE role = 'admin' AND status = 'active' AND id <> $1", [targetId]);
+        if (!others.n) {
           await client.query('ROLLBACK');
           res.status(400).json({ message: 'At least one admin account must remain.' });
           return;

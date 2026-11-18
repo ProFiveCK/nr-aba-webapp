@@ -155,6 +155,26 @@ You will be asked to set a new password after signing in.
   await sendMail({ to: email, subject: 'Naoero Treasury Portal access', text });
 }
 
+/**
+ * Asks the person who filled in the sign-up form to confirm the address is
+ * theirs. The request reaches the administrators only after they do.
+ */
+async function sendSignupVerificationEmail({ email, name }, token, hours) {
+  const link = `${FRONTEND_BASE_URL}#verify-signup=${token}`;
+  const text = `Hello ${name || email},
+
+Someone asked for a Naoero Treasury Portal account using this email address.
+
+If that was you, confirm your address by opening this link:
+${link}
+
+The link expires in ${hours} hours. Your request goes to an administrator for approval once you confirm it.
+
+If you did not ask for an account, ignore this email and no account will be created.
+`;
+  return sendMail({ to: email, replyTo: REPLY_TO, subject: 'Confirm your email for the Naoero Treasury Portal', text });
+}
+
 async function sendReviewerPasswordResetEmail({ email, display_name, role }, tempPassword) {
   const name = display_name || email;
   const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : 'account';
@@ -399,5 +419,6 @@ export {
   sendMail,
   sendReviewerPasswordResetEmail,
   sendReviewerWelcomeEmail,
+  sendSignupVerificationEmail,
   testingModeEnabled,
 };

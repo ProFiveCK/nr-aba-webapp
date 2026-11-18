@@ -32,7 +32,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  // how far away November 2026 happens to be when the suite is executed.
  beforeEach(async()=>{
   await resetLeaveTables(pool);await pool.query('TRUNCATE hr_gov_policy_versions,hr_gov_calendars,hr_gov_pattern_approvals CASCADE');
-  hr=await account({hr_admin:true,hr_access:true,hr_report_read:true,hr_evidence_read:true});certifier=await account({hr_admin:true,hr_access:true});owner=await account({hr_access:true,hr_leave_apply:true},'employee');
+  hr=await account({hr_admin:true,hr_access:true,hr_report_read:true});certifier=await account({hr_admin:true,hr_access:true});owner=await account({hr_access:true,hr_leave_apply:true},'employee');
   department=(await pool.query("INSERT INTO hr_departments(name) VALUES('Synthetic Government Workflow') RETURNING *")).rows[0];division=(await pool.query("INSERT INTO hr_divisions(name,department_id) VALUES('Synthetic Division',$1) RETURNING *",[department.id])).rows[0];
   employee=(await pool.query("INSERT INTO hr_employees(display_name,reviewer_id,department_id,division_id,department_code,division_code,leave_policy_regime) VALUES('Synthetic Government Applicant',$1,$2,$3,'Synthetic Government Workflow','Synthetic Division','government') RETURNING *",[owner.id,department.id,division.id])).rows[0];
   const pattern=(await pool.query("INSERT INTO hr_work_patterns(name,working_weekdays,hours_per_day) VALUES($1,ARRAY[1,2,3,4,5],7) RETURNING *",[`Synthetic Workflow Pattern ${randomUUID()}`])).rows[0];
@@ -348,7 +348,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  test('an authorised approver certifies, verifies and grants in one retry-safe transaction',async()=>{
   await customRoute();
   const approver=officers.department.account;
-  await grantAccess(pool,approver.id,{hr_admin:true,hr_evidence_read:true});
+  await grantAccess(pool,approver.id,{hr_admin:true});
   const r=await submit(application('special')),view=await call(`/requests/${r.id}`,null,approver),stage=view.body.stages[0];
   assert.equal(view.body.can_verify_evidence,true);
   const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason,certification_confirmed:true,verify_evidence:true,verification_comment:reason};
@@ -369,7 +369,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   const view=await w.requestView(pool,user(hr),r.id),stage=view.stages[0];
   const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason,certification_confirmed:true,verify_evidence:true,verification_comment:reason};
   assert.equal((await call(`/requests/${r.id}/decisions`,data,approver)).status,403);
-  await grantAccess(pool,approver.id,{hr_admin:true,hr_evidence_read:true});
+  await grantAccess(pool,approver.id,{hr_admin:true});
   assert.equal((await call(`/requests/${r.id}`,null,approver)).body.can_verify_evidence,true);
   await pool.query("DELETE FROM reviewer_capabilities WHERE reviewer_id=$1 AND capability='hr_admin'",[approver.id]);
   assert.equal((await call(`/requests/${r.id}/decisions`,data,approver)).status,403);
@@ -382,7 +382,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  });
  test('combined approval retains a valid HR review completed while the application was open',async()=>{
   await customRoute();const approver=officers.department.account;
-  await grantAccess(pool,approver.id,{hr_admin:true,hr_evidence_read:true});
+  await grantAccess(pool,approver.id,{hr_admin:true});
   const r=await submit(application('special')),stage=(await w.requestView(pool,user(hr),r.id)).stages[0];
   await evidence(r.id);
   const data={stage_id:stage.id,binding_id:stage.binding.id,event_key:randomUUID(),decision:'approved',note:reason,certification_confirmed:true,verify_evidence:true,verification_comment:reason};
@@ -393,7 +393,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  test('a failed final grant rolls back the combined evidence review and preserves the balance hold',async()=>{
   await customRoute([{level:'division',label:'Division approver'},{level:'department',label:'Head of Department'}]);
   const approver=officers.department.account;
-  await grantAccess(pool,approver.id,{hr_admin:true,hr_evidence_read:true});
+  await grantAccess(pool,approver.id,{hr_admin:true});
   const r=await submit(application('special'));await decide(r.id);
   await pool.query("UPDATE reviewers SET status='inactive' WHERE id=$1",[officers.division.account.id]);
   const stage=(await w.requestView(pool,user(hr),r.id)).stages[1];

@@ -11,8 +11,8 @@ import { findApp, type AppId } from './apps';
  * from before routing lands there, with everything after the `#`. Anywhere
  * else the URL is already a route and there is nothing to translate.
  *
- * `#reset-password=<token>` is left alone — it is a password-reset link from
- * an email, not navigation, and App still reads it from the hash.
+ * `#reset-password=<token>` and `#verify-signup=<token>` are left alone — they
+ * are links from emails, not navigation, and App still reads them from the hash.
  *
  * Both the location it reads and the rewrite it performs are parameters, so
  * the decision can be tested without a DOM.
@@ -24,7 +24,7 @@ export function migrateLegacyHash(
     if (location.pathname !== '/') return;
 
     const raw = location.hash.replace(/^#/, '');
-    if (!raw || raw.startsWith('reset-password=')) return;
+    if (!raw || raw.startsWith('reset-password=') || raw.startsWith('verify-signup=')) return;
 
     const [appId = '', section = ''] = raw.split('?')[0].split('/');
     const app = findApp(appId as AppId);

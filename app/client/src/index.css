@@ -109,3 +109,44 @@
   .leave-workspace [role="dialog"] { max-height: calc(100dvh - 1rem); }
   .leave-workspace [role="dialog"] > div { padding-left: 1rem; padding-right: 1rem; }
 }
+
+/* Policies & Procedures: the text of a policy, the same in the reader and the
+   editor, so what an editor sees is what readers get. */
+.policy-content {
+  @apply max-w-none text-[15px] leading-7 text-gray-800;
+  overflow-wrap: anywhere;
+}
+.policy-content > :first-child { margin-top: 0; }
+.policy-content :where(h2) { @apply mt-8 mb-3 text-xl font-semibold text-gray-900; }
+.policy-content :where(h3) { @apply mt-6 mb-2 text-lg font-semibold text-gray-900; }
+.policy-content :where(h4) { @apply mt-5 mb-2 text-base font-semibold text-gray-900; }
+.policy-content :where(h2, h3) { scroll-margin-top: 9rem; }
+.policy-content :where(p) { @apply my-3; }
+.policy-content :where(ul) { @apply my-3 list-disc pl-6; }
+.policy-content :where(ol) { @apply my-3 list-decimal pl-6; }
+.policy-content :where(li) { @apply my-1; }
+.policy-content :where(li > p) { @apply my-0; }
+.policy-content :where(a) { @apply font-medium text-brand underline underline-offset-2; }
+.policy-content :where(blockquote) { @apply my-4 rounded-r-lg border-l-4 border-accent bg-amber-50/60 px-4 py-2 text-gray-800; }
+.policy-content :where(hr) { @apply my-6 border-gray-200; }
+.policy-content :where(img) { @apply my-3 h-auto max-w-full rounded-lg; }
+.policy-content :where(table) { @apply my-4 w-full border-collapse text-sm; table-layout: auto; }
+.policy-content :where(th, td) { @apply border border-gray-300 px-3 py-2 text-left align-top; }
+.policy-content :where(th) { @apply bg-gray-100 font-semibold text-gray-900; }
+.policy-content :where(th > p, td > p) { @apply my-0; }
+.policy-content :where(code) { @apply rounded bg-gray-100 px-1 text-[13px]; }
+/* The editor marks the cells a table action will act on. */
+.policy-content .selectedCell { @apply bg-blue-100; }
+.policy-content .tableWrapper { @apply overflow-x-auto; }
+.policy-content.ProseMirror-focused { outline: none; }
+.policy-content .ProseMirror-selectednode { @apply ring-2 ring-brand/50; }
+
+/* Printing a policy prints the policy, not the portal around it. */
+@media print {
+  body:has(.policy-print) .portal-chrome { display: none; }
+  body:has(.policy-print) .min-h-screen { background: white; }
+  body:has(.policy-print) main { padding: 0; }
+  .policy-content { font-size: 11pt; }
+  .policy-content :where(h2, h3, h4) { break-after: avoid; }
+  .policy-content :where(tr, img) { break-inside: avoid; }
+}

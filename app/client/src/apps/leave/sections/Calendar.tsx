@@ -52,7 +52,9 @@ export function Calendar() {
     // Responsible for others: managers through their reporting line, HR through a scope or centrally.
     const manages = permissions.hr_admin === true || permissions.hr_officer === true || permissions.hr_leave_approve === true;
     const canFilterUnits = permissions.hr_admin === true || permissions.hr_officer === true;
-    const views: [CalendarView, string][] = [['team', 'My team'], ['mine', 'My leave'], ...(manages ? [['scope', 'People I manage'] as [CalendarView, string]] : [])];
+    const central = permissions.hr_admin === true;
+    // Central HR covers every department, so its wider view is named for that.
+    const views: [CalendarView, string][] = [['team', 'My team'], ['mine', 'My leave'], ...(manages ? [['scope', central ? 'All departments' : 'People I manage'] as [CalendarView, string]] : [])];
     const requested = params.get('view');
     const view: CalendarView = views.some(([id]) => id === requested) ? requested as CalendarView : 'team';
     const departmentId = view === 'scope' ? params.get('department') || '' : '';
@@ -130,7 +132,7 @@ export function Calendar() {
                     <p className="mt-1 text-sm text-gray-600">
                         {view === 'team' ? 'Who in your team is away. Colleagues’ leave shows dates only, not the type of leave.'
                             : view === 'mine' ? 'Your own approved and submitted leave.'
-                                : 'Leave for the people you manage or administer.'}
+                                : central ? 'Leave across every department. Choose a department or division to narrow it.' : 'Leave for the people you manage or administer.'}
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -160,7 +162,7 @@ export function Calendar() {
                             Department
                             <select className="rounded-lg border border-gray-300 px-2 py-2 text-gray-900" value={departmentId}
                                 onChange={(e) => changeUnit({ department: e.target.value })}>
-                                <option value="">All I can see</option>
+                                <option value="">{central ? 'All departments' : 'All I can see'}</option>
                                 {units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}
                             </select>
                         </label>
@@ -202,11 +204,12 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
  * cannot fit. Each day shows how many people are away; choosing a day lists
  * them underneath.
  */
-function PhoneMonth({ people, days, start, monthLabel }: {
+function PhoneMonth({ people, days, start, monthLabel, todayDay }: {
     people: { id: string; name: string; days: Set<number>; pendingDays: Set<number>; studyDays: Set<number> }[];
     days: { day: number; weekend: boolean; holiday?: string }[];
     start: Date;
     monthLabel: string;
+    todayDay: number | null;
 }) {
     const awayOn = (day: number) => people.flatMap((person) => {
         const statuses: DayStatus[] = [];
@@ -215,11 +218,9 @@ function PhoneMonth({ people, days, start, monthLabel }: {
         if (person.studyDays.has(day)) statuses.push('study');
         return statuses.length ? [{ id: person.id, name: person.name, statuses }] : [];
     });
-    const today = new Date();
-    const isThisMonth = today.getFullYear() === start.getFullYear() && today.getMonth() === start.getMonth();
     // Today when someone is away today, otherwise the first day anyone is.
     const firstBusy = days.find(({ day }) => awayOn(day).length)?.day ?? 1;
-    const [chosen, setChosen] = useState<number>(isThisMonth && awayOn(today.getDate()).length ? today.getDate() : firstBusy);
+    const [chosen, setChosen] = useState<number>(todayDay !== null && awayOn(todayDay).length ? todayDay : firstBusy);
     const day = Math.min(chosen, days.length);
     const leading = (start.getDay() + 6) % 7;
     const selected = awayOn(day);
@@ -240,10 +241,11 @@ function PhoneMonth({ people, days, start, monthLabel }: {
                             type="button"
                             onClick={() => setChosen(d)}
                             aria-pressed={d === day}
-                            aria-label={`${d} ${start.toLocaleDateString('en-GB', { month: 'long' })}${name ? `, ${name} (public holiday)` : ''}: ${away.length ? `${away.length} ${away.length === 1 ? 'person' : 'people'} away` : 'nobody away'}`}
+                            aria-current={d === todayDay ? 'date' : undefined}
+                            aria-label={`${d} ${start.toLocaleDateString('en-GB', { month: 'long' })}${d === todayDay ? ' (today)' : ''}${name ? `, ${name} (public holiday)` : ''}: ${away.length ? `${away.length} ${away.length === 1 ? 'person' : 'people'} away` : 'nobody away'}`}
                             className={`flex min-h-12 flex-col items-center justify-start gap-1 rounded-md border py-1 ${d === day ? 'border-brand ring-1 ring-brand' : 'border-transparent'} ${name ? 'bg-rose-50 text-rose-700' : weekend ? 'bg-gray-50 text-gray-400' : 'bg-white text-gray-900'}`}
                         >
-                            <span className={name ? 'font-semibold' : ''}>{d}</span>
+                            <span className={d === todayDay ? 'flex h-6 w-6 items-center justify-center rounded-full bg-brand font-semibold text-white' : name ? 'font-semibold' : ''}>{d}</span>
                             {away.length > 0 && (
                                 <span className="flex items-center gap-0.5" aria-hidden="true">
                                     {kinds.map((kind) => <span key={kind} className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[kind]}`} />)}
@@ -255,7 +257,7 @@ function PhoneMonth({ people, days, start, monthLabel }: {
                 })}
             </div>
             <div className="mt-3 border-t border-gray-100 pt-3 text-sm" aria-live="polite">
-                <h4 className="font-semibold text-gray-900">{dayLabel}{holiday ? ` — ${holiday}` : ''}</h4>
+                <h4 className="font-semibold text-gray-900">{dayLabel}{day === todayDay ? ' (today)' : ''}{holiday ? ` — ${holiday}` : ''}</h4>
                 {selected.length ? (
                     <div role="list" className="mt-2 space-y-1.5">
                         {selected.map((person) => (
@@ -279,10 +281,14 @@ function leaveLabel(entry: CalendarEntry) {
     return entry.own && entry.leave_code ? governmentLabel(entry.leave_code) : entry.leave_type_name;
 }
 
-export function CalendarMonth({ entries, start, end, view = 'scope', holidays = new Map() }: {
+export function CalendarMonth({ entries, start, end, view = 'scope', holidays = new Map(), today = new Date() }: {
     entries: CalendarEntry[]; start: Date; end: Date; view?: CalendarView; holidays?: Map<string, string>;
+    /** Injected for tests; the real calendar marks the actual date. */
+    today?: Date;
 }) {
     const monthLabel = start.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    // The day of this month that is today, or null when another month is shown.
+    const todayDay = today.getFullYear() === start.getFullYear() && today.getMonth() === start.getMonth() ? today.getDate() : null;
     const daysInMonth = end.getDate();
     const days = Array.from({ length: daysInMonth }, (_, i) => {
         const date = new Date(start.getFullYear(), start.getMonth(), i + 1);
@@ -327,15 +333,20 @@ export function CalendarMonth({ entries, start, end, view = 'scope', holidays = 
                     <EmptyState title={EMPTY_TITLES[view]} />
                 </div>
             ) : (<>
-                <PhoneMonth key={start.toISOString()} people={byPerson} days={days} start={start} monthLabel={monthLabel} />
+                <PhoneMonth key={start.toISOString()} people={byPerson} days={days} start={start} monthLabel={monthLabel} todayDay={todayDay} />
                 <div className="hidden overflow-x-auto app-panel md:block">
                     <table className="min-w-[1100px] text-sm"><caption className="sr-only">Approved leave, submitted leave awaiting approval and study leave for {monthLabel}</caption>
                         <thead className="bg-gray-50 text-xs text-gray-500">
                             <tr>
                                 <th className="sticky left-0 bg-gray-50 px-3 py-2 text-left font-medium">Person</th>
                                 {days.map(({ day, weekend, holiday }) => (
-                                    <th key={day} title={holiday} className={`w-7 py-2 text-center font-normal ${holiday ? 'font-semibold text-rose-700' : weekend ? 'text-gray-300' : ''}`}>
-                                        {day}
+                                    <th key={day} title={day === todayDay ? `Today${holiday ? ` — ${holiday}` : ''}` : holiday}
+                                        aria-current={day === todayDay ? 'date' : undefined}
+                                        className={`w-7 py-2 text-center font-normal ${day === todayDay ? 'bg-brand/10' : ''} ${holiday ? 'font-semibold text-rose-700' : weekend ? 'text-gray-300' : ''}`}>
+                                        {day === todayDay
+                                            ? <span className="mx-auto flex h-6 w-6 items-center justify-center rounded-full bg-brand font-semibold text-white">{day}</span>
+                                            : day}
+                                        {day === todayDay && <span className="sr-only"> (today)</span>}
                                         {holiday && <span className="sr-only"> ({holiday}, public holiday)</span>}
                                     </th>
                                 ))}
@@ -356,7 +367,7 @@ export function CalendarMonth({ entries, start, end, view = 'scope', holidays = 
                                         const studying = person.studyDays.has(day);
                                         const statuses = [away && 'Approved leave', pending && 'Submitted — awaiting approval', studying && 'Study leave'].filter(Boolean);
                                         return (
-                                            <td key={day} className="p-0.5">
+                                            <td key={day} className={`p-0.5 ${day === todayDay ? 'border-x-2 border-brand/60 bg-brand/10' : ''}`}>
                                                 <div
                                                     className={`flex h-5 flex-col gap-px overflow-hidden rounded-sm ${statuses.length ? '' : holiday ? 'bg-rose-100' : weekend ? 'bg-gray-100' : 'bg-gray-50'}`}
                                                     role={statuses.length ? 'img' : undefined}
@@ -383,6 +394,7 @@ export function CalendarMonth({ entries, start, end, view = 'scope', holidays = 
                     <span className="inline-flex items-center gap-1.5"><span className={`h-3 w-3 rounded-sm ${pendingDayClass}`} aria-hidden="true" />Submitted — awaiting approval</span>
                     <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-amber-500" aria-hidden="true" />Study leave</span>
                     {monthHolidays.length > 0 && <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-rose-100" aria-hidden="true" />Public holiday</span>}
+                    {todayDay !== null && <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-full bg-brand" aria-hidden="true" />Today</span>}
                 </p>
             )}
 

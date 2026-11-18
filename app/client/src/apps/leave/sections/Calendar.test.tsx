@@ -19,7 +19,7 @@ it('shows submitted dates and a status badge without marking them approved', () 
     expect(table).not.toContain('on 3 November');
     expect(table).not.toContain('October 2026');
     expect(table).toContain('border-dashed');
-    expect(table).not.toContain('bg-brand');
+    expect(table).not.toContain('flex-1 bg-brand');
     expect(list).toContain('Submitted — awaiting approval');
     expect(list).not.toContain('Approved leave');
     expect(list).toContain('30/10/2026 to 02/11/2026');
@@ -103,4 +103,20 @@ it('gives phones a month grid that counts who is away and lists them for the cho
     expect(phone).toMatch(/<h4[^>]*>1 November<\/h4>/);
     expect(phone).toContain('Ana');
     expect(phone).toContain('Submitted — awaiting approval');
+});
+
+it('marks today in the grid and the phone view, and only in the current month', () => {
+    const today = new Date(2026, 10, 18);
+    const html = renderToStaticMarkup(<CalendarMonth entries={[pending]} start={start} end={end} today={today} />);
+    const table = html.match(/<table[^>]*>(.*?)<\/table>/)?.[1] || '';
+    expect(table).toMatch(/<th[^>]*aria-current="date"[^>]*><span[^>]*bg-brand[^>]*>18<\/span><span class="sr-only"> \(today\)<\/span>/);
+    expect(table.match(/aria-current="date"/g)?.length).toBe(1);
+    expect(table.match(/border-x-2 border-brand/g)?.length).toBe(1);
+    expect(html).toContain('aria-label="18 November (today): nobody away"');
+    expect(html).toContain('>Today</span>');
+
+    const otherMonth = renderToStaticMarkup(<CalendarMonth entries={[pending]} start={start} end={end} today={new Date(2026, 11, 3)} />);
+    expect(otherMonth).not.toContain('aria-current="date"');
+    expect(otherMonth).not.toContain('(today)');
+    expect(otherMonth).not.toContain('>Today</span>');
 });

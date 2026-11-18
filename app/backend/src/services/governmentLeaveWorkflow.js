@@ -38,7 +38,7 @@ export async function accountState(client,id,scope=null) {
   const parentId=scope?.division_id?(await client.query('SELECT parent_division_id FROM hr_divisions WHERE id=$1',[scope.division_id])).rows[0]?.parent_division_id:null;
   const permitted=scopes.filter(s=>scope&&s.department_id===scope.department_id&&(!s.division_id||s.division_id===scope.division_id||s.division_id===parentId));
   const capabilities=[...grants.map(g=>g.capability),...permitted.flatMap(s=>s.capabilities)];
-  return {user:reviewerSummary(row,undefined,capabilities),approval:capabilities.includes('hr_leave_approve')};
+  return {user:reviewerSummary(row,undefined,capabilities)};
 }
 export async function assertCentral(client,user) {
   const state=await accountState(client,user.id);
@@ -137,7 +137,7 @@ export async function assignConsentOffice(pool,{user,actor,data}) {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('hr-approval-assignments'))");await assertCentral(client,user);
     const {rows:[employee]}=await client.query("SELECT * FROM hr_employees WHERE id=$1 AND status='active'",[data.approver_employee_id]);
     const state=employee?.reviewer_id?await accountState(client,employee.reviewer_id,{department_id:data.department_id,division_id:null}):null;
-    if(!state||(data.level==='hr_verifier'?!isCentralHr(state.user):!state.approval))fail('Choose an active linked officer with the required explicit approval or central HR grant.');
+    if(!state||(data.level==='hr_verifier'&&!isCentralHr(state.user)))fail(data.level==='hr_verifier'?'The HR verifier needs Central HR administration.':'Choose an active officer with a verified login.');
     if(data.effective_to&&data.effective_to<data.effective_from)fail('Office dates are reversed.',400);
     if(['relevant_secretary','minister'].includes(data.level)&&!data.department_id||data.level==='hr_verifier'&&data.department_id)fail('Secretary is department-specific; HR verifier is government-wide.',400);
     if((await client.query("SELECT 1 FROM hr_gov_consent_offices a LEFT JOIN hr_gov_consent_withdrawals w ON w.office_id=a.id WHERE level=$1 AND department_id IS NOT DISTINCT FROM $2::uuid AND daterange(effective_from,COALESCE(w.effective_to,a.effective_to),'[]') && daterange($3,$4,'[]')",[data.level,data.department_id||null,data.effective_from,data.effective_to||null])).rowCount)fail('An effective consent office already covers these dates.');
@@ -181,7 +181,7 @@ export async function bindingIssue(client,request,stage) {
   if(!employee||employee.status!=='active'||employee.reviewer_id!==binding.reviewer_id)return 'The officer or verified account link changed. HR must review the assignment.';
   if(binding.approver_employee_id===request.employee_id||binding.reviewer_id===request.submitted_by)return 'Self-approval requires an authorised substitute; Chief Secretary needs a verified acting officeholder.';
   const state=await accountState(client,binding.reviewer_id,request);
-  if(!state||(stage.level==='hr_verifier'?!isCentralHr(state.user):!state.approval))return 'The required officer capability is inactive or revoked.';
+  if(!state||(stage.level==='hr_verifier'&&!isCentralHr(state.user)))return stage.level==='hr_verifier'?'The HR verifier no longer has Central HR administration.':'The officer account is inactive.';
   const offices=await effectiveOffices(client,request,stage.level);
   if(!offices.some(o=>o.id===binding.assignment_id&&(binding.assignment_kind==='substitute'||o.approver_employee_id===binding.approver_employee_id)))return 'The dated office assignment changed. HR must explicitly rebind the pending stage.';
   return null;
@@ -266,7 +266,7 @@ export async function getRequest(client,id) {
   const {rows:[request]}=await client.query(`SELECT ${normalizedDates},(SELECT to_jsonb(rc) FROM hr_gov_request_route_corrections rc WHERE rc.request_id=r.id) AS route_correction FROM hr_gov_requests r WHERE r.id=$1`,[id]);if(!request)fail('Request not found.',404);return request;
 }
 export async function canReadRequest(client,user,request) {
-  if(await canAccessEmployee(client,user,request.employee_id,'hr_report_read',{owner:true}))return true;
+  if(await canAccessEmployee(client,user,request.employee_id,'hr_officer',{owner:true}))return true;
   const {rows:[placement]}=await client.query('SELECT department_id,division_id,status FROM hr_employees WHERE id=$1',[request.employee_id]);
   if(!placement||placement.status!=='active'&&!request.application_snapshot.separation_case||placement.department_id!==request.department_id||placement.division_id!==request.division_id)return false;
   const stages=await stagesFor(client,request.id);

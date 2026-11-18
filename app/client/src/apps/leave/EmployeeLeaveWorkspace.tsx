@@ -37,7 +37,7 @@ const steps: [PreparationStep, string][] = [['balances', 'Service & balances'], 
 export function EmployeeLeaveWorkspace({profile,departments,patterns,central,section,step,onNavigate,onClose,onChanged}:{profile:EmployeeProfile;departments:OrgDepartment[];patterns:WorkPattern[];central:boolean;section:EmployeeSection;step:PreparationStep;onNavigate:(section:EmployeeSection,step?:PreparationStep)=>void;onClose:()=>void;onChanged:()=>Promise<void>}) {
     const { user } = useAuth();
     const navigate = useNavigate();
-    const canReadBalances=central||user?.permissions?.hr_balance_manage===true;
+    const canReadBalances=central||user?.permissions?.hr_officer===true;
     const id=profile.employee.id;
     const [summary,setSummary]=useState<Summary|null>(null),[error,setError]=useState(''),[version,setVersion]=useState(0);
     useEffect(()=>{let live=true;void apiClient.get<Summary>(`/hr/directory/${id}/leave-arrangements`).then(data=>{if(live){setSummary(data);setError('');}}).catch((err:Error)=>{if(live)setError(err.message);});return()=>{live=false;};},[id,version,profile,section,step]);
@@ -45,7 +45,7 @@ export function EmployeeLeaveWorkspace({profile,departments,patterns,central,sec
     const government=summary?.government;
     const missing = summary?.preparation.find(item => item.status === 'missing');
     const needsSetup = central && (summary?.regime === 'government' || summary?.account_type === 'employee') && !!missing;
-    const canReview = central || user?.permissions?.hr_report_read === true || user?.permissions?.hr_leave_approve === true;
+    const canReview = central || user?.permissions?.hr_officer === true || user?.permissions?.hr_leave_approve === true;
     const state = summary?.regime === 'government' ? (summary.restricted ? 'Access restricted' : government?.activation.status === 'active' ? 'Can apply for leave' : government?.activation.status === 'paused' ? 'Leave paused' : 'Setup incomplete') : summary ? 'Employee record' : 'Loading…';
     return <div className="space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0"><Button variant="ghost" onClick={onClose}>← Employees</Button><h2 className="mt-2 break-words text-xl font-semibold text-gray-900">{reviewRecordLabel(profile.employee.display_name)}</h2><p className="break-words text-sm text-gray-600">{reviewRecordLabel(profile.employee.department_code||'Department unverified')} / {reviewRecordLabel(profile.employee.division_code||'Division unverified')} · {profile.employee.status}</p></div><span className="rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-900">{state}</span></div>

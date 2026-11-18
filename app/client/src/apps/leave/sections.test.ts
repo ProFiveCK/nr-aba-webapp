@@ -8,7 +8,7 @@ describe('visibleLeaveSections', () => {
     it('gives an administrator every section', () => {
         expect(idsFor({
             hr_access: true, hr_admin: true, hr_leave_apply: true,
-            hr_leave_approve: true, hr_staff_manage: true,
+            hr_leave_approve: true, hr_officer: true,
         })).toEqual(['work-queue', 'my-leave', 'calendar', 'employees', 'report', 'settings']);
     });
 
@@ -25,20 +25,14 @@ describe('visibleLeaveSections', () => {
         expect(idsFor({ hr_admin: true })).toContain('work-queue');
     });
 
-    it('staff management does not grant reports or balance tools', () => {
-        expect(idsFor({hr_staff_manage:true})).toEqual(['employees']);
-        expect(idsFor({hr_report_read:true})).toEqual(['report']);
-        expect(idsFor({hr_balance_manage:true})).toEqual(['employees']);
-    });
-
-    it('groups balance access under Employees without granting staff editing', () => {
-        expect(idsFor({ hr_balance_manage: true })).toEqual(['employees']);
-        expect(idsFor({ hr_staff_manage: true, hr_balance_manage: true })).toEqual(['employees']);
-        expect(defaultLeaveSection({ hr_balance_manage: true })).toBe('employees');
+    it('gives an HR officer employees and reports, and an approver neither', () => {
+        expect(idsFor({ hr_access: true, hr_officer: true })).toEqual(['calendar', 'employees', 'report']);
+        expect(defaultLeaveSection({ hr_officer: true })).toBe('employees');
+        expect(idsFor({ hr_access: true, hr_leave_approve: true })).not.toContain('employees');
     });
 
     it('withholds settings from everyone but an administrator', () => {
-        expect(idsFor({ hr_staff_manage: true, hr_leave_approve: true })).not.toContain('settings');
+        expect(idsFor({ hr_officer: true, hr_leave_approve: true })).not.toContain('settings');
     });
 
     // hr_access can be granted on its own, which lets someone into the app

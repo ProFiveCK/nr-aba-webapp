@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {after,before,beforeEach,describe,test} from 'node:test';
-import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase,grantAccess} from '../test-support/database.js';
+import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase,grantAccess,nominateApprover} from '../test-support/database.js';
 
 describe('Finance Treasury division hierarchy',{skip:skipWithoutDatabase},()=>{
  let pool,server,base,auth,admin,department,treasury,createOrganisationDivision,divisionPlacementIssue,assertEmployeeScope,employeeScopeSql,managerScopeSql;
@@ -51,7 +51,7 @@ describe('Finance Treasury division hierarchy',{skip:skipWithoutDatabase},()=>{
   assert.equal((await call(`/departments/${department.id}/divisions`,{name:'Accounting',parent_division_id:treasury.id})).status,409);
  });
  test('creation requires central HR and audit failure rolls the new division back',async()=>{
-  const limited=await account({hr_access:true,hr_staff_manage:true});
+  const limited=await account({hr_access:true});
   assert.equal((await call(`/departments/${department.id}/divisions`,{name:'Accounting',parent_division_id:treasury.id},limited)).status,403);
   await pool.query("CREATE FUNCTION synthetic_hierarchy_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hr.division.created' THEN RAISE EXCEPTION 'synthetic hierarchy audit failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER synthetic_hierarchy_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION synthetic_hierarchy_failure()");
   try{await assert.rejects(child('Accounting'),/synthetic hierarchy audit failure/);assert.equal((await pool.query("SELECT 1 FROM hr_divisions WHERE name='Accounting'")).rowCount,0);}
@@ -61,21 +61,25 @@ describe('Finance Treasury division hierarchy',{skip:skipWithoutDatabase},()=>{
   const accounting=await child('Accounting'),systems=await child('Financial Systems');
   const otherParent=await createOrganisationDivision(pool,{departmentId:department.id,name:'Other unit',actor:admin});
   const other=await createOrganisationDivision(pool,{departmentId:department.id,name:'Other division',parentDivisionId:otherParent.id,actor:admin});
-  const limited=await account({hr_access:true,hr_staff_manage:true,hr_leave_approve:true});
+  const limited=await account({hr_access:true});
   const manager=(await pool.query("INSERT INTO hr_employees(display_name,reviewer_id,department_id,division_id) VALUES('Synthetic manager',$1,$2,$3) RETURNING *",[limited.id,department.id,treasury.id])).rows[0];
   const employees=[];
   for(const node of [accounting,systems,other])employees.push((await pool.query("INSERT INTO hr_employees(display_name,department_id,division_id,manager_id) VALUES($1,$2,$3,$4) RETURNING *",[node.name,department.id,node.id,manager.id])).rows[0]);
-  await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,division_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,$3,ARRAY['hr_staff_manage','hr_leave_approve'],'2026-01-01',$4,$5)",[limited.id,department.id,treasury.id,admin.id,reason]);
+  await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,division_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,$3,ARRAY['hr_officer'],'2026-01-01',$4,$5)",[limited.id,department.id,treasury.id,admin.id,reason]);
+  await nominateApprover(pool,limited.id);
+  // Both rights are worked out from Leave settings: the HR officer assignment and the nomination.
+  const caps=await auth.loadCapabilities(limited.id);assert.ok(caps.includes('hr_officer')&&caps.includes('hr_leave_approve'));
+  const user={...limited,permissions:Object.fromEntries(caps.map(c=>[c,true]))};
   const visible=async condition=>(await pool.query(`SELECT e.id FROM hr_employees e WHERE e.id=ANY($2::uuid[]) AND ${condition}`,[limited.id,employees.map(e=>e.id)])).rows.map(e=>e.id).sort();
-  assert.deepEqual(await visible(employeeScopeSql(limited,'hr_staff_manage')),employees.slice(0,2).map(e=>e.id).sort());
-  assert.deepEqual(await visible(managerScopeSql(limited)),employees.slice(0,2).map(e=>e.id).sort());
-  await assertEmployeeScope(pool,limited,employees[0].id,'hr_staff_manage');
-  await assert.rejects(assertEmployeeScope(pool,limited,employees[2].id,'hr_staff_manage'),e=>e.status===404);
+  assert.deepEqual(await visible(employeeScopeSql(user,'hr_officer')),employees.slice(0,2).map(e=>e.id).sort());
+  assert.deepEqual(await visible(managerScopeSql(user)),employees.slice(0,2).map(e=>e.id).sort());
+  await assertEmployeeScope(pool,user,employees[0].id,'hr_officer');
+  await assert.rejects(assertEmployeeScope(pool,user,employees[2].id,'hr_officer'),e=>e.status===404);
   const read=await call('/org-units',null,limited);assert.equal(read.status,200);assert.equal(read.body[0].divisions.length,3);
   await pool.query('UPDATE hr_access_scopes SET division_id=$2 WHERE reviewer_id=$1',[limited.id,accounting.id]);
-  assert.deepEqual(await visible(employeeScopeSql(limited,'hr_staff_manage')),[employees[0].id]);
-  await assert.rejects(assertEmployeeScope(pool,limited,employees[1].id,'hr_staff_manage'),e=>e.status===404);
+  assert.deepEqual(await visible(employeeScopeSql(user,'hr_officer')),[employees[0].id]);
+  await assert.rejects(assertEmployeeScope(pool,user,employees[1].id,'hr_officer'),e=>e.status===404);
   await pool.query('UPDATE hr_employees SET manager_id=NULL WHERE id=$1',[employees[0].id]);
-  assert.deepEqual(await visible(managerScopeSql(limited)),[employees[1].id]);
+  assert.deepEqual(await visible(managerScopeSql(user)),[employees[1].id]);
  });
 });

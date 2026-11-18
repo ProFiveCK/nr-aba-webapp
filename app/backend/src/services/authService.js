@@ -16,9 +16,10 @@ import {
   PERMISSIONS,
   PREFERENCE_KEYS,
   LEAVE_ONLY_CAPABILITIES,
+  isLeaveOnlyKey,
 } from '../config.js';
 import { ServiceError } from '../lib/serviceError.js';
-import { activeScopeSql } from './hrAccess.js';
+import { activeScopeSql, approverHolderSql } from './hrAccess.js';
 import { employeeApiLimiter } from '../middleware/employeeApiLimit.js';
 
 export function setAuthCookie(res, token, expiresAt) {
@@ -164,18 +165,28 @@ export function hasPermission(permissions, permission) {
   return p[permission] === true;
 }
 
-/** Each account's capabilities in one query, one list per id, in order. */
+/**
+ * Each account's capabilities in one query, one list per id, in order: its
+ * ticks, plus the Leave rights worked out from Leave settings (HR officer from
+ * an active assignment, approver from a nomination). Either also opens the
+ * Leave app.
+ */
 export async function loadCapabilitiesFor(reviewerIds) {
   if (!reviewerIds.length) return [];
   const { rows } = await pool.query(
-    `SELECT reviewer_id, capability FROM reviewer_capabilities WHERE reviewer_id = ANY($1::uuid[])
-     UNION SELECT s.reviewer_id, unnest(s.capabilities) FROM hr_access_scopes s WHERE s.reviewer_id = ANY($1::uuid[]) AND ${activeScopeSql()}
-     UNION SELECT s.reviewer_id, 'hr_access' FROM hr_access_scopes s WHERE s.reviewer_id = ANY($1::uuid[]) AND ${activeScopeSql()}`,
-    [reviewerIds]
+    `SELECT reviewer_id, capability FROM reviewer_capabilities WHERE reviewer_id = ANY($1::uuid[]) AND capability = ANY($2::text[])
+     UNION SELECT s.reviewer_id, '${PERMISSIONS.HR_OFFICER}' FROM hr_access_scopes s WHERE s.reviewer_id = ANY($1::uuid[]) AND ${activeScopeSql()}
+     UNION SELECT r.id, '${PERMISSIONS.HR_LEAVE_APPROVE}' FROM reviewers r WHERE r.id = ANY($1::uuid[]) AND ${approverHolderSql('r.id')}`,
+    // Only ticks the account page offers count, so approver and HR officer
+    // can come from Leave settings alone.
+    [reviewerIds, ALL_CAPABILITIES]
   );
-  const byId = new Map(reviewerIds.map((id) => [id, []]));
-  for (const row of rows) byId.get(row.reviewer_id)?.push(row.capability);
-  return reviewerIds.map((id) => byId.get(id));
+  const byId = new Map(reviewerIds.map((id) => [id, new Set()]));
+  for (const row of rows) byId.get(row.reviewer_id)?.add(row.capability);
+  for (const held of byId.values()) {
+    if (held.has(PERMISSIONS.HR_OFFICER) || held.has(PERMISSIONS.HR_LEAVE_APPROVE)) held.add(PERMISSIONS.HR_ACCESS);
+  }
+  return reviewerIds.map((id) => [...byId.get(id)]);
 }
 
 export async function loadCapabilities(reviewerId) {
@@ -234,7 +245,7 @@ export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS, 
   if (row.account_type === 'employee') {
     // Writes refuse anything else; requireAuth also fences these accounts into Leave.
     for (const key of Object.keys(permissions)) {
-      if (!LEAVE_ONLY_CAPABILITIES.includes(key)) delete permissions[key];
+      if (!isLeaveOnlyKey(key)) delete permissions[key];
     }
   } else {
     const stored = parsePermissions(row.permissions);

@@ -26,12 +26,12 @@ describe('current leave balances and movement accounts', { skip: skipWithoutData
   }
   beforeEach(async () => {
     await resetLeaveTables(pool); await pool.query('TRUNCATE hr_gov_policy_versions CASCADE');
-    admin = await reviewer({ hr_admin: true }); scoped = await reviewer({ hr_balance_manage: true }); owner = await reviewer({ hr_access: true, hr_leave_apply: true });
+    admin = await reviewer({ hr_admin: true }); scoped = await reviewer({ hr_officer: true }); owner = await reviewer({ hr_access: true, hr_leave_apply: true });
     department = (await pool.query("INSERT INTO hr_departments(name) VALUES('Treasury balance test') RETURNING *")).rows[0];
     employee = (await pool.query("INSERT INTO hr_employees(display_name,department_id,reviewer_id,leave_policy_regime) VALUES('Current employee',$1,$2,'government') RETURNING *", [department.id, owner.id])).rows[0];
     outside = (await pool.query("INSERT INTO hr_employees(display_name,leave_policy_regime) VALUES('Outside employee','government') RETURNING *")).rows[0];
     legacy = (await pool.query("INSERT INTO hr_employees(display_name,department_id) VALUES('Setup employee',$1) RETURNING *", [department.id])).rows[0];
-    await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_balance_manage'],'2020-01-01',$3,'Verified balance test scope')", [scoped.id, department.id, admin.id]);
+    await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_officer'],'2020-01-01',$3,'Verified HR officer test scope')", [scoped.id, department.id, admin.id]);
     policy = (await pool.query(`INSERT INTO hr_gov_policy_versions(label,effective_from,effective_to,rules,source_reference,status,reason)
       VALUES('Balance test policy','2020-01-01','2099-12-31',$1,'signed test','published','Verified policy test') RETURNING *`, [DEFAULT_RULES])).rows[0];
     account = await entitlement(employee.id);
@@ -52,13 +52,13 @@ describe('current leave balances and movement accounts', { skip: skipWithoutData
     const excluded = (await balances.staffLeaveBalances(pool, { user: user(admin) })).employees.find(e => e.id === legacy.id);
     assert.equal(excluded.leave_status, 'not_entitled'); assert.deepEqual(excluded.balances, []);
   });
-  test('list and account respect balance scopes and owner access without exposing other staff', async () => {
+  test('list and account respect HR officer scopes and owner access without exposing other staff', async () => {
     assert.equal((await balances.staffLeaveBalances(pool, { user: user(scoped) })).total, 2);
-    assert.equal((await balances.staffLeaveBalances(pool, { user: { ...scoped, permissions: { hr_staff_manage: true } } })).total, 0);
+    assert.equal((await balances.staffLeaveBalances(pool, { user: { ...scoped, permissions: { hr_leave_approve: true } } })).total, 0, 'approving gives no balance access');
     assert.equal((await balances.employeeLeaveAccount(pool, { user: user(owner), employeeId: employee.id })).accounts.length, 1);
     await assert.rejects(balances.employeeLeaveAccount(pool, { user: user(scoped), employeeId: outside.id }), error => error.status === 404);
     await assert.rejects(balances.employeeLeaveAccount(pool, { user: user(owner), employeeId: outside.id }), error => error.status === 404);
-    await assert.rejects(balances.employeeLeaveAccount(pool, { user: { ...scoped, permissions: { hr_staff_manage: true } }, employeeId: employee.id }), error => error.status === 404);
+    await assert.rejects(balances.employeeLeaveAccount(pool, { user: { ...scoped, permissions: { hr_leave_approve: true } }, employeeId: employee.id }), error => error.status === 404);
     assert.equal((await balances.staffLeaveBalances(pool, { user: user(scoped), search: 'Treasury' })).total, 2);
     assert.equal((await balances.staffLeaveBalances(pool, { user: user(admin), search: '%' })).total, 0);
   });

@@ -23,7 +23,7 @@ router.use('/', employeeLeaveArrangementsRouter);
 // Identity, transfers, imports and enterprise configuration stay central.
 // Directory reads and details updates also allow explicitly scoped HR.
 const centralHr = requirePermission(PERMISSIONS.HR_ADMIN);
-const staffHr = requirePermission(PERMISSIONS.HR_STAFF_MANAGE,PERMISSIONS.HR_ADMIN);
+const staffHr = requirePermission(PERMISSIONS.HR_OFFICER,PERMISSIONS.HR_ADMIN);
 router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 const employeeId = param('id').isUUID();
 const reason = body('reason').isString().trim().isLength({ min: 10, max: 1000 });
@@ -74,9 +74,9 @@ router.put('/:id/details', staffHr, [employeeId,reason,body('display_name').isSt
   body('manager_id').exists({values:'undefined'}),body('manager_id').optional({nullable:true}).isUUID()], async (req,res) => {
   if (!handleValidation(req,res)) return;
   res.json(await updateManagedEmployee(pool,{employeeId:req.params.id,data:req.body,actor:actor(req),reason:req.body.reason,authorize:async client=>{
-    const employee=await assertEmployeeScope(client,req.user,req.params.id,'hr_staff_manage');
+    const employee=await assertEmployeeScope(client,req.user,req.params.id,'hr_officer');
     if (!isCentralHr(req.user) && req.body.status!==employee.status) throw new ServiceError(403,'Central HR controls employee activation and offboarding.');
-    if (req.body.manager_id && req.body.manager_id!==employee.manager_id) await assertEmployeeScope(client,req.user,req.body.manager_id,'hr_staff_manage');
+    if (req.body.manager_id && req.body.manager_id!==employee.manager_id) await assertEmployeeScope(client,req.user,req.body.manager_id,'hr_officer');
   }}));
 });
 
@@ -90,9 +90,9 @@ router.post('/work-patterns', centralHr, [reason,body('name').isString().trim().
 
 router.get('/:id/profile', staffHr, [employeeId], async (req, res) => {
   if (!handleValidation(req, res)) return;
-  if (!(await canAccessEmployee(pool,req.user,req.params.id,'hr_staff_manage'))) throw new ServiceError(404,'Employee not found.');
+  if (!(await canAccessEmployee(pool,req.user,req.params.id,'hr_officer'))) throw new ServiceError(404,'Employee not found.');
   const profile=await employeeProfile(pool,req.params.id);
-  if (profile.employee.manager_id && !(await canAccessEmployee(pool,req.user,profile.employee.manager_id,'hr_staff_manage'))) { profile.employee.manager_name='Outside your assigned scope — contact central HR'; }
+  if (profile.employee.manager_id && !(await canAccessEmployee(pool,req.user,profile.employee.manager_id,'hr_officer'))) { profile.employee.manager_name='Outside your assigned scope — contact central HR'; }
   res.json(profile);
 });
 
@@ -157,12 +157,7 @@ router.get('/approval-assignments', centralHr, [query('page').optional().isInt({
   const filters=[req.query.search?.trim()||'',req.query.department_id||null,req.query.level||null,req.query.timing||null];
   const where="($1='' OR position(lower($1) in lower(concat_ws(' ',e.display_name,d.name,v.name)))>0) AND ($2::uuid IS NULL OR a.department_id=$2) AND ($3::text IS NULL OR a.level=$3) AND ($4::text IS NULL OR ($4='current' AND a.effective_from<=(NOW() AT TIME ZONE 'Pacific/Nauru')::date AND (a.effective_to IS NULL OR a.effective_to>=(NOW() AT TIME ZONE 'Pacific/Nauru')::date)) OR ($4='upcoming' AND a.effective_from>(NOW() AT TIME ZONE 'Pacific/Nauru')::date) OR ($4='ended' AND a.effective_to<(NOW() AT TIME ZONE 'Pacific/Nauru')::date))";
   const { rows } = await pool.query(`SELECT a.*,e.display_name AS approver_name,d.name AS department_name,v.name AS division_name,
-    e.status AS employee_status,r.status AS account_status,e.reviewer_id,
-    ((EXISTS(SELECT 1 FROM reviewer_capabilities c WHERE c.reviewer_id=r.id AND c.capability='hr_leave_approve')
-      OR EXISTS(SELECT 1 FROM hr_access_scopes s WHERE s.reviewer_id=r.id AND 'hr_leave_approve'=ANY(s.capabilities)
-        AND s.revoked_at IS NULL AND s.effective_from <= (NOW() AT TIME ZONE 'Pacific/Nauru')::date
-        AND (s.effective_to IS NULL OR s.effective_to >= (NOW() AT TIME ZONE 'Pacific/Nauru')::date)
-        AND s.department_id=a.department_id AND (s.division_id IS NULL OR s.division_id=a.division_id)))) AS has_approval_grant
+    e.status AS employee_status,r.status AS account_status,e.reviewer_id
     FROM hr_approval_assignments a JOIN hr_employees e ON e.id=a.approver_employee_id
     LEFT JOIN reviewers r ON r.id=e.reviewer_id LEFT JOIN hr_departments d ON d.id=a.department_id LEFT JOIN hr_divisions v ON v.id=a.division_id
     WHERE ${where} ORDER BY a.level,a.effective_from,a.id LIMIT $5 OFFSET $6`, [...filters,pageSize,(page-1)*pageSize]);
@@ -177,7 +172,7 @@ router.post('/approval-assignments/:id/close', centralHr, [employeeId, reason, d
 
 router.get('/:id/approval-chain', staffHr, [employeeId, query('on_date').matches(/^\d{4}-\d{2}-\d{2}$/).isISO8601({ strict: true })], async (req, res) => {
   if (!handleValidation(req, res)) return;
-  if (!(await canAccessEmployee(pool,req.user,req.params.id,'hr_staff_manage'))) throw new ServiceError(404,'Employee not found.');
+  if (!(await canAccessEmployee(pool,req.user,req.params.id,'hr_officer'))) throw new ServiceError(404,'Employee not found.');
   res.json(await previewApprovalChain(pool, req.params.id, req.query.on_date));
 });
 

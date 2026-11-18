@@ -3,11 +3,11 @@ import { pool } from '../db.js';
 import { PERMISSIONS } from '../config.js';
 import { requirePermission } from '../services/authService.js';
 import { body,param,query,handleValidation } from '../middleware/validation.js';
-import { activeScopeSql,grantHrScope,isCentralHr,revokeHrScope,SCOPE_CAPABILITIES } from '../services/hrAccess.js';
+import { activeScopeSql,grantHrScope,isCentralHr,revokeHrScope } from '../services/hrAccess.js';
 const router=express.Router();
 const central=requirePermission(PERMISSIONS.HR_ADMIN);
 router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
-router.get('/context',requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_STAFF_MANAGE),async(req,res)=>{
+router.get('/context',requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_OFFICER),async(req,res)=>{
   const {rows}=await pool.query(`SELECT s.id,s.department_id,s.division_id,s.capabilities,s.effective_from,s.effective_to,
     d.name AS department_name,v.name AS division_name FROM hr_access_scopes s JOIN hr_departments d ON d.id=s.department_id
     LEFT JOIN hr_divisions v ON v.id=s.division_id WHERE s.reviewer_id=$1 AND ${activeScopeSql()} ORDER BY d.name,v.name,s.id`,[req.user.id]);
@@ -28,7 +28,7 @@ const date=(field,required=false)=>{const v=body(field);return(required?v:v.opti
 const reason=body('reason').isString().trim().isLength({min:10,max:1000});
 const actor=req=>({id:req.user.id,email:req.user.email,ip:req.ip});
 router.post('/',central,[reason,body('reviewer_id').isUUID(),body('department_id').isUUID(),body('division_id').optional({nullable:true}).isUUID(),
-  body('capabilities').isArray({min:1,max:5}),body('capabilities.*').isIn(SCOPE_CAPABILITIES),date('effective_from',true),date('effective_to')],async(req,res)=>{
+  date('effective_from',true),date('effective_to')],async(req,res)=>{
   if(!handleValidation(req,res))return;
   res.status(201).json(await grantHrScope(pool,{user:req.user,actor:actor(req),data:req.body}));
 });

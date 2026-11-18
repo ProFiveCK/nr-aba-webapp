@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after, before, describe } from 'node:test';
-import { connectTestDatabase, skipWithoutDatabase } from '../test-support/database.js';
+import { connectTestDatabase, nominateApprover, skipWithoutDatabase } from '../test-support/database.js';
 import { createAccount, lastAudit, prepareRoutes, startApp } from '../test-support/http.js';
 
 describe('account access has one source', { skip: skipWithoutDatabase }, () => {
@@ -154,7 +154,8 @@ describe('account access has one source', { skip: skipWithoutDatabase }, () => {
     const scopes = (await pool.query('SELECT id, capabilities, revoked_at FROM hr_access_scopes WHERE id = ANY($1::uuid[])',
       [[keptScope, futureScope, blockedScope]])).rows;
     const byId = Object.fromEntries(scopes.map((row) => [row.id, row]));
-    assert.deepEqual(byId[keptScope].capabilities, ['hr_report_read']);
+    // Narrowed to reports by the denial, then made one HR officer right by the later migration.
+    assert.deepEqual(byId[keptScope].capabilities, ['hr_officer']);
     assert.equal(byId[keptScope].revoked_at, null);
     assert.notEqual(byId[futureScope].revoked_at, null, 'a future scope with nothing left is revoked');
     assert.notEqual(byId[blockedScope].revoked_at, null, 'denying the Leave app revokes the scopes that implied it');
@@ -174,7 +175,7 @@ describe('account access has one source', { skip: skipWithoutDatabase }, () => {
       `INSERT INTO hr_access_scopes (reviewer_id, department_id, capabilities, effective_from, reason, revoked_at)
        VALUES ($1, $2, $3, '2020-01-01', 'Synthetic scope for the evidence migration test.', $4) RETURNING id`,
       [holder.reviewer.id, department.id, capabilities, revoked ? new Date() : null])).rows[0].id;
-    const mixed = await scope(['hr_leave_approve', 'hr_evidence_read']);
+    const mixed = await scope(['hr_report_read', 'hr_evidence_read']);
     const only = await scope(['hr_evidence_read']);
     const history = await scope(['hr_evidence_read', 'hr_report_read'], true);
     const { initSchema } = await import('../db.js');
@@ -183,7 +184,7 @@ describe('account access has one source', { skip: skipWithoutDatabase }, () => {
     assert.ok(await lastAudit(pool, 'reviewer.capability.retired', holder.reviewer.id));
     const byId = Object.fromEntries((await pool.query('SELECT id, capabilities, revoked_at FROM hr_access_scopes WHERE id = ANY($1::uuid[])',
       [[mixed, only, history]])).rows.map((row) => [row.id, row]));
-    assert.deepEqual(byId[mixed].capabilities, ['hr_leave_approve']);
+    assert.deepEqual(byId[mixed].capabilities, ['hr_officer'], 'evidence removed, then reports became the HR officer right');
     assert.equal(byId[mixed].revoked_at, null);
     assert.notEqual(byId[only].revoked_at, null, 'an assignment that held only evidence is revoked');
     assert.deepEqual(byId[history].capabilities, ['hr_evidence_read', 'hr_report_read'], 'revoked history is left as it was');
@@ -196,17 +197,17 @@ describe('account access has one source', { skip: skipWithoutDatabase }, () => {
     assert.equal(refused.status, 400);
     assert.match(refused.json.message, /leave-only account/);
     assert.equal((await edit(staff.reviewer.id, { capabilities: ['hr_access', 'aba_access'] })).status, 400, 'other apps are refused, not dropped');
-    assert.equal((await edit(staff.reviewer.id, { capabilities: ['hr_access', 'hr_leave_apply', 'hr_leave_approve'] })).status, 200);
+    assert.equal((await edit(staff.reviewer.id, { capabilities: ['hr_access', 'hr_leave_apply'] })).status, 200);
 
     // Granted before the rule existed: removed on start and recorded.
     await pool.query("INSERT INTO reviewer_capabilities (reviewer_id, capability) VALUES ($1, 'hr_admin'), ($1, 'aba_access')", [staff.reviewer.id]);
     const { initSchema } = await import('../db.js');
     await initSchema();
-    assert.deepEqual(await explicit(staff.reviewer.id), ['hr_access', 'hr_leave_apply', 'hr_leave_approve']);
+    assert.deepEqual(await explicit(staff.reviewer.id), ['hr_access', 'hr_leave_apply']);
     assert.equal((await lastAudit(pool, 'reviewer.capability.retired', staff.reviewer.id)).metadata.reason, 'Leave-only accounts hold Leave access only.');
 
     const catalogue = (await app.call('GET', '/api/capability-catalogue', { token: admin.token })).json;
-    assert.ok(catalogue.leave_only_capabilities.includes('hr_leave_approve'));
+    assert.deepEqual(catalogue.leave_only_capabilities, ['hr_access', 'hr_leave_apply']);
     assert.ok(!catalogue.leave_only_capabilities.includes('hr_admin'));
     assert.ok(catalogue.leave_only_capabilities.every((key) => key.startsWith('hr_')));
   });
@@ -215,7 +216,7 @@ describe('account access has one source', { skip: skipWithoutDatabase }, () => {
     const scoped = await createAccount(pool, unique('list-scoped'), { capabilities: ['aba_access'] });
     const { rows: [department] } = await pool.query("INSERT INTO hr_departments (name) VALUES ($1) RETURNING id", [`List ${randomUUID().slice(0, 8)}`]);
     await pool.query(`INSERT INTO hr_access_scopes (reviewer_id, department_id, capabilities, effective_from, reason)
-      VALUES ($1, $2, ARRAY['hr_report_read'], '2020-01-01', 'Synthetic scope for the account list test.')`, [scoped.reviewer.id, department.id]);
+      VALUES ($1, $2, ARRAY['hr_officer'], '2020-01-01', 'Synthetic scope for the account list test.')`, [scoped.reviewer.id, department.id]);
     const list = async () => {
       let queries = 0;
       const original = pool.query;
@@ -229,9 +230,56 @@ describe('account access has one source', { skip: skipWithoutDatabase }, () => {
     const first = await list();
     const listed = first.accounts.find((a) => a.id === scoped.reviewer.id);
     assert.deepEqual(listed.permissions, await permissionsOf(scoped), 'the list shows what the account itself is told');
-    assert.equal(listed.permissions.hr_report_read, true);
-    assert.equal(listed.permissions.hr_access, true, 'an active scope opens the Leave app');
+    assert.equal(listed.permissions.hr_officer, true);
+    assert.equal(listed.permissions.hr_access, true, 'an HR officer assignment opens the Leave app');
     for (let i = 0; i < 3; i += 1) await createAccount(pool, unique('list-more'), { capabilities: ['aba_access'] });
     assert.equal((await list()).queries, first.queries);
+  });
+  test('Leave rights come from Leave settings: old ticks and scope rights move across, and a nomination alone makes an approver', async () => {
+    const ticked = await createAccount(pool, unique('old-leave-ticks'), { capabilities: ['hr_access'] });
+    const id = ticked.reviewer.id;
+    // Written directly: the account page can no longer grant these.
+    await pool.query(`INSERT INTO reviewer_capabilities (reviewer_id, capability)
+      SELECT $1, unnest(ARRAY['hr_leave_approve','hr_staff_manage','hr_balance_manage','hr_report_read'])`, [id]);
+    const { rows: [department] } = await pool.query("INSERT INTO hr_departments (name) VALUES ($1) RETURNING id", [`Settings ${randomUUID().slice(0, 8)}`]);
+    const scope = async (capabilities) => (await pool.query(
+      `INSERT INTO hr_access_scopes (reviewer_id, department_id, capabilities, effective_from, reason)
+       VALUES ($1, $2, $3, '2020-01-01', 'Synthetic scope for the Leave settings migration test.') RETURNING id`,
+      [id, department.id, capabilities])).rows[0].id;
+    const officerScope = await scope(['hr_staff_manage', 'hr_balance_manage']);
+    const decisionsOnly = await scope(['hr_leave_approve']);
+
+    const warnings = [];
+    const warn = console.warn;
+    console.warn = (...args) => { warnings.push(args.join(' ')); };
+    try {
+      const { initSchema } = await import('../db.js');
+      await initSchema();
+    } finally { console.warn = warn; }
+
+    assert.deepEqual(await explicit(id), ['hr_access']);
+    const retired = await lastAudit(pool, 'reviewer.capability.retired', id);
+    assert.equal(retired.metadata.reason, 'Leave rights now come from Leave settings.');
+    const byId = Object.fromEntries((await pool.query('SELECT id, capabilities, revoked_at FROM hr_access_scopes WHERE id = ANY($1::uuid[])',
+      [[officerScope, decisionsOnly]])).rows.map((row) => [row.id, row]));
+    assert.deepEqual(byId[officerScope].capabilities, ['hr_officer']);
+    assert.equal(byId[officerScope].revoked_at, null);
+    assert.notEqual(byId[decisionsOnly].revoked_at, null, 'decisions follow nominations, so a decisions-only assignment goes');
+    assert.ok(await lastAudit(pool, 'hr.access_scope.migrated', decisionsOnly));
+    assert.ok(warnings.some((line) => line.includes('Approve leave') && line.includes(id)), 'an approval tick without a nomination is named');
+    const migrated = await permissionsOf(ticked);
+    assert.equal(migrated.hr_officer, true);
+    assert.equal(migrated.hr_leave_approve, undefined, 'no nomination, so not an approver');
+    assert.equal((await edit(id, { capabilities: ['hr_access', 'hr_leave_approve'] })).status, 422, 'approval cannot be ticked');
+
+    // A nomination in Leave settings is all an approver needs, and closing it ends it.
+    const nominee = await createAccount(pool, unique('nominee'), { departmentCode: '12' });
+    assert.equal((await permissionsOf(nominee)).hr_leave_approve, undefined);
+    const assignment = await nominateApprover(pool, nominee.reviewer.id);
+    const nominated = await permissionsOf(nominee);
+    assert.equal(nominated.hr_leave_approve, true);
+    assert.equal(nominated.hr_access, true, 'a nomination opens the Leave app');
+    await pool.query("UPDATE hr_approval_assignments SET effective_to = (NOW() AT TIME ZONE 'Pacific/Nauru')::date - 1 WHERE id = $1", [assignment]);
+    assert.equal((await permissionsOf(nominee)).hr_leave_approve, undefined);
   });
 });

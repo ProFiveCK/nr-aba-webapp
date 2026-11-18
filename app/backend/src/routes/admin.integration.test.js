@@ -157,7 +157,7 @@ describe('account administration routes', { skip: skipWithoutDatabase }, () => {
       BEGIN RAISE EXCEPTION 'refused by test'; END; $$ LANGUAGE plpgsql`);
     await pool.query('CREATE TRIGGER admin_test_refuse BEFORE INSERT ON reviewer_capabilities FOR EACH ROW EXECUTE FUNCTION admin_test_refuse()');
     try {
-      const failed = await edit(admin, id, { display_name: 'Should Not Stick', capabilities: ['hr_access', 'hr_leave_apply', 'hr_report_read'] });
+      const failed = await edit(admin, id, { display_name: 'Should Not Stick', capabilities: ['hr_access', 'hr_leave_apply', 'aba_access'] });
       assert.equal(failed.status, 500);
     } finally {
       await pool.query('DROP TRIGGER IF EXISTS admin_test_refuse ON reviewer_capabilities');

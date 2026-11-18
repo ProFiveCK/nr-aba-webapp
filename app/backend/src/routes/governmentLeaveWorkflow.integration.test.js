@@ -2,7 +2,7 @@ import {describe,test,before,after,beforeEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {writeFile} from 'node:fs/promises';
-import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase,grantAccess} from '../test-support/database.js';
+import {connectTestDatabase,resetLeaveTables,skipWithoutDatabase,grantAccess,nominateApprover} from '../test-support/database.js';
 import {DEFAULT_RULES} from '../lib/governmentLeaveRules.js';
 
 // Only a local, deliberately unreachable SMTP server; notification tests
@@ -32,7 +32,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  // how far away November 2026 happens to be when the suite is executed.
  beforeEach(async()=>{
   await resetLeaveTables(pool);await pool.query('TRUNCATE hr_gov_policy_versions,hr_gov_calendars,hr_gov_pattern_approvals CASCADE');
-  hr=await account({hr_admin:true,hr_access:true,hr_report_read:true});certifier=await account({hr_admin:true,hr_access:true});owner=await account({hr_access:true,hr_leave_apply:true},'employee');
+  hr=await account({hr_admin:true,hr_access:true});certifier=await account({hr_admin:true,hr_access:true});owner=await account({hr_access:true,hr_leave_apply:true},'employee');
   department=(await pool.query("INSERT INTO hr_departments(name) VALUES('Synthetic Government Workflow') RETURNING *")).rows[0];division=(await pool.query("INSERT INTO hr_divisions(name,department_id) VALUES('Synthetic Division',$1) RETURNING *",[department.id])).rows[0];
   employee=(await pool.query("INSERT INTO hr_employees(display_name,reviewer_id,department_id,division_id,department_code,division_code,leave_policy_regime) VALUES('Synthetic Government Applicant',$1,$2,$3,'Synthetic Government Workflow','Synthetic Division','government') RETURNING *",[owner.id,department.id,division.id])).rows[0];
   const pattern=(await pool.query("INSERT INTO hr_work_patterns(name,working_weekdays,hours_per_day) VALUES($1,ARRAY[1,2,3,4,5],7) RETURNING *",[`Synthetic Workflow Pattern ${randomUUID()}`])).rows[0];
@@ -234,9 +234,10 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   assert.equal(delivery.messages[0].to,officers.department.account.email);
  });
  test('revoked approval authority suppresses an unsent approval request',async()=>{
-  const r=await submit();await pool.query("DELETE FROM reviewer_capabilities WHERE reviewer_id=$1 AND capability='hr_leave_approve'",[officers.division.account.id]);
+  // Approval authority is the nomination in Leave settings; closing it withdraws it.
+  const r=await submit();await pool.query("UPDATE hr_approval_assignments SET effective_to=(NOW() AT TIME ZONE 'Pacific/Nauru')::date-1 WHERE approver_employee_id=$1",[officers.division.employee.id]);
   const delivery=await notificationDelivery();assert.equal(delivery.messages.length,0);assert.equal(delivery.result.skipped,1);
-  assert.match((await notificationQueue(r.id))[0].last_error,/capability/);
+  assert.match((await notificationQueue(r.id))[0].last_error,/office assignment changed/);
  });
  test('queue entries roll back with an application transaction and concurrent workers do not send twice',async()=>{
   const data=application(),client=await pool.connect();
@@ -275,7 +276,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   assert.equal((await call(path+'&search=Recorded%20explanation',null,hr)).body.total,0);
   assert.equal((await call(path+'&search=%25',null,hr)).body.total,0);
   assert.equal((await call('/requests?mode=mine&status=all&search='+recorded.id)).body.total,0);
-  const outsider=await account({hr_access:true,hr_leave_approve:true});
+  const outsider=await account({hr_access:true});await nominateApprover(pool,outsider.id);
   assert.equal((await call('/requests?mode=mine&status=all&search='+first.id,null,outsider)).body.total,0);
   assert.equal((await call(path+'&search='+first.id,null,outsider)).body.total,0);
   assert.equal((await call(path+'&search='+('x'.repeat(101)),null,hr)).status,422);
@@ -476,7 +477,8 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  });
  test('one division level selects each division nominee and grants once without a HoD stage',async()=>{
   const otherDivision=(await pool.query("INSERT INTO hr_divisions(name,department_id) VALUES('Synthetic second division',$1) RETURNING *",[department.id])).rows[0];
-  const otherAccount=await account({hr_access:true,hr_leave_approve:true});
+  // Its division nomination below is what makes it an approver.
+  const otherAccount=await account({hr_access:true});
   const otherEmployee=(await pool.query("INSERT INTO hr_employees(display_name,reviewer_id,department_id,division_id) VALUES('Synthetic second division approver',$1,$2,$3) RETURNING *",[otherAccount.id,department.id,otherDivision.id])).rows[0];
   await pool.query("INSERT INTO hr_approval_assignments(level,department_id,division_id,approver_employee_id,effective_from,reason) VALUES('division',$1,$2,$3,'2026-01-01',$4)",[department.id,otherDivision.id,otherEmployee.id,reason]);
   await customRoute([{level:'division',label:'Divisional Chief'}]);
@@ -571,11 +573,11 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  test('placement transfer, revoked capability and calendar successor cannot silently change a pending grant',async()=>{
   const r=await submit();const old=await l.loadContext(pool,employee.id),calendar=old.calendars[0];await l.createCalendar(pool,{user:user(hr),actor:hr,data:{label:'Corrected synthetic calendar',effective_from:calendar.effective_from,effective_to:calendar.effective_to,holidays:[{date:'2026-11-02',name:'Synthetic added holiday'}],supersedes_id:calendar.id,source_reference:'Synthetic corrected gazette',reason}});
   await assert.rejects(decide(r.id),/no chargeable|calculation changed/);await w.cancelRequest(pool,{user:user(hr),actor:hr,id:r.id,reason});
-  const second=await submit(application('special','2026-11-03'));await pool.query("DELETE FROM reviewer_capabilities WHERE reviewer_id=$1 AND capability='hr_leave_approve'",[officers.division.account.id]);await assert.rejects(decide(second.id),/capability/);
-  await grantAccess(pool,officers.division.account.id,{hr_leave_approve:true});await pool.query('UPDATE hr_employees SET division_id=NULL WHERE id=$1',[employee.id]);await assert.rejects(decide(second.id),/Placement changed/);await assert.rejects(w.requestView(pool,user(officers.division.account),second.id),/Request not found/);assert.equal((await call('/requests?mode=queue',null,officers.division.account)).body.total,0);
+  const second=await submit(application('special','2026-11-03'));await pool.query("UPDATE hr_approval_assignments SET effective_to=(NOW() AT TIME ZONE 'Pacific/Nauru')::date-1 WHERE approver_employee_id=$1",[officers.division.employee.id]);await assert.rejects(decide(second.id),/office assignment changed/);
+  await pool.query('UPDATE hr_approval_assignments SET effective_to=NULL WHERE approver_employee_id=$1',[officers.division.employee.id]);await pool.query('UPDATE hr_employees SET division_id=NULL WHERE id=$1',[employee.id]);await assert.rejects(decide(second.id),/Placement changed/);await assert.rejects(w.requestView(pool,user(officers.division.account),second.id),/Request not found/);assert.equal((await call('/requests?mode=queue',null,officers.division.account)).body.total,0);
  });
  test('self-approval uses a signed substitute but Chief Secretary cannot be replaced with HOD delegation',async()=>{
-  await pool.query('UPDATE hr_approval_assignments SET approver_employee_id=$1 WHERE level=\'division\'',[employee.id]);await grantAccess(pool,owner.id,{hr_leave_approve:true});owner.permissions.hr_leave_approve=true;
+  await pool.query('UPDATE hr_approval_assignments SET approver_employee_id=$1 WHERE level=\'division\'',[employee.id]);owner.permissions.hr_leave_approve=true;
   const r=await submit(),view=await w.requestView(pool,user(hr),r.id);assert.match(view.stages[0].issue,/Self-approval/);await assert.rejects(decide(r.id,{},owner),/Self-approval/);
   await w.rebindStage(pool,{user:user(hr),actor:hr,id:r.id,stageId:view.stages[0].id,data:{substitute_employee_id:officers.department.employee.id,source_reference:'Signed case-specific authorised division substitute',reason}});await decide(r.id,{},officers.department.account);
   await assert.rejects(w.rebindStage(pool,{user:user(hr),actor:hr,id:r.id,stageId:view.stages.at(-1).id,data:{substitute_employee_id:officers.department.employee.id,source_reference:'Attempted unsupported HOD delegation',reason}}),/Chief Secretary must/);
@@ -589,7 +591,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
  });
  test('HTTP isolation: private reasons/files withheld from ordinary approvers, no clinical PDF bypass, paging and no client charge injection',async()=>{
   const data=application('medical','2026-11-02'),r=await submit(data);
-  const outsider=await account({hr_access:true,hr_leave_approve:true,hr_report_read:true});assert.equal((await call(`/requests/${r.id}`,null,outsider)).status,404);
+  const outsider=await account({hr_access:true});await nominateApprover(pool,outsider.id);assert.equal((await call(`/requests/${r.id}`,null,outsider)).status,404);
   const approver=await call(`/requests/${r.id}`,null,officers.division.account);assert.equal(approver.status,200);assert.equal(approver.body.reason,null);assert.deepEqual(approver.body.documents,[]);assert.equal(approver.body.medical_review,undefined);assert.equal(approver.body.review_summary,undefined);assert.equal(approver.cache,'no-store');
   const centralList=await call('/requests?mode=all&status=pending',null,hr);assert.equal(centralList.status,200);assert.equal(centralList.body.total,1);assert.equal(centralList.body.requests[0].id,r.id);
   assert.equal((await call(`/requests/${r.id}/documents/${randomUUID()}`,null,officers.division.account)).status,404);
@@ -807,7 +809,7 @@ assert.equal((await call(`/requests/${r.id}/pdf`,null,officers.chief_secretary.a
   assert.equal(withMc.body.medical_review.periods[0].tracking.uncertified.remaining_occasions,2);
   assert.equal(withMc.body.medical_review.periods[0].request_occasion_included,false);
   assert.equal((await call('/requests?mode=queue&status=pending',null,hr)).body.requests.find(r=>r.id===certified.id).medical_mode,'certificate');
-  const outsider=await account({hr_access:true,hr_report_read:true,hr_leave_approve:true});assert.equal((await call(`/requests/${a.id}`,null,outsider)).status,404);
+  const outsider=await account({hr_access:true});await nominateApprover(pool,outsider.id);assert.equal((await call(`/requests/${a.id}`,null,outsider)).status,404);
  });
  test('due runner requires published enabled plans, prorates the cutover, and records a system audit without duplicate postings',async()=>{
   const p=await jobs.prepareJobPlan(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{code:'recreation',first_post_end:'2026-10-07',payroll_anchor:'2026-10-07',temporary_start:'appointment',source_reference:'Signed synthetic payroll anchor and proration',reason}});

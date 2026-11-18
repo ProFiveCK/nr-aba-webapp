@@ -41,8 +41,8 @@ export async function employeeGovernmentRoute(client, employee) {
 
 /** Read-only employee context. No identity provisioning, balance seeding or conversion. */
 export async function employeeLeaveArrangements(client, { user, employeeId }) {
-  if (!isCentralHr(user) && user?.permissions?.hr_staff_manage !== true) throw new ServiceError(403, 'HR employee management access is required.');
-  if (!(await canAccessEmployee(client, user, employeeId, 'hr_staff_manage'))) throw new ServiceError(404, 'Employee not found.');
+  if (!isCentralHr(user) && user?.permissions?.hr_officer !== true) throw new ServiceError(403, 'HR employee management access is required.');
+  if (!(await canAccessEmployee(client, user, employeeId, 'hr_officer'))) throw new ServiceError(404, 'Employee not found.');
   const { rows: [employee] } = await client.query(`SELECT e.id,e.leave_policy_regime,e.leave_entitled,e.status,e.reviewer_id,e.department_id,e.division_id,e.department_code,e.division_code,
     e.manager_id,m.display_name AS manager_name,r.account_type,r.status AS account_status,r.onboarding_state,
     e.ineligible_reason,e.study_leave_start,e.study_leave_end,e.eligibility_note,e.join_date
@@ -50,7 +50,7 @@ export async function employeeLeaveArrangements(client, { user, employeeId }) {
     FROM hr_employees e LEFT JOIN hr_employees m ON m.id=e.manager_id LEFT JOIN reviewers r ON r.id=e.reviewer_id WHERE e.id=$1`, [employeeId]);
   if (!employee) throw new ServiceError(404, 'Employee not found.');
   const asOf = today();
-  const managerVisible = !employee.manager_id || await canAccessEmployee(client, user, employee.manager_id, 'hr_staff_manage');
+  const managerVisible = !employee.manager_id || await canAccessEmployee(client, user, employee.manager_id, 'hr_officer');
   const result = { employee_id: employeeId, regime: employee.leave_policy_regime, account_type: employee.account_type,
     as_of: asOf, historical_preserved: true, account_status: employee.account_status, onboarding_state: employee.onboarding_state,
     reporting_manager: { employee_id: managerVisible ? employee.manager_id : null,

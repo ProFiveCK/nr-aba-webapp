@@ -212,7 +212,7 @@ describe('employee directory and enterprise approval foundation', { skip: skipWi
       const employee = await createEmployee(pool, { name: level });
       const login = await account({ type: 'employee' });
       await verifyLink(employee, login);
-      await pool.query("INSERT INTO reviewer_capabilities (reviewer_id, capability) VALUES ($1,'hr_leave_approve')", [login.id]);
+      // The nomination below is all an approver needs; there is no approval tick.
       const assignment = { level, department_id: level === 'chief_secretary' ? null : department.id,
         division_id: level === 'division' ? division.id : null, approver_employee_id: employee.id, effective_from: '2026-01-01' };
       const created = await directory.assignLeaveApprover(pool, { assignment, actor, reason });
@@ -226,20 +226,21 @@ describe('employee directory and enterprise approval foundation', { skip: skipWi
     await directory.setEmployeeOrganisation(pool, { employeeId: otherApplicant.id, departmentId: other.department.id, divisionId: other.division.id, actor, reason });
     assert.equal((await directory.previewApprovalChain(pool, otherApplicant.id, '2026-10-06')).stages[1].assignment_id, null);
     await assert.rejects(directory.assignLeaveApprover(pool, { assignment: heads[1].assignment, actor, reason }), { status: 409 });
-    await pool.query("DELETE FROM reviewer_capabilities WHERE reviewer_id = $1 AND capability = 'hr_leave_approve'", [heads[1].login.id]);
-    assert.match((await directory.previewApprovalChain(pool, applicant.id, '2026-10-06')).stages[1].issue, /explicit/);
+    await pool.query("UPDATE reviewers SET status = 'inactive' WHERE id = $1", [heads[1].login.id]);
+    assert.match((await directory.previewApprovalChain(pool, applicant.id, '2026-10-06')).stages[1].issue, /inactive/);
+    await pool.query("UPDATE reviewers SET status = 'active' WHERE id = $1", [heads[1].login.id]);
     await directory.closeApprovalAssignment(pool, { assignmentId: heads[1].created.id, endDate: '2026-10-05', actor, reason });
-    const selfLogin = await account({ permissions: { hr_leave_approve: true } });
+    const selfLogin = await account({});
     await verifyLink(applicant, selfLogin);
     await directory.assignLeaveApprover(pool, { assignment: { ...heads[1].assignment, approver_employee_id: applicant.id, effective_from: '2026-10-06' }, actor, reason });
     assert.match((await directory.previewApprovalChain(pool, applicant.id, '2026-10-06')).stages[1].issue, /Self-approval/);
   });
 
-  test('unscoped directory is empty and identity management is central HR only and does not trust self-supplied account IDs', async () => {
+  test('an old staff tick opens no directory, and identity management is central HR only and does not trust self-supplied account IDs', async () => {
     const employee = await createEmployee(pool, { name: 'Employee' });
     const staff = await account({ permissions: { hr_staff_manage: true, hr_access: true } });
     const token = await tokenFor(staff);
-    const empty=await call(token, '/api/hr/directory');assert.equal(empty.status,200);assert.equal(empty.body.total,0);
+    assert.equal((await call(token, '/api/hr/directory')).status, 403, 'HR officers come from Leave settings, not ticks');
     assert.equal((await call(token, `/api/hr/employees/${employee.id}`, { reviewer_id: staff.id }, 'PUT')).status, 403);
     const hr = await account({ permissions: { hr_admin: true } });
     const hrToken = await tokenFor(hr);

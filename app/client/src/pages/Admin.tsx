@@ -652,7 +652,12 @@ function UserManagementPanel() {
         const account = form.id ? accounts.find((a) => a.id === form.id) : undefined;
         if (!account) return [];
         const explicit = new Set(account.explicit_capabilities ?? []);
-        const labels = new Map(capabilityGroups.flatMap((g) => g.capabilities.map((c) => [c.key, c.label] as const)));
+        const labels = new Map<string, string>([
+            ...capabilityGroups.flatMap((g) => g.capabilities.map((c) => [c.key, c.label] as const)),
+            // Worked out from Leave settings, never ticked.
+            ['hr_officer', 'HR officer (Leave settings → HR officers)'],
+            ['hr_leave_approve', 'Leave approver (Leave settings → Organisation & approvers)'],
+        ]);
         return (account.capabilities ?? []).filter((key) => !explicit.has(key) && labels.has(key)).map((key) => labels.get(key) as string);
     }, [form.id, accounts, capabilityGroups]);
 
@@ -1236,7 +1241,8 @@ function UserManagementPanel() {
                             <div className="space-y-3">
                                 <p className="text-xs text-gray-500">
                                     Tick everything this person does, in any combination. Choosing a job above fills these in.
-                                    These ticks are all of their access: a role adds nothing on top.
+                                    These ticks are all of their access: a role adds nothing on top. Leave approvers and
+                                    departmental HR officers are not ticks: they are set in the Leave app's settings.
                                 </p>
                                 {form.role === 'admin' && (
                                     <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
@@ -1276,8 +1282,8 @@ function UserManagementPanel() {
                                 </div>
                                 {scopedOnly.length > 0 && (
                                     <p className="text-xs text-gray-600">
-                                        Also held through Leave HR access assignments: {scopedOnly.join(', ')}. Change
-                                        those in the Leave app's HR access settings.
+                                        Also held through Leave settings: {scopedOnly.join(', ')}. Change those in
+                                        the Leave app's settings, not here.
                                     </p>
                                 )}
                                 {!capabilityGroups.length && (

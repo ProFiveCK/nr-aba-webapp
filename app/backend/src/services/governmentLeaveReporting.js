@@ -9,7 +9,7 @@ export async function governmentActivity(pool,{user,from,to,page=1}){
  dayNumber(from);dayNumber(to);if(to<from)throw new ServiceError(400,'Report dates are reversed.');
  return withTransaction(pool,async client=>{
   await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-  const scope=employeeScopeSql(user,'hr_report_read','$1','e');
+  const scope=employeeScopeSql(user,'hr_officer','$1','e');
   const params=[user.id,from,to];
   const common=`FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id WHERE ${scope}`;
   const summary=(await client.query(`SELECT count(*) FILTER(WHERE r.start_date<=$3 AND r.end_date>=$2)::int AS total,count(*) FILTER(WHERE r.status='pending')::int AS pending,

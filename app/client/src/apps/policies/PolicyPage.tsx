@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Download, Pencil, Printer } from 'lucide-react';
 import { apiClient } from '../../lib/api';
 import { formatDate, formatDateTime, todayIsoDate } from '../../lib/date';
@@ -31,6 +31,9 @@ export function PolicyPage({ meta, onMetaChanged }: { meta: PolicyMeta; onMetaCh
     const { id = '', versionId } = useParams();
     const [params, setParams] = useSearchParams();
     const navigate = useNavigate();
+    // Back to the manual, section or search the reader came from, when they came from the library.
+    const from = (useLocation().state as { from?: string } | null)?.from;
+    const backTo = from?.startsWith('/policies') ? from : '/policies';
     const { confirm, prompt } = useConfirm();
     const { addToast } = useToast();
     const [policy, setPolicy] = useState<PolicyDocument | null>(null);
@@ -55,7 +58,7 @@ export function PolicyPage({ meta, onMetaChanged }: { meta: PolicyMeta; onMetaCh
     if (error) {
         return (
             <div className="space-y-4">
-                <Link to="/policies" className="inline-flex items-center gap-1.5 font-medium text-brand hover:underline"><ArrowLeft size={16} aria-hidden="true" />All documents</Link>
+                <Link to={backTo} className="inline-flex items-center gap-1.5 font-medium text-brand hover:underline"><ArrowLeft size={16} aria-hidden="true" />Back to the library</Link>
                 <p role="alert" className="rounded-lg bg-rose-50 p-4 text-rose-700">{error}</p>
             </div>
         );
@@ -98,7 +101,7 @@ export function PolicyPage({ meta, onMetaChanged }: { meta: PolicyMeta; onMetaCh
 
     return (
         <div className="policy-print space-y-4">
-            <Link to="/policies" className="inline-flex items-center gap-1.5 font-medium text-brand hover:underline print:hidden"><ArrowLeft size={16} aria-hidden="true" />All documents</Link>
+            <Link to={backTo} className="inline-flex items-center gap-1.5 font-medium text-brand hover:underline print:hidden"><ArrowLeft size={16} aria-hidden="true" />Back to the library</Link>
 
             {retired && (
                 <Notice tone="gray">
@@ -131,9 +134,23 @@ export function PolicyPage({ meta, onMetaChanged }: { meta: PolicyMeta; onMetaCh
                     <article>
                         <header className="mb-6 border-b border-gray-200 pb-4">
                             <div className="flex flex-wrap items-start justify-between gap-3">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    {[policy.code, typeLabel(meta, policy.doc_type), policy.category].filter(Boolean).join(' · ')}
-                                </p>
+                                <div>
+                                    {!!policy.categories.length && (
+                                        <p className="mb-2 flex flex-wrap gap-1.5 text-xs font-medium text-gray-600">
+                                            {policy.categories.map((tag) => (
+                                                <span key={tag.id} className="rounded-full bg-gray-100 px-2.5 py-0.5 print:bg-transparent print:px-0">
+                                                    {tag.parent_id && tag.parent_name && (
+                                                        <><Link to={`/policies?category=${tag.parent_id}`} className="hover:text-brand hover:underline">{tag.parent_name}</Link> › </>
+                                                    )}
+                                                    <Link to={`/policies?category=${tag.id}`} className="hover:text-brand hover:underline">{tag.name}</Link>
+                                                </span>
+                                            ))}
+                                        </p>
+                                    )}
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                        {policy.code} · {typeLabel(meta, policy.doc_type)}
+                                    </p>
+                                </div>
                                 {shown && (
                                     <button type="button" onClick={() => window.print()} className="toolbar-button max-sm:hidden print:hidden">
                                         <Printer size={15} aria-hidden="true" />Print

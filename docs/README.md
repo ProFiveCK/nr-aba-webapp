@@ -29,8 +29,10 @@ The **Policies & Procedures** app is the library of policies, procedures, guidel
 
 Two ticks on the account page, under **Policies & Procedures**, cover the work behind it:
 
-- **Write and edit drafts**: register a document (code, title, kind, category, owning department, review date), write it in the editor or bring it in with **Import from Word** (.docx; headings, lists, tables, bold and pictures come across, fonts and colours do not), and add pictures and files.
-- **Approve and publish**: read a draft and put it into force, saying what it changes and when it is next due for review; withdraw a document, or restore one.
+- **Write and edit drafts**: register a document (code, title, kind, categories, owning department, optional review date), write it in the editor or bring it in with **Import from Word** (.docx; headings, lists, tables, bold and pictures come across, fonts and colours do not), and add pictures and files.
+- **Approve and publish**: put a draft into force (the version number is given automatically; a note on what changed and a review date are optional), withdraw or restore a document, and look after the categories.
+
+The library is organised like a set of manuals. Publishers keep the list under **Manage categories**: manuals (for example Finance Manual) holding sections (Payments, Procurement), in the order they set. Editors tick one or more of them for each document, so nobody types a category and the list stays tidy. Readers browse manuals and sections down the side of the library; a manual lists its documents section by section, like its table of contents. A category still holding documents or sections cannot be removed; rename or move it instead.
 
 Publishing never overwrites: the version it replaces is kept and readers can open it from the history. A document that was ever published can be withdrawn but not deleted. Each save names the draft revision it started from, so two editors cannot overwrite each other, and nothing is published that changed after the publisher opened it.
 

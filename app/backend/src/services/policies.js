@@ -6,8 +6,9 @@
  * - anyone signed in reads published documents and their earlier versions;
  * - "Write and edit drafts" (policy_edit) registers documents, writes drafts,
  *   adds files and imports Word documents;
- * - "Approve and publish" (policy_publish) puts a draft into force, and
- *   withdraws or restores a document.
+ * - "Approve and publish" (policy_publish) puts a draft into force,
+ *   withdraws or restores a document, and maintains the categories (manuals
+ *   and their sections) that documents are tagged with.
  * Either tick also shows drafts and withdrawn documents, since both kinds of
  * work need to see them.
  *
@@ -55,44 +56,91 @@ function fileView(row) {
 
 // ===== Reading =====
 
-/** The lists the library's filters and the register form choose from. */
+// What "in the library" means for a document, as SQL on `d`: readers see
+// what is in force; editors and publishers also see what is not yet
+// published. Withdrawn documents have a view of their own.
+const inLibrary = (canManage) => (canManage
+  ? 'd.retired_at IS NULL'
+  : `d.retired_at IS NULL AND EXISTS (
+      SELECT 1 FROM policy_versions p WHERE p.document_id = d.id AND p.status = 'published')`);
+
+/** The categories tagged on a document, as JSON, for a SELECT over `d`. */
+const DOCUMENT_CATEGORIES = `COALESCE((
+  SELECT json_agg(json_build_object('id', c.id, 'name', c.name, 'parent_id', c.parent_id, 'parent_name', pc.name)
+                  ORDER BY pc.sort_order NULLS FIRST, lower(pc.name) NULLS FIRST, c.sort_order, lower(c.name))
+    FROM policy_document_categories dc
+    JOIN policy_categories c ON c.id = dc.category_id
+    LEFT JOIN policy_categories pc ON pc.id = c.parent_id
+   WHERE dc.document_id = d.id), '[]'::json)`;
+
+/**
+ * The library's structure and the lists its filters and forms choose from.
+ * Each category carries how many documents in the library it holds, counting
+ * a manual's sections; readers are not shown categories with nothing in them.
+ */
 export async function policyMeta(user) {
   const { canEdit, canPublish, canManage } = policyRights(user);
-  // Readers are offered only what narrows the documents they can see.
-  const visible = canManage ? 'TRUE' : `d.retired_at IS NULL AND EXISTS (
-    SELECT 1 FROM policy_versions p WHERE p.document_id = d.id AND p.status = 'published')`;
-  const [{ rows: departments }, { rows: categories }] = await Promise.all([
+  const visible = inLibrary(canManage);
+  const [{ rows: departments }, { rows: categories }, { rows: [counts] }] = await Promise.all([
     canManage
       ? pool.query('SELECT id, name FROM hr_departments ORDER BY lower(name)')
       : pool.query(`SELECT DISTINCT dep.id, dep.name FROM policy_documents d
                       JOIN hr_departments dep ON dep.id = d.department_id
                      WHERE ${visible} ORDER BY dep.name`),
-    pool.query(`SELECT DISTINCT d.category FROM policy_documents d
-                 WHERE d.category IS NOT NULL AND ${visible} ORDER BY d.category`),
+    pool.query(`
+      SELECT c.id, c.parent_id, c.name, c.sort_order,
+             (SELECT count(DISTINCT dc.document_id) FROM policy_document_categories dc
+                JOIN policy_categories t ON t.id = dc.category_id
+                JOIN policy_documents d ON d.id = dc.document_id
+               WHERE (t.id = c.id OR t.parent_id = c.id) AND ${visible})::int AS document_count
+        FROM policy_categories c
+       ORDER BY c.sort_order, lower(c.name)`),
+    pool.query(`
+      SELECT count(*)::int AS total,
+             count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM policy_document_categories dc WHERE dc.document_id = d.id))::int AS uncategorised
+        FROM policy_documents d WHERE ${visible}`),
   ]);
   return {
     types: POLICY_TYPES,
     departments,
-    categories: categories.map((row) => row.category),
+    document_count: counts.total,
+    uncategorised_count: counts.uncategorised,
+    categories: canManage ? categories : categories.filter((c) => c.document_count > 0),
     can_edit: canEdit,
     can_publish: canPublish,
   };
 }
 
+/** The views editors and publishers have besides a category, as SQL. */
+const STATES = {
+  draft: 'dr.id IS NOT NULL AND d.retired_at IS NULL',
+  unpublished: 'p.id IS NULL AND d.retired_at IS NULL',
+  overdue: `d.review_due < ${TODAY} AND d.retired_at IS NULL`,
+  withdrawn: 'd.retired_at IS NOT NULL',
+};
+
 /**
- * The library, narrowed by any of: words to search for, kind, category and
- * owning department. A search looks through the code, title, category and
- * the published text, and returns a passage from the text around the match,
- * with the matched words between ⟦ and ⟧.
+ * The library, narrowed by any of: a category (a manual includes its
+ * sections; "none" is the documents in no category), words to search for,
+ * kind and owning department, and for
+ * editors and publishers one of the STATES views. A search looks through the
+ * code, title, category names and the published text, and returns a passage
+ * from the text around the match, with the matched words between ⟦ and ⟧.
  */
-export async function listPolicies(user, { q, type, category, department_id: departmentId } = {}) {
+export async function listPolicies(user, { q, type, category, department_id: departmentId, state } = {}) {
   const { canManage } = policyRights(user);
   const params = [];
-  const where = [];
   const add = (value) => { params.push(value); return `$${params.length}`; };
-  if (!canManage) where.push('d.retired_at IS NULL', 'p.id IS NOT NULL');
+  const where = [canManage && Object.hasOwn(STATES, state) ? STATES[state] : inLibrary(canManage)];
   if (type) where.push(`d.doc_type = ${add(String(type))}`);
-  if (category) where.push(`d.category = ${add(String(category))}`);
+  if (category === 'none') {
+    where.push('NOT EXISTS (SELECT 1 FROM policy_document_categories dc WHERE dc.document_id = d.id)');
+  } else if (category) {
+    if (!UUID.test(String(category))) throw badRequest('Choose a category from the list.');
+    const id = add(String(category));
+    where.push(`EXISTS (SELECT 1 FROM policy_document_categories dc JOIN policy_categories c ON c.id = dc.category_id
+                         WHERE dc.document_id = d.id AND (c.id = ${id} OR c.parent_id = ${id}))`);
+  }
   if (departmentId) {
     if (!UUID.test(String(departmentId))) throw badRequest('Choose a department from the list.');
     where.push(`d.department_id = ${add(String(departmentId))}`);
@@ -104,7 +152,9 @@ export async function listPolicies(user, { q, type, category, department_id: dep
   if (search) {
     const words = `websearch_to_tsquery('english', ${add(search)})`;
     const like = add(`%${search.replace(/[\\%_]/g, '\\$&')}%`);
-    const text = `to_tsvector('english', d.code || ' ' || d.title || ' ' || coalesce(d.category, '') || ' ' || coalesce(p.body_text, ''))`;
+    const names = `(SELECT string_agg(c.name, ' ') FROM policy_document_categories dc
+                      JOIN policy_categories c ON c.id = dc.category_id WHERE dc.document_id = d.id)`;
+    const text = `to_tsvector('english', d.code || ' ' || d.title || ' ' || coalesce(${names}, '') || ' ' || coalesce(p.body_text, ''))`;
     where.push(`(${text} @@ ${words} OR d.title ILIKE ${like} OR d.code ILIKE ${like})`);
     rank = `ts_rank(${text}, ${words})`;
     snippet = `CASE WHEN coalesce(p.body_text, '') <> '' THEN ts_headline('english', p.body_text, ${words},
@@ -112,17 +162,18 @@ export async function listPolicies(user, { q, type, category, department_id: dep
   }
 
   const { rows } = await pool.query(
-    `SELECT d.id, d.code, d.title, d.doc_type, d.category, d.department_id, dep.name AS department_name,
+    `SELECT d.id, d.code, d.title, d.doc_type, d.department_id, dep.name AS department_name,
             d.review_due, d.review_due < ${TODAY} AS review_overdue, d.retired_at,
             p.version_no AS published_version_no, p.published_at,
             ${canManage ? 'dr.version_no AS draft_version_no, dr.updated_at AS draft_updated_at,' : ''}
+            ${DOCUMENT_CATEGORIES} AS categories,
             ${rank} AS rank, ${snippet} AS snippet
        FROM policy_documents d
        LEFT JOIN policy_versions p ON p.document_id = d.id AND p.status = 'published'
        LEFT JOIN policy_versions dr ON dr.document_id = d.id AND dr.status = 'draft'
        LEFT JOIN hr_departments dep ON dep.id = d.department_id
-      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-      ORDER BY ${search ? 'rank DESC NULLS LAST, ' : ''}lower(d.title)`,
+      WHERE ${where.join(' AND ')}
+      ORDER BY ${search ? 'rank DESC NULLS LAST, ' : ''}lower(d.code)`,
     params,
   );
   return rows.map(({ rank: _rank, ...row }) => row);
@@ -132,7 +183,7 @@ async function loadDocument(db, id, { lock = false } = {}) {
   if (!UUID.test(String(id))) return null;
   const { rows } = await db.query(
     `SELECT d.*, dep.name AS department_name, d.review_due < ${TODAY} AS review_overdue,
-            rb.display_name AS retired_by_name,
+            rb.display_name AS retired_by_name, ${DOCUMENT_CATEGORIES} AS categories,
             EXISTS (SELECT 1 FROM policy_versions v WHERE v.document_id = d.id AND v.status = 'published') AS is_published,
             EXISTS (SELECT 1 FROM policy_versions v WHERE v.document_id = d.id AND v.status <> 'draft') AS was_published
        FROM policy_documents d
@@ -226,18 +277,21 @@ export async function readPolicyFile(user, fileId) {
 
 // ===== The register =====
 
-/** A document's register entry from a form, checked and tidied. */
+/**
+ * A document's register entry from a form, checked and tidied. Categories
+ * come as `category_ids`, picked from the managed list; `categories` returns
+ * their names too, for the audit log.
+ */
 async function registerFields(db, input) {
   const code = String(input.code ?? '').trim().replace(/\s+/g, ' ');
   const title = String(input.title ?? '').trim().replace(/\s+/g, ' ');
   const docType = String(input.doc_type ?? '');
-  const category = String(input.category ?? '').trim().replace(/\s+/g, ' ') || null;
   const departmentId = input.department_id || null;
   const reviewDue = input.review_due || null;
+  const categoryIds = [...new Set(Array.isArray(input.category_ids) ? input.category_ids.map(String) : [])];
   if (!code || code.length > 40) throw badRequest('Give the document a code of up to 40 characters, such as FIN-SOP-001.');
   if (!title || title.length > 200) throw badRequest('Give the document a title of up to 200 characters.');
   if (!TYPE_KEYS.includes(docType)) throw badRequest(`Choose what kind of document it is: ${POLICY_TYPES.map((t) => t.label).join(', ')}.`);
-  if (category && category.length > 80) throw badRequest('Keep the category to 80 characters.');
   if (reviewDue && !DATE.test(reviewDue)) throw badRequest('Give the review date as a date.');
   if (departmentId) {
     const { rows } = UUID.test(String(departmentId))
@@ -245,7 +299,23 @@ async function registerFields(db, input) {
       : { rows: [] };
     if (!rows.length) throw badRequest('Choose the owning department from the list.');
   }
-  return { code, title, doc_type: docType, category, department_id: departmentId, review_due: reviewDue };
+  if (categoryIds.length > 10) throw badRequest('Tag a document with at most ten categories.');
+  const { rows: picked } = categoryIds.every((c) => UUID.test(c))
+    ? await db.query('SELECT id, name FROM policy_categories WHERE id = ANY($1::uuid[]) ORDER BY lower(name)', [categoryIds])
+    : { rows: [] };
+  if (picked.length !== categoryIds.length) throw badRequest('Choose categories from the list. One you chose may have just been removed.');
+  return {
+    code, title, doc_type: docType, department_id: departmentId, review_due: reviewDue,
+    category_ids: categoryIds, categories: picked.map((c) => c.name),
+  };
+}
+
+/** Sets the categories a document is tagged with. */
+async function tagCategories(db, documentId, categoryIds) {
+  await db.query('DELETE FROM policy_document_categories WHERE document_id = $1 AND NOT (category_id = ANY($2::uuid[]))', [documentId, categoryIds]);
+  await db.query(
+    `INSERT INTO policy_document_categories (document_id, category_id) SELECT $1, unnest($2::uuid[])
+     ON CONFLICT DO NOTHING`, [documentId, categoryIds]);
 }
 
 async function refuseTakenCode(db, code, exceptId = null) {
@@ -262,10 +332,11 @@ export async function createPolicy(actor, input) {
     const fields = await registerFields(client, input);
     await refuseTakenCode(client, fields.code);
     const { rows: [document] } = await client.query(
-      `INSERT INTO policy_documents (code, title, doc_type, category, department_id, review_due, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [fields.code, fields.title, fields.doc_type, fields.category, fields.department_id, fields.review_due, actor.id],
+      `INSERT INTO policy_documents (code, title, doc_type, department_id, review_due, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [fields.code, fields.title, fields.doc_type, fields.department_id, fields.review_due, actor.id],
     );
+    await tagCategories(client, document.id, fields.category_ids);
     await client.query(
       `INSERT INTO policy_versions (document_id, version_no, status, created_by, updated_by)
        VALUES ($1, 1, 'draft', $2, $2)`,
@@ -285,11 +356,16 @@ export async function updatePolicyDetails(actor, id, input) {
     const fields = await registerFields(client, input);
     await refuseTakenCode(client, fields.code, id);
     await client.query(
-      `UPDATE policy_documents SET code = $2, title = $3, doc_type = $4, category = $5, department_id = $6,
-              review_due = $7, updated_at = NOW() WHERE id = $1`,
-      [id, fields.code, fields.title, fields.doc_type, fields.category, fields.department_id, fields.review_due],
+      `UPDATE policy_documents SET code = $2, title = $3, doc_type = $4, department_id = $5,
+              review_due = $6, updated_at = NOW() WHERE id = $1`,
+      [id, fields.code, fields.title, fields.doc_type, fields.department_id, fields.review_due],
     );
-    const kept = Object.fromEntries(Object.keys(fields).map((key) => [key, before[key]]));
+    await tagCategories(client, id, fields.category_ids);
+    const kept = {
+      ...Object.fromEntries(['code', 'title', 'doc_type', 'department_id', 'review_due'].map((key) => [key, before[key]])),
+      category_ids: before.categories.map((c) => c.id),
+      categories: before.categories.map((c) => c.name).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())),
+    };
     await recordAudit({ actor, action: 'policy.details_updated', entityType: 'policy_document', entityId: id, before: kept, after: fields, client });
   });
   return getPolicy(actor, id);
@@ -391,19 +467,21 @@ export async function discardDraft(actor, id, { revision = null } = {}) {
 }
 
 /**
- * Puts the draft into force. The version it replaces is kept as superseded.
- * `review_due`, when given, becomes the document's next review date.
+ * Puts the draft into force, as the next version number. The version it
+ * replaces is kept as superseded. A note on what changed is optional, and so
+ * is a review date: `review_due` sets or (as null) clears it, and leaving it
+ * out keeps the one the document has.
  */
-export async function publishDraft(actor, id, { revision = null, change_summary: changeSummary, review_due: reviewDue = null }) {
+export async function publishDraft(actor, id, { revision = null, change_summary: changeSummary, review_due: reviewDue }) {
   await withTransaction(pool, async (client) => {
-    await lockChangeable(client, id);
+    const document = await lockChangeable(client, id);
     const draft = await lockDraft(client, id);
     if (!draft) throw badRequest('There is no draft to publish.');
     if (revision !== draft.revision) throw conflict('The draft changed after you opened it. Reload and read it again before publishing.');
     if (!draft.body_text && !draft.file_ids.length) throw badRequest('The draft is empty. Write it before publishing.');
-    const summary = String(changeSummary ?? draft.change_summary ?? '').trim().slice(0, 500);
-    if (!summary) throw badRequest('Say briefly what this version changes, so readers of the history know.');
-    if (reviewDue && !DATE.test(String(reviewDue))) throw badRequest('Give the next review date as a date.');
+    const summary = String(changeSummary ?? draft.change_summary ?? '').trim().slice(0, 500) || null;
+    const nextReview = reviewDue === undefined ? document.review_due : reviewDue || null;
+    if (nextReview && !DATE.test(String(nextReview))) throw badRequest('Give the next review date as a date.');
 
     const { rows: replaced } = await client.query(
       `UPDATE policy_versions SET status = 'superseded', superseded_at = NOW()
@@ -413,14 +491,11 @@ export async function publishDraft(actor, id, { revision = null, change_summary:
         WHERE id = $1`,
       [draft.id, summary, actor.id],
     );
-    await client.query(
-      'UPDATE policy_documents SET review_due = COALESCE($2::date, review_due), updated_at = NOW() WHERE id = $1',
-      [id, reviewDue || null],
-    );
+    await client.query('UPDATE policy_documents SET review_due = $2, updated_at = NOW() WHERE id = $1', [id, nextReview]);
     await pruneUnusedFiles(client, id);
     await recordAudit({
       actor, action: 'policy.published', entityType: 'policy_document', entityId: id,
-      after: { version_no: draft.version_no, replaces: replaced[0]?.version_no ?? null, change_summary: summary, review_due: reviewDue || null },
+      after: { version_no: draft.version_no, replaces: replaced[0]?.version_no ?? null, change_summary: summary, review_due: nextReview },
       client,
     });
   });
@@ -508,4 +583,116 @@ export async function importWordDocument(actor, id, file) {
     console.warn(`[policies] Word import failed for ${file.file_name}: ${err.message}`);
     throw badRequest(`${file.file_name} could not be read as a Word document. Open it in Word, save it again as .docx, and try once more.`);
   }
+}
+
+// ===== Categories =====
+//
+// The library's structure: manuals (top level) holding sections, two levels
+// and no more. Publishers maintain it; editors tag documents from it.
+
+async function loadCategory(db, id, { lock = false } = {}) {
+  if (!UUID.test(String(id))) return null;
+  const { rows } = await db.query(
+    `SELECT c.*,
+            (SELECT count(*) FROM policy_categories s WHERE s.parent_id = c.id)::int AS section_count,
+            (SELECT count(*) FROM policy_document_categories dc WHERE dc.category_id = c.id)::int AS tagged_count
+       FROM policy_categories c WHERE c.id = $1 ${lock ? 'FOR UPDATE' : ''}`,
+    [id],
+  );
+  return rows[0] || null;
+}
+
+/** A category's name and place from a form, checked: a section's manual must itself be a manual. */
+async function categoryFields(db, input, self = null) {
+  const name = String(input.name ?? '').trim().replace(/\s+/g, ' ');
+  if (!name || name.length > 80) throw badRequest('Give the category a name of up to 80 characters.');
+  const parentId = input.parent_id || null;
+  if (parentId) {
+    const parent = await loadCategory(db, parentId);
+    if (!parent || parent.id === self?.id) throw badRequest('Choose the manual from the list.');
+    if (parent.parent_id) throw badRequest(`${parent.name} is itself a section. Sections go inside a manual, two levels at most.`);
+    if (self?.section_count) throw badRequest(`${self.name} has sections of its own, so it stays a manual. Move its sections first.`);
+  }
+  return { name, parent_id: parentId };
+}
+
+/** Runs a category write, turning a clash of names into something a person can act on. */
+async function uniqueName(name, work) {
+  try {
+    return await work();
+  } catch (err) {
+    if (err.code === '23505') throw conflict(`There is already a category called ${name} there.`);
+    throw err;
+  }
+}
+
+export async function createCategory(actor, input) {
+  return withTransaction(pool, async (client) => {
+    const fields = await categoryFields(client, input);
+    const { rows: [created] } = await uniqueName(fields.name, () => client.query(
+      `INSERT INTO policy_categories (name, parent_id, sort_order)
+       VALUES ($1, $2, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM policy_categories
+                         WHERE parent_id IS NOT DISTINCT FROM $2::uuid))
+       RETURNING id, name, parent_id, sort_order`,
+      [fields.name, fields.parent_id]));
+    await recordAudit({ actor, action: 'policy.category.created', entityType: 'policy_category', entityId: created.id, after: fields, client });
+    return created;
+  });
+}
+
+/** Renames a category, or moves it: a section to another manual or to the top level, a manual into a manual. */
+export async function updateCategory(actor, id, input) {
+  return withTransaction(pool, async (client) => {
+    const before = await loadCategory(client, id, { lock: true });
+    if (!before) throw notFound('That category is not in the list.');
+    const fields = await categoryFields(client, input, before);
+    const moved = (fields.parent_id ?? null) !== (before.parent_id ?? null);
+    const { rows: [updated] } = await uniqueName(fields.name, () => client.query(
+      `UPDATE policy_categories SET name = $2, parent_id = $3, updated_at = NOW(),
+              sort_order = CASE WHEN $4 THEN (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM policy_categories
+                                               WHERE parent_id IS NOT DISTINCT FROM $3::uuid) ELSE sort_order END
+        WHERE id = $1 RETURNING id, name, parent_id, sort_order`,
+      [id, fields.name, fields.parent_id, moved]));
+    await recordAudit({
+      actor, action: 'policy.category.updated', entityType: 'policy_category', entityId: id,
+      before: { name: before.name, parent_id: before.parent_id }, after: fields, client,
+    });
+    return updated;
+  });
+}
+
+/** Moves a category one place up or down among its neighbours. */
+export async function moveCategory(actor, id, { direction }) {
+  if (!['up', 'down'].includes(direction)) throw badRequest('Move a category up or down.');
+  await withTransaction(pool, async (client) => {
+    const category = await loadCategory(client, id, { lock: true });
+    if (!category) throw notFound('That category is not in the list.');
+    const { rows: siblings } = await client.query(
+      `SELECT id FROM policy_categories WHERE parent_id IS NOT DISTINCT FROM $1::uuid
+        ORDER BY sort_order, lower(name) FOR UPDATE`, [category.parent_id]);
+    const order = siblings.map((row) => row.id);
+    const at = order.indexOf(category.id);
+    const to = direction === 'up' ? at - 1 : at + 1;
+    if (to < 0 || to >= order.length) return;
+    [order[at], order[to]] = [order[to], order[at]];
+    await client.query(
+      `UPDATE policy_categories c SET sort_order = o.position
+         FROM unnest($1::uuid[]) WITH ORDINALITY AS o(id, position) WHERE c.id = o.id`, [order]);
+  });
+}
+
+/** Removes a category nothing uses. One still holding sections or documents is kept, saying why. */
+export async function deleteCategory(actor, id) {
+  await withTransaction(pool, async (client) => {
+    const category = await loadCategory(client, id, { lock: true });
+    if (!category) throw notFound('That category is not in the list.');
+    if (category.section_count) {
+      throw badRequest(`${category.name} still has ${category.section_count} section${category.section_count === 1 ? '' : 's'}. Move or remove them first.`);
+    }
+    if (category.tagged_count) {
+      throw badRequest(`${category.tagged_count} document${category.tagged_count === 1 ? ' is' : 's are'} still in ${category.name}, withdrawn ones included. Take ${category.tagged_count === 1 ? 'it' : 'them'} out of it, or rename the category instead.`);
+    }
+    await client.query('DELETE FROM policy_categories WHERE id = $1', [id]);
+    await recordAudit({ actor, action: 'policy.category.deleted', entityType: 'policy_category', entityId: id, before: { name: category.name, parent_id: category.parent_id }, client });
+  });
 }

@@ -5,11 +5,33 @@ export interface PolicyType {
     label: string;
 }
 
+/** A manual (no parent) or a section of one. Publishers maintain the list. */
+export interface PolicyCategory {
+    id: string;
+    parent_id: string | null;
+    name: string;
+    sort_order: number;
+    /** Documents in the library it holds, a manual counting its sections. */
+    document_count: number;
+}
+
+/** A category as tagged on a document. */
+export interface PolicyTag {
+    id: string;
+    name: string;
+    parent_id: string | null;
+    parent_name: string | null;
+}
+
 export interface PolicyMeta {
     types: PolicyType[];
     departments: { id: string; name: string }[];
-    categories: string[];
+    categories: PolicyCategory[];
+    /** Documents in the library for this account, and those in no category. */
+    document_count: number;
+    uncategorised_count: number;
     can_edit: boolean;
+    /** Also maintains the categories. */
     can_publish: boolean;
 }
 
@@ -18,7 +40,7 @@ export interface PolicyListItem {
     code: string;
     title: string;
     doc_type: string;
-    category: string | null;
+    categories: PolicyTag[];
     department_id: string | null;
     department_name: string | null;
     review_due: string | null;
@@ -72,13 +94,14 @@ export interface PolicyDetails {
     code: string;
     title: string;
     doc_type: string;
-    category: string | null;
+    category_ids: string[];
     department_id: string | null;
     review_due: string | null;
 }
 
-export interface PolicyDocument extends PolicyDetails {
+export interface PolicyDocument extends Omit<PolicyDetails, 'category_ids'> {
     id: string;
+    categories: PolicyTag[];
     department_name: string | null;
     review_overdue: boolean | null;
     retired_at: string | null;

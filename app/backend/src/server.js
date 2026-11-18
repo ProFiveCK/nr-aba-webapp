@@ -54,6 +54,7 @@ const [
   { default: listsRouter },
   { default: batchesRouter },
   { default: syncRouter },
+  { default: policiesRouter },
 ] = await Promise.all([
   import('./routes/forexTT.js'),
   import('./routes/health.js'),
@@ -65,6 +66,7 @@ const [
   import('./routes/lists.js'),
   import('./routes/batches.js'),
   import('./routes/sync.js'),
+  import('./routes/policies.js'),
 ]);
 const app = express();
 
@@ -156,6 +158,7 @@ app.get('/health', async (_req, res) => {
 app.use('/api/forex-tt', forexTTRouter);
 app.use('/api/public-health', publicHealthRouter);
 app.use('/api/hr', hrRouter);
+app.use('/api/policies', policiesRouter);
 app.use('/api', healthRouter);
 app.use('/api/auth', authRouter);
 app.use('/api', adminRouter);

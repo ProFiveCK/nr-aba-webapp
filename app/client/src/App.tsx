@@ -22,6 +22,7 @@ const Banking = lazy(() => import('./pages/Banking').then((m) => ({ default: m.B
 const Payroll = lazy(() => import('./pages/Payroll').then((m) => ({ default: m.Payroll })));
 const Admin = lazy(() => import('./pages/Admin').then((m) => ({ default: m.Admin })));
 const LeaveApp = lazy(() => import('./apps/leave/LeaveApp').then((m) => ({ default: m.LeaveApp })));
+const PoliciesApp = lazy(() => import('./apps/policies/PoliciesApp').then((m) => ({ default: m.PoliciesApp })));
 
 declare global {
   interface Window {
@@ -51,6 +52,7 @@ function AuthedRoutes() {
         <Route path="forex-tt/*" element={<ForexTTApp />} />
         <Route path="fit-for-duty/*" element={<PublicHealthApp />} />
         <Route path="leave/*" element={<LeaveApp />} />
+        <Route path="policies/*" element={<PoliciesApp />} />
         <Route path="admin/*" element={<Admin />} />
 
         {/* Earlier names, kept so saved links and emails still land. */}

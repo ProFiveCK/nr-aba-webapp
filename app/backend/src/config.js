@@ -81,6 +81,19 @@ export const FOREX_TT_ALLOWED_MIMES = new Set([
 ]);
 export const FOREX_TT_ALLOWED_EXTENSIONS = new Set(['.pdf', '.png', '.jpg', '.jpeg']);
 
+// Policies & Procedures. The kinds of document the library holds, and the
+// files a document may carry (attachments to download, and the pictures in
+// its text). The server sends the kinds to the UI, so this is the one list.
+export const POLICY_TYPES = [
+  { key: 'policy', label: 'Policy' },
+  { key: 'procedure', label: 'Procedure' },
+  { key: 'guideline', label: 'Guideline' },
+  { key: 'form', label: 'Form' },
+];
+// Below nginx's 10 MB request limit (app/docker/nginx.conf), with room for
+// the rest of the upload request.
+export const POLICY_MAX_FILE_BYTES = 8 * 1024 * 1024;
+
 // Permissions
 export const PERMISSIONS = {
   SUBMIT_ABA: 'submit_aba',
@@ -109,6 +122,10 @@ export const PERMISSIONS = {
   TOOLS_ACCESS: 'tools_access',
   FOREX_TT_ACCESS: 'forex_tt_access',
   PUBLIC_HEALTH_ACCESS: 'public_health_access',
+  // Policies & Procedures. Reading needs no tick: every signed-in account,
+  // Leave-only staff logins included, reads what has been published.
+  POLICY_EDIT: 'policy_edit',
+  POLICY_PUBLISH: 'policy_publish',
 };
 
 // Grantable capabilities, grouped by app, so the admin UI renders itself from
@@ -161,6 +178,14 @@ export const CAPABILITY_CATALOGUE = [
       { key: PERMISSIONS.HR_ACCESS, label: 'Open the Leave app' },
       { key: PERMISSIONS.HR_LEAVE_APPLY, label: 'Apply for leave' },
       { key: PERMISSIONS.HR_ADMIN, label: 'Central HR administration across government' },
+    ],
+  },
+  {
+    app: 'policies',
+    label: 'Policies & Procedures',
+    capabilities: [
+      { key: PERMISSIONS.POLICY_EDIT, label: 'Write and edit drafts' },
+      { key: PERMISSIONS.POLICY_PUBLISH, label: 'Approve and publish' },
     ],
   },
   {

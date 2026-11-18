@@ -283,6 +283,11 @@ export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS, 
   };
 }
 
+// Where a Leave-only (employee) login may go: Leave, and the Policies &
+// Procedures library, which every signed-in account reads. Writing policies
+// takes ticks such a login can never hold.
+const EMPLOYEE_AREAS = ['/api/hr', '/api/policies'];
+
 // All a session that still has to change its password may reach.
 const PASSWORD_CHANGE_PATHS = new Set([
   '/api/auth/me', '/api/auth/change-password', '/api/auth/logout', '/api/auth/refresh',
@@ -340,7 +345,7 @@ export function requireAuth(roles = []) {
       // Legacy finance routes also use role/any-login gates. A Leave-only
       // identity must not inherit access through any of those older gates.
       const path = requestPath.split('?')[0];
-      if (session.account_type === 'employee' && path !== '/api/hr' && !path.startsWith('/api/hr/') && !PASSWORD_CHANGE_PATHS.has(path)) {
+      if (session.account_type === 'employee' && !EMPLOYEE_AREAS.some((area) => path === area || path.startsWith(`${area}/`)) && !PASSWORD_CHANGE_PATHS.has(path)) {
         res.status(403).json({ message: 'This account has employee Leave access only.' });
         return;
       }

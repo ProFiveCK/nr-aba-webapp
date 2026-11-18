@@ -1,6 +1,7 @@
 import type { User } from '../contexts/auth-types';
 import type { LucideIcon } from 'lucide-react';
 import {
+  BookOpen,
   CreditCard,
   Landmark,
   Wallet,
@@ -21,6 +22,7 @@ export type AppId =
   | 'forex-tt'
   | 'public-health'
   | 'hr'
+  | 'policies'
   | 'admin';
 
 export type UserRole = 'user' | 'banking' | 'reviewer' | 'admin' | 'payroll' | 'public_health';
@@ -38,8 +40,9 @@ export interface AppDef {
   shortLabel: string;
   icon: LucideIcon;
   /** Capability that grants access. Held in any combination, so one person can
-   *  be an ABA preparer, a reviewer and a banking officer at once. */
-  capability: string;
+   *  be an ABA preparer, a reviewer and a banking officer at once. `null` for
+   *  a page every signed-in account opens, Leave-only staff logins included. */
+  capability: string | null;
   description: string;
   color: string;
 }
@@ -115,6 +118,16 @@ export const APPS: AppDef[] = [
     description: 'Request leave, review approvals, and manage team availability.',
     color: 'bg-brand',
   },
+  {
+    id: 'policies',
+    path: 'policies',
+    label: 'Policies & Procedures',
+    shortLabel: 'Policies',
+    icon: BookOpen,
+    capability: null,
+    description: 'Read the policies, procedures and guidelines that are in force.',
+    color: 'bg-indigo-600',
+  },
 ];
 
 export const SYSTEM_PAGES: AppDef[] = [
@@ -124,7 +137,7 @@ export const SYSTEM_PAGES: AppDef[] = [
     label: 'Dashboard',
     shortLabel: 'Dashboard',
     icon: LayoutDashboard,
-    capability: 'dashboard',
+    capability: null,
     description: 'App launcher and overview.',
     color: 'bg-gray-700',
   },
@@ -142,7 +155,7 @@ export const SYSTEM_PAGES: AppDef[] = [
 
 export function canAccessApp(user: User | null, app: AppDef): boolean {
   if (!user) return false;
-  if (app.id === 'dashboard') return true;
+  if (app.capability === null) return true;
   return user.permissions?.[app.capability] === true;
 }
 

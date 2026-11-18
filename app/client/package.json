@@ -11,6 +11,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@tiptap/extension-image": "3.32.2",
+    "@tiptap/extension-table": "3.32.2",
+    "@tiptap/pm": "3.32.2",
+    "@tiptap/react": "3.32.2",
+    "@tiptap/starter-kit": "3.32.2",
     "cupertino-files": "^0.2.0",
     "lucide-react": "^0.469.0",
     "react": "^19.2.0",

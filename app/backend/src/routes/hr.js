@@ -1537,9 +1537,9 @@ router.get(
     const audience = calendarAudienceSql(req.user, req.query.view || 'team', { userParam: '$3', departmentParam: '$4', divisionParam: '$5' });
     const params = [req.query.from, req.query.to, req.user.id, req.query.department_id || null, req.query.division_id || null];
     const { rows: applications } = await pool.query(
-      `SELECT a.id, a.employee_id, a.start_date, a.end_date, a.days, a.status,
+      `SELECT a.id, a.employee_id, a.start_date, a.end_date, a.status,
               CASE WHEN ${audience.masked} THEN '${MASKED_LEAVE_LABEL}' ELSE t.name END AS leave_type_name,
-              e.display_name AS employee_name, e.department_code, ${unitNamesSql('e')}, 'leave' AS kind, ${audience.own} AS own
+              e.display_name AS employee_name, ${unitNamesSql('e')}, 'leave' AS kind, ${audience.own} AS own
          FROM hr_leave_applications a
          JOIN hr_leave_types t ON t.id = a.leave_type_id
          JOIN hr_employees e ON e.id = a.employee_id
@@ -1554,8 +1554,8 @@ router.get(
     // application. It is not private, so every view shows it as study leave.
     const { rows: studyLeave } = await pool.query(
       `SELECT 'study-' || e.id AS id, e.id AS employee_id, e.study_leave_start AS start_date, e.study_leave_end AS end_date,
-              NULL::numeric AS days, 'approved' AS status, 'Study leave' AS leave_type_name,
-              e.display_name AS employee_name, e.department_code, ${unitNamesSql('e')},
+              'approved' AS status, 'Study leave' AS leave_type_name,
+              e.display_name AS employee_name, ${unitNamesSql('e')},
               'study_leave' AS kind, ${audience.own} AS own
          FROM hr_employees e
         WHERE e.status = 'active' AND e.leave_entitled = FALSE AND e.ineligible_reason = 'study_leave'

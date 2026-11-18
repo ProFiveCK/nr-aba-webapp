@@ -615,7 +615,7 @@ assert.equal((await call(`/requests/${r.id}/pdf`,null,officers.chief_secretary.a
   const path=view=>`/calendar?from=2026-11-01&to=2026-11-30&view=${view}`;
   const team=(await call(path('team'),null,teammate)).body.entries;
   assert.equal(team.length,1);assert.equal(team[0].id,r.id);assert.equal(team[0].leave_type_name,'On leave');assert.equal(team[0].own,false);assert.equal(team[0].leave_code,null);
-  for(const field of ['reason','documents','medical_mode','code'])assert.equal(team[0][field],undefined);
+  for(const field of ['reason','documents','medical_mode','code','days','department_code'])assert.equal(team[0][field],undefined);
   const own=(await call(path('team'))).body.entries;
   assert.equal(own.length,1);assert.equal(own[0].own,true);assert.equal(own[0].leave_code,'medical','the applicant sees their own leave named');
   assert.equal(own[0].department_name,department.name,'rows carry their unit for grouping');

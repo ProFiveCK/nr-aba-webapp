@@ -8,7 +8,7 @@ const router=express.Router();
 const central=requirePermission(PERMISSIONS.HR_ADMIN);
 router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
 router.get('/context',requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_OFFICER),async(req,res)=>{
-  const {rows}=await pool.query(`SELECT s.id,s.department_id,s.division_id,s.capabilities,s.effective_from,s.effective_to,
+  const {rows}=await pool.query(`SELECT s.id,s.department_id,s.division_id,s.effective_from,s.effective_to,
     d.name AS department_name,v.name AS division_name FROM hr_access_scopes s JOIN hr_departments d ON d.id=s.department_id
     LEFT JOIN hr_divisions v ON v.id=s.division_id WHERE s.reviewer_id=$1 AND ${activeScopeSql()} ORDER BY d.name,v.name,s.id`,[req.user.id]);
   res.json({central:isCentralHr(req.user),scopes:rows});

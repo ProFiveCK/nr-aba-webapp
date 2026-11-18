@@ -7,13 +7,13 @@ const end = new Date(2026, 10, 30);
 // A month other than the one shown, so "today" does not appear unless a test asks for it.
 const elsewhere = new Date(2027, 0, 15);
 const pending = {
-    id: 'pending', employee_id: 'ana', employee_name: 'Ana', department_code: null,
+    id: 'pending', employee_id: 'ana', employee_name: 'Ana',
     department_name: 'Finance', division_name: 'Accounting',
     leave_type_name: 'On leave', start_date: '2026-10-30',
-    end_date: '2026-11-02', days: '1', status: 'pending' as const,
+    end_date: '2026-11-02', status: 'pending' as const,
 };
 const study = { ...pending, id: 'study-cia', employee_id: 'cia', employee_name: 'Cia', leave_type_name: 'Study leave',
-    kind: 'study_leave' as const, status: 'approved' as const, start_date: '2026-09-01', end_date: null, days: null };
+    kind: 'study_leave' as const, status: 'approved' as const, start_date: '2026-09-01', end_date: null };
 const render = (props: Partial<Parameters<typeof CalendarMonth>[0]> = {}) =>
     renderToStaticMarkup(<CalendarMonth entries={[pending]} start={start} end={end} today={elsewhere} {...props} />);
 const body = (html: string) => (html.match(/<tbody[^>]*>.*<\/tbody>/)?.[0] || '');
@@ -118,6 +118,13 @@ it('keeps the grid compact: one line per person, bounded height, sticky dates an
     expect(html).not.toContain('Colleagues’ leave shows');
 });
 
+it('names the team or department above the grid, with nothing else in the header strip but the colour key', () => {
+    const html = render({ heading: 'Treasury' });
+    expect(html).toMatch(/<h3[^>]*>Treasury<span[^>]*>· 1 person<\/span><\/h3>/);
+    expect(html.indexOf('Treasury')).toBeLessThan(html.indexOf('<table'));
+    expect(render({ view: 'department' })).toContain('>Your department<');
+});
+
 it('says why a view is empty', () => {
     expect(render({ entries: [], view: 'team' })).toContain('Your login is not linked to a team yet');
     expect(render({ entries: [], view: 'department' })).toContain('Your login is not linked to a department yet');
@@ -130,6 +137,7 @@ it('marks today, says who is away today, and only in the current month', () => {
     expect(html).toMatch(/<th[^>]*aria-current="date"[^>]*>.*?<span[^>]*bg-brand[^>]*>18<\/span><span class="sr-only"> \(today\)<\/span>/);
     expect(html.match(/<th[^>]*aria-current="date"/g)).toHaveLength(1);
     expect(html).toContain('Away today (2):</span> Ana, Cia');
+    expect(html.indexOf('</table>')).toBeLessThan(html.indexOf('Away today'));
     expect(html).toContain('aria-label="18 November (today): 2 people away"');
 
     const later = render({ entries: [away] });

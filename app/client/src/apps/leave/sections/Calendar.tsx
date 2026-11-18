@@ -50,8 +50,8 @@ export function Calendar() {
     const [params, setParams] = useSearchParams();
     const permissions = user?.permissions || {};
     // Responsible for others: managers through their reporting line, HR through a scope or centrally.
-    const manages = permissions.hr_admin === true || permissions.hr_staff_manage === true || permissions.hr_leave_approve === true;
-    const canFilterUnits = permissions.hr_admin === true || permissions.hr_staff_manage === true;
+    const manages = permissions.hr_admin === true || permissions.hr_officer === true || permissions.hr_leave_approve === true;
+    const canFilterUnits = permissions.hr_admin === true || permissions.hr_officer === true;
     const views: [CalendarView, string][] = [['team', 'My team'], ['mine', 'My leave'], ...(manages ? [['scope', 'People I manage'] as [CalendarView, string]] : [])];
     const requested = params.get('view');
     const view: CalendarView = views.some(([id]) => id === requested) ? requested as CalendarView : 'team';

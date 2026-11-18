@@ -22,7 +22,7 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
  const finish=(requestId,action='consumed',extra={})=>s.finishReservation(pool,{employeeId:employee.id,requestId,action,actor:central,reason,authorize:async()=>true,...extra});
  beforeEach(async()=>{
   await resetLeaveTables(pool);await pool.query('TRUNCATE hr_gov_policy_versions,hr_gov_calendars,hr_gov_pattern_approvals CASCADE');
-  central=await account({hr_admin:true,hr_access:true,hr_balance_manage:true});certifier=await account({hr_admin:true,hr_access:true});scoped=await account({hr_access:true,hr_staff_manage:true});owner=await account({hr_access:true,hr_leave_apply:true},'employee');
+  central=await account({hr_admin:true,hr_access:true});certifier=await account({hr_admin:true,hr_access:true});scoped=await account({hr_access:true});owner=await account({hr_access:true,hr_leave_apply:true},'employee');
   department=(await pool.query("INSERT INTO hr_departments(name) VALUES ('Synthetic Foundation') RETURNING *")).rows[0];employee=(await pool.query("INSERT INTO hr_employees(display_name,department_id,department_code,reviewer_id,leave_policy_regime) VALUES ('Synthetic Government Employee',$1,'Synthetic Foundation',$2,'government') RETURNING *",[department.id,owner.id])).rows[0];
   const pattern=(await pool.query("INSERT INTO hr_work_patterns(name,working_weekdays,hours_per_day) VALUES ($1,ARRAY[1,2,3,4,5],7) RETURNING *",[`Synthetic Weekly ${randomUUID()}`])).rows[0];
   await pool.query("INSERT INTO hr_employee_service_periods(employee_id,start_date,employment_category,counts_for_service,work_pattern_id,reason) VALUES ($1,'2026-01-01','permanent',TRUE,$2,$3)",[employee.id,pattern.id,reason]);
@@ -223,9 +223,10 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
  test('server preview and pages are scoped; caller cannot supply notice date or charges; no public grant route exists',async()=>{
   await opening();const response=await call(`/api/hr/government/employees/${employee.id}/evaluate`,{...input(),charge:'0',notice_date:'1900-01-01'},owner);assert.equal(response.status,200);assert.equal(response.body.charge,'1.000000');assert.equal(response.body.submission_enabled,false);assert.equal(response.cache,'no-store');assert.notEqual(response.body.input.notice_date,'1900-01-01');
   for(const path of [`/api/hr/government/employees/${employee.id}`,`/api/hr/government/employees/${employee.id}/ledger`])assert.equal((await call(path,undefined,scoped)).status,404);
-  await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES ($1,$2,ARRAY['hr_staff_manage'],'2026-01-01',$3,$4)",[scoped.id,department.id,central.id,reason]);
+  await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES ($1,$2,ARRAY['hr_officer'],'2026-01-01',$3,$4)",[scoped.id,department.id,central.id,reason]);
+  // One HR officer right covers the record and its balances.
   assert.equal((await call(`/api/hr/government/employees/${employee.id}`,undefined,scoped)).status,200);
-  assert.equal((await call(`/api/hr/government/employees/${employee.id}/ledger`,undefined,scoped)).status,404);
+  assert.equal((await call(`/api/hr/government/employees/${employee.id}/ledger`,undefined,scoped)).status,200);
   assert.equal((await call(`/api/hr/government/employees/${employee.id}/evaluate`,{...input(),end_date:'2028-01-01'})).status,400);
   assert.equal((await call('/api/hr/government/configuration',undefined,scoped)).status,403);assert.equal((await call(`/api/hr/government/employees/${employee.id}/consume`,{request_id:randomUUID()})).status,404);assert.equal((await call(`/api/hr/government/employees/${employee.id}/ledger`)).body.movements.length,1);
   assert.equal((await call(`/api/hr/government/employees/${employee.id}/corrections`,{entitlement_id:randomUUID(),amount:'1',effective_date:'2026-10-07',event_key:randomUUID(),source_reference:'Valid reference',reason},scoped)).status,403);
@@ -254,8 +255,7 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
   const filtered=await call(`/api/hr/government/balances?department_id=${department.id}&status=activation_required&sort=recreation&direction=desc`);
   assert.equal(filtered.status,200);assert.equal(filtered.body.total,1);assert.equal(filtered.body.departments[0].id,department.id);
   assert.equal((await call(`/api/hr/government/balances?department_id=${randomUUID()}`)).body.total,0);
-  await pool.query('DELETE FROM reviewer_capabilities WHERE reviewer_id=$1',[scoped.id]);await grantAccess(pool,scoped.id,{hr_access:true,hr_balance_manage:true});
-  await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_balance_manage'],'2020-01-01',$3,$4)",[scoped.id,department.id,central.id,reason]);
+  await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_officer'],'2020-01-01',$3,$4)",[scoped.id,department.id,central.id,reason]);
   assert.equal((await call(path,undefined,scoped)).status,200);assert.equal((await call('/api/hr/government/balances',undefined,scoped)).body.total,1);
  });
  test('legacy accrual cannot write into government historical balances',async()=>{

@@ -17,6 +17,6 @@ export function Report() {
             <label className="text-sm font-medium text-gray-700">To<AustralianDateInput aria-label="Period through" required value={to} min={from} onChange={event => setTo(event.target.value)} className="mt-1 block rounded-lg border border-gray-300 px-3 py-2" /></label>
         </div>
         {(!from || !to || from > to) ? <p role="alert" className="text-sm text-amber-800">Choose a valid date range to view the report.</p> : <GovernmentActivity from={from} to={to} details />}
-        {(user?.permissions?.hr_admin || user?.permissions?.hr_balance_manage) && <Link className="text-sm font-semibold text-brand underline" to="/leave/balances">View current staff balances & movements</Link>}
+        {(user?.permissions?.hr_admin || user?.permissions?.hr_officer) && <Link className="text-sm font-semibold text-brand underline" to="/leave/balances">View current staff balances & movements</Link>}
     </div>;
 }

@@ -94,8 +94,8 @@ describe('central HR management screens and bounded APIs', { skip: skipWithoutDa
     const employee=await create();await pool.query("UPDATE hr_employees SET leave_policy_regime='government' WHERE id=$1",[employee.id]);
     const outside=(await pool.query("INSERT INTO hr_departments(name) VALUES('Outside migration scope') RETURNING *")).rows[0];
     await pool.query("INSERT INTO hr_employees(display_name,department_id,leave_policy_regime,status) VALUES('Outside migrated',$1,'government','active'),('Inactive migrated',$2,'government','inactive')",[outside.id,department.id]);
-    const staff=await account({hr_staff_manage:true});
-    const scopes=await import('./hrAccess.js');await scopes.grantHrScope(pool,{user:actor,actor,data:{reviewer_id:staff.id,department_id:department.id,capabilities:['hr_staff_manage'],effective_from:'2020-01-01',reason}});
+    const staff=await account({hr_access:true});
+    const scopes=await import('./hrAccess.js');await scopes.grantHrScope(pool,{user:actor,actor,data:{reviewer_id:staff.id,department_id:department.id,effective_from:'2020-01-01',reason}});
     const scoped=await call('?regime=government&status=active',undefined,'GET',staff);assert.equal(scoped.status,200);assert.equal(scoped.body.total,1);assert.equal(scoped.body.employees[0].id,employee.id);
     assert.equal((await call(`?regime=government&status=active&department_id=${outside.id}`,undefined,'GET',staff)).body.total,0);
     assert.equal((await call(`?regime=government&status=active&department_id=${department.id}`)).body.total,1);
@@ -130,19 +130,23 @@ describe('central HR management screens and bounded APIs', { skip: skipWithoutDa
     assert.equal((await call('/work-patterns',{...options.data,working_weekdays:[0],reason})).status,422);
   });
   test('central-HR gates protect every new operation and request responses are no-store',async()=>{
-    const staff=await account({hr_staff_manage:true});const employee=await create();
+    // An HR officer for another department: past the gate, but not this employee's unit.
+    const staff=await account({hr_access:true});const employee=await create();
+    const elsewhere=(await pool.query("INSERT INTO hr_departments(name) VALUES ('Elsewhere') RETURNING *")).rows[0];
+    await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,reason) VALUES($1,$2,ARRAY['hr_officer'],'2020-01-01','Synthetic HR officer elsewhere')",[staff.id,elsewhere.id]);
     for(const [path,body,method] of [['/accounts',undefined,'GET'],['',{display_name:'Unauthorised',external_id:'000002',department_id:department.id,reason},'POST'],[`/${employee.id}/details`,{display_name:'Unauthorised',status:'active',manager_id:null,reason},'PUT']])assert.equal((await call(path,body,method,staff)).status,path.endsWith('/details')?404:403);
     assert.equal((await call('/work-patterns',undefined,'GET',staff)).status,200);
     assert.equal((await call('/accounts')).cache,'no-store');
     assert.equal((await call(`/${employee.id}/profile`)).body.employee.daily_rate,undefined);
     assert.equal((await call(`/${employee.id}/details`,{display_name:'Bad',status:'active',reason},'PUT')).status,422);
   });
-  test('officeholder list exposes names and readiness without granting approval capabilities',async()=>{
+  test('nominating an officeholder makes them an approver without any tick',async()=>{
     const employee=await create(),login=await account();
     await pool.query('UPDATE hr_employees SET reviewer_id=$2 WHERE id=$1',[employee.id,login.id]);
     const assigned=await call('/approval-assignments',{level:'department',department_id:department.id,approver_employee_id:employee.id,effective_from:'2026-01-01',reason});assert.equal(assigned.status,201);
-    const listed=(await call('/approval-assignments')).body;assert.equal(listed.page_size,50);assert.equal(listed.assignments[0].department_name,'Finance');assert.ok(!listed.assignments[0].has_approval_grant);
-    assert.equal((await pool.query("SELECT count(*)::int n FROM reviewer_capabilities WHERE reviewer_id=$1 AND capability='hr_leave_approve'",[login.id])).rows[0].n,0);
+    const listed=(await call('/approval-assignments')).body;assert.equal(listed.page_size,50);assert.equal(listed.assignments[0].department_name,'Finance');assert.equal(listed.assignments[0].has_approval_grant,undefined);
+    assert.equal((await pool.query("SELECT count(*)::int n FROM reviewer_capabilities WHERE reviewer_id=$1 AND capability='hr_leave_approve'",[login.id])).rows[0].n,0,'no tick is written');
+    assert.ok((await auth.loadCapabilities(login.id)).includes('hr_leave_approve'),'the nomination itself makes them an approver');
     assert.equal((await call('/approval-assignments',{level:'chief_secretary',department_id:department.id,approver_employee_id:employee.id,effective_from:'2026-01-01',reason})).status,400);
   });
 });

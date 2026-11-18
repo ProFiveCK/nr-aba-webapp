@@ -34,7 +34,7 @@ export const BALANCE_SORTS = ['name','department','recreation','medical','specia
 export async function staffLeaveBalances(pool, { user, search = '', page = 1, departmentId = null, divisionId = null, status = '', sort = 'name', direction = 'asc' }) {
   return withTransaction(pool, async client => {
     await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-    const scope = employeeScopeSql(user, 'hr_balance_manage', '$1', 'e');
+    const scope = employeeScopeSql(user, 'hr_officer', '$1', 'e');
     const scopedStaff = `SELECT e.id,e.display_name,e.leave_policy_regime,e.department_id,e.division_id,
       COALESCE(d.name,e.department_code) AS department_name,COALESCE(v.name,e.division_code) AS division_name,
       CASE WHEN e.leave_policy_regime<>'government' AND NOT e.leave_entitled THEN 'not_entitled'

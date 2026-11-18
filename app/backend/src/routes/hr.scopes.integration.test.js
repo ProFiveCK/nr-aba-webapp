@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {after,before,beforeEach,describe,test} from 'node:test';
-import {connectTestDatabase,createEmployee,resetLeaveTables,skipWithoutDatabase,upsertLeaveType,grantAccess} from '../test-support/database.js';
+import {connectTestDatabase,createEmployee,resetLeaveTables,skipWithoutDatabase,upsertLeaveType,grantAccess,nominateApprover} from '../test-support/database.js';
 
 describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDatabase},()=>{
   let pool,auth,access,central,staff,approver,owner,other,department,division,sibling,foreign,employee,peer,outsider,type,approved,pending,attachment,server,base;
@@ -17,6 +17,9 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
   async function token(row){const session=await auth.createSession(row.id);return auth.buildTokenPayload(row,session.tokenId,session.expiresAt);}
   async function call(row,path,body,method=body?'POST':'GET',bearer){const res=await fetch(`${base}${path}`,{method,headers:{Authorization:`Bearer ${bearer||await token(row)}`,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return{status:res.status,body:(res.headers.get('content-type')||'').includes('json')?await res.json():await res.text(),cache:res.headers.get('cache-control')};}
   const grant=(row,caps,div=division.id,dept=department.id,extra={})=>access.grantHrScope(pool,{user:{id:central.id,permissions:{hr_admin:true}},actor:central,data:{reviewer_id:row.id,department_id:dept,division_id:div,capabilities:caps,effective_from:'2020-01-01',reason,...extra}});
+  // An approver reaches people through Leave settings: a nomination, plus (for
+  // older-rules records) being their reporting manager in the same unit.
+  async function lineApprover(row,report=employee){const record=(await pool.query("INSERT INTO hr_employees(display_name,reviewer_id,department_id,division_id,status) VALUES ($1,$2,$3,$4,'active') RETURNING *",[`Line approver ${randomUUID().slice(0,8)}`,row.id,report.department_id||department.id,report.division_id||division.id])).rows[0];await pool.query('UPDATE hr_employees SET manager_id=$2 WHERE id=$1',[report.id,record.id]);return nominateApprover(pool,row.id);}
   async function application(person,status='approved'){return(await pool.query(`INSERT INTO hr_leave_applications(employee_id,leave_type_id,start_date,end_date,days,reason,status,reviewed_by,reviewed_at) VALUES ($1,$2,'2026-10-08','2026-10-09',2,'Synthetic scoped leave',$3,$4,NOW()) RETURNING *`,[person.id,type.id,status,approver.id])).rows[0];}
   beforeEach(async()=>{
     await resetLeaveTables(pool);central=await account('Central HR',{hr_admin:true,hr_access:true});staff=await account('Scoped HR');approver=await account('Scoped approver');owner=await account('Applicant',{hr_access:true,hr_leave_apply:true});other=await account('Outside applicant',{hr_access:true,hr_leave_apply:true});
@@ -32,8 +35,8 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
   });
   test('unified approval records keep department scope, evidence permissions and status filters',async()=>{
     const path='/government/workflow/requests?mode=queue&include_recorded=true';
-    await grant(staff,['hr_report_read']);assert.equal((await call(staff,path+'&status=all')).body.total,0);
-    await grant(approver,['hr_leave_approve']);
+    await grant(staff,['hr_officer']);assert.equal((await call(staff,path+'&status=all')).body.total,0);
+    const nomination=await lineApprover(approver);
     const approvedList=await call(approver,path+'&status=approved');assert.equal(approvedList.status,200);assert.equal(approvedList.body.total,1);
     const row=approvedList.body.requests[0];assert.equal(row.id,approved.id);assert.equal(row.record_source,'recorded');assert.equal(row.can_pdf,true);assert.equal(row.recorded_application.attachments[0].id,attachment.id,'evidence follows the right to decide');
     assert.equal((await call(approver,path+'&status=pending')).body.requests[0].id,pending.id);
@@ -41,7 +44,7 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     assert.equal((await call(approver,path+`&status=all&employee_id=${outsider.id}`)).body.total,0);
     assert.ok(!JSON.stringify(approvedList.body).includes('file_data'));
     assert.equal((await call(owner,path+'&status=all')).body.total,0);
-    await pool.query('UPDATE hr_access_scopes SET revoked_at=NOW() WHERE reviewer_id=$1',[approver.id]);assert.equal((await call(approver,path+'&status=all')).status,403);
+    await pool.query("UPDATE hr_approval_assignments SET effective_to='2001-01-01' WHERE id=$1",[nomination]);assert.equal((await call(approver,path+'&status=all')).status,403,'ending the nomination ends the approver');
   });
   test('recorded PDF downloads contain one page and retain the complete application explanation',async()=>{
     const {PDFDocument}=await import('pdf-lib');
@@ -51,13 +54,13 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     const pdf=await PDFDocument.load(await response.arrayBuffer());assert.equal(pdf.getPageCount(),1);
     assert.equal((await pool.query('SELECT reason FROM hr_leave_applications WHERE id=$1',[approved.id])).rows[0].reason,explanation);
   });
-  test('legacy staff capability alone no longer gives global records or exports',async()=>{
-    const legacy=await account('Unscoped HR',{hr_access:true,hr_staff_manage:true});assert.deepEqual((await call(legacy,'/employees')).body,[]);assert.equal((await call(legacy,'/directory')).body.total,0);
-    assert.equal((await call(legacy,`/directory/${employee.id}/profile`)).status,404);assert.equal((await call(legacy,`/employees/${employee.id}`,{position_title:'Unauthorized'},'PUT')).status,404);
+  test('an old staff, balance or report tick alone gives no records or exports',async()=>{
+    const legacy=await account('Unscoped HR',{hr_access:true,hr_staff_manage:true,hr_balance_manage:true,hr_report_read:true});assert.equal((await call(legacy,'/employees')).status,403);assert.equal((await call(legacy,'/directory')).status,403);
+    assert.equal((await call(legacy,`/directory/${employee.id}/profile`)).status,403);assert.equal((await call(legacy,`/employees/${employee.id}`,{position_title:'Unauthorized'},'PUT')).status,403);
     assert.equal((await call(legacy,'/report?from=2026-10-01&to=2026-10-31')).status,403);assert.equal((await call(legacy,'/adjustments',{employee_id:employee.id,leave_type_id:type.id,amount:1,reason})).status,403);
   });
   test('division scope filters both directories, references and calendar including guessed IDs',async()=>{
-    await grant(staff,['hr_staff_manage']);await pool.query('UPDATE hr_employees SET manager_id=$2 WHERE id=$1',[employee.id,outsider.id]);
+    await grant(staff,['hr_officer']);await pool.query('UPDATE hr_employees SET manager_id=$2 WHERE id=$1',[employee.id,outsider.id]);
     const list=await call(staff,'/directory');assert.equal(list.status,200);assert.equal(list.body.total,1);assert.equal(list.body.employees[0].id,employee.id);assert.equal(list.cache,'no-store');
     const old=await call(staff,'/employees');assert.equal(old.body.length,1);assert.equal(old.body[0].manager_name,null);
     assert.equal((await call(staff,`/directory?department_id=${foreign.id}`)).body.total,0);assert.equal((await call(staff,'/directory?search=Outside Person')).body.total,0);
@@ -69,7 +72,7 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     assert.deepEqual(calendar.map(a=>a.status).sort(),['approved','pending']);
   });
   test('calendar includes only approved and submitted leave overlapping the month, within the caller scope',async()=>{
-    await grant(staff,['hr_staff_manage']);
+    await grant(staff,['hr_officer']);
     await application(employee,'rejected');await application(employee,'cancelled');
     await application(peer,'pending');await application(outsider,'pending');
     const crossing=await application(employee,'pending');
@@ -117,10 +120,10 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     assert.deepEqual(shown,[refused.id],'the government calendar shows the pending and approved requests instead; a refused carry-over leaves the original');
   });
   test('whole-department scope includes siblings, excludes unverified placement and other departments',async()=>{
-    await grant(staff,['hr_staff_manage'],null);assert.equal((await call(staff,'/directory')).body.total,2);assert.equal((await call(staff,'/org-units')).body[0].divisions.length,2);
+    await grant(staff,['hr_officer'],null);assert.equal((await call(staff,'/directory')).body.total,2);assert.equal((await call(staff,'/org-units')).body[0].divisions.length,2);
   });
   test('scoped edits cannot transfer, link identities, set status or change central configuration',async()=>{
-    await grant(staff,['hr_staff_manage']);const details={display_name:'Verified Treasury Person',position_title:'Officer',status:'active',manager_id:null,email:null,reason};
+    await grant(staff,['hr_officer']);const details={display_name:'Verified Treasury Person',position_title:'Officer',status:'active',manager_id:null,email:null,reason};
     assert.equal((await call(staff,`/directory/${employee.id}/details`,details,'PUT')).status,200);
     assert.equal((await call(staff,`/directory/${outsider.id}/details`,details,'PUT')).status,404);assert.equal((await call(staff,`/directory/${employee.id}/details`,{...details,manager_id:outsider.id},'PUT')).status,404);
     assert.equal((await call(staff,`/directory/${employee.id}/details`,{...details,status:'inactive'},'PUT')).status,403);assert.equal((await call(staff,`/employees/${employee.id}`,{department_code:foreign.name},'PUT')).status,403);
@@ -128,22 +131,22 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     for(const[path,body,method]of blocked)assert.equal((await call(staff,path,body,method)).status,403,path);
   });
   test('direct historical reporting-line edits cannot create a manager cycle',async()=>{
-    await grant(staff,['hr_staff_manage'],null);
+    await grant(staff,['hr_officer'],null);
     assert.equal((await call(staff,`/employees/${employee.id}`,{manager_id:peer.id},'PUT')).status,200);
     const result=await call(staff,`/employees/${peer.id}`,{manager_id:employee.id},'PUT');
     assert.equal(result.status,400);assert.match(result.body.message,/manager cycle/);
     assert.equal((await pool.query('SELECT manager_id FROM hr_employees WHERE id=$1',[peer.id])).rows[0].manager_id,null);
   });
-  test('balances, reports and personnel PDFs have separate scoped rights; evidence follows leave decisions',async()=>{
-    await grant(staff,['hr_staff_manage']);assert.equal((await call(staff,`/employees/${employee.id}/balances`)).status,403);assert.equal((await call(staff,`/leaves/${approved.id}/payroll-form`)).status,404);assert.equal((await call(staff,`/leaves/${approved.id}/attachments/${attachment.id}`)).status,404);
-    await grant(staff,['hr_balance_manage','hr_report_read']);assert.equal((await call(staff,'/employees/balances?year=2026')).body.employees.length,1);assert.equal((await call(staff,`/employees/${outsider.id}/balances`)).status,404);
+  test('an HR officer has records, balances, reports and personnel PDFs for the unit; evidence follows leave decisions',async()=>{
+    await grant(staff,['hr_officer']);assert.equal((await call(staff,`/employees/${employee.id}/balances`)).status,200);assert.equal((await call(staff,`/leaves/${approved.id}/payroll-form`)).status,200);assert.equal((await call(staff,`/leaves/${approved.id}/attachments/${attachment.id}`)).status,404,'an HR officer is not an approver');
+    assert.equal((await call(staff,'/employees/balances?year=2026')).body.employees.length,1);assert.equal((await call(staff,`/employees/${outsider.id}/balances`)).status,404);
     assert.deepEqual((await call(staff,'/report?from=2026-10-01&to=2026-10-31')).body.rows.map(r=>r.employee_name),['Treasury Person']);assert.equal((await call(staff,`/leaves/${approved.id}/application.pdf`)).status,200);
     const foreignApp=(await pool.query('SELECT id FROM hr_leave_applications WHERE employee_id=$1',[outsider.id])).rows[0];assert.equal((await call(staff,`/leaves/${foreignApp.id}/payroll-form`)).status,404);
     assert.equal((await call(staff,'/adjustments',{employee_id:employee.id,leave_type_id:type.id,amount:1,reason,year:2026})).status,201);assert.equal((await call(staff,'/adjustments',{employee_id:outsider.id,leave_type_id:type.id,amount:1,reason,year:2026})).status,404);
-    assert.equal((await call(staff,`/leaves/${approved.id}/attachments/${attachment.id}`)).status,404);await grant(staff,['hr_leave_approve']);assert.equal((await call(staff,`/leaves/${approved.id}/attachments/${attachment.id}`)).status,200);
+    assert.equal((await call(staff,`/leaves/${approved.id}/attachments/${attachment.id}`)).status,404);await lineApprover(staff);assert.equal((await call(staff,`/leaves/${approved.id}/attachments/${attachment.id}`)).status,200);
   });
   test('scoped balances use current entitlement credits and live holds without exposing retained or missing credit',async()=>{
-    await grant(staff,['hr_balance_manage'],null);
+    await grant(staff,['hr_officer'],null);
     const year=new Date(Date.now()+12*3600000).getUTCFullYear();
     const start=`${year}-01-01`,end=`${year}-12-31`;
     await pool.query("UPDATE hr_employees SET leave_policy_regime='government',daily_rate=123.45 WHERE id=ANY($1::uuid[])",[[employee.id,peer.id,outsider.id]]);
@@ -188,7 +191,7 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     assert.equal((await call(staff,`/government/employees/${employee.id}/corrections`,{reason})).status,403);
   });
   test('current balance reporting rejects a different year rather than mixing account periods',async()=>{
-    await grant(staff,['hr_balance_manage']);
+    await grant(staff,['hr_officer']);
     const year=new Date(Date.now()+12*3600000).getUTCFullYear();
     const current=await call(staff,`/employees/balances?year=${year}`);
     assert.equal(current.status,200);assert.equal(current.body.year,year);assert.equal(current.body.as_of.slice(0,4),String(year));
@@ -198,7 +201,7 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     }
   });
   test('scoped older balance corrections remain available while missing rows stay unrecorded',async()=>{
-    await grant(staff,['hr_balance_manage'],null);
+    await grant(staff,['hr_officer'],null);
     const result=await call(staff,'/employees/balances?year=2026');
     const current=result.body.employees.find(row=>row.id===employee.id),missing=result.body.employees.find(row=>row.id===peer.id);
     assert.deepEqual(current.balances[type.name],{balance:10,pending:0});assert.equal(current.can_adjust_balance,true);
@@ -209,29 +212,33 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     assert.equal((await call(staff,'/adjustments',{employee_id:employee.id,leave_type_id:type.id,amount:1,reason,year:2026})).status,409);
   });
   test('revocation invalidates a live session and future/expired grants confer no access',async()=>{
-    const scope=await grant(staff,['hr_staff_manage']),bearer=await token(staff);assert.equal((await call(staff,'/directory',undefined,'GET',bearer)).body.total,1);
+    const scope=await grant(staff,['hr_officer']),bearer=await token(staff);assert.equal((await call(staff,'/directory',undefined,'GET',bearer)).body.total,1);
     assert.equal((await call(central,`/access-scopes/${scope.id}/revoke`,{reason})).status,200);assert.equal((await call(staff,'/directory',undefined,'GET',bearer)).status,401);
-    await grant(staff,['hr_staff_manage'],division.id,department.id,{effective_from:'2099-01-01'});assert.equal((await call(staff,'/directory')).status,403);await grant(staff,['hr_staff_manage'],division.id,department.id,{effective_to:'2020-12-31'});assert.equal((await call(staff,'/directory')).status,403);
+    await grant(staff,['hr_officer'],division.id,department.id,{effective_from:'2099-01-01'});assert.equal((await call(staff,'/directory')).status,403);await grant(staff,['hr_officer'],division.id,department.id,{effective_to:'2020-12-31'});assert.equal((await call(staff,'/directory')).status,403);
   });
   test('transfer immediately removes old access even for the original approver',async()=>{
-    await grant(approver,['hr_leave_approve']);const bearer=await token(approver);assert.equal((await call(approver,'/approvals',undefined,'GET',bearer)).body.length,1);assert.equal((await call(approver,`/leaves/${approved.id}/payroll-form`)).status,200);
+    await lineApprover(approver);const bearer=await token(approver);assert.equal((await call(approver,'/approvals',undefined,'GET',bearer)).body.length,1);assert.equal((await call(approver,`/leaves/${approved.id}/payroll-form`)).status,200);
     await pool.query('UPDATE hr_employees SET department_id=$2,division_id=NULL WHERE id=$1',[employee.id,foreign.id]);assert.equal((await call(approver,'/approvals',undefined,'GET',bearer)).body.length,0);
     assert.equal((await call(approver,`/leaves/${approved.id}/payroll-form`)).status,404);assert.equal((await call(approver,`/leaves/${approved.id}/attachments/${attachment.id}`)).status,404);assert.equal((await call(approver,`/leaves/${pending.id}/decision`,{decision:'approved'})).status,404);
   });
   test('owners retain their documents; foreign manager links cannot bypass placement',async()=>{
     assert.equal((await call(owner,`/leaves/${approved.id}/payroll-form`)).status,200);assert.equal((await call(owner,`/leaves/${approved.id}/attachments/${attachment.id}`)).status,200);assert.equal((await call(other,`/leaves/${approved.id}/application.pdf`)).status,404);
-    const manager=await createEmployee(pool,{name:'Foreign manager'});await pool.query('UPDATE hr_employees SET reviewer_id=$2,department_id=$3 WHERE id=$1',[manager.id,approver.id,foreign.id]);await grantAccess(pool,approver.id,{hr_access:true,hr_leave_approve:true});await pool.query('UPDATE hr_employees SET manager_id=$2 WHERE id=$1',[employee.id,manager.id]);
+    const manager=await createEmployee(pool,{name:'Foreign manager'});await pool.query('UPDATE hr_employees SET reviewer_id=$2,department_id=$3 WHERE id=$1',[manager.id,approver.id,foreign.id]);await nominateApprover(pool,approver.id);await pool.query('UPDATE hr_employees SET manager_id=$2 WHERE id=$1',[employee.id,manager.id]);
     assert.equal((await call(approver,'/team')).body.length,0);assert.equal((await call(approver,`/leaves/${approved.id}/attachments/${attachment.id}`)).status,404);
     await pool.query('UPDATE hr_employees SET department_id=$2,division_id=$3 WHERE id=$1',[manager.id,department.id,division.id]);assert.equal((await call(approver,'/team')).body.length,1);
   });
   test('scope assignment validates boundaries and denies central escalation; revoking the scope removes the access; audited',async()=>{
-    const data={reviewer_id:staff.id,department_id:department.id,capabilities:['hr_staff_manage'],effective_from:'2020-01-01',reason};assert.equal((await call(staff,'/access-scopes',data)).status,403);assert.equal((await call(central,'/access-scopes',{...data,department_id:foreign.id,division_id:division.id})).status,400);assert.equal((await call(central,'/access-scopes',{...data,capabilities:['hr_admin']})).status,422);
-    const scope=await grant(staff,['hr_staff_manage']);await pool.query('UPDATE reviewers SET permissions=$2 WHERE id=$1',[staff.id,{hr_staff_manage:false}]);assert.equal((await call(staff,'/directory')).status,200,'a stored denial no longer overrides a scope');
+    const data={reviewer_id:staff.id,department_id:department.id,capabilities:['hr_officer'],effective_from:'2020-01-01',reason};assert.equal((await call(staff,'/access-scopes',data)).status,403);assert.equal((await call(central,'/access-scopes',{...data,department_id:foreign.id,division_id:division.id})).status,400);
+    const escalation=await call(central,'/access-scopes',{...data,capabilities:['hr_admin']});assert.equal(escalation.status,201);
+    assert.deepEqual(escalation.body.capabilities,['hr_officer'],'a requested right is ignored: an assignment only ever makes an HR officer');
+    assert.equal((await call(staff,'/access-scopes')).status,403,'an HR officer gains no central HR');
+    await access.revokeHrScope(pool,{user:{permissions:{hr_admin:true}},actor:central,scopeId:escalation.body.id,reason});
+    const scope=await grant(staff,['hr_officer']);await pool.query('UPDATE reviewers SET permissions=$2 WHERE id=$1',[staff.id,{hr_officer:false}]);assert.equal((await call(staff,'/directory')).status,200,'a stored denial no longer overrides a scope');
     await access.revokeHrScope(pool,{user:{permissions:{hr_admin:true}},actor:central,scopeId:scope.id,reason});assert.equal((await call(staff,'/directory')).status,403);
-    await assert.rejects(access.grantHrScope(pool,{user:{permissions:{hr_admin:true}},actor:{id:randomUUID()},data}),{code:'23503'});assert.equal((await call(central,'/access-scopes')).body.total,1);assert.equal((await pool.query("SELECT count(*)::int n FROM audit_log WHERE entity_id=$1 AND action='hr.access_scope.granted'",[scope.id])).rows[0].n,1);
+    await assert.rejects(access.grantHrScope(pool,{user:{permissions:{hr_admin:true}},actor:{id:randomUUID()},data}),{code:'23503'});assert.equal((await call(central,'/access-scopes')).body.total,2);assert.equal((await pool.query("SELECT count(*)::int n FROM audit_log WHERE entity_id=$1 AND action='hr.access_scope.granted'",[scope.id])).rows[0].n,1);
   });
   test('a queued balance write rechecks placement after a concurrent transfer',async()=>{
-    await grant(staff,['hr_balance_manage']);const bearer=await token(staff),lock=await pool.connect();
+    await grant(staff,['hr_officer']);const bearer=await token(staff),lock=await pool.connect();
     let request;
     try {
       await lock.query('BEGIN');await lock.query('SELECT id FROM hr_employees WHERE id=$1 FOR UPDATE',[employee.id]);
@@ -253,15 +260,15 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
       IF NEW.action='hr.access_scope.granted' THEN RAISE EXCEPTION 'Synthetic audit unavailable'; END IF; RETURN NEW; END $$;
       CREATE TRIGGER reject_scope_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_scope_audit()`);
     try {
-      await assert.rejects(grant(staff,['hr_staff_manage']),/Synthetic audit unavailable/);
+      await assert.rejects(grant(staff,['hr_officer']),/Synthetic audit unavailable/);
       assert.equal((await pool.query('SELECT count(*)::int n FROM hr_access_scopes')).rows[0].n,0);
       const response=await call(staff,'/directory',undefined,'GET',bearer);assert.equal(response.status,403,'session remains valid, scope was not committed');
     } finally {await pool.query('DROP TRIGGER reject_scope_audit ON audit_log; DROP FUNCTION reject_scope_audit()');}
   });
-  test('approval queues include evidence for the approver, self decisions remain blocked',async()=>{
-    await grant(approver,['hr_leave_approve']);const queue=await call(approver,'/approvals?status=approved');assert.equal(queue.body[0].attachments.length,1);
-    await assert.rejects(grant(approver,['hr_evidence_read']),/distinct scoped HR capabilities/,'evidence is no longer a separate right');
-    await grant(owner,['hr_leave_approve']);assert.equal((await call(owner,`/leaves/${pending.id}/decision`,{decision:'approved'})).status,403);
+  test('approval queues include evidence for the approver, HR officers get no queue, self decisions remain blocked',async()=>{
+    await lineApprover(approver);const queue=await call(approver,'/approvals?status=approved');assert.equal(queue.body[0].attachments.length,1);
+    await grant(staff,['hr_leave_approve']);assert.equal((await call(staff,'/approvals?status=approved')).status,403,'an HR assignment does not make an approver');
+    await nominateApprover(pool,owner.id);assert.equal((await call(owner,`/leaves/${pending.id}/decision`,{decision:'approved'})).status,404,'an approver is never in their own reporting line');
   });
 
 });

@@ -95,3 +95,26 @@ export async function readBalance(pool, employeeId, leaveTypeId, year) {
     lastResetDate: rows[0].last_reset_date,
   };
 }
+
+/**
+ * Makes an account a leave approver the way production does: a nomination in
+ * Leave settings. Uses a division office in its own synthetic department, so
+ * it never becomes the office a workflow test resolves. Creates a linked
+ * employee record when the account has none. Returns the assignment id, which
+ * a test can close (set effective_to) to withdraw the approver.
+ */
+export async function nominateApprover(pool, reviewerId) {
+  const suffix = Math.random().toString(36).slice(2, 10);
+  let { rows: [employee] } = await pool.query("SELECT id FROM hr_employees WHERE reviewer_id = $1 AND status = 'active' LIMIT 1", [reviewerId]);
+  if (!employee) {
+    ({ rows: [employee] } = await pool.query(
+      "INSERT INTO hr_employees (display_name, reviewer_id, status) VALUES ($1, $2, 'active') RETURNING id", [`Synthetic approver ${suffix}`, reviewerId]));
+  }
+  const { rows: [department] } = await pool.query('INSERT INTO hr_departments (name) VALUES ($1) RETURNING id', [`Synthetic nominations ${suffix}`]);
+  const { rows: [division] } = await pool.query('INSERT INTO hr_divisions (department_id, name) VALUES ($1, $2) RETURNING id', [department.id, `Synthetic office ${suffix}`]);
+  const { rows: [assignment] } = await pool.query(
+    `INSERT INTO hr_approval_assignments (level, department_id, division_id, approver_employee_id, effective_from, reason)
+     VALUES ('division', $1, $2, $3, '2000-01-01', 'Synthetic nomination for a test approver.') RETURNING id`,
+    [department.id, division.id, employee.id]);
+  return assignment.id;
+}

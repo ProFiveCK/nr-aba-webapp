@@ -13,7 +13,7 @@ import {withTransaction} from '../lib/transaction.js';
 import {CODES,COMMON_CODES,DEFAULT_RULES,SOURCE,dayNumber,serviceFacts} from '../lib/governmentLeaveRules.js';
 import * as service from '../services/governmentLeave.js';
 import { staffLeaveBalances, employeeLeaveAccount, BALANCE_STATUSES, BALANCE_SORTS } from '../services/governmentLeaveBalances.js';
-const router=express.Router(),central=requirePermission(PERMISSIONS.HR_ADMIN),access=requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_STAFF_MANAGE,PERMISSIONS.HR_BALANCE_MANAGE,PERMISSIONS.HR_LEAVE_APPROVE);
+const router=express.Router(),central=requirePermission(PERMISSIONS.HR_ADMIN),access=requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_OFFICER,PERMISSIONS.HR_LEAVE_APPROVE);
 router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
 router.use('/report',governmentLeaveReportingRouter);
 router.use('/drafts',governmentLeaveDraftsRouter);
@@ -26,7 +26,7 @@ const defaultReference=(req,_res,next)=>{for(const key of ['source_reference','p
 const date=name=>body(name).isString().custom(value=>{dayNumber(value);return true;});
 const actor=req=>({id:req.user.id,email:req.user.email,ip:req.ip});
 const data=req=>({user:req.user,actor:actor(req),data:req.body,employeeId:req.params.id});
-router.get('/balances',requirePermission(PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_BALANCE_MANAGE),[
+router.get('/balances',requirePermission(PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_OFFICER),[
  query('search').optional().isString().trim().isLength({max:100}),query('page').optional().isInt({min:1,max:100000}),
  query('department_id').optional().isUUID(),query('division_id').optional().isUUID(),
  query('status').optional().isIn(BALANCE_STATUSES),query('sort').optional().isIn(BALANCE_SORTS),query('direction').optional().isIn(['asc','desc'])

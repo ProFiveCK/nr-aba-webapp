@@ -13,8 +13,9 @@ describe('access presets', () => {
         expect(presetCapabilities(presetById('leave-staff')!, offered)).toEqual(['hr_access', 'hr_leave_apply']);
     });
 
-    it('add approval for an approver', () => {
-        expect(presetCapabilities(presetById('leave-approver')!, offered)).toContain('hr_leave_approve');
+    it('never tick approval: approvers are nominated in Leave settings', () => {
+        expect(presetById('leave-approver')).toBeUndefined();
+        expect(presetCapabilities(presetById('central-hr')!, offered)).not.toContain('hr_leave_approve');
     });
 
     it('drop keys the server does not offer instead of sending them', () => {

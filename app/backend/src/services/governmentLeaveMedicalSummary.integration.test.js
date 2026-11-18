@@ -162,8 +162,8 @@ describe('read-only Government Medical tracking', { skip: skipWithoutDatabase },
   test('medical details stay central-only and setup adoption metadata changes without altering employee leave rules', async () => {
     const { rows: [department] } = await pool.query("INSERT INTO hr_departments(name) VALUES('Medical department') RETURNING id");
     await pool.query('UPDATE hr_employees SET department_id=$2 WHERE id=$1', [employee.id, department.id]);
-    const scoped = (await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES($1,'Scoped HR','user','x',$2) RETURNING *", [`${randomUUID()}@example.test`, { hr_staff_manage: true }])).rows[0];
-    await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_staff_manage'],'2020-01-01',$3,$4)", [scoped.id, department.id, actor.id, reason]);
+    const scoped = (await pool.query("INSERT INTO reviewers(email,display_name,role,password_hash,permissions) VALUES($1,'HR officer','user','x',$2) RETURNING *", [`${randomUUID()}@example.test`, { hr_officer: true }])).rows[0];
+    await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_officer'],'2020-01-01',$3,$4)", [scoped.id, department.id, actor.id, reason]);
     const limited = await arrangements.employeeLeaveArrangements(pool, { user: scoped, employeeId: employee.id });
     assert.equal(limited.government, null); assert.ok(!JSON.stringify(limited).includes('baseline'));
     const central = await arrangements.employeeLeaveArrangements(pool, { user: actor, employeeId: employee.id });

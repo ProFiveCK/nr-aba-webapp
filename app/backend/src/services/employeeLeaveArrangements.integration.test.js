@@ -98,18 +98,22 @@ describe('read-only employee leave arrangements', { skip: skipWithoutDatabase },
   });
 
   test('scope and capability checks protect even minimal profiles, and scoped HR receives no central/private detail', async () => {
-    const staff = await account({ hr_staff_manage: true, hr_access: true });
-    assert.equal((await request(staff)).status, 404);
+    const staff = await account({ hr_access: true });
+    // An HR officer comes only from an assignment; claiming the right without one reaches nobody.
+    const claimed = { ...staff, permissions: { hr_access: true, hr_officer: true } };
+    assert.equal((await request(staff)).status, 403);
+    await assert.rejects(summary(claimed), { status: 404 });
     assert.equal((await request(await account({ hr_access: true }))).status, 403);
     assert.equal((await request(actor, randomUUID())).status, 404);
     assert.equal((await request(actor, 'not-a-uuid')).status, 422);
-    await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_staff_manage'],'2020-01-01',$3,$4)", [staff.id, department.id, actor.id, reason]);
+    await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_officer'],'2020-01-01',$3,$4)", [staff.id, department.id, actor.id, reason]);
     await configuration(['medical']);
     const data = (await request(staff)).body;
     assert.equal(data.restricted, true); assert.equal(data.legacy, null); assert.equal(data.government, null); assert.deepEqual(data.preparation, []);
     assert.ok(!JSON.stringify(data).includes('SECRET'));
     await pool.query("UPDATE hr_access_scopes SET revoked_at=NOW() WHERE reviewer_id=$1", [staff.id]);
-    await assert.rejects(summary(staff), { status: 404 });
+    await assert.rejects(summary(claimed), { status: 404 });
+    assert.equal((await request(staff)).status, 403);
   });
 
   test('enrolment, latest published activation, draft configuration and employee-only account remain distinct', async () => {
@@ -219,14 +223,14 @@ describe('read-only employee leave arrangements', { skip: skipWithoutDatabase },
     assert.equal(usage.latest_published_policy.label, 'Future published policy'); assert.equal(usage.latest_published_policy.timing, 'future');
     assert.equal(usage.next_policy.id, usage.latest_published_policy.id); assert.ok(!JSON.stringify(usage).includes('PRIVATE'));
     assert.equal((await pool.query('SELECT leave_policy_regime FROM hr_employees WHERE id=$1', [original.id])).rows[0].leave_policy_regime, 'legacy');
-    await assert.rejects(service.employeeLeavePolicyUsage(pool, { user: await account({ hr_staff_manage: true }) }), { status: 403 });
+    await assert.rejects(service.employeeLeavePolicyUsage(pool, { user: { ...(await account({})), permissions: { hr_officer: true } } }), { status: 403 });
     async function usageHttp(user) {
       const session = await auth.createSession(user.id);
       const token = auth.buildTokenPayload(user, session.tokenId, session.expiresAt);
       return fetch(`${base}/leave-policy-usage`, { headers: { Authorization: `Bearer ${token}` } });
     }
     const response = await usageHttp(actor); assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
-    assert.equal((await usageHttp(await account({ hr_staff_manage: true }))).status, 403);
+    assert.equal((await usageHttp(await account({ hr_access: true }))).status, 403);
     await pool.query("INSERT INTO hr_employee_service_periods(employee_id,start_date,employment_category,counts_for_service,reason) VALUES($1,'2020-01-01','contract',TRUE,$2)", [restricted.id, reason]);
     const contracts = await service.employeeLeavePolicyUsage(readOnly, { user: actor });
     assert.equal(contracts.counts.legacy_awaiting_migration, 2);
@@ -252,9 +256,9 @@ describe('read-only employee leave arrangements', { skip: skipWithoutDatabase },
     assert.equal(missing.total, 1); assert.equal(missing.employees[0].id, retained.id);
     const arrangements = await service.employeeLeaveArrangements(pool, { user: actor, employeeId: retained.id });
     assert.match(arrangements.preparation.find(p => p.key === 'placement').detail, /sYNTHETIC fINANCE.*Treasury retained.*Explicitly verify/);
-    const staff = await account({ hr_staff_manage: true });
-    await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_staff_manage'],'2020-01-01',$3,$4)", [staff.id, department.id, actor.id, reason]);
-    const scoped = await listEmployeeDirectory(pool, { user: staff, departmentId: department.id });
+    const staff = await account({});
+    await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_officer'],'2020-01-01',$3,$4)", [staff.id, department.id, actor.id, reason]);
+    const scoped = await listEmployeeDirectory(pool, { user: { ...staff, permissions: { hr_officer: true } }, departmentId: department.id });
     assert.equal(scoped.total, 1); assert.equal(scoped.employees[0].id, employee.id);
     // The managed department registry itself rejects ambiguous case-only names.
     await assert.rejects(pool.query("INSERT INTO hr_departments(name) VALUES('SYNTHETIC FINANCE')"), { code: '23505' });
@@ -267,7 +271,7 @@ describe('read-only employee leave arrangements', { skip: skipWithoutDatabase },
   }
 
   test('the route preview shows the single Supervisor stage applications actually take, and blocks self-approval', async () => {
-    const subjectLogin = await account({ hr_leave_approve: true });
+    const subjectLogin = await account({});
     await pool.query('UPDATE hr_employees SET reviewer_id=$2 WHERE id=$1', [employee.id, subjectLogin.id]);
     await assignDivisionTo(employee);
     const route = (await summary()).government.route;
@@ -278,8 +282,8 @@ describe('read-only employee leave arrangements', { skip: skipWithoutDatabase },
     assert.equal(route.ready, false);
   });
 
-  test('the route preview is ready for a valid approver and reports a revoked approval capability', async () => {
-    const officerLogin = await account({ hr_leave_approve: true });
+  test('the route preview is ready for a nominated approver and reports one whose account was deactivated', async () => {
+    const officerLogin = await account({});
     const officer = await createEmployee(pool, { name: 'Dated Government officer' });
     await pool.query('UPDATE hr_employees SET reviewer_id=$2 WHERE id=$1', [officer.id, officerLogin.id]);
     await assignDivisionTo(officer);
@@ -287,9 +291,9 @@ describe('read-only employee leave arrangements', { skip: skipWithoutDatabase },
     assert.equal(route.stages[0].approver_name, officer.display_name);
     assert.equal(route.stages[0].issue, null);
     assert.equal(route.ready, true);
-    await pool.query('DELETE FROM reviewer_capabilities WHERE reviewer_id=$1', [officerLogin.id]);
+    await pool.query("UPDATE reviewers SET status='inactive' WHERE id=$1", [officerLogin.id]);
     route = (await summary()).government.route;
-    assert.match(route.stages[0].issue, /capability/);
+    assert.match(route.stages[0].issue, /inactive/);
     assert.equal(route.ready, false);
   });
 });

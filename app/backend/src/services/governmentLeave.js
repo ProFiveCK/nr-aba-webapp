@@ -14,8 +14,8 @@ const fail=(message,status=409)=>{throw new ServiceError(status,message);};
 const audit=(client,actor,action,id,after)=>recordAudit({client,actor,action,entityType:'hr_government_leave',entityId:id,after});
 export function central(user){if(!isCentralHr(user))fail('Central HR administration is required.',403);}
 export async function lockEmployee(client,id){const {rows:[employee]}=await client.query('SELECT * FROM hr_employees WHERE id=$1 FOR UPDATE',[id]);if(!employee)fail('Employee not found.',404);return employee;}
-export async function ledgerReadable(client,user,id){if(!(await canAccessEmployee(client,user,id,'hr_balance_manage',{owner:true})))fail('Employee not found.',404);}
-export async function readable(client,user,id){if(!(await canAccessEmployee(client,user,id,'hr_staff_manage',{owner:true}))&&!(await canAccessEmployee(client,user,id,'hr_balance_manage'))&&!(await canAccessEmployee(client,user,id,'hr_leave_approve')))fail('Employee not found.',404);}
+export async function ledgerReadable(client,user,id){if(!(await canAccessEmployee(client,user,id,'hr_officer',{owner:true})))fail('Employee not found.',404);}
+export async function readable(client,user,id){if(!(await canAccessEmployee(client,user,id,'hr_officer',{owner:true}))&&!(await canAccessEmployee(client,user,id,'hr_leave_approve',{manager:true})))fail('Employee not found.',404);}
 const dates=(prefix='')=>`${prefix}*,to_char(${prefix}effective_from,'YYYY-MM-DD') AS effective_from,to_char(${prefix}effective_to,'YYYY-MM-DD') AS effective_to`;
 export async function loadContext(client,employeeId){
  const {rows:[employee]}=await client.query('SELECT id,display_name,status,leave_policy_regime FROM hr_employees WHERE id=$1',[employeeId]);if(!employee)fail('Employee not found.',404);

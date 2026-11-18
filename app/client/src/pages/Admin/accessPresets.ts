@@ -19,10 +19,8 @@ const LEAVE_BASICS = ['hr_access', 'hr_leave_apply'];
 export const ACCESS_PRESETS: AccessPreset[] = [
     { id: 'leave-staff', label: 'Staff member (leave only)', description: 'Applies for their own leave and sees their balance.',
         role: 'user', capabilities: LEAVE_BASICS },
-    { id: 'leave-approver', label: 'Leave approver', description: 'Also approves leave applications sent to them.',
-        role: 'user', capabilities: [...LEAVE_BASICS, 'hr_leave_approve'] },
-    { id: 'central-hr', label: 'Central HR officer', description: 'Manages staff, balances and reports across government, and decides leave with its evidence.',
-        role: 'user', capabilities: [...LEAVE_BASICS, 'hr_leave_approve', 'hr_staff_manage', 'hr_balance_manage', 'hr_report_read', 'hr_admin'] },
+    { id: 'central-hr', label: 'Central HR officer', description: 'Manages staff, balances, reports and leave settings across government.',
+        role: 'user', capabilities: [...LEAVE_BASICS, 'hr_admin'] },
     { id: 'preparer', label: 'ABA and FOREX TT preparer', description: 'Prepares payment batches and raises FOREX TT requests.',
         role: 'user', capabilities: ['aba_access', 'submit_aba', 'forex_tt_access', 'submit_forex_tt', ...LEAVE_BASICS] },
     { id: 'reviewer', label: 'Treasury reviewer', description: 'Reviews and rejects ABA batches, processes FOREX TT and reviews Fit for Duty batches.',

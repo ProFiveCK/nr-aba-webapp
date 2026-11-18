@@ -22,7 +22,7 @@ import * as jobs from '../services/governmentLeaveJobs.js';
 import {governmentEvidenceUpload} from '../services/governmentLeaveUpload.js';
 import {governmentLeaveMedicalSummary,medicalTrackingTotals} from '../services/governmentLeaveMedicalSummary.js';
 const router=express.Router();
-const access=requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_LEAVE_APPROVE,PERMISSIONS.HR_REPORT_READ);
+const access=requirePermission(PERMISSIONS.HR_ACCESS,PERMISSIONS.HR_ADMIN,PERMISSIONS.HR_LEAVE_APPROVE,PERMISSIONS.HR_OFFICER);
 const central=requirePermission(PERMISSIONS.HR_ADMIN),apply=requirePermission(PERMISSIONS.HR_LEAVE_APPLY);
 router.use(access);
 router.use(caseRouter);
@@ -112,7 +112,7 @@ router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query
   const assignedOnly=mode==='queue'&&req.query.assigned==='true';
   // 'waiting on me' = an undecided current stage bound to this officer; the wider queue also shows everything in HR's scope.
   const boundToMe=current=>`EXISTS(SELECT 1 FROM hr_gov_request_stages s JOIN LATERAL(SELECT reviewer_id FROM hr_gov_stage_bindings b WHERE b.stage_id=s.id ORDER BY recorded_at DESC,id DESC LIMIT 1)b ON TRUE WHERE s.request_id=r.id AND ${workflow.activeStageSql()}${current?' AND s.ordinal=r.stage_index':''} AND b.reviewer_id=$1 AND (e.status='active' OR r.application_snapshot->>'separation_case'='true') AND e.department_id=r.department_id AND e.division_id=r.division_id)`;
-  const scope=mode==='all'?'($1::uuid IS NOT NULL)':mode==='mine'?'e.reviewer_id=$1':assignedOnly?`(${boundToMe(true)})`:`(${employeeScopeSql(req.user,'hr_report_read','$1')} OR ${boundToMe(false)})`;
+  const scope=mode==='all'?'($1::uuid IS NOT NULL)':mode==='mine'?'e.reviewer_id=$1':assignedOnly?`(${boundToMe(true)})`:`(${employeeScopeSql(req.user,'hr_officer','$1')} OR ${boundToMe(false)})`;
   const where=`${scope} AND ($2='all' OR ${effectiveStatusSql()}=$2) AND ($4::uuid IS NULL OR r.employee_id=$4)`;
   const selection=`SELECT r.id,r.employee_id,r.application_snapshot->'employee'->>'name' AS employee_name,r.code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(r.end_date,'YYYY-MM-DD') AS end_date,r.charge,CASE WHEN r.code='paternity' THEN (SELECT count(*)::int FROM jsonb_array_elements(COALESCE(r.grant_snapshot->'evaluation'->'segments',r.application_snapshot->'evaluation'->'segments','[]'::jsonb)) day WHERE (day->>'scheduled_hours')::numeric>0 AND COALESCE((day->>'holiday')::boolean,FALSE)=FALSE) ELSE NULL END AS requested_working_days,r.application_snapshot->'input'->>'duration_unit' AS duration_unit,r.application_snapshot->'input'->>'hours' AS hours,r.status,(SELECT jsonb_build_object('request_id',ce.request_id,'action',ce.effect->>'action','effective_end',ce.effect->>'effective_end') FROM hr_gov_case_effects ce WHERE ce.original_request_id=r.id ORDER BY ce.version DESC LIMIT 1) AS amendment,r.submitted_at,r.stage_index,s.level AS current_level,s.label AS current_label,b.approver_name AS current_approver,
     (SELECT count(*)::int FROM hr_gov_request_stages missing WHERE missing.request_id=r.id AND ${workflow.activeStageSql('missing')} AND NOT EXISTS(SELECT 1 FROM hr_gov_stage_bindings mb WHERE mb.stage_id=missing.id)) AS unassigned_stages,

@@ -26,16 +26,15 @@ it('keeps specialist views inaccessible to an ordinary approver even through a q
     expect(html).not.toContain('Follow-up status');
     expect(html).not.toContain('Planning');
 });
-it('opens balance access without mounting employee management', () => {
-    auth.permissions = { hr_balance_manage: true };
-    const html = render(<Employees />, '/leave/employees');
-    expect(html).toContain('Authorised balance browser');
-    expect(html).not.toContain('Employee directory editor');
+it('gives an HR officer employee records and balances under one right', () => {
+    auth.permissions = { hr_officer: true };
+    expect(render(<Employees />, '/leave/employees')).toContain('Employee directory editor');
+    expect(render(<Employees />, '/leave/employees?view=balances')).toContain('Authorised balance browser');
 });
-it('does not grant balance controls to staff management alone', () => {
-    auth.permissions = { hr_staff_manage: true };
+it('gives an approver neither records nor balances', () => {
+    auth.permissions = { hr_leave_approve: true };
     const html = render(<Employees />, '/leave/employees?view=balances');
-    expect(html).toContain('Employee directory editor');
+    expect(html).not.toContain('Employee directory editor');
     expect(html).not.toContain('Authorised balance browser');
 });
 it('opens an employee at the leave list with application entry on demand', () => {

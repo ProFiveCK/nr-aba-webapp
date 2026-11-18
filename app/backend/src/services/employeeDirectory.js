@@ -32,7 +32,7 @@ export async function linkedEmployee(pool, accountId) {
 
 export async function listEmployeeDirectory(pool, { page = 1, pageSize = 50, search = '', departmentId = null, status = null, readiness = '', regime = null, contractWithoutLeave = null, user = null } = {}) {
   const values = [status, departmentId, search.trim(), readiness];
-  const scopeCondition = user ? employeeScopeSql(user,'hr_staff_manage','$5') : '($5::uuid IS NULL)';
+  const scopeCondition = user ? employeeScopeSql(user,'hr_officer','$5') : '($5::uuid IS NULL)';
   values.push(user?.id || null, regime, contractWithoutLeave);
   // Retained names support central discovery only; scope authority still uses
   // verified department_id through scopeCondition, and reads never assign it.
@@ -302,17 +302,13 @@ export async function closeApprovalAssignment(pool, { assignmentId, endDate, act
 }
 
 // A preview for configuration review. It cannot approve a leave application.
-// Missing scopes, revoked grants, inactive accounts and self-approval all block
+// Missing nominations, inactive accounts and self-approval all block
 // readiness; delegation and the staged request state machine are the next build.
 export async function previewApprovalChain(pool, employeeId, onDate) {
   const { rows: [employee] } = await pool.query('SELECT id, department_id, division_id FROM hr_employees WHERE id = $1', [employeeId]);
   if (!employee) throw notFound('Employee not found.');
   const { rows } = await pool.query(
-    `SELECT a.*, e.reviewer_id, e.display_name AS approver_name, e.status AS employee_status, r.status AS account_status,
-       (EXISTS (SELECT 1 FROM reviewer_capabilities c WHERE c.reviewer_id = e.reviewer_id AND c.capability = 'hr_leave_approve')
-         OR EXISTS (SELECT 1 FROM hr_access_scopes s WHERE s.reviewer_id=e.reviewer_id AND 'hr_leave_approve'=ANY(s.capabilities)
-           AND s.revoked_at IS NULL AND s.effective_from <= $1 AND (s.effective_to IS NULL OR s.effective_to >= $1)
-           AND s.department_id=$3 AND (s.division_id IS NULL OR s.division_id=$2))) AS has_approval_grant
+    `SELECT a.*, e.reviewer_id, e.display_name AS approver_name, e.status AS employee_status, r.status AS account_status
      FROM hr_approval_assignments a JOIN hr_employees e ON e.id = a.approver_employee_id
      LEFT JOIN reviewers r ON r.id = e.reviewer_id
      WHERE a.effective_from <= $1 AND (a.effective_to IS NULL OR a.effective_to >= $1)
@@ -329,7 +325,6 @@ export async function previewApprovalChain(pool, employeeId, onDate) {
     else if (!assignment) issue = 'Exactly one effective approver must be assigned.';
     else if (assignment.approver_employee_id === employeeId) issue = 'Self-approval requires an authorised substitute.';
     else if (assignment.employee_status !== 'active' || assignment.account_status !== 'active') issue = 'Approver or account is inactive.';
-    else if (!assignment.has_approval_grant) issue = 'Approver needs an explicit leave approval grant.';
     return { level, assignment_id: assignment?.id || null, approver_employee_id: assignment?.approver_employee_id || null,
       approver_name: assignment?.approver_name || null, issue };
   });

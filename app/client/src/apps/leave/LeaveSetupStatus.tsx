@@ -5,7 +5,7 @@ import type { LeavePolicyUsage } from './leaveSetup';
 const settings = [
     { view: 'policies', title: 'Policy & calendars', detail: 'Leave entitlements, public holidays and working schedules.', icon: CalendarDays },
     { view: 'organisation', title: 'Organisation & approvers', detail: 'Departments, reporting structure and approval routes.', icon: Users },
-    { view: 'access', title: 'Administration access', detail: 'Assign the people who can manage employee records.', icon: ShieldCheck },
+    { view: 'access', title: 'HR officers', detail: 'Who manages staff records, balances and reports for a department or division.', icon: ShieldCheck },
     { view: 'advanced', title: 'Advanced maintenance', detail: 'Balance schedules, bulk employee accounts and payroll reconciliation.', icon: Settings2 },
 ];
 

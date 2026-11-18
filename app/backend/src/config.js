@@ -97,14 +97,12 @@ export const PERMISSIONS = {
   // be granted in any combination.
   HR_ACCESS: 'hr_access',
   HR_LEAVE_APPLY: 'hr_leave_apply',
+  // Worked out from Leave settings, never ticked: holding an approval office
+  // (or a pending step assigned to you), and holding an HR officer assignment
+  // for a department or division. See services/hrAccess.js.
   HR_LEAVE_APPROVE: 'hr_leave_approve',
-  HR_STAFF_MANAGE: 'hr_staff_manage',
+  HR_OFFICER: 'hr_officer',
   HR_ADMIN: 'hr_admin',
-  HR_BALANCE_MANAGE: 'hr_balance_manage',
-  HR_REPORT_READ: 'hr_report_read',
-  // Retired: supporting evidence now follows the right to decide the leave.
-  // Kept so the earlier hidden-permissions migration still recognises the key.
-  HR_EVIDENCE_READ: 'hr_evidence_read',
   ABA_ACCESS: 'aba_access',
   BANKING_ACCESS: 'banking_access',
   PAYROLL_ACCESS: 'payroll_access',
@@ -162,10 +160,6 @@ export const CAPABILITY_CATALOGUE = [
     capabilities: [
       { key: PERMISSIONS.HR_ACCESS, label: 'Open the Leave app' },
       { key: PERMISSIONS.HR_LEAVE_APPLY, label: 'Apply for leave' },
-      { key: PERMISSIONS.HR_LEAVE_APPROVE, label: 'Approve leave within assigned scope or verified reporting line' },
-      { key: PERMISSIONS.HR_STAFF_MANAGE, label: 'Manage staff within assigned HR scope' },
-      { key: PERMISSIONS.HR_BALANCE_MANAGE, label: 'Manage balances within assigned HR scope' },
-      { key: PERMISSIONS.HR_REPORT_READ, label: 'Read reports within assigned HR scope' },
       { key: PERMISSIONS.HR_ADMIN, label: 'Central HR administration across government' },
     ],
   },
@@ -181,12 +175,22 @@ export const CAPABILITY_CATALOGUE = [
   },
 ];
 
+// Former Leave ticks, kept only so the start-up migrations can recognise and
+// retire them. Nothing grants or checks them.
+export const RETIRED_LEAVE_GRANTS = {
+  HR_STAFF_MANAGE: 'hr_staff_manage',
+  HR_BALANCE_MANAGE: 'hr_balance_manage',
+  HR_REPORT_READ: 'hr_report_read',
+  HR_EVIDENCE_READ: 'hr_evidence_read',
+};
+
 export const ALL_CAPABILITIES = CAPABILITY_CATALOGUE.flatMap((g) => g.capabilities.map((c) => c.key));
 
 // What a leave-only (employee) account may hold: the Leave app, short of
 // central HR administration across government. The single rule for writes,
 // reads and the account page.
-export const LEAVE_ONLY_CAPABILITIES = ALL_CAPABILITIES.filter((key) => key.startsWith('hr_') && key !== PERMISSIONS.HR_ADMIN);
+export const isLeaveOnlyKey = (key) => key.startsWith('hr_') && key !== PERMISSIONS.HR_ADMIN;
+export const LEAVE_ONLY_CAPABILITIES = ALL_CAPABILITIES.filter(isLeaveOnlyKey);
 
 // Per-account notification preferences. These are the only keys the
 // reviewers.permissions column may still hold; it no longer grants access.

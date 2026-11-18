@@ -41,7 +41,7 @@ export function LeaveApp() {
                 {visible.some((s) => s.id === 'my-leave') && <Route path="my-leave" element={<MyLeave />} />}
                 {visible.some((s) => s.id === 'calendar') && <Route path="calendar" element={<Calendar />} />}
                 {visible.some((s) => s.id === 'employees') && <><Route path="employees" element={<Employees />} /><Route path="staff" element={<LeaveRedirect to="/leave/employees" />} /></>}
-                {(user?.permissions?.hr_admin || user?.permissions?.hr_balance_manage) && <Route path="balances" element={<LeaveRedirect to="/leave/employees?view=balances" />} />}
+                {(user?.permissions?.hr_admin || user?.permissions?.hr_officer) && <Route path="balances" element={<LeaveRedirect to="/leave/employees?view=balances" />} />}
                 {visible.some((s) => s.id === 'report') && <Route path="report" element={<Report />} />}
                 {visible.some((s) => s.id === 'settings') && <><Route path="settings" element={<Staff key="settings" workspace="settings" />} /><Route path="policies" element={<Navigate to="/leave/settings?view=policies" replace />} /></>}
                 {/* An unknown or forbidden section, including one reached from

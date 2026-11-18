@@ -20,8 +20,8 @@ export const LEAVE_SECTIONS: LeaveSectionDef[] = [
     { id: 'work-queue', label: 'Work queue', capabilities: ['hr_leave_approve', 'hr_admin'] },
     { id: 'my-leave', label: 'My Leave', capabilities: ['hr_leave_apply'] },
     { id: 'calendar', label: 'Calendar', capabilities: ['hr_access'] },
-    { id: 'employees', label: 'Employees', capabilities: ['hr_staff_manage', 'hr_balance_manage', 'hr_admin'] },
-    { id: 'report', label: 'Reports', capabilities: ['hr_report_read', 'hr_admin'] },
+    { id: 'employees', label: 'Employees', capabilities: ['hr_officer', 'hr_admin'] },
+    { id: 'report', label: 'Reports', capabilities: ['hr_officer', 'hr_admin'] },
     { id: 'settings', label: 'Settings', capabilities: ['hr_admin'] },
 ];
 

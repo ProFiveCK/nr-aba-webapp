@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import {initOrganisationHierarchySchema,initParentApproverSchema} from './services/organisationHierarchy.js';
 import { initGovernmentLeaveSchema } from './services/governmentLeaveSchema.js';
 import dotenv from 'dotenv';
-import { ALL_CAPABILITIES, LEAVE_ONLY_CAPABILITIES, PERMISSIONS, PREFERENCE_KEYS, ROLE_CAPABILITIES } from './config.js';
+import { ALL_CAPABILITIES, LEAVE_ONLY_CAPABILITIES, PERMISSIONS, PREFERENCE_KEYS, RETIRED_LEAVE_GRANTS, ROLE_CAPABILITIES } from './config.js';
 
 dotenv.config();
 
@@ -149,7 +149,7 @@ async function retireHiddenPermissions(client) {
   if (flag.length && flag[0].hidden_permissions_retired_at) return;
 
   const today = "(NOW() AT TIME ZONE 'Pacific/Nauru')::date";
-  const accessKeys = new Set(Object.values(PERMISSIONS).filter((key) => !PREFERENCE_KEYS.includes(key)));
+  const accessKeys = new Set([...Object.values(PERMISSIONS), ...Object.values(RETIRED_LEAVE_GRANTS)].filter((key) => !PREFERENCE_KEYS.includes(key)));
   const legacyAdminGrants = [...ALL_CAPABILITIES, PERMISSIONS.ADMIN];
   const { rows: reviewers } = await client.query('SELECT id, role, status, permissions, account_type FROM reviewers ORDER BY id FOR UPDATE');
   let changedAccounts = 0;
@@ -259,7 +259,7 @@ async function retireHiddenPermissions(client) {
  * holds the key there is nothing to do.
  */
 async function retireEvidenceGrant(client) {
-  const key = PERMISSIONS.HR_EVIDENCE_READ;
+  const key = RETIRED_LEAVE_GRANTS.HR_EVIDENCE_READ;
   const { rows: grants } = await client.query(
     'DELETE FROM reviewer_capabilities WHERE capability = $1 RETURNING reviewer_id', [key]);
   for (const { reviewer_id: reviewerId } of grants) {
@@ -307,6 +307,69 @@ async function fenceLeaveOnlyAccounts(client) {
       [reviewerId, JSON.stringify({ capability, reason: 'Leave-only accounts hold Leave access only.' })]);
   }
   if (rows.length) console.info(`[schema] removed ${rows.length} grant(s) a leave-only account may not hold`);
+}
+
+/**
+ * Leave rights beyond applying come from Leave settings, not ticks (see
+ * services/hrAccess.js). This moves existing accounts across and records each
+ * change; once nothing holds an old right there is nothing to do.
+ *
+ * - The old "Approve leave", "Manage staff", "Manage balances" and "Read
+ *   reports" ticks are removed. Approving now follows a nomination, so anyone
+ *   who had the approval tick without one is named in a warning.
+ * - An HR assignment holding staff, balance or report rights becomes one HR
+ *   officer assignment; one that only held leave decisions is revoked, as
+ *   decisions follow nominations.
+ */
+async function moveLeaveRightsToSettings(client) {
+  const { approverHolderSql, HR_OFFICER } = await import('./services/hrAccess.js');
+  const officerRights = [RETIRED_LEAVE_GRANTS.HR_STAFF_MANAGE, RETIRED_LEAVE_GRANTS.HR_BALANCE_MANAGE, RETIRED_LEAVE_GRANTS.HR_REPORT_READ];
+  const retired = [...officerRights, PERMISSIONS.HR_LEAVE_APPROVE];
+
+  // Widen the scope check once so assignments can hold the single right.
+  const { rows: checks } = await client.query(
+    "SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'hr_access_scopes'::regclass AND contype = 'c'");
+  for (const check of checks) {
+    if (!check.def.includes('hr_staff_manage') || check.def.includes(HR_OFFICER)) continue;
+    await client.query(`ALTER TABLE hr_access_scopes DROP CONSTRAINT "${check.conname.replace(/"/g, '')}"`);
+    await client.query(`ALTER TABLE hr_access_scopes ADD CONSTRAINT "${check.conname.replace(/"/g, '')}" CHECK (cardinality(capabilities) BETWEEN 1 AND 6
+      AND capabilities <@ ARRAY['hr_officer','hr_staff_manage','hr_leave_approve','hr_balance_manage','hr_report_read','hr_evidence_read']::text[])`);
+  }
+
+  const { rows: ticks } = await client.query(
+    `DELETE FROM reviewer_capabilities c WHERE c.capability = ANY($1::text[])
+     RETURNING c.reviewer_id, c.capability, ${approverHolderSql('c.reviewer_id')} AS nominated`, [retired]);
+  const unnominated = new Set();
+  for (const { reviewer_id: reviewerId, capability, nominated } of ticks) {
+    if (capability === PERMISSIONS.HR_LEAVE_APPROVE && !nominated) unnominated.add(reviewerId);
+    await client.query(
+      `INSERT INTO audit_log (action, entity_type, entity_id, metadata) VALUES ('reviewer.capability.retired', 'reviewer', $1, $2)`,
+      [reviewerId, JSON.stringify({ capability, nominated, reason: 'Leave rights now come from Leave settings.' })]);
+  }
+
+  const { rows: scopes } = await client.query(
+    "SELECT * FROM hr_access_scopes WHERE revoked_at IS NULL AND capabilities <> ARRAY['hr_officer']::text[] ORDER BY id FOR UPDATE");
+  let revoked = 0;
+  for (const scope of scopes) {
+    const officer = scope.capabilities.some((right) => officerRights.includes(right));
+    const { rows: [after] } = officer
+      ? await client.query('UPDATE hr_access_scopes SET capabilities = $2 WHERE id = $1 RETURNING *', [scope.id, [HR_OFFICER]])
+      : await client.query(
+        `UPDATE hr_access_scopes SET revoked_at = NOW(),
+           revoke_reason = 'Leave decisions now follow approver nominations in Leave settings.' WHERE id = $1 RETURNING *`, [scope.id]);
+    if (!officer) revoked += 1;
+    await client.query(
+      `INSERT INTO audit_log (action, entity_type, entity_id, before, after, metadata)
+       VALUES ('hr.access_scope.migrated', 'hr_access_scope', $1, $2, $3, $4)`,
+      [scope.id, JSON.stringify(scope), JSON.stringify(after), JSON.stringify({ migration: 'leave_rights_to_settings' })]);
+  }
+
+  if (ticks.length || scopes.length) {
+    console.info(`[schema] Leave rights moved to Leave settings: ${ticks.length} tick(s) removed, ${scopes.length - revoked} HR assignment(s) now HR officer, ${revoked} decisions-only assignment(s) revoked`);
+  }
+  if (unnominated.size) {
+    console.warn(`[schema] ${unnominated.size} account(s) had "Approve leave" but hold no approval nomination; nominate them in Leave settings if they still approve: ${[...unnominated].join(', ')}`);
+  }
 }
 
 const { Pool } = pg;
@@ -1173,7 +1236,7 @@ export async function initSchema() {
         department_id UUID NOT NULL REFERENCES hr_departments(id) ON DELETE RESTRICT,
         division_id UUID,
         capabilities TEXT[] NOT NULL CHECK (cardinality(capabilities) BETWEEN 1 AND 5
-          AND capabilities <@ ARRAY['hr_staff_manage','hr_leave_approve','hr_balance_manage','hr_report_read','hr_evidence_read']::text[]),
+          AND capabilities <@ ARRAY['hr_officer','hr_staff_manage','hr_leave_approve','hr_balance_manage','hr_report_read','hr_evidence_read']::text[]),
         effective_from DATE NOT NULL,
         effective_to DATE CHECK (effective_to >= effective_from),
         granted_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
@@ -1566,6 +1629,7 @@ export async function initSchema() {
     await materialiseRoleFloor(client);
     await retireHiddenPermissions(client);
     await retireEvidenceGrant(client);
+    await moveLeaveRightsToSettings(client);
     await fenceLeaveOnlyAccounts(client);
 
     await client.query('COMMIT');

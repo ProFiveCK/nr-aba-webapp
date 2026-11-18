@@ -29,7 +29,7 @@ export function EmployeeManagement({ workspace='employees' }: { workspace?:'empl
     const [scopeSummary,setScopeSummary] = useState('Checking assigned access…');
     useEffect(() => { void apiClient.get<{central:boolean;scopes:{department_name:string;division_name:string|null}[]}>('/hr/access-scopes/context').then(context=>setScopeSummary(context.central ? 'Central HR · Government-wide records' : context.scopes.length ? `Assigned access: ${context.scopes.map(scope=>`${scope.department_name} / ${scope.division_name || 'All divisions'}`).join('; ')}` : 'No active department or division assignment. Contact central HR.')).catch(()=>setScopeSummary('Unable to confirm assigned access.')); }, []);
     const choices = workspace === 'settings'
-        ? [['summary', 'Settings'], ['policies', 'Policy & calendars'], ['organisation', 'Organisation & approvers'], ['access', 'Administration access'], ['advanced', 'Advanced maintenance']]
+        ? [['summary', 'Settings'], ['policies', 'Policy & calendars'], ['organisation', 'Organisation & approvers'], ['access', 'HR officers'], ['advanced', 'Advanced maintenance']]
         : [['directory', 'Employees']];
     // Retired setup URLs return to the current workspace; they must not revive import or transfer tools.
     const maintenanceTool = ['accrual', 'accounts', 'payroll'].includes(requested || '') ? requested : params.get('tool');

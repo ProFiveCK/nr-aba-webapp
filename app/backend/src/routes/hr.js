@@ -167,7 +167,7 @@ async function approvedLeaveForm(req, id) {
     );
     if (!rows.length) return null;
     const application = rows[0];
-    if (!(await canAccessEmployee(pool,req.user,application.employee_id,'hr_report_read',{owner:true,manager:true}))
+    if (!(await canAccessEmployee(pool,req.user,application.employee_id,'hr_officer',{owner:true,manager:true}))
       && !(await canActOnEmployee(req,application.employee_id))) return null;
 
     const snapshot = application.payroll_form_snapshot;
@@ -194,7 +194,7 @@ async function approvedLeaveForm(req, id) {
 
 const leaveFormAccess = requirePermission(
   PERMISSIONS.HR_ACCESS, PERMISSIONS.HR_LEAVE_APPROVE,
-  PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_REPORT_READ, PERMISSIONS.HR_ADMIN
+  PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN
 );
 
 router.get(
@@ -317,7 +317,7 @@ router.post(
 
 // ===== Manager: team and approvals =====
 
-router.get('/team', requirePermission(PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN), async (req,res) => {
+router.get('/team', requirePermission(PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN), async (req,res) => {
   const {rows}=await pool.query(`SELECT e.*, m.display_name AS manager_name FROM hr_employees e
     LEFT JOIN hr_employees m ON m.id=e.manager_id AND ${employeeReadSql(req.user,'$1','m')}
     WHERE e.status='active' AND ${employeeReadSql(req.user)} ORDER BY e.display_name`,[req.user.id]);
@@ -429,7 +429,7 @@ async function resolveOrgUnit(departmentInput, divisionInput) {
   return { department: departments[0].name, division: divisions[0].name, department_id: departments[0].id, division_id: divisions[0].id };
 }
 
-router.get('/org-units', requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN), async (req, res) => {
+router.get('/org-units', requirePermission(PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN), async (req, res) => {
   const {rows:allowed}=await pool.query(`SELECT DISTINCT department_id,division_id FROM hr_access_scopes s WHERE reviewer_id=$1 AND ${activeScopeSql()}`,[req.user.id]);
   const [{ rows: departments }, { rows: divisions }] = await Promise.all([
     pool.query('SELECT id, name FROM hr_departments ORDER BY lower(name)'),
@@ -554,12 +554,12 @@ router.delete(
   }
 );
 
-router.get('/employees', requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN), async (req, res) => {
+router.get('/employees', requirePermission(PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN), async (req, res) => {
   const { rows } = await pool.query(
     `SELECT e.*, m.display_name AS manager_name
        FROM hr_employees e
-       LEFT JOIN hr_employees m ON m.id = e.manager_id AND ${employeeScopeSql(req.user,'hr_staff_manage','$1','m')}
-      WHERE ${employeeScopeSql(req.user,'hr_staff_manage')} ORDER BY e.status, e.display_name`,[req.user.id]
+       LEFT JOIN hr_employees m ON m.id = e.manager_id AND ${employeeScopeSql(req.user,'hr_officer','$1','m')}
+      WHERE ${employeeScopeSql(req.user,'hr_officer')} ORDER BY e.status, e.display_name`,[req.user.id]
   );
   res.json(visibleEmployees(req, rows));
 });
@@ -569,7 +569,7 @@ router.get('/employees', requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSI
 // current-policy staff use only their current entitlement ledger and live holds.
 router.get(
   '/employees/balances',
-  requirePermission(PERMISSIONS.HR_BALANCE_MANAGE, PERMISSIONS.HR_ADMIN),
+  requirePermission(PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN),
   [query('year').optional().isInt()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -582,7 +582,7 @@ router.get(
       SELECT e.id,e.display_name,e.department_code,e.division_code,e.status,e.reviewer_id,e.email,e.join_date,
         e.leave_policy_regime,COALESCE(r.account_type,'staff') AS account_type
       FROM hr_employees e LEFT JOIN reviewers r ON r.id=e.reviewer_id
-      WHERE e.status='active' AND e.leave_entitled AND ${employeeScopeSql(req.user,'hr_balance_manage','$2')}
+      WHERE e.status='active' AND e.leave_entitled AND ${employeeScopeSql(req.user,'hr_officer','$2')}
     ), accounts AS (
       SELECT e.id AS employee_id,t.name AS leave_type,b.balance,b.pending
       FROM scoped e JOIN hr_leave_balances b ON b.employee_id=e.id AND b.year=$1
@@ -747,7 +747,7 @@ function blankToNull(req, _res, next) {
 
 router.put(
   '/employees/:id',
-  requirePermission(PERMISSIONS.HR_STAFF_MANAGE, PERMISSIONS.HR_ADMIN),
+  requirePermission(PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN),
   blankToNull,
   [
     param('id').isUUID(),
@@ -771,8 +771,8 @@ router.put(
     if (!handleValidation(req, res)) return;
 
     if (!isCentralHr(req.user) && Object.keys(req.body).some(key=>!['display_name','position_title','manager_id'].includes(key))) throw new ServiceError(403,'Central HR controls identity, placement, status and eligibility changes in historical tools.');
-    if (!(await canAccessEmployee(pool,req.user,req.params.id,'hr_staff_manage'))) throw new ServiceError(404,'Employee not found.');
-    if (req.body.manager_id && !(await canAccessEmployee(pool,req.user,req.body.manager_id,'hr_staff_manage'))) throw new ServiceError(404,'Reporting manager not found.');
+    if (!(await canAccessEmployee(pool,req.user,req.params.id,'hr_officer'))) throw new ServiceError(404,'Employee not found.');
+    if (req.body.manager_id && !(await canAccessEmployee(pool,req.user,req.body.manager_id,'hr_officer'))) throw new ServiceError(404,'Reporting manager not found.');
 
     // Only the fields the caller actually sent, so an unmentioned field keeps
     // its value and an explicit null clears it.
@@ -786,7 +786,7 @@ router.put(
       return;
     }
     // Managing staff records and setting what they are paid are different
-    // powers; HR_STAFF_MANAGE grants the first, not the second.
+    // powers; an HR officer has the first, not the second.
     if (Object.hasOwn(updates, 'daily_rate') && !canSeePay(req)) {
       res.status(403).json({ message: 'Only an administrator can set a pay rate.' });
       return;
@@ -865,8 +865,8 @@ router.put(
             seen.add(id);
           }
         }
-        await assertEmployeeScope(client,req.user,req.params.id,'hr_staff_manage');
-        if (updates.manager_id) await assertEmployeeScope(client,req.user,updates.manager_id,'hr_staff_manage');
+        await assertEmployeeScope(client,req.user,req.params.id,'hr_officer');
+        if (updates.manager_id) await assertEmployeeScope(client,req.user,updates.manager_id,'hr_officer');
         if (Object.hasOwn(updates, 'reviewer_id')) {
           await setEmployeeAccount(client, { employeeId: req.params.id, reviewerId: updates.reviewer_id,
             actor: { id: req.user.id, email: req.user.email, ip: req.ip },
@@ -1092,11 +1092,11 @@ router.post(
 
 router.get(
   '/employees/:id/balances',
-  requirePermission(PERMISSIONS.HR_BALANCE_MANAGE, PERMISSIONS.HR_ADMIN),
+  requirePermission(PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN),
   [param('id').isUUID(), query('year').optional().isInt()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
-    if (!(await canAccessEmployee(pool,req.user,req.params.id,'hr_balance_manage'))) throw new ServiceError(404,'Employee not found.');
+    if (!(await canAccessEmployee(pool,req.user,req.params.id,'hr_officer'))) throw new ServiceError(404,'Employee not found.');
     const year = Number(req.query.year) || new Date().getFullYear();
     const { rows } = await pool.query(
       `SELECT b.*, t.name AS leave_type_name
@@ -1114,7 +1114,7 @@ router.get(
 // kept, so a balance can always be explained.
 router.post(
   '/adjustments',
-  requirePermission(PERMISSIONS.HR_BALANCE_MANAGE, PERMISSIONS.HR_ADMIN),
+  requirePermission(PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN),
   [
     body('employee_id').isUUID(),
     body('leave_type_id').isUUID(),
@@ -1132,7 +1132,7 @@ router.post(
       actorId: req.user.id,
       year: req.body.year,
       authorize: async client => {
-        const employee = await assertEmployeeScope(client,req.user,req.body.employee_id,'hr_balance_manage');
+        const employee = await assertEmployeeScope(client,req.user,req.body.employee_id,'hr_officer');
         const { rows: [account] } = employee.reviewer_id ? await client.query('SELECT account_type FROM reviewers WHERE id=$1',[employee.reviewer_id]) : { rows: [] };
         if (employee.leave_policy_regime === 'government' || account?.account_type === 'employee') {
           throw new ServiceError(409,'This balance requires a certified correction. Contact central HR.');
@@ -1571,7 +1571,7 @@ router.get(
 // two pay periods in full against both of them.
 router.get(
   '/report',
-  requirePermission(PERMISSIONS.HR_REPORT_READ, PERMISSIONS.HR_ADMIN),
+  requirePermission(PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN),
   [query('from').isISO8601(), query('to').isISO8601()],
   async (req, res) => {
     if (!handleValidation(req, res)) return;
@@ -1584,7 +1584,7 @@ router.get(
          CROSS JOIN LATERAL ${WORKING_DAYS_IN_RANGE} w
         WHERE a.status = 'approved'
           AND a.start_date <= $2 AND a.end_date >= $1
-          AND ${employeeScopeSql(req.user,'hr_report_read','$3')}
+          AND ${employeeScopeSql(req.user,'hr_officer','$3')}
         GROUP BY e.display_name, e.department_code, t.name
         ORDER BY e.display_name, t.name`,
       [req.query.from, req.query.to,req.user.id]

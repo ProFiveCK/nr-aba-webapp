@@ -4,7 +4,9 @@ import { body, param, handleValidation } from '../middleware/validation.js';
 import { pool } from '../db.js';
 import {
   generateTempPassword,
+  allowedPresetsForUnits,
   loadCapabilities,
+  loadCapabilitiesFor,
   requireAuth,
   reviewerAllowedPresets,
   reviewerSummary,
@@ -37,6 +39,7 @@ import {
   PREFERENCE_KEYS,
   REPLY_TO,
   ROLE_CAPABILITIES,
+  LEAVE_ONLY_CAPABILITIES,
   SIGNUP_APP_IDS,
   SIGNUP_ROLES,
   SMTP_FROM,
@@ -376,7 +379,7 @@ async function explicitCapabilities(ids) {
 // Capability catalogue, so the admin UI renders its checkboxes from data
 // rather than hardcoding them for each new app.
 router.get('/capability-catalogue', requireAuth(['admin']), (_req, res) => {
-  res.json({ groups: CAPABILITY_CATALOGUE, role_capabilities: ROLE_CAPABILITIES });
+  res.json({ groups: CAPABILITY_CATALOGUE, role_capabilities: ROLE_CAPABILITIES, leave_only_capabilities: LEAVE_ONLY_CAPABILITIES });
 });
 
 router.get('/reviewers', requireAuth(['admin']), async (_req, res) => {
@@ -386,11 +389,15 @@ router.get('/reviewers', requireAuth(['admin']), async (_req, res) => {
        FROM reviewers
       ORDER BY LOWER(COALESCE(NULLIF(display_name, ''), email)) ASC`
   );
-  const explicit = await explicitCapabilities(rows.map((row) => row.id));
-  res.json(await Promise.all(rows.map(async (row, i) => ({
-    ...reviewerSummary(row, await reviewerAllowedPresets(row.id), await loadCapabilities(row.id)),
+  // A fixed number of queries however many accounts there are.
+  const ids = rows.map((row) => row.id);
+  const [explicit, capabilities, presets] = await Promise.all([
+    explicitCapabilities(ids), loadCapabilitiesFor(ids), allowedPresetsForUnits(rows),
+  ]);
+  res.json(rows.map((row, i) => ({
+    ...reviewerSummary(row, presets[i], capabilities[i]),
     explicit_capabilities: explicit[i],
-  }))));
+  })));
 });
 
 router.post(

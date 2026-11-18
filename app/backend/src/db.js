@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import {initOrganisationHierarchySchema,initParentApproverSchema} from './services/organisationHierarchy.js';
 import { initGovernmentLeaveSchema } from './services/governmentLeaveSchema.js';
 import dotenv from 'dotenv';
-import { ALL_CAPABILITIES, PERMISSIONS, PREFERENCE_KEYS, ROLE_CAPABILITIES } from './config.js';
+import { ALL_CAPABILITIES, LEAVE_ONLY_CAPABILITIES, PERMISSIONS, PREFERENCE_KEYS, ROLE_CAPABILITIES } from './config.js';
 
 dotenv.config();
 
@@ -288,6 +288,25 @@ async function retireEvidenceGrant(client) {
   if (grants.length || scopes.length) {
     console.info(`[schema] retired the supporting-evidence grant from ${grants.length} account(s) and ${scopes.length} HR scope(s)`);
   }
+}
+
+/**
+ * Leave-only accounts hold Leave access only (LEAVE_ONLY_CAPABILITIES). Writes
+ * refuse anything else; this removes what was ticked before that rule, records
+ * each removal, and has nothing to do once none is left.
+ */
+async function fenceLeaveOnlyAccounts(client) {
+  const { rows } = await client.query(
+    `DELETE FROM reviewer_capabilities c USING reviewers r
+      WHERE r.id = c.reviewer_id AND r.account_type = 'employee' AND NOT (c.capability = ANY($1::text[]))
+      RETURNING c.reviewer_id, c.capability`, [LEAVE_ONLY_CAPABILITIES]);
+  for (const { reviewer_id: reviewerId, capability } of rows) {
+    await client.query(
+      `INSERT INTO audit_log (action, entity_type, entity_id, metadata)
+       VALUES ('reviewer.capability.retired', 'reviewer', $1, $2)`,
+      [reviewerId, JSON.stringify({ capability, reason: 'Leave-only accounts hold Leave access only.' })]);
+  }
+  if (rows.length) console.info(`[schema] removed ${rows.length} grant(s) a leave-only account may not hold`);
 }
 
 const { Pool } = pg;
@@ -1547,6 +1566,7 @@ export async function initSchema() {
     await materialiseRoleFloor(client);
     await retireHiddenPermissions(client);
     await retireEvidenceGrant(client);
+    await fenceLeaveOnlyAccounts(client);
 
     await client.query('COMMIT');
   } catch (error) {

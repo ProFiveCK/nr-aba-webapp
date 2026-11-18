@@ -23,7 +23,7 @@ import { parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js';
 
 import hrAccessRouter from './hrAccess.js';
-import { CALENDAR_VIEWS, MASKED_LEAVE_LABEL, calendarAudienceSql, teamRoster, unitNamesSql } from '../services/leaveCalendar.js';
+import { CALENDAR_VIEWS, MASKED_LEAVE_LABEL, ROSTER_VIEWS, calendarAudienceSql, calendarRoster, unitNamesSql } from '../services/leaveCalendar.js';
 import employeeOnboardingRouter from './employeeOnboarding.js';
 import governmentLeaveRouter from './governmentLeave.js';
 import { assertEmployeeScope,canAccessEmployee,employeeReadSql,employeeScopeSql,isCentralHr,managerScopeSql,activeScopeSql,canReadEvidence,evidenceReadSql } from '../services/hrAccess.js';
@@ -1520,9 +1520,10 @@ router.get('/overview/breakdown',requirePermission(PERMISSIONS.HR_ADMIN),
 
 // ===== Calendar and reporting =====
 
-// The caller's team, for the team calendar: its name and who is in it.
-router.get('/calendar/team', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res) => {
-  res.json(await teamRoster(pool, req.user.id));
+// Who the team or department calendar lists: its name and who is in it.
+router.get('/calendar/members', requirePermission(PERMISSIONS.HR_ACCESS), [query('view').optional().isIn(ROSTER_VIEWS)], async (req, res) => {
+  if (!handleValidation(req, res)) return;
+  res.json(await calendarRoster(pool, req.user.id, req.query.view || 'team'));
 });
 
 // Approved and submitted leave for one calendar view (see leaveCalendar.js).

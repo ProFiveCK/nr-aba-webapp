@@ -27,11 +27,12 @@ interface CalendarEntry {
     leave_code?: string | null;
 }
 
-/** Team calendar for everyone; All departments for Central HR. The server enforces the same. */
-export type CalendarView = 'team' | 'all';
+/** Team and Department for everyone; All departments for Central HR. The server enforces the same. */
+export type CalendarView = 'team' | 'department' | 'all';
 
-/** A member of the caller's team, shown whether or not they are away. */
+/** A member of the caller's team or department, shown whether or not they are away. */
 export interface TeamMember { employee_id: string; name: string; own?: boolean; department_name?: string | null; division_name?: string | null }
+interface Roster { name: string | null; members: TeamMember[] }
 
 interface OrgUnit { id: string; name: string; divisions: { id: string; name: string }[] }
 
@@ -47,7 +48,9 @@ export function Calendar() {
     const { addToast } = useToast();
     const [params, setParams] = useSearchParams();
     const central = user?.permissions?.hr_admin === true;
-    const view: CalendarView = central && params.get('view') === 'all' ? 'all' : 'team';
+    const views: [CalendarView, string][] = [['team', 'Team'], ['department', 'Department'], ...(central ? [['all', 'All departments'] as [CalendarView, string]] : [])];
+    const requested = params.get('view');
+    const view: CalendarView = views.some(([id]) => id === requested) ? requested as CalendarView : 'team';
     const departmentId = view === 'all' ? params.get('department') || '' : '';
     const divisionId = view === 'all' ? params.get('division') || '' : '';
 
@@ -56,10 +59,11 @@ export function Calendar() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [units, setUnits] = useState<OrgUnit[]>([]);
-    const [team, setTeam] = useState<{ name: string | null; members: TeamMember[] } | null>(null);
+    const [rosters, setRosters] = useState<Partial<Record<CalendarView, Roster>>>({});
     const loadVersion = useRef(0);
     const holidays = useHolidays();
     const bounds = useMemo(() => monthBounds(offset), [offset]);
+    const roster = rosters[view];
 
     useEffect(() => {
         if (view !== 'all') return;
@@ -72,14 +76,14 @@ export function Calendar() {
     }, [view]);
 
     useEffect(() => {
-        if (view !== 'team' || team) return;
+        if (view === 'all' || roster) return;
         let live = true;
-        apiClient.get<{ name: string | null; members: TeamMember[] }>('/hr/calendar/team')
-            .then((roster) => { if (live) setTeam(roster); })
+        apiClient.get<Roster>(`/hr/calendar/members?view=${view}`)
+            .then((next) => { if (live) setRosters((current) => ({ ...current, [view]: next })); })
             // Without the roster the calendar still shows who is away; only the available rows are missing.
             .catch(() => undefined);
         return () => { live = false; };
-    }, [view, team]);
+    }, [view, roster]);
 
     const load = useCallback(async () => {
         const requestVersion = ++loadVersion.current;
@@ -123,65 +127,52 @@ export function Calendar() {
         if (next.department && next.division) values.division = next.division;
         setParams(values);
     };
-    const title = view === 'all' ? 'All departments' : `Team calendar${team?.name ? ` — ${team.name}` : ''}`;
+    const select = 'rounded-md border border-gray-300 px-2 py-1.5 text-sm text-gray-900';
 
     return (
-        <div className="space-y-5">
-            <div className="app-panel flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6">
-                <div className="min-w-0">
-                    <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
-                    <p className="mt-1 text-sm text-gray-600">
-                        {view === 'all'
-                            ? 'Leave across every department, with its type.'
-                            : 'Everyone in your team and when they are away. Colleagues’ leave shows dates, not the type of leave.'}
-                    </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
+        <div className="space-y-3">
+            <div className="app-panel flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+                <h2 className="text-base font-semibold text-gray-900">
+                    {view === 'all' ? 'All departments' : `${view === 'team' ? 'Team' : 'Department'} calendar`}
+                    {view !== 'all' && roster?.name && <span className="font-normal text-gray-500"> · {roster.name}</span>}
+                </h2>
+                <nav aria-label="Calendar views" className="flex rounded-lg border border-gray-200 p-0.5">
+                    {views.map(([id, label]) => (
+                        <button key={id} type="button" aria-current={view === id ? 'page' : undefined}
+                            onClick={() => setParams(id === 'team' ? {} : { view: id })}
+                            className={`rounded-md px-3 py-1 text-sm font-medium ${view === id ? 'bg-brand text-white' : 'text-gray-700 hover:bg-gray-100'}`}>
+                            {label}
+                        </button>
+                    ))}
+                </nav>
+                {view === 'all' && units.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                        <select aria-label="Department" className={select} value={departmentId} onChange={(e) => showUnits({ department: e.target.value })}>
+                            <option value="">All departments</option>
+                            {units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}
+                        </select>
+                        {department && department.divisions.length > 0 && (
+                            <select aria-label="Division" className={select} value={divisionId} onChange={(e) => showUnits({ department: departmentId, division: e.target.value })}>
+                                <option value="">Whole department</option>
+                                {department.divisions.map((division) => <option key={division.id} value={division.id}>{division.name}</option>)}
+                            </select>
+                        )}
+                    </div>
+                )}
+                <div className="ml-auto flex items-center gap-1">
                     <Button variant="secondary" onClick={() => setOffset(offset - 1)} aria-label="Previous month">←</Button>
-                    <span className="min-w-36 text-center text-sm font-semibold text-gray-900" aria-live="polite">{monthLabel}</span>
+                    <span className="min-w-32 text-center text-sm font-semibold text-gray-900" aria-live="polite">{monthLabel}</span>
                     <Button variant="secondary" onClick={() => setOffset(offset + 1)} aria-label="Next month">→</Button>
                     {offset !== 0 && <Button variant="ghost" onClick={() => setOffset(0)}>Today</Button>}
                 </div>
             </div>
-
-            {central && (
-                <div className="flex flex-wrap items-end justify-between gap-3">
-                    <nav aria-label="Calendar views" className="flex flex-wrap gap-2">
-                        <Button variant={view === 'team' ? 'primary' : 'secondary'} aria-current={view === 'team' ? 'page' : undefined} onClick={() => setParams({})}>Team calendar</Button>
-                        <Button variant={view === 'all' ? 'primary' : 'secondary'} aria-current={view === 'all' ? 'page' : undefined} onClick={() => setParams({ view: 'all' })}>All departments</Button>
-                    </nav>
-                    {view === 'all' && units.length > 0 && (
-                        <div className="flex flex-wrap gap-2 text-sm">
-                            <label className="flex flex-col gap-1 text-gray-600">
-                                Department
-                                <select className="rounded-lg border border-gray-300 px-2 py-2 text-gray-900" value={departmentId}
-                                    onChange={(e) => showUnits({ department: e.target.value })}>
-                                    <option value="">All departments</option>
-                                    {units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}
-                                </select>
-                            </label>
-                            {department && department.divisions.length > 0 && (
-                                <label className="flex flex-col gap-1 text-gray-600">
-                                    Division
-                                    <select className="rounded-lg border border-gray-300 px-2 py-2 text-gray-900" value={divisionId}
-                                        onChange={(e) => showUnits({ department: departmentId, division: e.target.value })}>
-                                        <option value="">Whole department</option>
-                                        {department.divisions.map((division) => <option key={division.id} value={division.id}>{division.name}</option>)}
-                                    </select>
-                                </label>
-                            )}
-                        </div>
-                    )}
-                </div>
-            )}
 
             {loading ? (
                 <LoadingState label="Loading calendar…" />
             ) : error ? (
                 <div className="app-panel p-5"><p role="alert" className="text-sm text-red-700">{error}</p><button type="button" className="toolbar-button mt-3" onClick={() => void load()}>Try again</button></div>
             ) : (
-                <CalendarMonth entries={entries} start={bounds.start} end={bounds.end} view={view} holidays={holidays}
-                    members={view === 'team' ? team?.members : undefined} />
+                <CalendarMonth entries={entries} start={bounds.start} end={bounds.end} view={view} holidays={holidays} members={roster?.members} />
             )}
         </div>
     );
@@ -294,38 +285,46 @@ export function CalendarMonth({ entries, start, end, view = 'team', holidays = n
     if (!people.length) {
         return (
             <div className="app-panel p-4">
-                <EmptyState title={view === 'team'
-                    ? 'Your login is not linked to a team yet, so there is no team calendar to show'
-                    : 'No approved or submitted leave this month'} />
+                <EmptyState title={view === 'all'
+                    ? 'No approved or submitted leave this month'
+                    : `Your login is not linked to a ${view === 'team' ? 'team' : 'department'} yet, so there is no calendar to show`} />
             </div>
         );
     }
 
     return (
-        <div className="space-y-4">
-            {todayDay !== null && (
-                <p className="app-panel px-4 py-3 text-sm text-gray-700" role="status">
-                    {awayToday.length
-                        ? <><span className="font-semibold text-gray-900">Away today ({awayToday.length}):</span> {awayToday.slice(0, 8).map((p) => p.name).join(', ')}{awayToday.length > 8 ? ` and ${awayToday.length - 8} more` : ''}</>
-                        : <span className="font-semibold text-gray-900">Nobody {view === 'team' ? 'in your team ' : ''}is away today.</span>}
+        <div className="app-panel overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-gray-200 px-4 py-2 text-xs text-gray-600">
+                <p role="status" className="min-w-0 truncate">
+                    {todayDay === null ? `${people.length} ${view === 'all' ? 'people on leave' : 'people'}`
+                        : awayToday.length
+                            ? <><span className="font-semibold text-gray-900">Away today ({awayToday.length}):</span> {awayToday.map((p) => p.name).join(', ')}</>
+                            : <span className="font-semibold text-gray-900">Nobody is away today</span>}
                 </p>
-            )}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    {STATUSES.map((status) => <span key={status} className="inline-flex items-center gap-1"><Swatch status={status} className="h-2.5 w-2.5 rounded-sm" />{STATUS_LABEL[status]}</span>)}
+                    {monthHolidays.length > 0 && <span className="inline-flex items-center gap-1"><span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm bg-rose-200" />Public holiday</span>}
+                </div>
+            </div>
 
             <PhoneMonth key={start.toISOString()} people={people} days={days} start={start} monthLabel={monthLabel} todayDay={todayDay} />
 
-            <div className="app-panel hidden overflow-x-auto md:block">
-                <table className="w-full min-w-[960px] table-fixed border-collapse text-sm">
+            {/* Bounded height: the grid scrolls inside the page, with dates and names kept in view. */}
+            <div className="hidden max-h-[calc(100vh-15rem)] min-h-64 overflow-auto md:block">
+                <table className="w-full min-w-[960px] table-fixed border-separate border-spacing-0 text-[13px]">
                     <caption className="sr-only">Leave for {monthLabel}: approved, awaiting approval and study leave</caption>
-                    <colgroup><col className="w-60" />{days.map(({ day }) => <col key={day} />)}</colgroup>
+                    <colgroup><col className="w-52" />{days.map(({ day }) => <col key={day} />)}</colgroup>
                     <thead>
-                        <tr className="border-b border-gray-200">
-                            <th scope="col" className="sticky left-0 z-10 bg-white px-4 py-2 text-left text-xs font-medium text-gray-500">{view === 'team' ? `${people.length} people` : `${people.length} people on leave`}</th>
+                        <tr>
+                            <th scope="col" className="sticky left-0 top-0 z-30 border-b border-gray-200 bg-white px-3 text-left text-xs font-medium text-gray-500">
+                                {view === 'all' ? `${people.length} on leave` : `${people.length} people`}
+                            </th>
                             {days.map(({ day, weekday, weekend, holiday }) => (
                                 <th key={day} scope="col" aria-current={day === todayDay ? 'date' : undefined}
                                     title={[day === todayDay && 'Today', holiday].filter(Boolean).join(' — ') || undefined}
-                                    className={`py-1.5 text-center font-normal ${holiday ? 'bg-rose-50' : weekend ? 'bg-gray-50' : ''}`}>
-                                    <span className={`block text-[10px] uppercase ${holiday ? 'text-rose-600' : weekend ? 'text-gray-400' : 'text-gray-500'}`}>{weekday.slice(0, 1)}</span>
-                                    <span className={`mx-auto mt-0.5 flex h-6 w-6 items-center justify-center rounded-full text-xs ${day === todayDay ? 'bg-brand font-semibold text-white' : holiday ? 'font-semibold text-rose-700' : weekend ? 'text-gray-400' : 'text-gray-800'}`}>{day}</span>
+                                    className={`sticky top-0 z-20 border-b border-gray-200 py-1 text-center font-normal ${holiday ? 'bg-rose-50' : weekend ? 'bg-gray-50' : 'bg-white'}`}>
+                                    <span className={`block text-[9px] uppercase leading-3 ${holiday ? 'text-rose-600' : weekend ? 'text-gray-400' : 'text-gray-500'}`}>{weekday.slice(0, 1)}</span>
+                                    <span className={`mx-auto flex h-5 w-5 items-center justify-center rounded-full text-[11px] ${day === todayDay ? 'bg-brand font-semibold text-white' : holiday ? 'font-semibold text-rose-700' : weekend ? 'text-gray-400' : 'text-gray-800'}`}>{day}</span>
                                     {day === todayDay && <span className="sr-only"> (today)</span>}
                                     {holiday && <span className="sr-only"> ({holiday}, public holiday)</span>}
                                 </th>
@@ -336,24 +335,24 @@ export function CalendarMonth({ entries, start, end, view = 'team', holidays = n
                         <tbody key={unit}>
                             {groups.length > 1 && (
                                 <tr>
-                                    <th scope="colgroup" colSpan={days.length + 1} className="sticky left-0 border-y border-gray-200 bg-gray-50 px-4 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
+                                    <th scope="colgroup" colSpan={days.length + 1} className="sticky left-0 border-b border-gray-200 bg-gray-100 px-3 py-0.5 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-600">
                                         {unit} <span className="font-normal normal-case text-gray-500">· {rows.length}</span>
                                     </th>
                                 </tr>
                             )}
                             {rows.map((person) => (
-                                <tr key={person.id} className={`border-b border-gray-100 ${person.own ? 'bg-sky-50' : ''}`}>
-                                    <th scope="row" className={`sticky left-0 z-10 px-4 py-2 text-left font-normal ${person.own ? 'bg-sky-50' : 'bg-white'}`}>
-                                        <span className="block truncate font-medium text-gray-900">{person.name}{person.own && <span className="font-normal text-gray-500"> (you)</span>}</span>
-                                        {person.periods.length > 0 && <span className="block truncate text-xs text-gray-500" title={person.periods.join(' · ')}>{person.periods.join(' · ')}</span>}
+                                <tr key={person.id}>
+                                    <th scope="row" title={person.periods.join(' · ') || undefined}
+                                        className={`sticky left-0 z-10 h-7 truncate border-b border-gray-100 px-3 text-left font-normal text-gray-900 ${person.own ? 'bg-sky-50 font-medium' : 'bg-white'}`}>
+                                        {person.name}{person.own && <span className="font-normal text-gray-500"> (you)</span>}
                                     </th>
                                     {days.map(({ day, weekend, holiday }) => {
                                         const statuses = STATUSES.filter((status) => person.marks[status].has(day));
                                         const label = statuses.length ? `${person.name}: ${statuses.map((s) => STATUS_LABEL[s]).join('; ')} on ${day} ${monthLabel}` : undefined;
                                         return (
-                                            <td key={day} className={`h-11 p-0 ${day === todayDay ? 'border-x-2 border-brand/50' : ''} ${holiday ? 'bg-rose-50' : weekend ? 'bg-gray-50' : ''}`}>
+                                            <td key={day} className={`h-7 border-b border-gray-100 p-0 ${day === todayDay ? 'border-x border-x-brand/50' : ''} ${holiday ? 'bg-rose-50' : weekend ? 'bg-gray-50' : person.own ? 'bg-sky-50' : ''}`}>
                                                 {statuses.length > 0 && (
-                                                    <div role="img" aria-label={label} title={label} className="flex h-6 flex-col gap-px">
+                                                    <div role="img" aria-label={label} title={label} className="flex h-4 flex-col gap-px">
                                                         {statuses.map((status) => {
                                                             // Continuous bars: rounded and inset only where a period starts or ends.
                                                             const startsHere = !person.marks[status].has(day - 1);
@@ -361,7 +360,7 @@ export function CalendarMonth({ entries, start, end, view = 'team', holidays = n
                                                             // An awaiting bar is outlined as one shape, its stripes aligned across days.
                                                             const outline = status === 'pending' ? `border-y border-violet-400 ${startsHere ? 'border-l' : ''} ${endsHere ? 'border-r' : ''}` : '';
                                                             return <span key={status} style={status === 'pending' ? { ...STRIPES, backgroundAttachment: 'fixed' } : STATUS_LOOK[status].style}
-                                                                className={`min-h-0 flex-1 ${STATUS_LOOK[status].className} ${outline} ${startsHere ? 'ml-1 rounded-l-md' : ''} ${endsHere ? 'mr-1 rounded-r-md' : ''}`} />;
+                                                                className={`min-h-0 flex-1 ${STATUS_LOOK[status].className} ${outline} ${startsHere ? 'ml-0.5 rounded-l' : ''} ${endsHere ? 'mr-0.5 rounded-r' : ''}`} />;
                                                         })}
                                                     </div>
                                                 )}
@@ -374,18 +373,6 @@ export function CalendarMonth({ entries, start, end, view = 'team', holidays = n
                     ))}
                 </table>
             </div>
-
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-1 text-xs text-gray-600">
-                {STATUSES.map((status) => <span key={status} className="inline-flex items-center gap-1.5"><Swatch status={status} />{STATUS_LABEL[status]}</span>)}
-                {monthHolidays.length > 0 && <span className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded-sm bg-rose-100" />Public holiday</span>}
-                {todayDay !== null && <span className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded-full bg-brand" />Today</span>}
-                {view === 'team' && <span className="text-gray-500">Colleagues’ leave shows as “Away”; the type stays private.</span>}
-            </div>
-            {monthHolidays.length > 0 && (
-                <p className="px-1 text-xs text-gray-600">
-                    Public holidays: {monthHolidays.map((d) => `${d.day} ${start.toLocaleDateString('en-GB', { month: 'short' })} — ${d.holiday}`).join(' · ')}
-                </p>
-            )}
         </div>
     );
 }
@@ -416,7 +403,7 @@ function PhoneMonth({ people, days, start, monthLabel, todayDay }: {
     const holiday = days[day - 1]?.holiday;
 
     return (
-        <div className="app-panel p-3 md:hidden">
+        <div className="p-3 md:hidden">
             <div className="grid grid-cols-7 gap-1 text-center text-xs" role="group" aria-label={`Days in ${monthLabel}`}>
                 {WEEKDAYS.map((name) => <div key={name} className="py-1 font-medium text-gray-500" aria-hidden="true">{name.slice(0, 1)}</div>)}
                 {Array.from({ length: leading }, (_, i) => <div key={`blank-${i}`} aria-hidden="true" />)}

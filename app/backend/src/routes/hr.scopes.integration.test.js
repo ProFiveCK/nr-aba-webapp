@@ -114,13 +114,28 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     const childTeam=(await call(childAccount,'/calendar?from=2026-10-01&to=2026-10-31&view=team')).body;
     assert.deepEqual(childTeam.map(a=>a.employee_id),[childEmployee.id],'the team does not reach up to the parent unit');
 
-    const roster=(await call(owner,'/calendar/team')).body;
+    const roster=(await call(owner,'/calendar/members?view=team')).body;
     assert.equal(roster.name,'Treasury');
     assert.deepEqual(roster.members.map(m=>m.name).sort(),['Child Division Member','Treasury Person']);
     assert.equal(roster.members.find(m=>m.name==='Treasury Person').own,true);
     for(const member of roster.members)assert.deepEqual(Object.keys(member).sort(),['department_name','division_name','employee_id','name','own'],'names and units only, no leave or record details');
-    assert.deepEqual((await call(childAccount,'/calendar/team')).body.members.map(m=>m.name),['Child Division Member']);
-    assert.deepEqual((await call(central,'/calendar/team')).body,{name:null,members:[]},'a login with no staff record has no team');assert.equal((await call(staff,'/calendar/team')).status,403,'the Leave app is still required');
+    assert.deepEqual((await call(childAccount,'/calendar/members?view=team')).body.members.map(m=>m.name),['Child Division Member']);
+    assert.deepEqual((await call(central,'/calendar/members?view=team')).body,{name:null,members:[]},'a login with no staff record has no team');assert.equal((await call(staff,'/calendar/members?view=team')).status,403,'the Leave app is still required');
+  });
+  test('department calendar: every division of your department, colleagues read On leave, other departments never',async()=>{
+    const path='/calendar?from=2026-10-01&to=2026-10-31&view=department';
+    const mate=await account('Sibling colleague',{hr_access:true,hr_leave_apply:true});
+    await pool.query('UPDATE hr_employees SET reviewer_id=$2 WHERE id=$1',[peer.id,mate.id]);
+    const seen=(await call(mate,path)).body;
+    assert.deepEqual([...new Set(seen.map(a=>a.employee_id))].sort(),[employee.id,peer.id].sort(),'the sibling division is in the department; another department is not');
+    for(const row of seen.filter(a=>a.employee_id===employee.id)){assert.equal(row.leave_type_name,'On leave');assert.equal(row.own,false);}
+    assert.ok(seen.filter(a=>a.employee_id===peer.id).every(a=>a.own===true&&a.leave_type_name==='T:Scope Leave'),'your own leave keeps its type');
+    assert.equal((await call(mate,'/calendar?from=2026-10-01&to=2026-10-31&view=team')).body.some(a=>a.employee_id===employee.id),false,'the team is narrower than the department');
+    assert.equal((await call(other,path)).body.some(a=>a.employee_id===employee.id||a.employee_id===peer.id),false);
+    const roster=(await call(mate,'/calendar/members?view=department')).body;
+    assert.equal(roster.name,'Scope Finance');
+    assert.deepEqual(roster.members.map(m=>m.name).sort(),['Sibling Person','Treasury Person']);
+    assert.equal((await call(mate,'/calendar/members?view=all')).status,422,'the member list is for the team and department only');
   });
   test('a record carried into the government workflow shows once, while its new request is pending or approved',async()=>{
     // Submitted requests cannot be edited, so each status gets its own carried record.

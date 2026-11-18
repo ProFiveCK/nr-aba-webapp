@@ -9,7 +9,7 @@ import {effectiveAbsenceSql,effectiveEndSql,isAbsenceSql,effectiveStatusSql} fro
 import {pool} from '../db.js';
 import {body,param,query,handleValidation} from '../middleware/validation.js';
 import {requirePermission} from '../services/authService.js';
-import {CALENDAR_VIEWS,MASKED_LEAVE_LABEL,calendarAudienceSql} from '../services/leaveCalendar.js';
+import {CALENDAR_VIEWS,MASKED_LEAVE_LABEL,calendarAudienceSql,unitNamesSql} from '../services/leaveCalendar.js';
 import {PERMISSIONS} from '../config.js';
 import {withTransaction} from '../lib/transaction.js';
 import {ServiceError} from '../lib/serviceError.js';
@@ -97,10 +97,11 @@ router.get('/calendar',[query('from').custom(value=>{dayNumber(value);return tru
   if(!handleValidation(req,res))return;
   if(req.query.to<req.query.from||dayNumber(req.query.to)-dayNumber(req.query.from)>62)throw new ServiceError(400,'Choose a calendar window of up to 63 days.');
   const page=Number(req.query.page)||1;
-  const audience=calendarAudienceSql(req.user,req.query.view||'scope',{userParam:'$3',departmentParam:'$5',divisionParam:'$6'});
-  const {rows}=await pool.query(`SELECT r.id,e.id AS employee_id,e.display_name AS employee_name,e.department_code,
+  const audience=calendarAudienceSql(req.user,req.query.view||'team',{userParam:'$3',departmentParam:'$5',divisionParam:'$6'});
+  // The type travels as a code the page names; a masked row carries neither.
+  const {rows}=await pool.query(`SELECT r.id,e.id AS employee_id,e.display_name AS employee_name,e.department_code,${unitNamesSql('e')},
     CASE WHEN ${audience.masked} THEN '${MASKED_LEAVE_LABEL}' WHEN r.status='pending' THEN 'Submitted government leave' ELSE 'Approved government leave' END AS leave_type_name,r.status,'leave' AS kind,
-    ${audience.own} AS own,CASE WHEN ${audience.own} THEN r.code END AS leave_code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(${effectiveEndSql()},'YYYY-MM-DD') AS end_date,r.charge AS days
+    ${audience.own} AS own,CASE WHEN ${audience.masked} THEN NULL ELSE r.code END AS leave_code,to_char(r.start_date,'YYYY-MM-DD') AS start_date,to_char(${effectiveEndSql()},'YYYY-MM-DD') AS end_date,r.charge AS days
     FROM hr_gov_requests r JOIN hr_employees e ON e.id=r.employee_id WHERE r.status IN ('pending','approved') AND ${effectiveAbsenceSql()} AND ${isAbsenceSql()} AND (r.status='pending' OR r.code<>'furlough' OR r.grant_snapshot->'case_determination'->'facts'->>'action'='take_leave') AND r.start_date<=$2 AND ${effectiveEndSql()}>=$1
     AND ${audience.where} ORDER BY r.start_date,r.id LIMIT 201 OFFSET $4`,[req.query.from,req.query.to,req.user.id,(page-1)*200,req.query.department_id||null,req.query.division_id||null]);
   res.json({entries:rows.slice(0,200),has_more:rows.length>200,page});

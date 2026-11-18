@@ -67,24 +67,22 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     for(const person of [peer,outsider])assert.equal((await call(staff,`/directory/${person.id}/profile`)).status,404);
     const profile=await call(staff,`/directory/${employee.id}/profile`);assert.equal(profile.body.employee.manager_id,outsider.id);assert.match(profile.body.employee.manager_name,/Outside your assigned scope/);assert.equal(profile.body.employee.daily_rate,undefined);
     const org=await call(staff,'/org-units');assert.equal(org.body.length,1);assert.deepEqual(org.body[0].divisions.map(v=>v.id),[division.id]);
-    const calendar=(await call(staff,'/calendar?from=2026-10-01&to=2026-10-31')).body;
-    assert.deepEqual(calendar.map(a=>a.employee_name),['Treasury Person','Treasury Person']);
-    assert.deepEqual(calendar.map(a=>a.status).sort(),['approved','pending']);
+    assert.deepEqual((await call(staff,'/calendar?from=2026-10-01&to=2026-10-31')).body,[],'an HR officer with no staff record has no team calendar');
+    assert.equal((await call(staff,'/calendar?from=2026-10-01&to=2026-10-31&view=all')).status,403,'all departments is for Central HR only');
   });
-  test('calendar includes only approved and submitted leave overlapping the month, within the caller scope',async()=>{
-    await grant(staff,['hr_officer']);
+  test('calendar includes only approved and submitted leave overlapping the month, within the caller team',async()=>{
     await application(employee,'rejected');await application(employee,'cancelled');
     await application(peer,'pending');await application(outsider,'pending');
     const crossing=await application(employee,'pending');
     await pool.query("UPDATE hr_leave_applications SET start_date='2026-09-30',end_date='2026-10-01' WHERE id=$1",[crossing.id]);
     const nextMonth=await application(employee,'pending');
     await pool.query("UPDATE hr_leave_applications SET start_date='2026-11-01',end_date='2026-11-02' WHERE id=$1",[nextMonth.id]);
-    const response=await call(staff,'/calendar?from=2026-10-01&to=2026-10-31');
+    const response=await call(owner,'/calendar?from=2026-10-01&to=2026-10-31');
     assert.equal(response.status,200);
     assert.deepEqual(response.body.map(a=>a.id).sort(),[approved.id,pending.id,crossing.id].sort());
     for(const row of response.body){assert.equal(row.employee_id,employee.id);assert.equal(row.reason,undefined);assert.equal(row.attachments,undefined);}
   });
-  test('team and own calendar views: same division only, colleagues read On leave, own leave keeps its type',async()=>{
+  test('team calendar: same division only, colleagues read On leave, own leave keeps its type, study leave is study leave for everyone',async()=>{
     const mate=await account('Division colleague',{hr_access:true,hr_leave_apply:true});
     const colleague=await createEmployee(pool,{name:'Division Colleague'});
     await pool.query("UPDATE hr_employees SET department_id=$2,division_id=$3,reviewer_id=$4,leave_entitled=FALSE,ineligible_reason='study_leave',study_leave_start='2026-09-01' WHERE id=$1",[colleague.id,department.id,division.id,mate.id]);
@@ -95,9 +93,11 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     for(const row of team.filter(a=>a.employee_id===employee.id)){assert.equal(row.leave_type_name,'On leave');assert.equal(row.own,false);assert.equal(row.reason,undefined);}
     const ownStudy=team.find(a=>a.employee_id===colleague.id);assert.equal(ownStudy.kind,'study_leave');assert.equal(ownStudy.own,true);
     const ownerTeam=(await call(owner,path('team'))).body;
-    const study=ownerTeam.find(a=>a.employee_id===colleague.id);assert.equal(study.kind,'leave','a colleague’s study leave is not named either');assert.equal(study.leave_type_name,'On leave');
+    const study=ownerTeam.find(a=>a.employee_id===colleague.id);assert.equal(study.kind,'study_leave','study leave is not private, so it looks the same in every view');assert.equal(study.leave_type_name,'Study leave');
     assert.ok(ownerTeam.filter(a=>a.employee_id===employee.id).every(a=>a.leave_type_name==='T:Scope Leave'&&a.own===true));
-    const mine=(await call(owner,path('mine'))).body;assert.deepEqual(mine.map(a=>a.employee_id),[employee.id,employee.id]);
+    const all=(await call(central,path('all'))).body;
+    assert.deepEqual(all.find(a=>a.employee_id===colleague.id),{...study,own:false},'Central HR sees study leave exactly as the team does');
+    assert.ok(all.filter(a=>a.employee_id===employee.id).every(a=>a.leave_type_name==='T:Scope Leave'),'Central HR sees types');
     assert.equal((await call(other,path('team'))).body.some(a=>a.employee_id===employee.id),false);
     assert.equal((await call(mate,path('nobody'))).status,422);
   });
@@ -118,7 +118,7 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     assert.equal(roster.name,'Treasury');
     assert.deepEqual(roster.members.map(m=>m.name).sort(),['Child Division Member','Treasury Person']);
     assert.equal(roster.members.find(m=>m.name==='Treasury Person').own,true);
-    for(const member of roster.members)assert.deepEqual(Object.keys(member).sort(),['employee_id','name','own'],'names only, no leave or record details');
+    for(const member of roster.members)assert.deepEqual(Object.keys(member).sort(),['department_name','division_name','employee_id','name','own'],'names and units only, no leave or record details');
     assert.deepEqual((await call(childAccount,'/calendar/team')).body.members.map(m=>m.name),['Child Division Member']);
     assert.deepEqual((await call(central,'/calendar/team')).body,{name:null,members:[]},'a login with no staff record has no team');assert.equal((await call(staff,'/calendar/team')).status,403,'the Leave app is still required');
   });
@@ -137,7 +137,7 @@ describe('HR scope isolation through actual HTTP routes',{skip:skipWithoutDataba
     };
     const refused=await application(employee);
     await carry(approved,'approved');await carry(pending,'pending');await carry(refused,'rejected');
-    const shown=(await call(owner,'/calendar?from=2026-10-01&to=2026-10-31&view=mine')).body.map(a=>a.id);
+    const shown=(await call(owner,'/calendar?from=2026-10-01&to=2026-10-31&view=team')).body.filter(a=>a.employee_id===employee.id).map(a=>a.id);
     assert.deepEqual(shown,[refused.id],'the government calendar shows the pending and approved requests instead; a refused carry-over leaves the original');
   });
   test('whole-department scope includes siblings, excludes unverified placement and other departments',async()=>{

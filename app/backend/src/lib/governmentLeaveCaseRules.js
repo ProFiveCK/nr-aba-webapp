@@ -101,7 +101,9 @@ export function determineCase(context,input,data,{assignedApproval=false}={}){
    if(input.code==='adoption'||facts.event_kind==='adoption'){
     confirmed(facts,'adoption_order_verified');dayNumber(facts.child_birth_date);requireFact(facts.child_birth_date<=facts.event_date&&facts.event_date<monthBoundary(facts.child_birth_date,12),'Child must be under twelve months at adoption.');
     if(input.code==='adoption')requireFact(facts.spouse_or_stepchild===false,'Adoption excludes spouse’s children and step-children.');
-   }else {confirmed(facts,'certificate_complete');tasks.push({kind:'birth_register',due_date:null,description:'Obtain Births Register extract as soon as practicable; verify parenthood.'});}
+   // The birth registration, signed by the doctor, is the application's supporting
+   // document, so there is no separate Births Register follow-up.
+   }else confirmed(facts,'certificate_complete');
   }
   if(['maternity','paternity'].includes(input.code)&&monthBoundary(input.notice_date,3)>input.start_date){reference(facts,'late_notice_authority_reference');discretion.push('late_parental_notice');}
   const ambiguous=input.code==='maternity'&&facts.pregnancy_number>=5&&six>input.start_date&&six<=input.end_date;

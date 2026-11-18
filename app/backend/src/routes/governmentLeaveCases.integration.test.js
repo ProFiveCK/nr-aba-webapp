@@ -71,6 +71,7 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   await assert.rejects(c.submitCase(pool,{user:user(owner),actor:owner,employeeId:employee.id,data:{...event('paternity','2026-12-01','2026-12-01'),case_details:details},documents:[doc],simpleApproval:true}),/10 working days per employee service year/);
   await decide(r.id,{certification_confirmed:true,case_details:details});
   const grant=await w.getRequest(pool,r.id);assert.equal(grant.grant_snapshot.paternity.periods[0].available_days,0);
+  assert.deepEqual((await pool.query('SELECT kind FROM hr_gov_case_tasks WHERE request_id=$1',[r.id])).rows.map(t=>t.kind).filter(k=>k==='birth_register'),[],'the doctor-signed birth registration is the supporting document; no Births Register follow-up');
   const {generatedPdfText}=await import('../test-support/pdfText.js');
   const pdf=await call(`/requests/${r.id}/pdf`,null,owner);assert.equal(pdf.status,200);
   const text=await generatedPdfText(new Uint8Array(pdf.body));assert.match(text,/10 approved working days/);assert.match(text,/Balance after approval: 0 days/);

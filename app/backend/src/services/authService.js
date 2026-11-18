@@ -15,7 +15,9 @@ import {
   ALL_CAPABILITIES,
   PERMISSIONS,
   PREFERENCE_KEYS,
+  LEAVE_ONLY_CAPABILITIES,
 } from '../config.js';
+import { ServiceError } from '../lib/serviceError.js';
 import { activeScopeSql } from './hrAccess.js';
 import { employeeApiLimiter } from '../middleware/employeeApiLimit.js';
 
@@ -117,19 +119,25 @@ export function buildTokenPayload(reviewer, tokenId, expiresAt) {
   );
 }
 
+const unitKey = (departmentCode, divisionCode) =>
+  `${String(departmentCode).trim()}/${String(divisionCode ?? '00').trim() || '00'}`;
+
+/** Allowed bank presets for several units in one query, one entry per input, in order. */
+export async function allowedPresetsForUnits(units) {
+  const wanted = [...new Set(units.filter((u) => u.department_code).map((u) => unitKey(u.department_code, u.division_code)))];
+  const { rows } = wanted.length ? await pool.query(
+    `SELECT department_code, division_code, allowed_bank_presets FROM department_profiles
+      WHERE department_code || '/' || division_code = ANY($1::text[])`, [wanted]) : { rows: [] };
+  const byUnit = new Map(rows.map((r) => [unitKey(r.department_code, r.division_code), r.allowed_bank_presets]));
+  return units.map((u) => {
+    if (!u.department_code) return DEFAULT_BANK_PRESETS;
+    const presets = (byUnit.get(unitKey(u.department_code, u.division_code)) || []).filter((k) => BANK_PRESET_KEYS.includes(k));
+    return presets.length ? presets : DEFAULT_BANK_PRESETS;
+  });
+}
+
 export async function resolveAllowedBankPresets(departmentCode, divisionCode) {
-  if (!departmentCode) return DEFAULT_BANK_PRESETS;
-  const dept = String(departmentCode).trim();
-  const div = String(divisionCode ?? '00').trim() || '00';
-  const { rows } = await pool.query(
-    'SELECT allowed_bank_presets FROM department_profiles WHERE department_code = $1 AND division_code = $2',
-    [dept, div]
-  );
-  if (rows.length) {
-    const presets = (rows[0].allowed_bank_presets || []).filter((k) => BANK_PRESET_KEYS.includes(k));
-    if (presets.length) return presets;
-  }
-  return DEFAULT_BANK_PRESETS;
+  return (await allowedPresetsForUnits([{ department_code: departmentCode, division_code: divisionCode }]))[0];
 }
 
 export async function reviewerAllowedPresets(reviewerId) {
@@ -156,14 +164,22 @@ export function hasPermission(permissions, permission) {
   return p[permission] === true;
 }
 
-export async function loadCapabilities(reviewerId) {
+/** Each account's capabilities in one query, one list per id, in order. */
+export async function loadCapabilitiesFor(reviewerIds) {
+  if (!reviewerIds.length) return [];
   const { rows } = await pool.query(
-    `SELECT capability FROM reviewer_capabilities WHERE reviewer_id = $1
-     UNION SELECT unnest(s.capabilities) FROM hr_access_scopes s WHERE s.reviewer_id=$1 AND ${activeScopeSql()}
-     UNION SELECT 'hr_access' FROM hr_access_scopes s WHERE s.reviewer_id=$1 AND ${activeScopeSql()}`,
-    [reviewerId]
+    `SELECT reviewer_id, capability FROM reviewer_capabilities WHERE reviewer_id = ANY($1::uuid[])
+     UNION SELECT s.reviewer_id, unnest(s.capabilities) FROM hr_access_scopes s WHERE s.reviewer_id = ANY($1::uuid[]) AND ${activeScopeSql()}
+     UNION SELECT s.reviewer_id, 'hr_access' FROM hr_access_scopes s WHERE s.reviewer_id = ANY($1::uuid[]) AND ${activeScopeSql()}`,
+    [reviewerIds]
   );
-  return rows.map((r) => r.capability);
+  const byId = new Map(reviewerIds.map((id) => [id, []]));
+  for (const row of rows) byId.get(row.reviewer_id)?.push(row.capability);
+  return reviewerIds.map((id) => byId.get(id));
+}
+
+export async function loadCapabilities(reviewerId) {
+  return (await loadCapabilitiesFor([reviewerId]))[0];
 }
 
 /**
@@ -174,6 +190,11 @@ export async function setCapabilities(reviewerId, capabilities, grantedBy = null
   const wanted = [...new Set(capabilities.filter((c) => ALL_CAPABILITIES.includes(c)))];
   // With a client the caller owns the transaction (so this joins it); without one it makes its own.
   const apply = async (client) => {
+    const { rows: [account] } = await client.query('SELECT account_type FROM reviewers WHERE id = $1', [reviewerId]);
+    const refused = account?.account_type === 'employee' ? wanted.filter((c) => !LEAVE_ONLY_CAPABILITIES.includes(c)) : [];
+    if (refused.length) {
+      throw new ServiceError(400, `A leave-only account can hold Leave access only, not central HR administration or other apps (${refused.join(', ')}).`);
+    }
     await client.query(
       'DELETE FROM reviewer_capabilities WHERE reviewer_id = $1 AND NOT (capability = ANY($2::text[]))',
       [reviewerId, wanted]
@@ -211,9 +232,9 @@ export function reviewerSummary(row, allowedBankPresets = DEFAULT_BANK_PRESETS, 
     if (capability !== PERMISSIONS.ADMIN) permissions[capability] = true;
   }
   if (row.account_type === 'employee') {
-    // Employee-only identities are fenced into Leave by requireAuth as well.
+    // Writes refuse anything else; requireAuth also fences these accounts into Leave.
     for (const key of Object.keys(permissions)) {
-      if (!key.startsWith('hr_')) delete permissions[key];
+      if (!LEAVE_ONLY_CAPABILITIES.includes(key)) delete permissions[key];
     }
   } else {
     const stored = parsePermissions(row.permissions);

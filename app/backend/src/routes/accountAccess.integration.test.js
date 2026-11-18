@@ -189,4 +189,49 @@ describe('account access has one source', { skip: skipWithoutDatabase }, () => {
     assert.deepEqual(byId[history].capabilities, ['hr_evidence_read', 'hr_report_read'], 'revoked history is left as it was');
     assert.equal((await edit(holder.reviewer.id, { capabilities: ['hr_access', 'hr_evidence_read'] })).status, 422, 'it can no longer be ticked');
   });
+  test('a leave-only account holds Leave access only, by one rule for writes, reads and the page', async () => {
+    const staff = await createAccount(pool, unique('leave-only'), { capabilities: ['hr_access', 'hr_leave_apply'] });
+    await pool.query("UPDATE reviewers SET account_type = 'employee' WHERE id = $1", [staff.reviewer.id]);
+    const refused = await edit(staff.reviewer.id, { capabilities: ['hr_access', 'hr_admin'] });
+    assert.equal(refused.status, 400);
+    assert.match(refused.json.message, /leave-only account/);
+    assert.equal((await edit(staff.reviewer.id, { capabilities: ['hr_access', 'aba_access'] })).status, 400, 'other apps are refused, not dropped');
+    assert.equal((await edit(staff.reviewer.id, { capabilities: ['hr_access', 'hr_leave_apply', 'hr_leave_approve'] })).status, 200);
+
+    // Granted before the rule existed: removed on start and recorded.
+    await pool.query("INSERT INTO reviewer_capabilities (reviewer_id, capability) VALUES ($1, 'hr_admin'), ($1, 'aba_access')", [staff.reviewer.id]);
+    const { initSchema } = await import('../db.js');
+    await initSchema();
+    assert.deepEqual(await explicit(staff.reviewer.id), ['hr_access', 'hr_leave_apply', 'hr_leave_approve']);
+    assert.equal((await lastAudit(pool, 'reviewer.capability.retired', staff.reviewer.id)).metadata.reason, 'Leave-only accounts hold Leave access only.');
+
+    const catalogue = (await app.call('GET', '/api/capability-catalogue', { token: admin.token })).json;
+    assert.ok(catalogue.leave_only_capabilities.includes('hr_leave_approve'));
+    assert.ok(!catalogue.leave_only_capabilities.includes('hr_admin'));
+    assert.ok(catalogue.leave_only_capabilities.every((key) => key.startsWith('hr_')));
+  });
+
+  test('the account list matches each account and costs the same number of queries however many there are', async () => {
+    const scoped = await createAccount(pool, unique('list-scoped'), { capabilities: ['aba_access'] });
+    const { rows: [department] } = await pool.query("INSERT INTO hr_departments (name) VALUES ($1) RETURNING id", [`List ${randomUUID().slice(0, 8)}`]);
+    await pool.query(`INSERT INTO hr_access_scopes (reviewer_id, department_id, capabilities, effective_from, reason)
+      VALUES ($1, $2, ARRAY['hr_report_read'], '2020-01-01', 'Synthetic scope for the account list test.')`, [scoped.reviewer.id, department.id]);
+    const list = async () => {
+      let queries = 0;
+      const original = pool.query;
+      pool.query = function counted(...args) { queries += 1; return original.apply(this, args); };
+      try {
+        const res = await app.call('GET', '/api/reviewers', { token: admin.token });
+        assert.equal(res.status, 200);
+        return { accounts: res.json, queries };
+      } finally { pool.query = original; }
+    };
+    const first = await list();
+    const listed = first.accounts.find((a) => a.id === scoped.reviewer.id);
+    assert.deepEqual(listed.permissions, await permissionsOf(scoped), 'the list shows what the account itself is told');
+    assert.equal(listed.permissions.hr_report_read, true);
+    assert.equal(listed.permissions.hr_access, true, 'an active scope opens the Leave app');
+    for (let i = 0; i < 3; i += 1) await createAccount(pool, unique('list-more'), { capabilities: ['aba_access'] });
+    assert.equal((await list()).queries, first.queries);
+  });
 });

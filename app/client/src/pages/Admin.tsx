@@ -561,6 +561,8 @@ function UserManagementPanel() {
     const [tempPassword, setTempPassword] = useState<{ email: string; value: string } | null>(null);
     const formRef = useRef<HTMLFormElement | null>(null);
     const [capabilityGroups, setCapabilityGroups] = useState<CapabilityGroup[]>([]);
+    // The server's list of what a leave-only account may hold; it refuses anything else.
+    const [leaveOnlyKeys, setLeaveOnlyKeys] = useState<string[]>([]);
     const [hrEmployees, setHrEmployees] = useState<HrEmployeeOption[]>([]);
     const canLinkStaff = authUser?.permissions?.hr_admin === true;
     const { addToast } = useToast();
@@ -588,8 +590,11 @@ function UserManagementPanel() {
     // catalogue surfaces it here without touching this component.
     useEffect(() => {
         apiClient
-            .get<{ groups: CapabilityGroup[] }>('/capability-catalogue')
-            .then((data) => setCapabilityGroups(data?.groups || []))
+            .get<{ groups: CapabilityGroup[]; leave_only_capabilities?: string[] }>('/capability-catalogue')
+            .then((data) => {
+                setCapabilityGroups(data?.groups || []);
+                setLeaveOnlyKeys(data?.leave_only_capabilities || []);
+            })
             .catch(() => setCapabilityGroups([]));
     }, []);
 
@@ -1235,12 +1240,22 @@ function UserManagementPanel() {
                                 </p>
                                 {form.role === 'admin' && (
                                     <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                                        The Administrator role manages accounts and settings. Leave administration, medical
-                                        evidence and every app still need their own ticks below, and can be removed.
+                                        The Administrator role manages accounts and settings. Leave administration and every
+                                        app still need their own ticks below, and can be removed.
+                                    </p>
+                                )}
+                                {form.account_type === 'employee' && (
+                                    <p className="text-xs text-gray-600">
+                                        This is a leave-only account, so it can hold Leave access only. Central HR
+                                        administration and other apps need a staff account.
                                     </p>
                                 )}
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    {capabilityGroups.map((group) => (
+                                    {(form.account_type === 'employee'
+                                        ? capabilityGroups
+                                            .map((group) => ({ ...group, capabilities: group.capabilities.filter((c) => leaveOnlyKeys.includes(c.key)) }))
+                                            .filter((group) => group.capabilities.length)
+                                        : capabilityGroups).map((group) => (
                                         <div key={group.app} className="rounded-md border border-gray-200 bg-white p-3">
                                             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">{group.label}</p>
                                             <div className="space-y-1.5">

@@ -183,6 +183,11 @@ export const CAPABILITY_CATALOGUE = [
 
 export const ALL_CAPABILITIES = CAPABILITY_CATALOGUE.flatMap((g) => g.capabilities.map((c) => c.key));
 
+// What a leave-only (employee) account may hold: the Leave app, short of
+// central HR administration across government. The single rule for writes,
+// reads and the account page.
+export const LEAVE_ONLY_CAPABILITIES = ALL_CAPABILITIES.filter((key) => key.startsWith('hr_') && key !== PERMISSIONS.HR_ADMIN);
+
 // Per-account notification preferences. These are the only keys the
 // reviewers.permissions column may still hold; it no longer grants access.
 export const PREFERENCE_KEYS = [PERMISSIONS.NOTIFY_ABA_SUBMISSIONS, PERMISSIONS.NOTIFY_FOREX_TT_SUBMISSIONS];

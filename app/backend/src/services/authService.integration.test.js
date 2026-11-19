@@ -12,7 +12,13 @@ import { connectTestDatabase, skipWithoutDatabase } from '../test-support/databa
 // end. Closing it per describe left every later block with a dead pool.
 let pool;
 
-before(async () => { pool = await connectTestDatabase(); });
+// Guarded here rather than left to the describes below: db.js throws at import
+// when no database is configured, so a bare `npm test` would fail this file
+// instead of skipping it like the other integration suites do.
+before(async () => {
+  if (skipWithoutDatabase) return;
+  pool = await connectTestDatabase();
+});
 after(async () => { await pool?.end(); });
 
 describe('forced password change', { skip: skipWithoutDatabase }, () => {

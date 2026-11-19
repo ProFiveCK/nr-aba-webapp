@@ -20,10 +20,12 @@ import {
   upsertLeaveType,
 } from '../test-support/database.js';
 import * as legacy from '../test-support/legacyLeave.js';
-import { ALL_CAPABILITIES } from '../config.js';
 
 // What an existing administrator holds after the access migration: every tick.
-const everything = Object.fromEntries(ALL_CAPABILITIES.map((key) => [key, true]));
+// Filled in inside the skipped describe together with the service: config.js
+// refuses to load without a JWT secret, so a static import would fail the
+// whole file under a plain `npm test` instead of skipping it like the others.
+let everything;
 
 describe('leave service', { skip: skipWithoutDatabase }, () => {
   let pool;
@@ -41,6 +43,9 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
   before(async () => {
     pool = await connectTestDatabase();
     service = await import('./leaveService.js');
+    everything = Object.fromEntries(
+      (await import('../config.js')).ALL_CAPABILITIES.map((key) => [key, true])
+    );
   });
 
   beforeEach(async () => {

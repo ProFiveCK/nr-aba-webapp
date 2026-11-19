@@ -135,6 +135,32 @@ export async function decideLeave(pool, { applicationId, decision, note, actorId
       }
     }
 
+    // Charging the balance is refused rather than allowed to drive it below
+    // zero. Between application and decision an administrator may have reduced
+    // the balance — a correcting adjustment, or a move to the government
+    // ledger — and approval then would spend days nobody has. The row is
+    // locked so the release and the charge below settle together: two
+    // simultaneous decisions of the same kind cannot interleave between them.
+    // If the row is gone there is nothing on the books to check; the charge
+    // below is then a no-op as before.
+    if (decision === 'approved') {
+      const { rows: held } = await client.query(
+        `SELECT balance
+           FROM hr_leave_balances
+          WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3
+            FOR UPDATE`,
+        [application.employee_id, application.leave_type_id,
+         balanceYearFor(application.start_date)]
+      );
+      if (held.length && Number(held[0].balance) < Number(application.days)) {
+        throw badRequest(
+          `Approving this application would overdraw the balance: only ${Number(held[0].balance)} `
+          + `day${Number(held[0].balance) === 1 ? '' : 's'} remain against these ${Number(application.days)} `
+          + 'working days. Reject the request, or record a balance correction first.'
+        );
+      }
+    }
+
     await releasePending(client, application);
     if (decision === 'approved') {
       await client.query(

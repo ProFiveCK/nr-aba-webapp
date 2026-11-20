@@ -268,10 +268,20 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   const recorded=rows.find(r=>r.record_source==='recorded');assert.equal(recorded.recorded_application.reason,'Recorded explanation');assert.equal(recorded.recorded_application.can_decide,false);
   assert.equal(Number(recorded.recorded_application.balance_days),2);assert.equal(Number(recorded.recorded_application.pending_days),0);
   assert.equal(Number(recorded.recorded_application.available_days),2);
-  const {rows:[recordedEntitlement]}=await pool.query('SELECT leave_entitled FROM hr_employees WHERE id=$1',[employee.id]);
+  const recordedEntitlement=(await pool.query('SELECT leave_entitled FROM hr_employees WHERE id=$1',[employee.id])).rows[0];
   assert.equal(recorded.recorded_application.leave_entitled,recordedEntitlement.leave_entitled);
-  assert.equal((await call('/requests?mode=queue&include_recorded=true&status=pending',null,hr)).body.total,0);
-  assert.equal((await call('/requests?mode=queue&include_recorded=true&status=all',null,hr)).body.total,57);
+  // A type with no balance row carries nothing the approval could overdraw:
+  // an official-style recorded application reports nothing, and the review
+  // modal stays quiet instead of showing a type default.
+  const officialType=(await pool.query("INSERT INTO hr_leave_types(name,default_days) VALUES($1,0) RETURNING id",[`Recorded Official ${randomUUID()}`])).rows[0];
+  await pool.query(`INSERT INTO hr_leave_applications(employee_id,leave_type_id,start_date,end_date,days,reason,status,applied_at)
+    VALUES($1,$2,'2026-09-01','2026-09-02',2,'Recorded official travel','pending','2026-08-01'::timestamp+interval '1 minute')`,[employee.id,officialType.id]);
+  const officialPage=await call('/requests?mode=queue&include_recorded=true&status=pending',null,hr);
+  const official=officialPage.body.requests.find(r=>r.recorded_application?.leave_type_name.startsWith('Recorded Official'));
+  assert.ok(official);assert.equal(official.recorded_application.balance_days,null);
+  assert.equal(official.recorded_application.pending_days,null);assert.equal(official.recorded_application.available_days,null);
+  assert.equal((await call('/requests?mode=queue&include_recorded=true&status=pending',null,hr)).body.total,1);
+  assert.equal((await call('/requests?mode=queue&include_recorded=true&status=all',null,hr)).body.total,58);
   assert.equal((await call('/requests?mode=all&status=approved',null,hr)).body.total,2);
   assert.equal((await call('/requests?mode=mine&include_recorded=true&status=approved')).body.total,2);
   const byReference=await call(path+'&search='+recorded.id,null,hr);

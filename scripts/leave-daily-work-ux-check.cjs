@@ -38,6 +38,10 @@ const assert = require('node:assert/strict');
    else if (path.endsWith('/account')) body = { employee: person(employeeId), accounts: [], movements: [], total: 0, page_size: 50, as_of: '2026-10-20' };
    else if (path.startsWith('/api/hr/directory/service-corrections/employees/')) body = [];
    else if (path === '/api/hr/onboarding/batches') body = { batches: [], total: 0 };
+   // The calendar's month view loads a roster, the portal's legacy entries and the paginated government entries.
+   else if (path === '/api/hr/calendar/members') body = { name: null, members: [{ id: 'member', employee_id: 'employee', name: 'Example Employee', own: true }] };
+   else if (path === '/api/hr/calendar') body = [];
+   else if (path === '/api/hr/government/workflow/calendar') body = { entries: [], has_more: false };
    else if (path === '/api/hr/onboarding/accounts') body = { accounts: [], total: 0 };
    else throw new Error(`Unexpected synthetic request: ${request.method()} ${path}`);
    await route.fulfill({ json: body });
@@ -95,7 +99,8 @@ const assert = require('node:assert/strict');
   await page.getByRole('button', { name: /Advanced maintenance Balance schedules/ }).click();
   await page.getByRole('heading', { name: 'Advanced maintenance', exact: true }).waitFor();
   assert.equal(await page.getByRole('heading', { name: 'Employee accounts', exact: true }).count(), 0);
-  await page.getByRole('link', { name: /Bulk employee accounts Prepare/ }).click();
+  // The tool tile names its purpose; the wording is 'Set up logins…' now.
+  await page.getByRole('link', { name: /Bulk employee accounts Set up logins/ }).click();
   await page.getByRole('heading', { name: 'Employee accounts', exact: true }).waitFor();
   await page.goto(base + '/leave/settings?view=workflow');
   await page.getByRole('heading', { name: 'Leave follow-ups' }).waitFor();
@@ -110,9 +115,10 @@ const assert = require('node:assert/strict');
    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
   }
   await page.screenshot({ path: '/tmp/aba-leave-simplification-desktop.png', fullPage: true });
-  // A balance-only user must never mount the staff editor or fetch its references.
-  permissions = { hr_access: true, hr_balance_manage: true }; calls.length = 0;
-  await page.goto(base + '/leave/employees');
+  // A view-only HR officer must never mount the staff editor or fetch its
+  // references; balances are read from the government balances view only.
+  permissions = { hr_access: true, hr_officer: true }; calls.length = 0;
+  await page.goto(base + '/leave/employees?view=balances');
   await page.getByRole('heading', { name: 'Staff balances', exact: true }).waitFor();
   assert.equal(calls.some(c => c.path.startsWith('/api/hr/directory') || c.path === '/api/hr/org-units'), false);
   permissions = { hr_access: true, hr_leave_approve: true }; calls.length = 0;

@@ -133,4 +133,16 @@ describe('verified employee onboarding and lifecycle over real HTTP',{skip:skipW
     try{await assert.rejects(service.activateEmployee(pool,{token:raw(link),password:'Synthetic secure password'}));assert.equal((await pool.query('SELECT status FROM reviewers WHERE id=$1',[row.id])).rows[0].status,'inactive');assert.equal((await pool.query('SELECT consumed_at FROM hr_account_tokens WHERE id=$1',[link.id])).rows[0].consumed_at,null);await assert.rejects(service.offboardEmployee(pool,{employeeId:employee.id,actor:central,reason,portalAdmin:true}));assert.equal((await pool.query('SELECT status FROM hr_employees WHERE id=$1',[employee.id])).rows[0].status,'active');}
     finally{await pool.query('DROP TRIGGER reject_lifecycle_audit ON audit_log');await pool.query('DROP FUNCTION reject_lifecycle_audit()');}
   });
+  test('a legacy staff record enrols in the government regime once, after an explicit reviewed change',async()=>{
+    await pool.query("UPDATE hr_employees SET leave_policy_regime='legacy' WHERE id=$1",[employee.id]);
+    const reference='Migration dry-run reference 2026-11-20.';
+    const enrol=await call(`/api/hr/directory/${employee.id}/enroll-government`,{reason:'Owner-directed consolidation onto the single government leave workflow.',source_reference:reference});
+    assert.equal(enrol.status,200);assert.equal(enrol.body.regime,'government');
+    assert.equal((await pool.query('SELECT leave_policy_regime FROM hr_employees WHERE id=$1',[employee.id])).rows[0].leave_policy_regime,'government');
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM audit_log WHERE action='hr.employee.enrolled_government' AND entity_id=$1`,[employee.id])).rows[0].n,1);
+    // Once enrolled the reviewed change is complete; a real reason is enforced, non-administrators are refused.
+    assert.equal((await call(`/api/hr/directory/${employee.id}/enroll-government`,{reason:'Repeat enrolment attempt is refused.',source_reference:reference})).status,409);
+    assert.equal((await call(`/api/hr/directory/${employee.id}/enroll-government`,{reason:'Too short',source_reference:reference})).status,422);
+    assert.equal((await call(`/api/hr/directory/${employee.id}/enroll-government`,{reason:'A departmental officer cannot enrol staff.',source_reference:reference},scoped)).status,403);
+  });
 });

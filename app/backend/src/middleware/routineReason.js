@@ -9,6 +9,7 @@ const REASON_NEEDED=[
   /^\/adjustments$/,
   /^\/directory\/service-corrections\//,
   /\/offboard$/,
+  /\/enroll-government$/,
   /^\/government\/workflow\/requests(\/|$)/,
   /^\/government\/workflow\/(employees\/[^/]+\/)?(cases|assisted-requests)$/,
 ];

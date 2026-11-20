@@ -20,10 +20,12 @@ import {
   upsertLeaveType,
 } from '../test-support/database.js';
 import * as legacy from '../test-support/legacyLeave.js';
-import { ALL_CAPABILITIES } from '../config.js';
 
 // What an existing administrator holds after the access migration: every tick.
-const everything = Object.fromEntries(ALL_CAPABILITIES.map((key) => [key, true]));
+// Filled in inside the skipped describe together with the service: config.js
+// refuses to load without a JWT secret, so a static import would fail the
+// whole file under a plain `npm test` instead of skipping it like the others.
+let everything;
 
 describe('leave service', { skip: skipWithoutDatabase }, () => {
   let pool;
@@ -41,6 +43,9 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
   before(async () => {
     pool = await connectTestDatabase();
     service = await import('./leaveService.js');
+    everything = Object.fromEntries(
+      (await import('../config.js')).ALL_CAPABILITIES.map((key) => [key, true])
+    );
   });
 
   beforeEach(async () => {
@@ -342,6 +347,52 @@ describe('leave service', { skip: skipWithoutDatabase }, () => {
       const balance = await readBalance(pool, ana.id, annual.id, YEAR);
       assert.equal(balance.pending, 0, 'the hold is released');
       assert.equal(balance.balance, 20, 'and nothing was spent');
+    });
+
+    // A correcting adjustment can land between application and decision —
+    // entitlement moved off a duplicated record, or hours re-registered on the
+    // government ledger. Approving then would charge days nobody has, so the
+    // decision is refused and the queue left as it was.
+    test('approval is refused when a later adjustment leaves the balance short', async () => {
+      const { application } = await apply();
+      // 20 - 18 leaves 2 days on the books against the 5 this request holds.
+      await service.adjustBalance(pool, {
+        employeeId: ana.id, leaveTypeId: annual.id, amount: -18, reason: 'Correcting adjustment',
+        actorId: null, year: YEAR,
+      });
+
+      await assert.rejects(() => service.decideLeave(pool, {
+        applicationId: application.id, decision: 'approved', note: '', actorId: null, canAct: allowAll,
+      }), /overdraw the balance/);
+
+      // Refused without disturbing anything: the hold stands until the request
+      // is actually resolved.
+      const balance = await readBalance(pool, ana.id, annual.id, YEAR);
+      assert.equal(balance.pending, 5, 'the hold is untouched');
+      assert.equal(balance.balance, 2, 'and the balance unchanged');
+    });
+
+    test('restoring the balance lets the same application be approved', async () => {
+      const { application } = await apply();
+      await service.adjustBalance(pool, {
+        employeeId: ana.id, leaveTypeId: annual.id, amount: -18, reason: 'Correcting adjustment',
+        actorId: null, year: YEAR,
+      });
+      await assert.rejects(() => service.decideLeave(pool, {
+        applicationId: application.id, decision: 'approved', note: '', actorId: null, canAct: allowAll,
+      }), /overdraw the balance/);
+
+      await service.adjustBalance(pool, {
+        employeeId: ana.id, leaveTypeId: annual.id, amount: 18, reason: 'Restored before approval',
+        actorId: null, year: YEAR,
+      });
+      await service.decideLeave(pool, {
+        applicationId: application.id, decision: 'approved', note: '', actorId: null, canAct: allowAll,
+      });
+
+      const balance = await readBalance(pool, ana.id, annual.id, YEAR);
+      assert.equal(balance.balance, 15, 'the days are spent');
+      assert.equal(balance.pending, 0, 'and no longer held');
     });
 
     test('approval moves the days out of the balance and clears the hold', async () => {

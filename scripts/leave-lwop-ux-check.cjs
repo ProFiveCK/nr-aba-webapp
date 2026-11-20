@@ -10,6 +10,7 @@ const assert=require('node:assert/strict');
   const summary=()=>({id:'lwop',employee_id:'employee',employee_name:'Example Employee',code:'lwop',start_date:'2027-01-11',end_date:'2028-01-10',charge:'0',status:approved?'approved':'pending',stage_index:0,submitted_at:'2026-10-21T00:00:00Z',current_level:'division',current_label:'Supervisor',current_approver:'Example Supervisor',unassigned_stages:0});
   await page.route('**/api/**',async route=>{
    const req=route.request(),path=new URL(req.url()).pathname;let body;
+   if(path==='/api/hr/government/workflow/holidays'){await route.fulfill({json:[]});return;}
    if(path==='/api/auth/me')body={reviewer:{id:'supervisor',email:'supervisor@example.test',display_name:'Example Supervisor',role:'user',account_type:'staff',permissions},permissions};
    else if(path==='/api/hr/government/workflow/requests')body={requests:[summary()],total:1};
    else if(path==='/api/hr/government/workflow/requests/lwop')body={...summary(),case:true,standard_lwop:true,can_prepare:false,can_amend:false,can_cancel:false,private_access:true,reason:'Family circumstances requiring unpaid leave.',documents:[{id:'letter',file_name:'Application letter.pdf',byte_size:100}],medical_mode:'not_applicable',tasks:[],stages:[{id:'stage',ordinal:0,level:'division',label:'Supervisor',binding:{id:'binding',reviewer_id:'supervisor',approver_name:'Example Supervisor'},decision:approved?{decision:'approved',decided_at:'2026-10-21T00:10:00Z'}:null,issue:null,can_decide:!approved}]};
@@ -21,7 +22,7 @@ const assert=require('node:assert/strict');
   const base=process.env.LEAVE_CHECK_URL||'http://127.0.0.1:5187';
   await page.goto(base+'/leave/approvals');await page.getByRole('button',{name:'Review application',exact:true}).click();
   const dialog=page.getByRole('dialog');await dialog.waitFor();
-  await dialog.getByText('Awaiting Supervisor · Example Supervisor.',{exact:true}).waitFor();
+  await dialog.getByRole('button',{name:'Approve',exact:true}).waitFor(); // the assigned stage is this supervisor's action now
   assert.equal(await dialog.getByText(/HR factual and pay determination|HR must assign|independent verification/).count(),0);
   assert.equal(await dialog.getByLabel('Decision reason',{exact:true}).count(),0);
   await dialog.getByText('Family circumstances requiring unpaid leave.',{exact:true}).waitFor();

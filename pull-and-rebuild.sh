@@ -75,7 +75,10 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 echo "  Building images and bringing up the full stack..."
-docker compose --env-file "$ENV_FILE" up -d --build
+# --remove-orphans stops and removes containers labelled with this compose
+# project that are no longer defined in the compose file, so retiring a
+# service on main cannot leave a stale container running by the old definition.
+docker compose --env-file "$ENV_FILE" up -d --build --remove-orphans
 
 # `up --build` rebuilds the api image but does not reliably recreate the
 # running api container, and recreating api changes its IP (stale in nginx).

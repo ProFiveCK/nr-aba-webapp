@@ -91,7 +91,7 @@ export function calculateEvaluation(context,input){
    if(!period){issues.push('The employee has no appointment recorded for some of these dates.');continue;}
    if(['unknown','casual','probationary'].includes(period.employment_category))issues.push('HR must determine the category and applicable legal terms; intern designation alone does not determine entitlement.');
    if(input.code==='recreation'&&period.is_teacher)issues.push('Teacher recreation requires an authorised discretionary case.');
-   if(['maternity','paternity','adoption'].includes(input.code)&&period.employment_category==='temporary')issues.push('Temporary parental applications are excluded under the September DHRL confirmation.');
+   if(['maternity','paternity','adoption'].includes(input.code)&&period.employment_category==='temporary')issues.push('Parental leave is not available to temporary employees under the published leave policy.');
    if(input.code==='lwop'&&period.employment_category!=='permanent')issues.push('LWOP is restricted to permanent employees.');
    if(['long_service','furlough'].includes(input.code)&&period.employment_category==='temporary')issues.push('Temporary long-service treatment requires an authorised determination.');
    if(input.code==='recreation'){

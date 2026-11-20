@@ -295,7 +295,7 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   assert.equal((await w.getRequest(pool,r.id)).grant_snapshot.case_determination.pay_segments.length,2);
  });
  test('temporary parental and non-permanent LWOP hard-block, while temporary official travel remains available',async()=>{
-  await pool.query("UPDATE hr_employee_service_periods SET employment_category='temporary',is_intern=TRUE WHERE employee_id=$1",[employee.id]);await assert.rejects(caseSubmit(event('maternity','2026-11-01','2027-01-23')),/Temporary parental/);await assert.rejects(caseSubmit(event('lwop')),/permanent/);const r=await caseSubmit();await determine(r.id,official);await grant(r.id);
+  await pool.query("UPDATE hr_employee_service_periods SET employment_category='temporary',is_intern=TRUE WHERE employee_id=$1",[employee.id]);await assert.rejects(caseSubmit(event('maternity','2026-11-01','2027-01-23')),/published leave policy/);await assert.rejects(caseSubmit(event('lwop')),/permanent/);const r=await caseSubmit();await determine(r.id,official);await grant(r.id);
  });
  test('adoption starts at the adoption date, validates under-twelve-month age and excludes spouse/step-child',async()=>{
   const r=await caseSubmit(event('adoption','2026-09-01','2026-09-28'));const facts={...generic,sex_eligibility:'female',parenthood_verified:true,adoption_order_verified:true,event_kind:'adoption',event_date:'2026-09-01',child_birth_date:'2026-01-01',spouse_or_stepchild:false};

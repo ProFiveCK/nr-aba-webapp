@@ -7,7 +7,7 @@ test('ordinary three-month and temporary twelve-month recreation are distinct; t
  let c=context();assert.ok(calculateEvaluation(c,{...input('recreation','2026-04-01'),notice_date:'2026-03-01'}).eligible_for_preview);assert.match(calculateEvaluation(c,input('recreation','2026-03-31')).issues.join(),/3 months/);
  c=context('temporary');assert.match(calculateEvaluation(c,input()).issues.join(),/12 months/);assert.ok(calculateEvaluation(c,input('medical')).eligible_for_preview);assert.ok(calculateEvaluation(c,input('special')).eligible_for_preview);
  c.periods[0].is_intern=true;assert.ok(calculateEvaluation(c,input('medical')).eligible_for_preview);c.periods[0].employment_category='unknown';assert.match(calculateEvaluation(c,input('medical')).issues.join(),/applicable legal terms/);
- assert.match(calculateEvaluation(context('temporary'),input('maternity')).issues.join(),/excluded/);assert.match(calculateEvaluation(context('contract'),input('lwop')).issues.join(),/permanent/);
+ assert.match(calculateEvaluation(context('temporary'),input('maternity')).issues.join(),/not available to temporary employees/);assert.match(calculateEvaluation(context('contract'),input('lwop')).issues.join(),/permanent/);
 });
 test('notice uses calendar days; holidays exempt only recreation/medical; medical eight days use one pool',()=>{
  const c=context();assert.ok(calculateEvaluation(c,{...input('recreation','2026-10-15'),notice_date:'2026-10-01'}).eligible_for_preview);const short=calculateEvaluation(c,{...input('recreation','2026-10-14'),notice_date:'2026-10-01'});

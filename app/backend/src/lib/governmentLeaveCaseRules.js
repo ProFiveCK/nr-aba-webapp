@@ -21,7 +21,7 @@ export function caseFoundation(context,input){
   requireFact(policy.evaluator_version===ENGINE_VERSION,`The policy covering ${date} uses an unsupported version. Contact the system administrator.`);
   const serviceIssues=service.issues.filter(issue=>issue!==UNVERIFIED_ANNIVERSARY);requireFact(period&&!serviceIssues.length,serviceIssues.join(' ')||'Verified appointment must cover every case date.');
   requireFact(!['unknown','casual','probationary'].includes(period.employment_category),'Resolve the legal employment category before an assisted application.');
-  if(['maternity','paternity','adoption'].includes(input.code))requireFact(period.employment_category!=='temporary','Temporary parental applications are excluded by the September confirmation.');
+  if(['maternity','paternity','adoption'].includes(input.code))requireFact(period.employment_category!=='temporary','Parental leave is not available to temporary employees under the published leave policy.');
   if(input.code==='lwop')requireFact(period.employment_category==='permanent','LWOP is restricted to permanent employees.');
   if(input.code==='teacher_recreation'){requireFact(period.is_teacher===true,'Teacher recreation requires a verified teacher appointment.');if(period.employment_category==='temporary'){const threshold=service.milestone(12);requireFact(threshold&&date>=threshold,'Temporary teacher recreation requires twelve months of credited service.');}}
   if(['long_service','furlough','witness_republic','witness_other'].includes(input.code))requireFact(['permanent','contract'].includes(period.employment_category),'This category requires a signed policy variation before this leave can be enabled.');

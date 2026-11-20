@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
   const summary = () => ({ id: 'grant', employee_id: employeeId, employee_name: person(employeeId).display_name, code: 'recreation', start_date: '2026-11-16', end_date: '2026-11-18', charge: '3', status: 'approved', stage_index: 0, submitted_at: '2026-10-07T00:00:00Z', can_pdf: true });
   await page.route('**/api/**', async route => {
    const request = route.request(), url = new URL(request.url()), path = url.pathname;
+   if (path.includes("/government/workflow/holidays")) { await route.fulfill({ json: [] }); return; }
    calls.push({ path, query: url.search, method: request.method() });
    let body;
    if (path === '/api/auth/me') body = { reviewer: { id: 'admin', email: 'admin@example.test', display_name: 'Example Administrator', role: permissions.hr_admin ? 'admin' : 'user', account_type: 'staff', permissions }, permissions };

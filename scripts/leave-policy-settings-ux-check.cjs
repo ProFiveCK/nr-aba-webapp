@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
   let failExtension=false;
   await page.route('**/api/**',async route=>{
    const request=route.request(),path=new URL(request.url()).pathname;let body;
+   if(path==='/api/hr/government/workflow/holidays'){await route.fulfill({json:[]});return;}
    if(request.method()!=='GET')writes.push({path,body:request.postDataJSON()});
    if(path==='/api/auth/me')body={reviewer:{id:'admin',email:'admin@example.test',display_name:'Administrator',role:'admin',permissions,account_type:'staff'},permissions};
    else if(path==='/api/hr/access-scopes/context')body={central:true,scopes:[]};

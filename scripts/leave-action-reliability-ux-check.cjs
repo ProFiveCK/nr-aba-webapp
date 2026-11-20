@@ -25,6 +25,7 @@ const until = async (test, message) => {
         const detail = id => ({ ...summary(id), stages: [{ id: 'stage', ordinal: 0, level: 'department', label: 'Head of Department', binding: { id: 'binding', approver_name: 'Approver' }, can_decide: !approved }], documents: [], private_access: true, reason: 'Verified family appointment.', can_cancel: !approved });
         await page.route('**/api/**', async route => {
             const request = route.request(), path = new URL(request.url()).pathname;
+            if (path.includes('/government/workflow/holidays')) { await route.fulfill({ json: [] }); return; }
             let body = {};
             if (path === '/api/auth/me') body = { reviewer: { id: 'reviewer', display_name: 'Test reviewer', email: 'test@example.test', role: 'admin', account_type: 'staff', permissions }, permissions };
             else if (path === '/api/hr/me') body = { employee: { id: 'employee', display_name: 'Test employee', leave_policy_regime: 'government' }, balances: [] };
@@ -180,16 +181,16 @@ const until = async (test, message) => {
         await page.getByRole('button', { name: 'Open parent', exact: true }).click();
         await page.getByRole('button', { name: 'Open child', exact: true }).click();
         let child = page.getByRole('dialog', { name: 'Child action', exact: true });
-        await child.getByRole('button', { name: 'Save verified change', exact: true }).focus();
+        await child.getByRole('button', { name: 'Save', exact: true }).focus();
         await page.keyboard.press('Tab');
         assert.equal(await child.getByRole('button', { name: 'Close dialog', exact: true }).evaluate(button => button === document.activeElement), true, 'Tab must wrap inside the child');
-        await child.getByLabel('Verification reason', { exact: true }).fill('Verified the recorded authority.');
+        await child.getByLabel('Reason (optional)', { exact: true }).fill('Verified the recorded authority.');
         await child.locator('form').evaluate(form => { form.requestSubmit(); form.requestSubmit(); });
         await child.getByRole('button', { name: 'Saving…', exact: true }).waitFor();
         assert.equal(await page.evaluate(() => window.saves), 1);
         await page.evaluate(() => window.finishSave(false));
         await child.getByRole('alert').filter({ hasText: 'Synthetic save failure.' }).waitFor();
-        assert.equal(await child.getByLabel('Verification reason', { exact: true }).inputValue(), 'Verified the recorded authority.');
+        assert.equal(await child.getByLabel('Reason (optional)', { exact: true }).inputValue(), 'Verified the recorded authority.');
         await page.keyboard.press('Escape');
         assert.equal(await page.getByRole('dialog').count(), 1);
         assert.equal(await page.evaluate(() => document.body.style.overflow), 'hidden');

@@ -148,8 +148,8 @@ describe('employee directory and enterprise approval foundation', { skip: skipWi
       'there is no legacy submission route; leave goes through the government workflow');
     const { rows: [application] } = await pool.query(`INSERT INTO hr_leave_applications (employee_id, leave_type_id, start_date, end_date, days, status)
       VALUES ($1,$2,'2026-10-20','2026-10-21',2,'pending') RETURNING id`, [employee.id, leaveType.id]);
-    assert.equal((await call(await tokenFor(actor), `/api/hr/leaves/${application.id}/decision`, { decision: 'approved' })).status, 409,
-      'the legacy final decision cannot grant government employee leave');
+    assert.equal((await call(await tokenFor(actor), `/api/hr/leaves/${application.id}/decision`, { decision: 'approved' })).status, 404,
+      'the legacy decision route is retired: leave is granted only through the staged workflow');
     assert.equal((await call(token, '/api/batches')).status, 403, 'even a legacy any-login gate cannot admit an employee-only account');
     const refreshed = await call(token, '/api/auth/refresh', {}, 'POST');
     assert.equal(refreshed.status, 200);
@@ -163,7 +163,7 @@ describe('employee directory and enterprise approval foundation', { skip: skipWi
     assert.equal(auth.reviewerSummary(actor).permissions.submit_aba, undefined, 'a staff account holds only what is ticked');
     assert.equal(auth.reviewerSummary(actor, [], ['submit_aba']).permissions.submit_aba, true, 'a ticked finance capability still works for staff');
     await pool.query("UPDATE hr_employees SET status = 'inactive' WHERE id = $1", [employee.id]);
-    assert.equal((await call(refreshed.body.token, '/api/hr/public-holidays')).status, 403,
+    assert.equal((await call(refreshed.body.token, '/api/hr/government/workflow/me')).status, 403,
       'employee deactivation blocks every authenticated endpoint without waiting for token expiry');
   });
 

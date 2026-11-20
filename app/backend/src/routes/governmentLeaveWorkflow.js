@@ -126,21 +126,12 @@ router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query
       jsonb_build_object('id',a.id,'employee_id',a.employee_id,'employee_name',e.display_name,'leave_type_name',t.name,
         'start_date',to_char(a.start_date,'YYYY-MM-DD'),'end_date',to_char(a.end_date,'YYYY-MM-DD'),'days',a.days,'status',a.status,
         'reason',a.reason,'applied_at',a.applied_at,'reviewer_note',a.reviewer_note,
-        'can_decide',e.reviewer_id IS DISTINCT FROM $1 AND e.leave_policy_regime<>'government' AND NOT EXISTS(SELECT 1 FROM reviewers owner WHERE owner.id=e.reviewer_id AND owner.account_type='employee'),
-        -- What the decision is made against: the balance for the type in the
-        -- year the leave starts in (the same keying approval charges). Nothing
-        -- tracked (no row — e.g. official travel) means nothing to charge:
-        -- NULL keeps the review modal quiet rather than showing a type
-        -- default the approval never consults.
-        'balance_days',CASE WHEN b.id IS NULL THEN NULL ELSE b.balance END,
-        'pending_days',CASE WHEN b.id IS NULL THEN NULL ELSE b.pending END,
-        'available_days',CASE WHEN b.id IS NULL THEN NULL ELSE b.balance-b.pending END,
-        'leave_entitled',e.leave_entitled,
+                -- Recorded applications are frozen history; only the staged workflow grants leave.
+        'can_decide',FALSE,
         'attachments',CASE WHEN ${evidenceReadSql(req.user,'$1')} THEN
           COALESCE((SELECT jsonb_agg(jsonb_build_object('id',att.id,'file_name',att.file_name,'content_type',att.content_type,'byte_size',att.byte_size,'created_at',att.created_at) ORDER BY att.created_at) FROM hr_leave_attachments att WHERE att.application_id=a.id),'[]'::jsonb) ELSE '[]'::jsonb END),
       CASE WHEN t.name='Sick (with MC)' THEN 'certificate' WHEN t.name='Sick (without MC)' THEN 'exemption' ELSE NULL END
     FROM hr_leave_applications a JOIN hr_employees e ON e.id=a.employee_id JOIN hr_leave_types t ON t.id=a.leave_type_id
-      LEFT JOIN hr_leave_balances b ON b.employee_id=a.employee_id AND b.leave_type_id=a.leave_type_id AND b.year=EXTRACT(YEAR FROM a.start_date)::int
     WHERE (${employeeScopeSql(req.user,'hr_leave_approve','$1')} OR ${managerScopeSql(req.user,'$1')})
       AND ($2='all' OR a.status=$2) AND ($4::uuid IS NULL OR a.employee_id=$4)
       AND NOT EXISTS(SELECT 1 FROM hr_gov_legacy_transfers transfer JOIN hr_gov_requests carried ON carried.id=transfer.request_id WHERE transfer.legacy_request_id=a.id)` : ''}`;

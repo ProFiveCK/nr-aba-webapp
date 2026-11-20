@@ -1,7 +1,8 @@
 /**
- * Leave and FOREX TT notifications used to keep their own mail transport and
- * testing-mode flag, so switching on testing mode in Admin did not stop them.
- * They now send through mailService, and follow its switch.
+ * The whole app sends through one mail service: the SMTP settings and the
+ * testing-mode switch saved in Admin. These probes pin the switch down —
+ * when testing mode is on nothing is attempted, and off, sends go to a real
+ * socket and report the server's acceptance so notification tracking works.
  */
 import assert from 'node:assert/strict';
 import test, { after, before, describe } from 'node:test';
@@ -14,67 +15,29 @@ process.env.SMTP_PORT = '1';
 describe('notifications follow the admin testing-mode switch', { skip: skipWithoutDatabase }, () => {
   let pool;
   let mail;
-  let notifications;
-  const leave = {
-    application: { leave_type_name: 'Annual', start_date: '2026-10-12', end_date: '2026-10-13', days: 2, reason: 'Rest' },
-    employee: { display_name: 'Ana' },
-  };
-  // Any mail the leave notifier would send; used to probe the testing-mode switch.
-  const decision = { ...leave, employee: { display_name: 'Ana', email: 'ana@test' }, decision: 'approved',
-    approver: { email: 'approver@test' }, decidedBy: 'Approver' };
 
   before(async () => {
     pool = await connectTestDatabase();
     mail = await import('./mailService.js');
-    notifications = await import('./notificationService.js');
+    await mail.refreshTestingModeSetting();
   });
   after(async () => {
     await pool.query('UPDATE reviewer_settings SET testing_mode = FALSE WHERE id = TRUE');
     await pool?.end();
   });
 
-  test('testing mode on: nothing is sent', async () => {
+  test('testing mode on: nothing is attempted', async () => {
     await pool.query('UPDATE reviewer_settings SET testing_mode = TRUE WHERE id = TRUE');
     await mail.refreshTestingModeSetting();
-    assert.deepEqual(await notifications.notifyLeaveDecision(decision), []);
+    assert.deepEqual(await mail.sendMail({ to: 'approver@example.test', subject: 'Synthetic', text: 'x' }),
+      { skipped: true, reason: 'testing_mode' });
+    await assert.rejects(() => mail.mailTransport.sendMail({ to: 'approver@example.test', subject: 'Synthetic', text: 'x' }));
   });
 
-  test('testing mode off: a send is attempted', async () => {
+  test('testing mode off: a send is attempted against the configured transport', async () => {
     await pool.query('UPDATE reviewer_settings SET testing_mode = FALSE WHERE id = TRUE');
     await mail.refreshTestingModeSetting();
-    await assert.rejects(() => notifications.notifyLeaveDecision(decision));
-  });
-
-  test('legacy approval and rejection emails go only to the applicant, without an approver confirmation copy', async () => {
-    const messages = [];
-    const original = mail.mailTransport.sendMail;
-    mail.mailTransport.sendMail = async message => { messages.push(message); return { accepted: [message.to] }; };
-    try {
-      for (const outcome of ['approved', 'rejected']) {
-        messages.length = 0;
-        const sent = await notifications.notifyLeaveDecision({ ...leave,
-          employee: { display_name: 'Ana', email: 'ana@test' }, decision: outcome,
-          approver: { email: 'approver@test' }, decidedBy: 'Approver', note: outcome === 'rejected' ? 'Reapply with revised dates.' : '',
-        });
-        assert.deepEqual(sent, ['ana@test']);
-        assert.equal(messages.length, 1);
-        assert.match(messages[0].subject, /Your leave request was (approved|not approved)/);
-        if (outcome === 'rejected') assert.match(messages[0].text, /Reapply with revised dates/);
-      }
-    } finally { mail.mailTransport.sendMail = original; }
-  });
-
-  test('a missing legacy applicant email does not redirect the outcome to the deciding approver', async () => {
-    const messages = [];
-    const original = mail.mailTransport.sendMail;
-    mail.mailTransport.sendMail = async message => { messages.push(message); return { accepted: [message.to] }; };
-    try {
-      const sent = await notifications.notifyLeaveDecision({ ...leave,
-        decision: 'rejected', approver: { email: 'approver@test' },
-      });
-      assert.deepEqual(sent, []);
-      assert.equal(messages.length, 0);
-    } finally { mail.mailTransport.sendMail = original; }
+    await assert.rejects(() => mail.sendMail({ to: 'approver@example.test', subject: 'Synthetic', text: 'x' }));
   });
 
   test('shared mail service returns actual SMTP acceptance for notification tracking', async () => {

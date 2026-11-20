@@ -128,11 +128,13 @@ router.get('/requests',[query('page').optional().isInt({min:1,max:100000}),query
         'reason',a.reason,'applied_at',a.applied_at,'reviewer_note',a.reviewer_note,
         'can_decide',e.reviewer_id IS DISTINCT FROM $1 AND e.leave_policy_regime<>'government' AND NOT EXISTS(SELECT 1 FROM reviewers owner WHERE owner.id=e.reviewer_id AND owner.account_type='employee'),
         -- What the decision is made against: the balance for the type in the
-        -- year the leave starts in (the same keying approval charges), so an
-        -- approver sees an overdrawing approval coming before recording it.
-        'balance_days',COALESCE(b.balance,CASE WHEN t.is_accruable THEN 0 ELSE t.default_days END),
-        'pending_days',COALESCE(b.pending,0),
-        'available_days',COALESCE(b.balance,CASE WHEN t.is_accruable THEN 0 ELSE t.default_days END)-COALESCE(b.pending,0),
+        -- year the leave starts in (the same keying approval charges). Nothing
+        -- tracked (no row — e.g. official travel) means nothing to charge:
+        -- NULL keeps the review modal quiet rather than showing a type
+        -- default the approval never consults.
+        'balance_days',CASE WHEN b.id IS NULL THEN NULL ELSE b.balance END,
+        'pending_days',CASE WHEN b.id IS NULL THEN NULL ELSE b.pending END,
+        'available_days',CASE WHEN b.id IS NULL THEN NULL ELSE b.balance-b.pending END,
         'leave_entitled',e.leave_entitled,
         'attachments',CASE WHEN ${evidenceReadSql(req.user,'$1')} THEN
           COALESCE((SELECT jsonb_agg(jsonb_build_object('id',att.id,'file_name',att.file_name,'content_type',att.content_type,'byte_size',att.byte_size,'created_at',att.created_at) ORDER BY att.created_at) FROM hr_leave_attachments att WHERE att.application_id=a.id),'[]'::jsonb) ELSE '[]'::jsonb END),

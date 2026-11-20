@@ -8,7 +8,6 @@ import bcrypt from 'bcryptjs';
 import { startGovernmentLeaveScheduler } from './services/governmentLeaveJobs.js';
 import { startLeaveNotificationDelivery } from './services/governmentLeaveNotifications.js';
 import { runDueLeaveAccruals } from './services/leaveAccrual.js';
-import { LOCK_KEYS, withAdvisoryLock } from './lib/advisoryLock.js';
 import { buildCookieParser, csrfGuard } from './services/authService.js';
 import { lowerEmail } from './utils/helpers.js';
 import {
@@ -26,9 +25,6 @@ import {
 } from './config.js';
 
 dotenv.config();
-
-// The in-process accrual scheduler, on unless a deployment drives it from cron.
-const ACCRUAL_SCHEDULER_ENABLED = (process.env.ACCRUAL_SCHEDULER || 'on').toLowerCase() !== 'off';
 
 // Express 4 drops a rejected promise from an async handler on the floor: the
 // request hangs and nothing is logged. `enableAsyncErrors()` routes those to
@@ -237,33 +233,6 @@ initSchema()
     else console.log('[government-leave-jobs] Disabled; independently approved plans can be run by central HR.');
     startLeaveNotificationDelivery(pool);
 
-    // Fortnightly leave accrual. Runs any due periods on startup (catching up
-    // after downtime) and then checks hourly.
-    //
-    // The advisory lock means only one container does the work when the API is
-    // scaled out — the rest decline quietly rather than racing and failing on
-    // the period_end constraint. Set ACCRUAL_SCHEDULER=off to run it from cron
-    // instead (`npm run accrual -- --due`); the two are interchangeable and
-    // equally idempotent.
-    if (ACCRUAL_SCHEDULER_ENABLED) {
-      const runScheduledAccruals = async () => {
-        try {
-          const { acquired, result } = await withAdvisoryLock(
-            pool, LOCK_KEYS.LEAVE_ACCRUAL, () => runDueLeaveAccruals(pool)
-          );
-          if (!acquired) return;
-          for (const periodEnd of result.ran) {
-            console.log(`[accrual-scheduler] Ran leave accrual for period ending ${periodEnd}`);
-          }
-        } catch (err) {
-          console.error('[accrual-scheduler] Failed to run due leave accruals', err);
-        }
-      };
-      runScheduledAccruals();
-      setInterval(runScheduledAccruals, 60 * 60 * 1000).unref();
-    } else {
-      console.log('[accrual-scheduler] Disabled (ACCRUAL_SCHEDULER=off) - run it from cron.');
-    }
   })
   .catch((err) => {
     console.error('Failed to start server', err);

@@ -5,22 +5,14 @@ import { body, param, query, handleValidation } from '../middleware/validation.j
 import { pool } from '../db.js';
 import { requirePermission } from '../services/authService.js';
 import { recordAudit } from '../services/auditService.js';
-import { notifyLeaveDecision } from '../services/notificationService.js';
-import { runLeaveAccrual } from '../services/leaveAccrual.js';
-import {
-  adjustBalance,
-  cancelLeave,
-  decideLeave,
-  setOpeningBalance,
-} from '../services/leaveService.js';
-import { withTransaction } from '../lib/transaction.js';
-import { ServiceError } from '../lib/serviceError.js';
-import { PERMISSIONS } from '../config.js';
-import { buildUpdateAssignments, changedFields, collectUpdates } from '../lib/sqlUpdate.js';
-import { normalizeNameKey } from '../lib/names.js';
 import { INELIGIBLE_REASONS, resolveEligibility } from '../lib/eligibility.js';
 import { parseDateOnly, toIsoDate } from '../lib/leaveDates.js';
 import { generateLeaveApplicationPdf } from '../services/leaveApplicationPdf.js';
+import {buildUpdateAssignments, changedFields, collectUpdates} from '../lib/sqlUpdate.js';
+import {normalizeNameKey} from '../lib/names.js';
+import { ServiceError } from '../lib/serviceError.js';
+import { PERMISSIONS } from '../config.js';
+import { withTransaction } from '../lib/transaction.js';
 
 import hrAccessRouter from './hrAccess.js';
 import { CALENDAR_VIEWS, MASKED_LEAVE_LABEL, ROSTER_VIEWS, calendarAudienceSql, calendarRoster, unitNamesSql } from '../services/leaveCalendar.js';
@@ -68,53 +60,19 @@ function visibleEmployee(req, row) {
 
 const visibleEmployees = (req, rows) => rows.map((row) => visibleEmployee(req, row));
 
-// ===== Reference data =====
-
-router.get('/leave-types', requirePermission(PERMISSIONS.HR_ACCESS), async (_req, res) => {
-  const { rows } = await pool.query(
-    'SELECT * FROM hr_leave_types WHERE is_active = TRUE ORDER BY name'
-  );
-  res.json(rows);
-});
-
 // ===== The signed-in user =====
 
 router.get('/me', requirePermission(PERMISSIONS.HR_ACCESS), async (req, res) => {
   const employee = await currentEmployee(req);
-  const year = new Date().getFullYear();
-  // Staff who are not entitled to leave have no balances to show.
-  if (employee.leave_entitled === false) {
-    const { rows: manager } = await pool.query(
-      'SELECT id, display_name, email FROM hr_employees WHERE id = $1',
-      [employee.manager_id]
-    );
-    res.json({ employee: visibleEmployee(req, employee), year, balances: [], manager: manager[0] || null });
-    return;
-  }
-  // Return every active leave type, not just the ones the employee has touched,
-  // so the form can show a zero (or not-yet-accrued) balance instead of hiding
-  // the type entirely. Untouched accruable types read as zero; upfront types
-  // read as their full entitlement — matching what ensureBalance would seed.
-  const { rows: balances } = await pool.query(
-    `SELECT COALESCE(b.id, t.id) AS id,
-            t.id AS leave_type_id,
-            t.name AS leave_type_name,
-            COALESCE(b.balance, CASE WHEN t.is_accruable THEN 0 ELSE t.default_days END) AS balance,
-            COALESCE(b.pending, 0) AS pending,
-            $2 AS year,
-            t.requires_note
-       FROM hr_leave_types t
-       LEFT JOIN hr_leave_balances b
-         ON b.leave_type_id = t.id AND b.employee_id = $1 AND b.year = $2
-      WHERE t.is_active = TRUE AND ($3::boolean=FALSE OR b.id IS NOT NULL)
-      ORDER BY t.name`,
-    [employee.id, year,employee.leave_policy_regime==='government' || req.user.account_type==='employee']
-  );
+  // Legacy balances are retired: government staff read their entitlements from
+  // the government ledger through /government/..., and excluded-contract
+  // records carry none. The field stays in the response so older clients that
+  // still read it see an empty list.
   const { rows: manager } = await pool.query(
     'SELECT id, display_name, email FROM hr_employees WHERE id = $1',
     [employee.manager_id]
   );
-  res.json({ employee: visibleEmployee(req, employee), year, balances, manager: manager[0] || null });
+  res.json({ employee: visibleEmployee(req, employee), year: new Date().getFullYear(), balances: [], manager: manager[0] || null });
 });
 
 // The documents attached to an application, without their bytes. Written as a
@@ -275,128 +233,6 @@ router.get(
     // rendered by the browser on the portal's own origin.
     res.set('Content-Disposition', `attachment; filename="${encodeURIComponent(attachment.file_name)}"`);
     return res.send(attachment.file_data);
-  }
-);
-
-// New applications go through the government workflow; there is no legacy submit
-// route. Historical reads, cancellations and decisions remain below.
-router.post(
-  '/leaves/:id/cancel',
-  requirePermission(PERMISSIONS.HR_LEAVE_APPLY),
-  [param('id').isUUID()],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const employee = await currentEmployee(req);
-    await cancelLeave(pool, { employee, applicationId: req.params.id });
-    res.json({ message: 'Leave application cancelled.' });
-  }
-);
-
-// Archiving only hides a finished application from the applicant's own list;
-// it never affects balances, and the row is kept for reporting.
-router.post(
-  '/leaves/:id/archive',
-  requirePermission(PERMISSIONS.HR_ACCESS),
-  [param('id').isUUID()],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const employee = await currentEmployee(req);
-    const { rows } = await pool.query(
-      `UPDATE hr_leave_applications SET archived_at = NOW()
-        WHERE id = $1 AND employee_id = $2 AND status IN ('cancelled','rejected')
-        RETURNING id`,
-      [req.params.id, employee.id]
-    );
-    if (!rows.length) {
-      res.status(400).json({ message: 'Only your own cancelled or rejected applications can be archived.' });
-      return;
-    }
-    res.json({ message: 'Application archived.' });
-  }
-);
-
-// ===== Manager: team and approvals =====
-
-router.get('/team', requirePermission(PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN), async (req,res) => {
-  const {rows}=await pool.query(`SELECT e.*, m.display_name AS manager_name FROM hr_employees e
-    LEFT JOIN hr_employees m ON m.id=e.manager_id AND ${employeeReadSql(req.user,'$1','m')}
-    WHERE e.status='active' AND ${employeeReadSql(req.user)} ORDER BY e.display_name`,[req.user.id]);
-  res.json(visibleEmployees(req,rows));
-});
-
-router.get('/approvals',requirePermission(PERMISSIONS.HR_LEAVE_APPROVE,PERMISSIONS.HR_ADMIN),
-  [query('status').optional().isIn(['pending','approved'])],async(req,res)=>{
-  if(!handleValidation(req,res))return;
-  const status=req.query.status==='approved'?'approved':'pending';
-  const {rows}=await pool.query(`SELECT a.id,a.employee_id,a.leave_type_id,a.start_date,a.end_date,a.days,a.reason,a.status,
-    a.applied_at,a.reviewed_at,a.reviewer_note,t.name AS leave_type_name,e.display_name AS employee_name,e.department_code,
-    CASE WHEN ${evidenceReadSql(req.user,'$2')} THEN ${ATTACHMENT_SUMMARY_SQL.replace(/ AS attachments$/, '')} ELSE '[]'::json END AS attachments FROM hr_leave_applications a JOIN hr_leave_types t ON t.id=a.leave_type_id
-    JOIN hr_employees e ON e.id=a.employee_id WHERE a.status=$1
-    AND (${employeeScopeSql(req.user,'hr_leave_approve','$2')} OR ${managerScopeSql(req.user,'$2')})
-    ORDER BY ${status==='pending'?'a.applied_at':'a.reviewed_at DESC'} ${status==='approved'?'LIMIT 20':''}`,[status,req.user.id]);
-  res.json(rows);
-});
-
-router.post(
-  '/leaves/:id/decision',
-  requirePermission(PERMISSIONS.HR_LEAVE_APPROVE, PERMISSIONS.HR_ADMIN),
-  [
-    param('id').isUUID(),
-    body('decision').isIn(['approved', 'rejected']),
-    body('reviewer_note').optional({ nullable: true }).isString().isLength({ max: 2000 }),
-  ],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const decision = req.body.decision;
-    const note = String(req.body.reviewer_note || '').trim();
-
-    const {rows:[decisionTarget]} = await pool.query('SELECT employee_id FROM hr_leave_applications WHERE id=$1',[req.params.id]);
-    if (!decisionTarget || !(await canActOnEmployee(req,decisionTarget.employee_id))) throw new ServiceError(404,'Leave application not found.');
-
-    const { rows: [owner] } = await pool.query(`SELECT r.account_type,e.leave_policy_regime FROM hr_leave_applications a
-      JOIN hr_employees e ON e.id = a.employee_id LEFT JOIN reviewers r ON r.id = e.reviewer_id WHERE a.id = $1`, [req.params.id]);
-    if (owner?.account_type === 'employee' || owner?.leave_policy_regime==='government') {
-      throw new ServiceError(409, 'Government employee leave requires the staged approval workflow. The legacy decision endpoint cannot grant it.');
-    }
-
-    const { application, applicant, leaveTypeName } = await decideLeave(pool, {
-      applicationId: req.params.id,
-      decision,
-      note,
-      actorId: req.user.id,
-      // Capability is checked above; whose leave this approver may touch is a
-      // question about the reporting line, which lives here rather than in the
-      // service.
-      canAct: async (employeeId,client) => {
-        const {rows:[current]}=await client.query(`SELECT e.leave_policy_regime,r.account_type FROM hr_employees e LEFT JOIN reviewers r ON r.id=e.reviewer_id WHERE e.id=$1`,[employeeId]);
-        if(current?.leave_policy_regime==='government' || current?.account_type==='employee') throw new ServiceError(409,'Government employee leave requires the staged approval workflow.');
-        return canActOnEmployee(req,employeeId,client);
-      },
-    });
-
-    await recordAudit({
-      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-      action: `hr.leave.${decision}`,
-      entityType: 'hr_leave_application',
-      entityId: application.id,
-      after: { decision, days: application.days },
-    });
-
-    if (applicant) {
-      notifyLeaveDecision({
-        application: { ...application, leave_type_name: leaveTypeName },
-        employee: applicant,
-        decision,
-        note,
-        decidedBy: req.user.display_name || req.user.email,
-        approver: { email: req.user.email },
-      })
-        .then((sentTo) => console.info(sentTo.length
-          ? `[leave] ${decision} notice for ${applicant.display_name} (${application.id}) emailed to ${sentTo.join(', ')}`
-          : `[leave] ${decision} notice for ${applicant.display_name} (${application.id}) not emailed: no applicant address, SMTP not configured, or testing mode`))
-        .catch((err) => console.error('Failed to notify applicant of leave decision', err));
-    }
-    res.json({ message: `Leave ${decision}.` });
   }
 );
 
@@ -745,6 +581,29 @@ function blankToNull(req, _res, next) {
   next();
 }
 
+// An employee's stored balances for one year, read-only: the government
+// ledger owns current entitlements, this view answers questions about the
+// historical record.
+router.get(
+  '/employees/:id/balances',
+  requirePermission(PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN),
+  [param('id').isUUID(), query('year').optional().isInt()],
+  async (req, res) => {
+    if (!handleValidation(req, res)) return;
+    if (!(await canAccessEmployee(pool,req.user,req.params.id,'hr_officer'))) throw new ServiceError(404,'Employee not found.');
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const { rows } = await pool.query(
+      `SELECT b.*, t.name AS leave_type_name
+         FROM hr_leave_balances b
+         JOIN hr_leave_types t ON t.id = b.leave_type_id
+        WHERE b.employee_id = $1 AND b.year = $2
+        ORDER BY t.name`,
+      [req.params.id, year]
+    );
+    res.json({ year, balances: rows });
+  }
+);
+
 router.put(
   '/employees/:id',
   requirePermission(PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN),
@@ -988,486 +847,6 @@ router.delete(
       },
     });
     res.status(204).end();
-  }
-);
-
-// Bulk-creates unlinked staff records (like POST /employees, repeated) and
-// sets each one's opening balance per leave type in the same call. Reuses
-// ensureBalance's default-seed-then-adjust path so an import produces the
-// exact same audit trail (hr_leave_adjustments) a manual adjustment would.
-// Skips (never overwrites) any name that already has a staff record, so
-// re-running an import after fixing a few rows is safe.
-router.post(
-  '/employees/import',
-  requirePermission(PERMISSIONS.HR_ADMIN),
-  [
-    body('rows').isArray({ min: 1, max: 500 }),
-    body('rows.*.display_name').isString().trim().isLength({ min: 1, max: 200 }),
-    body('rows.*.department_code').optional({ nullable: true }).isString().isLength({ max: 60 }),
-    body('rows.*.division_code').optional({ nullable: true }).isString().isLength({ max: 60 }),
-    body('rows.*.join_date').optional({ nullable: true }).isISO8601(),
-    body('rows.*.balances').optional().isObject(),
-  ],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const year = new Date().getFullYear();
-    const [{ rows: existing }, { rows: types }, { rows: unlinkedLogins }] = await Promise.all([
-      pool.query('SELECT display_name FROM hr_employees'),
-      pool.query('SELECT id, name FROM hr_leave_types'),
-      // Same cross-check as POST /employees: a login set up through User
-      // Management, with no staff record yet, that this row is about to
-      // duplicate under a differently-typed name instead of being linked to.
-      pool.query(
-        `SELECT r.display_name, r.email FROM reviewers r
-          LEFT JOIN hr_employees e ON e.reviewer_id = r.id
-          WHERE r.status = 'active' AND e.id IS NULL`
-      ),
-    ]);
-    // Normalized (punctuation/spacing-insensitive) so "Val-cade" in a CSV
-    // doesn't slip past a "Valcade" already on file — see normalizeNameKey.
-    const existingNames = new Set(existing.map((r) => normalizeNameKey(r.display_name)));
-    const unlinkedLoginNames = new Set(unlinkedLogins.map((r) => normalizeNameKey(r.display_name || r.email)));
-    const typeByName = new Map(types.map((t) => [t.name.toLowerCase(), t]));
-
-    const created = [];
-    const skipped = [];
-    for (const row of req.body.rows) {
-      const name = row.display_name.trim();
-      const key = normalizeNameKey(name);
-      if (existingNames.has(key)) {
-        skipped.push({ display_name: name, reason: 'A staff record with this name (or a close match) already exists.' });
-        continue;
-      }
-      if (unlinkedLoginNames.has(key)) {
-        skipped.push({ display_name: name, reason: 'A portal login with this name already exists without a staff record. Link it from User Management instead of importing it here.' });
-        continue;
-      }
-      const orgUnit = await resolveOrgUnit(row.department_code, row.division_code);
-      if (orgUnit.error) {
-        skipped.push({ display_name: name, reason: orgUnit.error });
-        continue;
-      }
-      try {
-        const employeeId = await withTransaction(pool, async (client) => {
-          const { rows: inserted } = await client.query(
-            `INSERT INTO hr_employees (display_name, department_code, division_code, join_date,department_id,division_id)
-             VALUES ($1, $2, $3, $4,$5,$6) RETURNING id`,
-            [name, orgUnit.department, orgUnit.division, row.join_date || null,orgUnit.department_id,orgUnit.division_id]
-          );
-          const id = inserted[0].id;
-          for (const [typeName, rawAmount] of Object.entries(row.balances || {})) {
-            const amount = Number(rawAmount);
-            const type = typeByName.get(String(typeName).trim().toLowerCase());
-            if (!Number.isFinite(amount) || !type) continue;
-            await setOpeningBalance(client, {
-              employeeId: id,
-              leaveTypeId: type.id,
-              target: amount,
-              reason: 'Bulk import: opening balance',
-              actorId: req.user.id,
-              year,
-            });
-          }
-          return id;
-        });
-        existingNames.add(key);
-        created.push({ id: employeeId, display_name: name });
-      } catch (err) {
-        console.error(`Bulk import failed for "${name}"`, err);
-        skipped.push({ display_name: name, reason: 'Unable to import this row.' });
-      }
-    }
-
-    await recordAudit({
-      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-      action: 'hr.employees.bulk_import',
-      entityType: 'hr_employee',
-      entityId: null,
-      after: { created: created.length, skipped: skipped.length },
-    });
-
-    res.status(201).json({ created, skipped });
-  }
-);
-
-router.get(
-  '/employees/:id/balances',
-  requirePermission(PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN),
-  [param('id').isUUID(), query('year').optional().isInt()],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    if (!(await canAccessEmployee(pool,req.user,req.params.id,'hr_officer'))) throw new ServiceError(404,'Employee not found.');
-    const year = Number(req.query.year) || new Date().getFullYear();
-    const { rows } = await pool.query(
-      `SELECT b.*, t.name AS leave_type_name
-         FROM hr_leave_balances b
-         JOIN hr_leave_types t ON t.id = b.leave_type_id
-        WHERE b.employee_id = $1 AND b.year = $2
-        ORDER BY t.name`,
-      [req.params.id, year]
-    );
-    res.json({ year, balances: rows });
-  }
-);
-
-// Manual balance correction. The reason is mandatory and every adjustment is
-// kept, so a balance can always be explained.
-router.post(
-  '/adjustments',
-  requirePermission(PERMISSIONS.HR_OFFICER, PERMISSIONS.HR_ADMIN),
-  [
-    body('employee_id').isUUID(),
-    body('leave_type_id').isUUID(),
-    body('amount').isFloat(),
-    body('reason').isString().isLength({ min: 3, max: 2000 }),
-    body('year').optional().isInt(),
-  ],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const { amount, year, reason } = await adjustBalance(pool, {
-      employeeId: req.body.employee_id,
-      leaveTypeId: req.body.leave_type_id,
-      amount: req.body.amount,
-      reason: req.body.reason,
-      actorId: req.user.id,
-      year: req.body.year,
-      authorize: async client => {
-        const employee = await assertEmployeeScope(client,req.user,req.body.employee_id,'hr_officer');
-        const { rows: [account] } = employee.reviewer_id ? await client.query('SELECT account_type FROM reviewers WHERE id=$1',[employee.reviewer_id]) : { rows: [] };
-        if (employee.leave_policy_regime === 'government' || account?.account_type === 'employee') {
-          throw new ServiceError(409,'This balance requires a certified correction. Contact central HR.');
-        }
-      },
-    });
-    await recordAudit({
-      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-      action: 'hr.balance.adjusted',
-      entityType: 'hr_employee',
-      entityId: req.body.employee_id,
-      after: { leave_type_id: req.body.leave_type_id, amount, reason, year },
-    });
-    res.status(201).json({ message: 'Balance adjusted.' });
-  }
-);
-
-// ===== Leave policies =====
-
-router.get('/policies', requirePermission(PERMISSIONS.HR_ADMIN), async (_req, res) => {
-  const { rows } = await pool.query(
-    `SELECT t.*,
-            ((SELECT COUNT(*) FROM hr_leave_applications a WHERE a.leave_type_id = t.id)
-           + (SELECT COUNT(*) FROM hr_leave_balances b WHERE b.leave_type_id = t.id)
-           + (SELECT COUNT(*) FROM hr_leave_adjustments adj WHERE adj.leave_type_id = t.id))::int AS usage_count
-       FROM hr_leave_types t
-      ORDER BY t.name`
-  );
-  res.json(rows);
-});
-
-router.post(
-  '/policies',
-  requirePermission(PERMISSIONS.HR_ADMIN),
-  [
-    body('name').isString().isLength({ min: 1, max: 100 }),
-    body('description').optional({ nullable: true }).isString().isLength({ max: 500 }),
-    body('default_days').isFloat({ min: 0, max: 365 }),
-    body('is_accruable').optional().isBoolean(),
-    body('requires_note').optional().isBoolean(),
-    body('accrual_days_per_fortnight').optional().isFloat({ min: 0, max: 365 }),
-    body('reset_period').optional().isIn(['none', 'financial_year', 'anniversary']),
-    body('max_balance').optional({ nullable: true }).isFloat({ min: 0, max: 1000 }),
-    body('requires_attachment').optional().isBoolean(),
-    body('attachment_label').optional({ nullable: true }).isString().isLength({ max: 200 }),
-  ],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    try {
-      const { rows } = await pool.query(
-        `INSERT INTO hr_leave_types (name, description, default_days, is_accruable, requires_note, accrual_days_per_fortnight, reset_period, max_balance, requires_attachment, attachment_label)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-        [req.body.name.trim(), req.body.description || null, req.body.default_days,
-         req.body.is_accruable === true, req.body.requires_note === true,
-         req.body.accrual_days_per_fortnight ?? 0, req.body.reset_period || 'none', req.body.max_balance ?? null,
-         req.body.requires_attachment === true, String(req.body.attachment_label || '').trim() || null]
-      );
-      await recordAudit({
-        actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-        action: 'hr.leave_type.created',
-        entityType: 'hr_leave_type',
-        entityId: rows[0].id,
-        after: { name: rows[0].name },
-      });
-      res.status(201).json(rows[0]);
-    } catch (err) {
-      if (err.code === '23505') {
-        res.status(409).json({ message: 'A leave type with that name already exists.' });
-        return;
-      }
-      throw err;
-    }
-  }
-);
-
-router.put(
-  '/policies/:id',
-  requirePermission(PERMISSIONS.HR_ADMIN),
-  [
-    param('id').isUUID(),
-    body('name').optional().isString().isLength({ min: 1, max: 100 }),
-    body('description').optional({ nullable: true }).isString().isLength({ max: 500 }),
-    body('default_days').optional().isFloat({ min: 0, max: 365 }),
-    body('is_accruable').optional().isBoolean(),
-    body('requires_note').optional().isBoolean(),
-    body('is_active').optional().isBoolean(),
-    body('accrual_days_per_fortnight').optional().isFloat({ min: 0, max: 365 }),
-    body('reset_period').optional().isIn(['none', 'financial_year', 'anniversary']),
-    body('max_balance').optional({ nullable: true }).isFloat({ min: 0, max: 1000 }),
-    body('requires_attachment').optional().isBoolean(),
-    body('attachment_label').optional({ nullable: true }).isString().isLength({ max: 200 }),
-  ],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const before = await pool.query('SELECT * FROM hr_leave_types WHERE id = $1', [req.params.id]);
-    if (!before.rows.length) {
-      res.status(404).json({ message: 'Leave type not found.' });
-      return;
-    }
-    const { rows } = await pool.query(
-      `UPDATE hr_leave_types
-          SET name = COALESCE($2, name),
-              description = COALESCE($3, description),
-              default_days = COALESCE($4, default_days),
-              is_accruable = COALESCE($5, is_accruable),
-              requires_note = COALESCE($6, requires_note),
-              is_active = COALESCE($7, is_active),
-              accrual_days_per_fortnight = COALESCE($8, accrual_days_per_fortnight),
-              reset_period = COALESCE($9, reset_period),
-              max_balance = CASE WHEN $10::boolean THEN $11::numeric ELSE max_balance END,
-              requires_attachment = COALESCE($12, requires_attachment),
-              attachment_label = CASE WHEN $13::boolean THEN $14::text ELSE attachment_label END
-        WHERE id = $1 RETURNING *`,
-      [req.params.id, req.body.name ?? null, req.body.description ?? null, req.body.default_days ?? null,
-       req.body.is_accruable ?? null, req.body.requires_note ?? null, req.body.is_active ?? null,
-       req.body.accrual_days_per_fortnight ?? null, req.body.reset_period ?? null,
-       Object.hasOwn(req.body, 'max_balance'), req.body.max_balance ?? null,
-       req.body.requires_attachment ?? null,
-       Object.hasOwn(req.body, 'attachment_label'), String(req.body.attachment_label || '').trim() || null]
-    );
-    await recordAudit({
-      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-      action: 'hr.leave_type.updated',
-      entityType: 'hr_leave_type',
-      entityId: req.params.id,
-      before: { name: before.rows[0].name, default_days: before.rows[0].default_days, max_balance: before.rows[0].max_balance },
-      after: { name: rows[0].name, default_days: rows[0].default_days, max_balance: rows[0].max_balance },
-    });
-    res.json(rows[0]);
-  }
-);
-
-// Deleting a leave type is allowed only when nothing references it — i.e. it
-// has never been applied against, held a balance, or been adjusted. A type in
-// use cannot be removed without breaking the historical record.
-router.delete(
-  '/policies/:id',
-  requirePermission(PERMISSIONS.HR_ADMIN),
-  [param('id').isUUID()],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const { rows: usage } = await pool.query(
-      `SELECT
-         (SELECT COUNT(*) FROM hr_leave_applications WHERE leave_type_id = $1) AS apps,
-         (SELECT COUNT(*) FROM hr_leave_balances WHERE leave_type_id = $1) AS balances,
-         (SELECT COUNT(*) FROM hr_leave_adjustments WHERE leave_type_id = $1) AS adjustments`,
-      [req.params.id]
-    );
-    if (!usage.length) {
-      res.status(404).json({ message: 'Leave type not found.' });
-      return;
-    }
-    const used = Number(usage[0].apps) + Number(usage[0].balances) + Number(usage[0].adjustments);
-    if (used > 0) {
-      res.status(409).json({
-        message: 'This leave type is already in use and cannot be deleted. Deactivate it instead.',
-      });
-      return;
-    }
-    const { rows } = await pool.query('DELETE FROM hr_leave_types WHERE id = $1 RETURNING *', [req.params.id]);
-    if (!rows.length) {
-      res.status(404).json({ message: 'Leave type not found.' });
-      return;
-    }
-    await recordAudit({
-      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-      action: 'hr.leave_type.deleted',
-      entityType: 'hr_leave_type',
-      entityId: req.params.id,
-      after: { name: rows[0].name },
-    });
-    res.json({ message: 'Leave type deleted.' });
-  }
-);
-
-// ===== Public holidays =====
-
-// Days the office is closed. Everyone needs to read them — the application
-// form previews a day count with them applied — but only an administrator sets
-// them.
-router.get('/public-holidays', requirePermission(PERMISSIONS.HR_ACCESS), async (_req, res) => {
-  const { rows } = await pool.query(
-    `SELECT id, to_char(holiday_date, 'YYYY-MM-DD') AS holiday_date, name
-       FROM hr_public_holidays ORDER BY holiday_date`
-  );
-  res.json(rows);
-});
-
-router.post(
-  '/public-holidays',
-  requirePermission(PERMISSIONS.HR_ADMIN),
-  [
-    body('holiday_date').isISO8601(),
-    body('name').isString().trim().isLength({ min: 1, max: 120 }),
-  ],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const day = toIsoDate(parseDateOnly(req.body.holiday_date));
-    let created;
-    try {
-      const { rows } = await pool.query(
-        `INSERT INTO hr_public_holidays (holiday_date, name, created_by)
-         VALUES ($1, $2, $3)
-         RETURNING id, to_char(holiday_date, 'YYYY-MM-DD') AS holiday_date, name`,
-        [day, req.body.name.trim(), req.user.id]
-      );
-      created = rows[0];
-    } catch (err) {
-      if (err.code === '23505') {
-        res.status(409).json({ message: 'That date is already a public holiday.' });
-        return;
-      }
-      throw err;
-    }
-    await recordAudit({
-      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-      action: 'hr.public_holiday.created',
-      entityType: 'hr_public_holiday',
-      entityId: created.id,
-      after: { holiday_date: created.holiday_date, name: created.name },
-    });
-    res.status(201).json(created);
-  }
-);
-
-router.delete(
-  '/public-holidays/:id',
-  requirePermission(PERMISSIONS.HR_ADMIN),
-  [param('id').isUUID()],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const { rows } = await pool.query(
-      `DELETE FROM hr_public_holidays WHERE id = $1
-       RETURNING to_char(holiday_date, 'YYYY-MM-DD') AS holiday_date, name`,
-      [req.params.id]
-    );
-    if (!rows.length) {
-      res.status(404).json({ message: 'Public holiday not found.' });
-      return;
-    }
-    await recordAudit({
-      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-      action: 'hr.public_holiday.deleted',
-      entityType: 'hr_public_holiday',
-      entityId: req.params.id,
-      after: { holiday_date: rows[0].holiday_date, name: rows[0].name },
-    });
-    res.json({ message: 'Public holiday removed.' });
-  }
-);
-
-// ===== Accrual & reset =====
-
-/**
- * Runs one fortnight of accrual and any due balance resets. Idempotent per
- * `period_end` (accrual) and per balance's `last_reset_at` (reset).
- */
-router.post(
-  '/accrual/run',
-  requirePermission(PERMISSIONS.HR_ADMIN),
-  [body('period_end').optional().isISO8601()],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const periodEnd = req.body.period_end
-      ? toIsoDate(parseDateOnly(req.body.period_end))
-      : toIsoDate(new Date());
-    const periodStart = parseDateOnly(periodEnd);
-    periodStart.setDate(periodStart.getDate() - 13);
-
-    const { credited, reset } = await withTransaction(pool, async (client) => {
-      const { rows: existingRun } = await client.query(
-        'SELECT id FROM hr_accrual_runs WHERE period_end = $1',
-        [periodEnd]
-      );
-      if (existingRun.length) {
-        throw new ServiceError(409, `Accrual for the period ending ${periodEnd} has already been run.`);
-      }
-
-      const outcome = await runLeaveAccrual(client, { periodEnd, actorId: req.user.id });
-      await client.query(
-        'INSERT INTO hr_accrual_runs (period_end, credited, run_by) VALUES ($1, $2, $3)',
-        [periodEnd, outcome.credited, req.user.id]
-      );
-      return outcome;
-    });
-
-    await recordAudit({
-      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-      action: 'hr.accrual.run',
-      entityType: 'hr_accrual_run',
-      entityId: null,
-      after: { period_start: toIsoDate(periodStart), period_end: periodEnd, credited, reset },
-    });
-
-    res.status(201).json({
-      message: `Accrual complete: ${credited} balance(s) credited, ${reset} balance(s) reset.`,
-      period_end: periodEnd,
-      credited,
-      reset,
-    });
-  }
-);
-
-// The first pay date of the fortnightly accrual schedule. Once set, the server
-// runs accrual on this date and every 14 days after it, automatically.
-router.get('/accrual/settings', requirePermission(PERMISSIONS.HR_ADMIN), async (_req, res) => {
-  const { rows } = await pool.query(
-    'SELECT accrual_anchor_date FROM reviewer_settings WHERE id = TRUE'
-  );
-  res.json({ accrual_anchor_date: rows[0]?.accrual_anchor_date || null });
-});
-
-router.put(
-  '/accrual/settings',
-  requirePermission(PERMISSIONS.HR_ADMIN),
-  [body('accrual_anchor_date').optional({ nullable: true }).isISO8601()],
-  async (req, res) => {
-    if (!handleValidation(req, res)) return;
-    const value = req.body.accrual_anchor_date
-      ? toIsoDate(parseDateOnly(req.body.accrual_anchor_date))
-      : null;
-    await pool.query(
-      `INSERT INTO reviewer_settings (id, accrual_anchor_date)
-       VALUES (TRUE, $1)
-       ON CONFLICT (id) DO UPDATE SET accrual_anchor_date = EXCLUDED.accrual_anchor_date`,
-      [value]
-    );
-    await recordAudit({
-      actor: { id: req.user.id, email: req.user.email, ip: req.ip },
-      action: 'hr.accrual.settings.updated',
-      entityType: 'reviewer_settings',
-      entityId: 'hr_accrual_anchor_date',
-      after: { accrual_anchor_date: value },
-    });
-    res.json({ accrual_anchor_date: value });
   }
 );
 

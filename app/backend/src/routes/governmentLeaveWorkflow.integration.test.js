@@ -254,42 +254,27 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   await customRoute();const first=await submit();await decide(first.id);
   const second=await submit(application('recreation','2026-11-03'));await decide(second.id);
   const type=(await pool.query("INSERT INTO hr_leave_types(name,default_days) VALUES($1,20) RETURNING id",[`Recorded Annual ${randomUUID()}`])).rows[0];
-  // The recorded queue carries the balance the decision is made against: the
-  // same employee/type/year row approval charges, so an approver can see an
-  // overdrawing application before recording it.
-  await pool.query('INSERT INTO hr_leave_balances(employee_id,leave_type_id,year,balance,pending) VALUES($1,$2,2026,2,0)',[employee.id,type.id]);
   await pool.query(`INSERT INTO hr_leave_applications(employee_id,leave_type_id,start_date,end_date,days,reason,status,reviewed_by,reviewed_at,applied_at)
-    SELECT $1,$2,'2026-09-01','2026-09-02',2,'Recorded explanation','approved',$3,'2026-09-01','2026-08-01'::timestamp+n*interval '1 minute' FROM generate_series(1,55)n`,[employee.id,type.id,hr.id]);
+    SELECT $1,$2,'2026-09-01','2026-09-02',2,'Recorded explanation','approved',$3,'2026-09-01','2026-08-01'::timestamp+n*interval '1 minute' FROM generate_series(1,56)n`,[employee.id,type.id,hr.id]);
   const path='/requests?mode=queue&include_recorded=true&status=approved';
   const page1=await call(path,null,hr),page2=await call(path+'&page=2',null,hr);
-  assert.equal(page1.status,200);assert.equal(page1.body.total,57);assert.equal(page1.body.requests.length,50);assert.equal(page2.body.requests.length,7);
-  const rows=[...page1.body.requests,...page2.body.requests];assert.equal(new Set(rows.map(r=>r.id)).size,57);
+  assert.equal(page1.status,200);assert.equal(page1.body.total,58);assert.equal(page1.body.requests.length,50);assert.equal(page2.body.requests.length,8);
+  const rows=[...page1.body.requests,...page2.body.requests];assert.equal(new Set(rows.map(r=>r.id)).size,58);
   assert.equal(rows[0].record_source,'workflow');assert.ok(rows.every(r=>r.status==='approved'&&r.can_pdf===true));
-  const recorded=rows.find(r=>r.record_source==='recorded');assert.equal(recorded.recorded_application.reason,'Recorded explanation');assert.equal(recorded.recorded_application.can_decide,false);
-  assert.equal(Number(recorded.recorded_application.balance_days),2);assert.equal(Number(recorded.recorded_application.pending_days),0);
-  assert.equal(Number(recorded.recorded_application.available_days),2);
-  const recordedEntitlement=(await pool.query('SELECT leave_entitled FROM hr_employees WHERE id=$1',[employee.id])).rows[0];
-  assert.equal(recorded.recorded_application.leave_entitled,recordedEntitlement.leave_entitled);
-  // A type with no balance row carries nothing the approval could overdraw:
-  // an official-style recorded application reports nothing, and the review
-  // modal stays quiet instead of showing a type default.
-  const officialType=(await pool.query("INSERT INTO hr_leave_types(name,default_days) VALUES($1,0) RETURNING id",[`Recorded Official ${randomUUID()}`])).rows[0];
-  await pool.query(`INSERT INTO hr_leave_applications(employee_id,leave_type_id,start_date,end_date,days,reason,status,applied_at)
-    VALUES($1,$2,'2026-09-01','2026-09-02',2,'Recorded official travel','pending','2026-08-01'::timestamp+interval '1 minute')`,[employee.id,officialType.id]);
-  const officialPage=await call('/requests?mode=queue&include_recorded=true&status=pending',null,hr);
-  const official=officialPage.body.requests.find(r=>r.recorded_application?.leave_type_name.startsWith('Recorded Official'));
-  assert.ok(official);assert.equal(official.recorded_application.balance_days,null);
-  assert.equal(official.recorded_application.pending_days,null);assert.equal(official.recorded_application.available_days,null);
-  assert.equal((await call('/requests?mode=queue&include_recorded=true&status=pending',null,hr)).body.total,1);
+  const recorded=rows.find(r=>r.record_source==='recorded');assert.equal(recorded.recorded_application.reason,'Recorded explanation');
+  // Recorded applications are frozen history: never decidable, no balance context.
+  assert.equal(recorded.recorded_application.can_decide,false);
+  assert.equal(recorded.recorded_application.balance_days,undefined);assert.equal(recorded.recorded_application.leave_entitled,undefined);
+  assert.equal((await call('/requests?mode=queue&include_recorded=true&status=pending',null,hr)).body.total,0);
   assert.equal((await call('/requests?mode=queue&include_recorded=true&status=all',null,hr)).body.total,58);
   assert.equal((await call('/requests?mode=all&status=approved',null,hr)).body.total,2);
   assert.equal((await call('/requests?mode=mine&include_recorded=true&status=approved')).body.total,2);
   const byReference=await call(path+'&search='+recorded.id,null,hr);
   assert.equal(byReference.body.total,1);assert.equal(byReference.body.requests[0].id,recorded.id);
   assert.equal((await call(path+'&search='+first.id,null,hr)).body.requests[0].id,first.id);
-  assert.equal((await call(path+'&search=2026-09-01&page=2',null,hr)).body.requests.length,5);
-  assert.equal((await call(path+'&search=01%2F09%2F2026',null,hr)).body.total,55);
-  assert.equal((await call(path+'&search=RECORDED%20ANNUAL',null,hr)).body.total,55);
+  assert.equal((await call(path+'&search=2026-09-01&page=2',null,hr)).body.requests.length,6);
+  assert.equal((await call(path+'&search=01%2F09%2F2026',null,hr)).body.total,56);
+  assert.equal((await call(path+'&search=RECORDED%20ANNUAL',null,hr)).body.total,56);
   assert.equal((await call(path+'&search=Recreation%20leave',null,hr)).body.total,2);
   assert.equal((await call(path+'&search=Recorded%20explanation',null,hr)).body.total,0);
   assert.equal((await call(path+'&search=%25',null,hr)).body.total,0);

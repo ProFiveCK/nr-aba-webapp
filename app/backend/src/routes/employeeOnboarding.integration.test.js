@@ -108,19 +108,6 @@ describe('verified employee onboarding and lifecycle over real HTTP',{skip:skipW
     assert.equal((await pool.query('SELECT leave_policy_regime FROM hr_employees WHERE id=$1',[employee.id])).rows[0].leave_policy_regime,'government');assert.deepEqual((await auth.loadCapabilities(existing.id)).sort(),['hr_access','hr_leave_apply']);
     assert.equal((await call('/api/hr/leaves',{leave_type_id:randomUUID(),start_date:'2026-10-08',end_date:'2026-10-09',reason},existing)).status,404);
   });
-  test('legacy final decisions queued behind government enrollment cannot bypass the gate',async()=>{
-    const type=(await pool.query("INSERT INTO hr_leave_types(name,default_days) VALUES ($1,10) RETURNING id",[`Lifecycle-${randomUUID()}`])).rows[0];
-    const application=(await pool.query("INSERT INTO hr_leave_applications(employee_id,leave_type_id,start_date,end_date,days,reason,status) VALUES ($1,$2,'2026-10-08','2026-10-09',2,$3,'pending') RETURNING id",[employee.id,type.id,reason])).rows[0];
-    const blocker=await pool.connect();await blocker.query('BEGIN');await blocker.query('SELECT id FROM hr_employees WHERE id=$1 FOR UPDATE',[employee.id]);
-    const request=call(`/api/hr/leaves/${application.id}/decision`,{decision:'approved',reviewer_note:reason});
-    try {
-      let waiting=false;
-      for(let n=0;n<100;n++){waiting=(await pool.query("SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT reviewer_id FROM hr_employees%' ")).rowCount>0;if(waiting)break;await new Promise(resolve=>setTimeout(resolve,10));}
-      assert.ok(waiting,'actual decision is waiting for employee placement/identity lock');
-      await blocker.query("UPDATE hr_employees SET leave_policy_regime='government' WHERE id=$1",[employee.id]);await blocker.query('COMMIT');assert.equal((await request).status,409);
-      assert.equal((await pool.query('SELECT status FROM hr_leave_applications WHERE id=$1',[application.id])).rows[0].status,'pending');
-    } finally {await blocker.query('ROLLBACK');blocker.release();}
-  });
   test('private link withdrawal, handover validation and shared staff offboarding enforce distinct authority',async()=>{
     const row=await provision(),link=await issue();assert.equal((await call(`/api/hr/onboarding/employees/${employee.id}/link`,{reason,purpose:'activation',handover:'verified_email'})).status,400);
     assert.equal((await call(`/api/hr/onboarding/employees/${employee.id}/revoke-links`,{reason},hr)).status,200);await assert.rejects(service.activateEmployee(pool,{token:raw(link),password:'Synthetic secure password'}),error=>error.status===400);

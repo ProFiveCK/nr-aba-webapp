@@ -7,7 +7,6 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "archive:batches": "node scripts/archive-old-batches.js",
-    "accrual": "node scripts/run-accrual.js",
     "test": "node --test \"src/**/*.test.js\"",
     "test:db": "bash scripts/test-db.sh"
   },

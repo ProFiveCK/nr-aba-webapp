@@ -128,29 +128,3 @@ export async function notifyForexTTSubmitter(request, newStatus, comments, actor
 
   await sendMail({ to: recipient, replyTo: actor?.email, subject, text });
 }
-
-// ===== Leave & HR =====
-
-function leaveDates(application) {
-  const format = (value) => new Date(value).toLocaleDateString('en-GB', {
-    day: '2-digit', month: 'short', year: 'numeric',
-  });
-  return `${format(application.start_date)} to ${format(application.end_date)}`;
-}
-
-/** Tells the applicant what was decided. Rejections always carry the reason. */
-export async function notifyLeaveDecision({ application, employee, decision, note, decidedBy }) {
-  if (!mailTransport || testingModeEnabled) return [];
-  const to = lowerEmail(employee?.email || '');
-  if (!to) return [];
-
-  const outcome = decision === 'approved' ? 'approved' : 'not approved';
-  const text = `Hello ${employee.display_name},
-
-Your ${application.leave_type_name} leave request for ${leaveDates(application)} (${application.days} working days) has been ${outcome}${decidedBy ? ` by ${decidedBy}` : ''}.
-${note ? `\nReason: ${note}\n` : ''}
-You can see your leave at ${appUrl('leave/my-leave')}
-`;
-  await sendMail({ to, subject: `Your leave request was ${outcome}`, text });
-  return [to];
-}

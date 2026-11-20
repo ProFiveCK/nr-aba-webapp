@@ -258,9 +258,6 @@ describe('government policy/service/calendar and certified subledger',{skip:skip
   await pool.query("INSERT INTO hr_access_scopes(reviewer_id,department_id,capabilities,effective_from,granted_by,reason) VALUES($1,$2,ARRAY['hr_officer'],'2020-01-01',$3,$4)",[scoped.id,department.id,central.id,reason]);
   assert.equal((await call(path,undefined,scoped)).status,200);assert.equal((await call('/api/hr/government/balances',undefined,scoped)).body.total,1);
  });
- test('legacy accrual cannot write into government historical balances',async()=>{
-  const type=await upsertLeaveType(pool,{name:'Synthetic Legacy Accrual',accruable:true,perFortnight:1});await pool.query('INSERT INTO hr_leave_balances(employee_id,leave_type_id,year,balance,pending) VALUES ($1,$2,2026,12,0)',[employee.id,type.id]);const {runLeaveAccrual}=await import('../services/leaveAccrual.js');await withTransaction(pool,client=>runLeaveAccrual(client,{periodEnd:'2026-10-07',actorId:central.id}));assert.equal((await pool.query('SELECT balance FROM hr_leave_balances WHERE employee_id=$1',[employee.id])).rows[0].balance,'12.00');
- });
  test('earlier clients cannot submit a second leave workflow, including staff awaiting transfer',async()=>{
   await pool.query("UPDATE hr_employees SET leave_policy_regime='legacy' WHERE id=$1",[employee.id]);
   await pool.query("UPDATE reviewers SET account_type='staff' WHERE id=$1",[owner.id]);

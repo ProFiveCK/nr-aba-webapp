@@ -1,11 +1,13 @@
 import {holidaysMissingNotice} from '../lib/governmentLeaveCalendarRules.js';
 import { governmentLeaveMedicalSummary } from './governmentLeaveMedicalSummary.js';
-import { ServiceError } from '../lib/serviceError.js';
+import { ServiceError, badRequest, notFound } from '../lib/serviceError.js';
+import { withTransaction } from '../lib/transaction.js';
+import { recordAudit } from './auditService.js';
 import { COMMON_CODES, serviceFacts } from '../lib/governmentLeaveRules.js';
 import { CASE_CODES } from '../lib/governmentLeaveCaseRules.js';
 import { canAccessEmployee, isCentralHr } from './hrAccess.js';
-import { loadContext } from './governmentLeave.js';
-import { bindingIssue, configurationFor, effectiveOffices, today } from './governmentLeaveWorkflow.js';
+import { loadContext, lockEmployee } from './governmentLeave.js';
+import { bindingIssue, configurationFor, effectiveOffices, today, assertCentral } from './governmentLeaveWorkflow.js';
 import { assertCutoverResolved } from './governmentLeaveCutover.js';
 import { serviceCorrectionIssue } from './employeeServiceCorrections.js';
 import { approvalRouteFor } from './governmentLeaveApprovalRoutes.js';
@@ -183,4 +185,32 @@ export async function employeeLeavePolicyUsage(client, { user }) {
     current_policy: summary(policies.find(p => p.effective_from <= asOf && p.effective_to >= asOf)),
     latest_published_policy: summary(latest), next_policy: summary(policies.find(p => p.effective_from > asOf)),
     activation_note: 'Active counts describe the latest published employee configuration, not request eligibility. Publishing a policy does not enrol or activate employees.' };
+}
+
+/**
+ * The reviewed regime change for a staff record that already has a linked
+ * login. Provisioning sets the government regime while it creates the
+ * account; these records were enrolled into the legacy balance system in an
+ * earlier era, and moving them needs exactly one explicit, reasoned, audited
+ * change: the balances they carry are then prepared and certified as
+ * government openings the ordinary way, before the employee's leave types
+ * are activated.
+ */
+export async function enrollGovernmentRegime(pool, { user, employeeId, data }) {
+  return withTransaction(pool, async client => {
+    await assertCentral(client, user);
+    const employee = await lockEmployee(client, employeeId);
+    if (!employee) throw notFound('Employee not found.');
+    if (employee.status !== 'active') throw badRequest('Only active employees can be enrolled in the government regime.');
+    if (employee.leave_policy_regime === 'government') {
+      throw new ServiceError(409, 'This employee is already enrolled in the government regime.');
+    }
+    await client.query("UPDATE hr_employees SET leave_policy_regime='government' WHERE id=$1", [employeeId]);
+    await recordAudit({ client, actor: user, action: 'hr.employee.enrolled_government',
+      entityType: 'hr_employee', entityId: employeeId,
+      before: { leave_policy_regime: employee.leave_policy_regime },
+      after: { leave_policy_regime: 'government', source_reference: data.source_reference, reason: data.reason } });
+    return { employee_id: employeeId, regime: 'government',
+      next: 'Prepare and certify opening balances under Leave settings — Foundations, then activate their leave types.' };
+  });
 }

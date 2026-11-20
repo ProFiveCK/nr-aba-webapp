@@ -7,6 +7,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { apiClient } from '../../lib/api';
 import { Button, LoadingState } from '../../components/Ui';
+import { ActionDialog, Field, inputClass } from './ManagementFields';
+import { value } from './managementForm';
 import { EmployeeDetails } from './EmployeeDetails';
 import { EmployeeOnboarding } from './EmployeeOnboarding';
 import { GovernmentFoundation } from './GovernmentFoundation';
@@ -37,6 +39,7 @@ const steps: [PreparationStep, string][] = [['balances', 'Service & balances'], 
 export function EmployeeLeaveWorkspace({profile,departments,patterns,central,section,step,onNavigate,onClose,onChanged}:{profile:EmployeeProfile;departments:OrgDepartment[];patterns:WorkPattern[];central:boolean;section:EmployeeSection;step:PreparationStep;onNavigate:(section:EmployeeSection,step?:PreparationStep)=>void;onClose:()=>void;onChanged:()=>Promise<void>}) {
     const { user } = useAuth();
     const navigate = useNavigate();
+    const [enrol,setEnrol]=useState(false),[enrolError,setEnrolError]=useState('');
     const canReadBalances=central||user?.permissions?.hr_officer===true;
     const id=profile.employee.id;
     const [summary,setSummary]=useState<Summary|null>(null),[error,setError]=useState(''),[version,setVersion]=useState(0);
@@ -60,6 +63,12 @@ export function EmployeeLeaveWorkspace({profile,departments,patterns,central,sec
         }}>Review {missing.label.toLowerCase()}</Button></div>}
 
         {error&&<p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        {enrolError&&<p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{enrolError}</p>}
+        {central&&summary?.regime==='legacy'&&profile.employee.reviewer_id&&<div className="app-panel flex flex-wrap items-center justify-between gap-3 p-4"><div className="min-w-0"><p className="font-semibold text-gray-900">Still recorded on the legacy balance system</p><p className="mt-1 text-sm text-gray-600">Enrolment moves this employee to the current government leave workflow: their stored balances are then prepared and certified as openings, and they apply on the standard leave screen.</p></div><Button variant="secondary" onClick={()=>{setEnrolError('');setEnrol(true);}}>Enrol in the government regime</Button></div>}
+        {enrol&&summary&&<ActionDialog title={`Enrol ${reviewRecordLabel(profile.employee.display_name)} in the government regime`} onClose={()=>setEnrol(false)} saveLabel="Enrol" reasonLabel="Reason for the enrolment" onSave={async form=>{try{await apiClient.post(`/hr/directory/${id}/enroll-government`,{reason:value(form,'reason'),source_reference:value(form,'source_reference')});setEnrol(false);await refresh();}catch(err){setEnrolError((err as Error).message||'Unable to record the enrolment.');}}}>
+            <Field label="Transition reference"><input name="source_reference" className={inputClass} minLength={5} maxLength={500} required placeholder="Owner direction / payroll reconciliation reference"/></Field>
+            <p className="text-sm text-gray-600">Next: certify their opening balances from Leave settings — Foundations, then switch on their leave types. Nothing is charged until openings are certified.</p>
+        </ActionDialog>}
         {!summary&&!error&&<LoadingState label="Loading current leave arrangements…"/>}
         {section==='arrangements'&&summary&&<>
             {central&&<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={()=>onNavigate('prepare','balances')}>Service &amp; balance corrections</Button><Button variant="secondary" onClick={()=>onNavigate('prepare','activation')}>Leave types &amp; balance schedules</Button></div>}

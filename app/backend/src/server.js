@@ -7,7 +7,6 @@ import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
 import { startGovernmentLeaveScheduler } from './services/governmentLeaveJobs.js';
 import { startLeaveNotificationDelivery } from './services/governmentLeaveNotifications.js';
-import { runDueLeaveAccruals } from './services/leaveAccrual.js';
 import { buildCookieParser, csrfGuard } from './services/authService.js';
 import { lowerEmail } from './utils/helpers.js';
 import {

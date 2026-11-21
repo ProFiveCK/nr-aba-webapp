@@ -26,10 +26,44 @@ export function medicalPdfLines(grant) {
   rows.push('The two categories are usage records, not separate 7-day and 3-day entitlements.');
   return rows;
 }
-export function governmentApprovalFormSnapshot(grant) {
+// Details the approved form prints that the immutable grant doesn't carry:
+// the employee's email and position; the department and its top-level unit
+// (a sub-unit reports under its parent, e.g. Finance / Treasury); the next
+// service anniversary - the day after the service year that funded the leave
+// ends, when that entitlement renews; and, for an amendment, the approved
+// leave it changed.
+export async function governmentPdfDetails(db,grant) {
+ const originalId=grant.code==='amendment'?grant.case_determination?.facts?.original_request_id:null;
+ const original=originalId?(await db.query(`SELECT id,code,medical_mode,to_char(start_date,'YYYY-MM-DD') AS start_date,to_char(end_date,'YYYY-MM-DD') AS end_date,charge::text AS charge,
+   application_snapshot->'evaluation'->'segments' AS segments,grant_snapshot->'balances' AS balances FROM hr_gov_requests WHERE id=$1`,[originalId])).rows[0]:null;
+ const ids=(original?original.balances:grant.balances||[])?.map(b=>b.entitlement_id).filter(Boolean)||[];
+ const {rows:[row]}=await db.query(`SELECT e.email,e.position_title,d.name AS department_name,COALESCE(pv.name,v.name) AS unit_name,
+   (SELECT to_char(MAX(period_end)+1,'YYYY-MM-DD') FROM hr_gov_entitlements WHERE id=ANY($4::uuid[])) AS next_due_date
+   FROM hr_employees e LEFT JOIN hr_departments d ON d.id=$2 LEFT JOIN hr_divisions v ON v.id=$3 LEFT JOIN hr_divisions pv ON pv.id=v.parent_division_id
+   WHERE e.id=$1`,[grant.employee.id,grant.employee.department_id||null,grant.employee.division_id||null,ids]);
+ return {...row,...(original?{amendment:{action:grant.case_determination.facts.action,original}}:{})};
+}
+const leaveNames=mode=>({recreation:'Annual',medical:mode==='certificate'?'Medical (with MC)':mode==='exemption'?'Medical (without MC)':'Medical (certificate status not recorded)',special:'Special',furlough:'Furlough',official:'Official',lwop:'Leave Without Pay',extended_medical:'Medical',extended_medical_minister:'Medical',maternity:'Maternity',paternity:'Paternity',adoption:'Adoption'});
+// An amendment is printed as the approved leave it changed: its type, the
+// period that still stands, the days that remain charged, and a note of
+// what was cancelled or shortened.
+function amendmentView(grant,amendment) {
+ if(!amendment)return null;
+ const {action,original}=amendment,cancelled=action==='cancel_grant';
+ const end=cancelled?original.end_date:grant.end_date;
+ // Leave that charges no balance (LWOP, parental) counts calendar days, as on its own approval form.
+ const charged=Number(original.charge||0)>0;
+ const remaining=cancelled?0:charged?(original.segments||[]).filter(s=>s.date<=end).reduce((n,s)=>n+Number(s.charge||0),0):(Date.parse(end)-Date.parse(original.start_date))/86400000+1;
+ const returned=charged?Math.max(0,Number(original.charge)-remaining):0;
+ const what=cancelled?'was cancelled':`was shortened to end ${governmentPdfDate(end)}`;
+ return {leave_type_name:leaveNames(original.medical_mode)[original.code]||label(original.code),start_date:original.start_date,end_date:end,days:remaining,
+  note:`Amendment: approved leave ref ${String(original.id).slice(0,8)} ${what}${returned>0?`; ${days(returned)} days returned to the balance`:''}.`};
+}
+export function governmentApprovalFormSnapshot(grant,details={}) {
  const mode=grant.medical_mode||grant.input?.medical_mode;
- const names={recreation:'Annual',medical:mode==='certificate'?'Medical (with MC)':mode==='exemption'?'Medical (without MC)':'Medical (certificate status not recorded)',special:'Special',furlough:'Furlough',official:'Official',lwop:'Leave Without Pay',extended_medical:'Medical',extended_medical_minister:'Medical',maternity:'Maternity',paternity:'Paternity',adoption:'Adoption'};
- const leaveName=names[grant.code]||label(grant.code);
+ const names=leaveNames(mode);
+ const amended=amendmentView(grant,details.amendment);
+ const leaveName=amended?.leave_type_name||names[grant.code]||label(grant.code);
  const balances=grant.balances||[];
  const parental=['maternity','paternity','adoption'].includes(grant.code);
  const approvedDays=grant.code==='paternity'?paternityWorkingSegments(grant.evaluation).length:parental?(Date.parse(grant.end_date)-Date.parse(grant.start_date))/86400000+1:grant.charge;
@@ -39,17 +73,17 @@ export function governmentApprovalFormSnapshot(grant) {
   annual.length?`Paternity: ${approvedDays} approved working days. Entitlement: 10 working days per service year. ${paternity.basis==='approval'?'Balance after approval':'Current balance'}: ${annual.map(p=>`${days(p.available_days)} days (${governmentPdfDate(p.period_start)}-${governmentPdfDate(p.period_end)})`).join('; ')}${paternity.basis==='approval'?'':` as at ${governmentPdfDate(paternity.as_of)}`}.`:
   `Paternity: ${approvedDays} approved working days. Entitlement: 10 working days per service year. Balance not determined; HR to reconcile.`:
   parental?`${leaveName}: ${approvedDays} approved calendar days. Separate event entitlement; no accrued balance deduction.`:null;
- return {id:grant.id,regime:'government',employee_name:grant.employee.name,department_code:grant.employee.department_name,division_code:grant.employee.division_name,leave_type_name:leaveName,start_date:grant.start_date,end_date:grant.end_date,days:approvedDays,parental_note:parentNote,...(annual.length?{balance_column_label:paternity.basis==='approval'?'BALANCE AFTER APPROVAL':'CURRENT BALANCE'}:{}),...(grant.input?.duration_unit==='hours'?{duration_unit:'hours',hours:grant.input.hours}:{}),reason:grant.reason,applied_at:grant.submitted_at,approved_at:grant.granted_at,approved_by_name:grant.stages.at(-1)?.binding?.approver_name||'Recorded final approver',approval_snapshot_available:true,balances:annual.length?[{leave_type_name:leaveName,before:annual.reduce((n,p)=>n+p.available_days,0),after:annual.reduce((n,p)=>n+p.available_days,0)}]:balances.length?[{leave_type_name:leaveName,before:balances.reduce((n,b)=>n+Number(b.before),0),after:balances.reduce((n,b)=>n+Number(b.after),0)}]:[]};
+ return {id:grant.id,regime:'government',employee_name:grant.employee.name,email:details.email||null,position_title:details.position_title||null,next_due_date:details.next_due_date||null,department_code:details.department_name||grant.employee.department_name,division_code:details.department_name?details.unit_name:grant.employee.division_name,leave_type_name:leaveName,start_date:amended?.start_date||grant.start_date,end_date:amended?.end_date||grant.end_date,days:amended?amended.days:approvedDays,...(amended?{amendment_note:amended.note}:{}),parental_note:parentNote,...(annual.length?{balance_column_label:paternity.basis==='approval'?'BALANCE AFTER APPROVAL':'CURRENT BALANCE'}:{}),...(grant.input?.duration_unit==='hours'?{duration_unit:'hours',hours:grant.input.hours}:{}),reason:grant.reason,applied_at:grant.submitted_at,approved_at:grant.granted_at,approved_by_name:grant.stages.at(-1)?.binding?.approver_name||'Recorded final approver',approval_snapshot_available:true,balances:annual.length?[{leave_type_name:leaveName,before:annual.reduce((n,p)=>n+p.available_days,0),after:annual.reduce((n,p)=>n+p.available_days,0)}]:balances.length?[{leave_type_name:leaveName,before:balances.reduce((n,b)=>n+Number(b.before),0),after:balances.reduce((n,b)=>n+Number(b.after),0)}]:[]};
 }
-export async function generateGovernmentLeavePdf(grant,{firstPageOnly=false}={}) {
+export async function generateGovernmentLeavePdf(grant,{firstPageOnly=false,details={}}={}) {
   if(firstPageOnly){
-    const form=await PDFDocument.load(await generateLeaveApplicationPdf(governmentApprovalFormSnapshot(grant),{firstPageOnly:true}));
+    const form=await PDFDocument.load(await generateLeaveApplicationPdf(governmentApprovalFormSnapshot(grant,details),{firstPageOnly:true}));
     form.getPage(0).setSize(595.28,841.89);
     return form.save();
   }
   const pdf=await PDFDocument.create(),font=await pdf.embedFont(StandardFonts.Helvetica),bold=await pdf.embedFont(StandardFonts.HelveticaBold);
   const width=595.28,height=841.89,margin=44,maxWidth=width-2*margin;
-  const approval=await PDFDocument.load(await generateLeaveApplicationPdf(governmentApprovalFormSnapshot(grant)));
+  const approval=await PDFDocument.load(await generateLeaveApplicationPdf(governmentApprovalFormSnapshot(grant,details)));
   for(const approvedPage of await pdf.copyPages(approval,approval.getPageIndices())){approvedPage.setSize(width,height);pdf.addPage(approvedPage);}
   let page,y,pageNumber=approval.getPageCount();
   function nextPage() {

@@ -56,9 +56,11 @@ test('paternity PDF uses approved working days and service-year remaining balanc
  data.evaluation.segments=Array.from({length:14},(_,i)=>({date:new Date(Date.UTC(2026,10,12+i)).toISOString().slice(0,10),scheduled_hours:[0,6].includes(new Date(Date.UTC(2026,10,12+i)).getUTCDay())?0:7,holiday:false}));
  const original=JSON.stringify(data);
  assert.equal(governmentApprovalFormSnapshot(data).days,10);
- assert.match(await generatedPdfText(await generateGovernmentLeavePdf(data,{firstPageOnly:true})),/10 approved working days.*Balance not determined/);
+ // Notes wrap in the Section 4 panel; wrapping only breaks at spaces.
+ const flat=async bytes=>(await generatedPdfText(bytes)).replace(/\n/g,' ');
+ assert.match(await flat(await generateGovernmentLeavePdf(data,{firstPageOnly:true})),/10 approved working days.*Balance not determined/);
  data.paternity={basis:'current_recorded_applications',as_of:'2026-11-16',periods:[{period_start:'2026-05-01',period_end:'2027-04-30',available_days:0}]};
- const text=await generatedPdfText(await generateGovernmentLeavePdf(data,{firstPageOnly:true}));
+ const text=await flat(await generateGovernmentLeavePdf(data,{firstPageOnly:true}));
  assert.match(text,/10 approved working days/);assert.match(text,/10 working days per service year/);assert.match(text,/Current balance: 0 days/);assert.match(text,/CURRENT BALANCE/);
  delete data.paternity;assert.equal(JSON.stringify(data),original);
 });
@@ -67,4 +69,31 @@ test('Maternity and Adoption PDFs show calendar duration independently of a zero
   const data={...fixture('certificate'),code,charge:'0',start_date:'2026-11-02',end_date:'2027-01-24'};
   const form=governmentApprovalFormSnapshot(data);assert.equal(form.days,84);assert.match(form.parental_note,/84 approved calendar days/);
  }
+});
+
+test('approval form prints the employee email, position and next service anniversary when supplied',()=>{
+ const form=governmentApprovalFormSnapshot(fixture('certificate'),{email:'review@example.test',position_title:'Accountant',next_due_date:'2027-05-01'});
+ assert.equal(form.email,'review@example.test');assert.equal(form.position_title,'Accountant');assert.equal(form.next_due_date,'2027-05-01');
+ const bare=governmentApprovalFormSnapshot(fixture('certificate'));assert.equal(bare.email,null);assert.equal(bare.next_due_date,null);
+});
+
+test('department prints with its top-level unit when the directory supplies them',()=>{
+ const form=governmentApprovalFormSnapshot(fixture('certificate'),{department_name:'Finance',unit_name:'Treasury'});
+ assert.equal(form.department_code,'Finance');assert.equal(form.division_code,'Treasury');
+});
+
+test('an amendment prints as the approved leave it changed, with the change noted beside Section 4',async()=>{
+ const {generatedPdfText}=await import('../test-support/pdfText.js');
+ const {leaveApplicationFormKind}=await import('./leaveApplicationPdf.js');
+ const original={id:'0a1b2c3d-0000-4000-8000-000000000000',code:'recreation',medical_mode:'not_applicable',start_date:'2026-11-02',end_date:'2026-11-06',charge:'5.000000',
+  segments:['02','03','04','05','06'].map(d=>({date:`2026-11-${d}`,charge:'1.000000'}))};
+ const grant={...fixture('certificate'),code:'amendment',start_date:'2026-11-02',end_date:'2026-11-03',charge:'0',balances:[],reason:'Returned to work early.'};
+ const shortened=governmentApprovalFormSnapshot(grant,{amendment:{action:'shorten_grant',original}});
+ assert.equal(leaveApplicationFormKind(shortened.leave_type_name),'annual');assert.equal(shortened.days,2);
+ assert.equal(shortened.start_date,'2026-11-02');assert.equal(shortened.end_date,'2026-11-03');
+ assert.match(shortened.amendment_note,/shortened to end 03\/11\/2026; 3 days returned/);
+ const cancelled=governmentApprovalFormSnapshot(grant,{amendment:{action:'cancel_grant',original}});
+ assert.equal(cancelled.days,0);assert.equal(cancelled.end_date,'2026-11-06');assert.match(cancelled.amendment_note,/was cancelled; 5 days returned/);
+ const text=(await generatedPdfText(await generateGovernmentLeavePdf(grant,{firstPageOnly:true,details:{amendment:{action:'shorten_grant',original}}}))).replace(/\n/g,' ');
+ assert.match(text,/Returned to work early/);assert.match(text,/Amendment: approved leave ref 0a1b2c3d/);assert.doesNotMatch(text,/Other approved leave type|not listed on this form/);
 });

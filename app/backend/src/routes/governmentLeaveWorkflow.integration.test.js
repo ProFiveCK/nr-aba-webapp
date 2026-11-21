@@ -321,6 +321,12 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   const {generatedPdfText}=await import('../test-support/pdfText.js');
   const {PDFDocument}=await import('pdf-lib');assert.equal((await PDFDocument.load(downloaded.body)).getPageCount(),1);assert.ok((await PDFDocument.load(granted.final_pdf)).getPageCount()>1);
   const printed=await generatedPdfText(downloaded.body);assert.match(printed,/Naoero Public Service/);assert.match(printed,/3.5 hours \([0-9.]+ days from the leave balance\)/);
+  // Email, position and the next service anniversary come from the employee and entitlement records.
+  await pool.query("UPDATE hr_employees SET email='applicant@example.test',position_title='Synthetic Accountant' WHERE id=$1",[employee.id]);
+  const nextDue=(await pool.query("SELECT to_char(MAX(period_end)+1,'YYYY-MM-DD') AS d FROM hr_gov_entitlements WHERE id=ANY($1::uuid[])",[granted.grant_snapshot.balances.map(b=>b.entitlement_id)])).rows[0].d;
+  const anniversary=nextDue&&new Intl.DateTimeFormat('en-GB',{day:'2-digit',month:'short',year:'numeric',timeZone:'UTC'}).format(new Date(nextDue));
+  const detailed=await generatedPdfText((await call(`/requests/${r.id}/pdf`)).body);
+  assert.match(detailed,/applicant@example\.test/);assert.match(detailed,/Synthetic Accountant/);assert.ok(anniversary&&detailed.includes(anniversary),anniversary);
   assert.deepEqual((await w.getRequest(pool,r.id)).final_pdf,granted.final_pdf);
   const {payrollLines}=await import('../lib/governmentLeavePayrollRules.js');
   const payroll=payrollLines([granted],{[employee.id]:{payroll_id:'0007',name:employee.display_name}},data.start_date,data.end_date);

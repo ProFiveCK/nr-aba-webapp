@@ -1,6 +1,6 @@
 import {paternityRequestBalance} from '../services/governmentLeavePaternity.js';
 import {loadContext} from '../services/governmentLeave.js';
-import {generateGovernmentLeavePdf} from '../services/governmentLeavePdf.js';
+import {generateGovernmentLeavePdf,governmentPdfDetails} from '../services/governmentLeavePdf.js';
 import {resolvedPublishedPoliciesSql} from '../services/governmentLeavePolicyTransitions.js';
 import express from 'express';
 import {decorateDrafts} from '../services/governmentLeaveDrafts.js';
@@ -184,6 +184,6 @@ router.get('/requests/:id/pdf',[id],async(req,res)=>{
   }
   // Refresh presentation from the immutable grant so existing approvals use current branding.
   // The stored decision, balances and original PDF remain unchanged.
-  res.set({'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="government-leave-${request.id}.pdf"`,'X-Content-Type-Options':'nosniff'}).send(grant?Buffer.from(await generateGovernmentLeavePdf(grant,{firstPageOnly:true})):request.final_pdf);
+  res.set({'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="government-leave-${request.id}.pdf"`,'X-Content-Type-Options':'nosniff'}).send(grant?Buffer.from(await generateGovernmentLeavePdf(grant,{firstPageOnly:true,details:await governmentPdfDetails(pool,grant)})):request.final_pdf);
 });
 export default router;

@@ -111,7 +111,7 @@ async function approvedLeaveForm(req, id) {
       `SELECT a.id, a.employee_id, a.reviewed_by, a.start_date, a.end_date, a.days, a.reason,
               a.applied_at, a.reviewed_at, a.payroll_form_snapshot,
               e.reviewer_id, e.manager_id, e.display_name AS current_employee_name,
-              e.position_title AS current_position_title, e.department_code AS current_department_code,
+              e.position_title AS current_position_title, e.email AS current_email, e.department_code AS current_department_code,
               e.division_code AS current_division_code,
               m.display_name AS current_supervisor_name, t.name AS current_leave_type_name,
               r.display_name AS current_approver_name
@@ -132,6 +132,7 @@ async function approvedLeaveForm(req, id) {
     return {
       id: application.id,
       employee_name: snapshot?.employee_name || application.current_employee_name,
+      email: application.current_email,
       position_title: snapshot ? snapshot.position_title : application.current_position_title,
       department_code: snapshot ? snapshot.department_code : application.current_department_code,
       division_code: snapshot ? snapshot.division_code : application.current_division_code,

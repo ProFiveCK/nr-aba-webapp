@@ -320,7 +320,7 @@ describe('government common leave workflow and reviewed jobs',{skip:skipWithoutD
   const downloaded=await call(`/requests/${r.id}/pdf`);assert.equal(downloaded.status,200);
   const {generatedPdfText}=await import('../test-support/pdfText.js');
   const {PDFDocument}=await import('pdf-lib');assert.equal((await PDFDocument.load(downloaded.body)).getPageCount(),1);assert.ok((await PDFDocument.load(granted.final_pdf)).getPageCount()>1);
-  const printed=await generatedPdfText(downloaded.body);assert.match(printed,/NAOERO/);assert.match(printed,/Hourly leave: 3.5 hours/);
+  const printed=await generatedPdfText(downloaded.body);assert.match(printed,/Naoero Public Service/);assert.match(printed,/3.5 hours \([0-9.]+ days from the leave balance\)/);
   assert.deepEqual((await w.getRequest(pool,r.id)).final_pdf,granted.final_pdf);
   const {payrollLines}=await import('../lib/governmentLeavePayrollRules.js');
   const payroll=payrollLines([granted],{[employee.id]:{payroll_id:'0007',name:employee.display_name}},data.start_date,data.end_date);

@@ -30,7 +30,7 @@ const OPTIONS = {
   ],
   allowedAttributes: {
     a: ['href', 'title', 'target', 'rel'],
-    img: ['src', 'alt', 'title'],
+    img: ['src', 'alt', 'title', 'class'],
     // Section addresses on headings: written below from the heading's own
     // words, so a re-save keeps the addresses other documents link to.
     h2: ['id'],
@@ -39,6 +39,9 @@ const OPTIONS = {
     td: ['colspan', 'rowspan'],
     ol: ['start'],
   },
+  // The one class an author may set on a picture: the frame opt-out. Any
+  // other class word is stripped, so content styling stays in the stylesheet.
+  allowedClasses: { img: ['bare'] },
   allowedSchemes: ['http', 'https', 'mailto'],
   // A picture may only be one of this policy's stored files: no other site,
   // and no data: URIs, which would swell every page and every backup.

@@ -72,3 +72,12 @@ describe('what a policy page may contain', () => {
     assert.equal(cleanPolicyHtml(once), once, 're-cleaning a body that already has addresses changes nothing');
   });
 });
+  test('a picture may carry only the frame opt-out, never any other styling', () => {
+    const clean = cleanPolicyHtml(
+      '<img src="' + policyFileUrl('0b9a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d') + '" class="bare">'
+      + '<img src="' + policyFileUrl('0b9a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d') + '" class="fancy shadow-lg wide">');
+
+    const [kept, stripped] = clean.split('><img');
+    assert.match(kept, /class="bare"/, 'the frame opt-out is kept');
+    assert.doesNotMatch(stripped, /class=/, 'any other styling is stripped');
+  });

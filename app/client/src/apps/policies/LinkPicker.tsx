@@ -34,10 +34,11 @@ export function LinkPicker({ onInsert, onClose }: {
     useEffect(() => {
         if (tab !== 'library') return;
         const query = term.trim();
-        if (query.length < 2) { setResults(null); return; }
+        if (query.length < 2) return; // the view shows the hint while the search is too short
         const timer = setTimeout(() => {
             apiClient.get<Result[]>(`/policies?q=${encodeURIComponent(query)}`)
-                .then((rows) => { setResults(rows || []); setActive(0); })
+                .then((rows) => { setResults(rows || []); })
+                .then(() => setActive(0))
                 .catch(() => setResults([]));
         }, 250);
         return () => clearTimeout(timer);

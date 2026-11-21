@@ -10,7 +10,7 @@ import { SortHeader } from '../../components/SortHeader';
 import { Button, Card, EmptyState, LoadingState, Pager } from '../../components/Ui';
 import { PolicyDetailsModal } from './PolicyDetailsModal';
 import { categoryPath, categoryTree, snippetParts, typeLabel } from './policyContent';
-import type { PolicyDocument, PolicyListItem, PolicyMeta } from './types';
+import type { PolicyDocument, PolicyListItem, PolicyMeta, PolicyReferenceIssue } from './types';
 
 /** Views of the library for people who write or publish, besides the categories. */
 const WORK_VIEWS = [
@@ -97,6 +97,17 @@ export function PolicyLibrary({ meta, onMetaChanged }: { meta: PolicyMeta; onMet
             .catch((err) => { if (!controller.signal.aborted) setError((err as Error).message || 'The library could not be loaded.'); });
         return () => controller.abort();
     }, [q, category, state, type, department]);
+    // Where the library's own links have gone stale, checked on demand.
+    const [references, setReferences] = useState<{ issues: PolicyReferenceIssue[]; documents: number } | null>(null);
+    useEffect(() => {
+        if (state !== 'reference-check') return;
+        const controller = new AbortController();
+        apiClient.get<{ issues: PolicyReferenceIssue[]; documents: number }>('/policies/reference-check', { signal: controller.signal })
+            .then((result) => { if (!controller.signal.aborted) setReferences(result); })
+            .catch((err) => { if (!controller.signal.aborted) setError((err as Error).message); });
+        return () => controller.abort();
+    }, [state]);
+    useEffect(() => { if (state !== 'reference-check') setReferences(null); }, [state]);
 
     const sorted = useMemo(() => {
         const rows = items ?? [];
@@ -112,7 +123,8 @@ export function PolicyLibrary({ meta, onMetaChanged }: { meta: PolicyMeta; onMet
     const manual = tree.find((m) => m.id === category);
     const section = !manual ? tree.flatMap((m) => m.sections.map((s) => ({ ...s, manual: m }))).find((s) => s.id === category) : undefined;
     const workView = WORK_VIEWS.find((v) => v.key === state);
-    const placeName = workView?.label ?? manual?.name ?? (section ? section.name : category === 'none' ? 'Not in a category' : 'All documents');
+    const placeName = state === 'reference-check' ? 'Reference check'
+        : workView?.label ?? manual?.name ?? (section ? section.name : category === 'none' ? 'Not in a category' : 'All documents');
     const searchingIn = category || state ? `Search in ${placeName}` : 'Search all documents';
 
     // A manual reads like its table of contents: its documents grouped by
@@ -216,6 +228,7 @@ export function PolicyLibrary({ meta, onMetaChanged }: { meta: PolicyMeta; onMet
                         <Card className="p-2">
                             <p className="px-2.5 pb-1 pt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Work</p>
                             {WORK_VIEWS.map((v) => <NavItem key={v.key} active={state === v.key} onClick={() => go({ state: v.key })}>{v.label}</NavItem>)}
+                            <NavItem active={state === 'reference-check'} onClick={() => go({ state: 'reference-check' })}>Reference check</NavItem>
                         </Card>
                     )}
                 </nav>
@@ -248,8 +261,32 @@ export function PolicyLibrary({ meta, onMetaChanged }: { meta: PolicyMeta; onMet
                         </select>
                     </div>
 
-                    {error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-rose-700">{error}</p>}
-                    {!items && !error && <LoadingState label="Loading the library…" />}
+                    {state === 'reference-check' && (
+                        <Card>
+                            {!references && <LoadingState label="Checking every link and file in the library…" />}
+                            {references && !references.issues.length && (
+                                <EmptyState title="Every reference resolves." detail={`Internal links and files across ${references.documents} documents in the library.`} />
+                            )}
+                            {!!references?.issues.length && (
+                                <div className="space-y-2">
+                                    <p className="text-sm text-gray-700">{references.issues.length} of {references.documents} documents carry a link that no longer resolves:</p>
+                                    <ul className="divide-y divide-gray-100">
+                                        {[...references.issues].sort((a, b) => a.code.localeCompare(b.code)).map((issue, i) => (
+                                            <li key={i} className="py-2 text-sm">
+                                                <Link to={`/policies/${issue.id}`} className="font-medium text-brand hover:underline">{issue.code} {issue.title}</Link>
+                                                <span className="text-gray-500"> · {issue.location === 'draft' ? 'draft' : 'in force'}</span>
+                                                <p className="text-gray-700">{issue.issue}</p>
+                                                <p className="text-xs text-gray-500">Points at: {issue.target_label || issue.target}</p>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                        </Card>
+                    )}
+                    {state === 'reference-check' && <div className="lg:hidden" aria-hidden="true" />}
+                    {state !== 'reference-check' && error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-rose-700">{error}</p>}
+                    {state !== 'reference-check' && !items && !error && <LoadingState label="Loading the library…" />}
                     {items && !items.length && (
                         <Card>
                             <EmptyState
@@ -258,7 +295,7 @@ export function PolicyLibrary({ meta, onMetaChanged }: { meta: PolicyMeta; onMet
                             />
                         </Card>
                     )}
-                    {!!items?.length && (
+                    {state !== 'reference-check' && !!items?.length && (
                         <div className="data-table-wrap">
                             <div className="data-table-scroll">
                                 <table className="data-table">

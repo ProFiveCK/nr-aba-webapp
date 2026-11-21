@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { aYearAfter, categoryLabel, categoryTree, fileSize, headingAnchors, portalLinkTarget, snippetParts } from './policyContent';
+import { aYearAfter, categoryLabel, categoryTree, fileSize, headingAnchors, portalLinkTarget, sectionsFromHtml, snippetParts } from './policyContent';
 
 it('gives each heading a readable section address, numbering repeats', () => {
     expect(headingAnchors(['Purpose', 'Who approves?', 'Purpose', 'Café rules', '***']))
@@ -47,4 +47,13 @@ it('arranges categories as manuals holding their sections, in their set order', 
     expect(categoryLabel(all, 'p')).toBe('Finance Manual › Payments');
     expect(categoryLabel(all, 'h')).toBe('HR Manual');
     expect(categoryLabel(all, 'missing')).toBe('');
+});
+
+it('reads a body heading list into the same section addresses the reader gives', () => {
+    expect(sectionsFromHtml('<h2>Purpose</h2><p>Who and why.</p><h3>Scope and <strong>limits</strong></h3><p>Six-month rule: &amp; more.</p><h2>Purpose</h2>'))
+        .toEqual([
+            { id: 'purpose', text: 'Purpose' },
+            { id: 'scope-and-limits', text: 'Scope and limits' },
+            { id: 'purpose-2', text: 'Purpose' },
+        ]);
 });

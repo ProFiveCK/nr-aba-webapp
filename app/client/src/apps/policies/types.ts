@@ -70,6 +70,7 @@ export interface PolicyVersion {
     status: 'draft' | 'published' | 'superseded';
     /** Cleaned by the server before it was stored; safe to show as it is. */
     body_html: string;
+    body_text?: string;
     change_summary: string | null;
     revision: number;
     published_at: string | null;
@@ -112,4 +113,16 @@ export interface PolicyDocument extends Omit<PolicyDetails, 'category_ids'> {
     /** Only for accounts that write or publish. */
     draft: PolicyVersion | null;
     versions: PolicyHistoryEntry[];
+}
+
+/** One reference the library's live texts no longer resolve. */
+export interface PolicyReferenceIssue {
+    id: string;
+    code: string;
+    title: string;
+    location: 'published' | 'draft';
+    target_kind: 'document' | 'file';
+    target: string;
+    target_label: string | null;
+    issue: string;
 }

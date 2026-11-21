@@ -129,7 +129,10 @@
 .policy-content :where(a) { @apply font-medium text-brand underline underline-offset-2; }
 .policy-content :where(blockquote) { @apply my-4 rounded-r-lg border-l-4 border-accent bg-amber-50/60 px-4 py-2 text-gray-800; }
 .policy-content :where(hr) { @apply my-6 border-gray-200; }
-.policy-content :where(img) { @apply my-3 h-auto max-w-full rounded-lg; }
+/* Screenshots frame themselves: hairline border, soft card, breathing room.
+   An author opts a picture out with the frame toggle (class="bare"). */
+.policy-content :where(img) { @apply my-3 h-auto max-w-full rounded-lg border border-gray-300 bg-gray-50 p-1; }
+.policy-content :where(img.bare) { @apply border-0 bg-transparent p-0; }
 .policy-content :where(table) { @apply my-4 w-full border-collapse text-sm; table-layout: auto; }
 .policy-content :where(th, td) { @apply border border-gray-300 px-3 py-2 text-left align-top; }
 .policy-content :where(th) { @apply bg-gray-100 font-semibold text-gray-900; }

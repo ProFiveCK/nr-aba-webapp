@@ -6,7 +6,7 @@ import StarterKit from '@tiptap/starter-kit';
 import { TableKit } from '@tiptap/extension-table';
 import Image from '@tiptap/extension-image';
 import {
-    ArrowLeft, Bold, FileUp, ImagePlus, Italic, Link2, List, ListOrdered, Minus, Paperclip, Quote,
+    ArrowLeft, Bold, FileUp, Frame, ImagePlus, Italic, Link2, List, ListOrdered, Minus, Paperclip, Quote,
     Redo2, Strikethrough, Table, Underline, Undo2, Unlink,
 } from 'lucide-react';
 import { apiClient } from '../../lib/api';
@@ -26,6 +26,19 @@ const ATTACHMENTS = '.pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.png,.jpg,.jpeg,.gif,
 const LibraryImage = Image.extend({
     parseHTML() {
         return [{ tag: 'img[src^="/api/policies/files/"]' }];
+    },
+    addAttributes() {
+        return {
+            ...this.parent?.(),
+            // The frame opt-out: readers frame every picture unless the
+            // author switched this one off; the server keeps only this
+            // one class word on pictures.
+            bare: {
+                default: false,
+                parseHTML: (element) => element.classList.contains('bare'),
+                renderHTML: (attributes) => (attributes.bare ? { class: 'bare' } : {}),
+            },
+        };
     },
 }).configure({ allowBase64: false });
 
@@ -83,11 +96,12 @@ const keepCursor = (event: MouseEvent) => event.preventDefault();
 
 const Divider = () => <span aria-hidden="true" className="mx-1 h-5 w-px bg-gray-200" />;
 
-function Toolbar({ editor, busy, onLink, onPicture, onAttachment, onWord }: {
+function Toolbar({ editor, busy, onLink, onPicture, onFrameToggle, onAttachment, onWord }: {
     editor: Editor;
     busy: boolean;
     onLink: () => void;
     onPicture: () => void;
+    onFrameToggle: () => void;
     onAttachment: () => void;
     onWord: () => void;
 }) {
@@ -104,6 +118,8 @@ function Toolbar({ editor, busy, onLink, onPicture, onAttachment, onWord }: {
             quote: e.isActive('blockquote'),
             link: e.isActive('link'),
             table: e.isActive('table'),
+            image: e.isActive('image'),
+            imageBare: e.isActive('image') ? !!e.getAttributes('image').bare : false,
             canUndo: e.can().undo(),
             canRedo: e.can().redo(),
         }),
@@ -138,6 +154,10 @@ function Toolbar({ editor, busy, onLink, onPicture, onAttachment, onWord }: {
                 : <ToolButton label="Add link" onClick={onLink}><Link2 size={16} /></ToolButton>}
             <ToolButton label="Insert table" disabled={state.table} onClick={() => run().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}><Table size={16} /></ToolButton>
             <ToolButton label="Insert picture" disabled={busy} onClick={onPicture}><ImagePlus size={16} /></ToolButton>
+            <ToolButton label="Frame on/off" disabled={!state.image} active={state.image && !state.imageBare}
+                onClick={() => onFrameToggle()}>
+                <Frame size={16} />
+            </ToolButton>
             <ToolButton label="Attach a file" disabled={busy} onClick={onAttachment}><Paperclip size={16} /></ToolButton>
             <Divider />
             <ToolButton label="Undo" disabled={!state.canUndo} onClick={() => run().undo().run()}><Undo2 size={16} /></ToolButton>
@@ -299,6 +319,10 @@ function EditorWorkspace({ policy }: { policy: PolicyDocument }) {
             <Card padded={false} className="overflow-hidden">
                 <Toolbar editor={editor} busy={!!busy} onLink={() => { setError(''); setLinkPicker(true); }}
                     onPicture={() => pictureInput.current?.click()}
+                    onFrameToggle={() => {
+                        const { bare } = editor.getAttributes('image');
+                        editor.chain().focus().updateAttributes('image', { bare: !bare }).run();
+                    }}
                     onAttachment={() => attachmentInput.current?.click()}
                     onWord={() => wordInput.current?.click()} />
                 {busy && <p role="status" className="border-b border-gray-200 bg-blue-50 px-4 py-1.5 text-blue-900">{busy === 'word' ? 'Importing the Word document…' : 'Uploading…'}</p>}

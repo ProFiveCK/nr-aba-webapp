@@ -2,7 +2,7 @@ import pg from 'pg';
 import { readFileSync } from 'node:fs';
 import {initOrganisationHierarchySchema,initParentApproverSchema} from './services/organisationHierarchy.js';
 import { initGovernmentLeaveSchema } from './services/governmentLeaveSchema.js';
-import { initPolicySchema } from './services/policySchema.js';
+import { initPolicySchema, addMissingPolicyHeadingIds } from './services/policySchema.js';
 import dotenv from 'dotenv';
 import { ALL_CAPABILITIES, LEAVE_ONLY_CAPABILITIES, PERMISSIONS, PREFERENCE_KEYS, RETIRED_LEAVE_GRANTS, ROLE_CAPABILITIES } from './config.js';
 
@@ -1622,6 +1622,7 @@ export async function initSchema() {
     await initParentApproverSchema(client);
     await initGovernmentLeaveSchema(client);
     await initPolicySchema(client);
+    await addMissingPolicyHeadingIds(client);
     // Employees added before service starts came from the record still need one; this is a no-op once they have it.
     const { syncServiceStart } = await import('./services/governmentLeave.js');
     const { rows: withoutService } = await client.query(`SELECT e.id FROM hr_employees e WHERE NOT EXISTS (SELECT 1 FROM hr_gov_service_bases b WHERE b.employee_id = e.id)

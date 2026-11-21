@@ -80,7 +80,7 @@ describe('policies and procedures', { skip: skipWithoutDatabase }, () => {
     assert.equal((await as(reader)('GET', '/')).json.length, 0, 'readers see nothing before it is published');
     assert.equal((await as(reader)('GET', `/${created.id}`)).status, 404);
 
-    const first = await writeAndPublish(created.id, '<h2>Purpose</h2><p>Record every payment.</p>');
+    const first = await writeAndPublish(created.id, '<h2 id="purpose">Purpose</h2><p>Record every payment.</p>');
     assert.equal(first.published.version_no, 1);
     assert.equal(first.draft, null);
 
@@ -88,11 +88,11 @@ describe('policies and procedures', { skip: skipWithoutDatabase }, () => {
     assert.deepEqual(library.map((d) => [d.code, d.published_version_no]), [['FIN-SOP-001', 1]]);
     assert.equal('draft_version_no' in library[0], false, 'readers are not told about drafts');
     const page = (await as(reader)('GET', `/${created.id}`)).json;
-    assert.equal(page.published.body_html, '<h2>Purpose</h2><p>Record every payment.</p>');
+    assert.equal(page.published.body_html, '<h2 id="purpose">Purpose</h2><p>Record every payment.</p>');
     assert.equal(page.draft, null);
 
     // Editing starts a second draft from the published text; readers keep seeing version 1.
-    const second = await as(editor)('PUT', `/${created.id}/draft`, { body_html: '<p>Record and check every payment.</p>', revision: null });
+    const second = await as(editor)('PUT', `/${created.id}/draft`, { body_html: '<p id="record-and-check-every-payment">Record and check every payment.</p>', revision: null });
     assert.equal(second.json.draft.version_no, 2);
     assert.equal((await as(reader)('GET', `/${created.id}`)).json.published.version_no, 1);
     assert.equal((await as(reader)('GET', `/${created.id}`)).json.draft, null);
@@ -106,7 +106,7 @@ describe('policies and procedures', { skip: skipWithoutDatabase }, () => {
     assert.deepEqual(history.map((v) => [v.version_no, v.status, v.change_summary]),
       [[2, 'published', 'Adds the check.'], [1, 'superseded', 'First version.']]);
     const old = await as(reader)('GET', `/${created.id}/versions/${history[1].id}`);
-    assert.equal(old.json.body_html, '<h2>Purpose</h2><p>Record every payment.</p>', 'the earlier wording can still be read');
+    assert.equal(old.json.body_html, '<h2 id="purpose">Purpose</h2><p>Record every payment.</p>', 'the earlier wording can still be read');
 
     const audit = await lastAudit(pool, 'policy.published', created.id);
     assert.deepEqual(audit.after, { version_no: 2, replaces: 1, change_summary: 'Adds the check.', review_due: '2027-11-18' });
@@ -208,7 +208,7 @@ describe('policies and procedures', { skip: skipWithoutDatabase }, () => {
     const created = await register();
     const imported = await upload(editor, `/${created.id}/import-word`, 'Payments SOP.docx', WORD);
     assert.equal(imported.status, 200, JSON.stringify(imported.json));
-    assert.match(imported.json.html, /^<h2>Purpose<\/h2>/);
+    assert.match(imported.json.html, /^<h2 id="purpose">Purpose<\/h2>/);
     assert.equal(imported.json.notes.length, 2);
     const { rows } = await pool.query('SELECT file_name, content_type FROM policy_files WHERE document_id = $1', [created.id]);
     assert.deepEqual(rows, [{ file_name: 'Payments SOP picture 1.png', content_type: 'image/png' }]);
@@ -370,7 +370,7 @@ describe('policies and procedures', { skip: skipWithoutDatabase }, () => {
     const restored = await as(editor)('POST', `/${created.id}/versions/${first.id}/restore-draft`);
     assert.equal(restored.status, 200);
     assert.equal(restored.json.draft.version_no, 3);
-    assert.equal(restored.json.draft.body_html, '<h2>First</h2><p>The original wording.</p>');
+    assert.equal(restored.json.draft.body_html, '<h2 id="first">First</h2><p>The original wording.</p>');
 
     // The version in force is untouched; readers see it, not the draft.
     const readerPage = (await as(reader)('GET', `/${created.id}`)).json;

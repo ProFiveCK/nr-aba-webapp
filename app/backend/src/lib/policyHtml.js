@@ -31,6 +31,10 @@ const OPTIONS = {
   allowedAttributes: {
     a: ['href', 'title', 'target', 'rel'],
     img: ['src', 'alt', 'title'],
+    // Section addresses on headings: written below from the heading's own
+    // words, so a re-save keeps the addresses other documents link to.
+    h2: ['id'],
+    h3: ['id'],
     th: ['colspan', 'rowspan'],
     td: ['colspan', 'rowspan'],
     ol: ['start'],
@@ -68,9 +72,10 @@ const OPTIONS = {
   exclusiveFilter: (frame) => frame.tag === 'img' && !FILE_URL.test(frame.attribs.src || ''),
 };
 
-/** The stored form of a policy body: clean HTML, safe to show as it is. */
+/** The stored form of a policy body: clean HTML, safe to show as it is, with
+ *  section addresses on its headings. */
 export function cleanPolicyHtml(html) {
-  return sanitizeHtml(String(html ?? ''), OPTIONS).trim();
+  return addHeadingIds(sanitizeHtml(String(html ?? ''), OPTIONS).trim());
 }
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
@@ -107,3 +112,57 @@ export function referencedPolicyIds(cleanHtml) {
   }
   return [...ids];
 }
+
+/** How much of a heading's text a section address keeps, matching the reader. */
+const SLUG_LIMIT = 60;
+
+const COMBINING_MARKS = /[\u0300-\u036f]/g;
+
+/** Advances the numbering map for one more heading, as in headingAnchors. */
+function nextHeadingAnchor(seen, text) {
+  const base = (String(text ?? '').trim().toLowerCase().normalize('NFKD')
+    .replace(COMBINING_MARKS, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, SLUG_LIMIT)) || 'section';
+  const count = (seen.get(base) ?? 0) + 1;
+  seen.set(base, count);
+  return count === 1 ? base : `${base}-${count}`;
+}
+
+/**
+ * The section address for each heading text, numbered where words repeat —
+ * the same rule the reader uses, so a stored address is the address the
+ * contents panel and any deep link point at.
+ */
+export function headingAnchors(texts) {
+  const seen = new Map();
+  return texts.map((text) => nextHeadingAnchor(seen, text));
+}
+
+const ENTITIES_IN_TEXT = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
+
+const HEADING = /<(h[23])([^>]*)>([\s\S]*?)<\/h[23]>/gi;
+
+/**
+ * Gives every h2/h3 an id, as part of the stored content. Ids the body
+ * already carries are kept (and taken into account when numbering), so a
+ * re-save never renumbers the addresses other documents link to.
+ */
+export function addHeadingIds(html) {
+  const seen = new Map();
+  // Seed the numbering with the ids the text already carries.
+  for (const { attrs } of String(html ?? '').matchAll(HEADING)) {
+    const existing = (/(?:^|\s)id=["']([^"']*)["']/.exec(attrs) || [])[1];
+    if (existing) seen.set(existing.toLowerCase(), (seen.get(existing.toLowerCase()) ?? 0) + 1);
+  }
+  return String(html ?? '').replace(HEADING, (whole, tag, attrs, inner) => {
+    const existing = (/(?:^|\s)id=["']([^"']*)["']/.exec(attrs) || [])[1];
+    if (existing) return whole;
+    const text = inner.replace(/<[^>]*>/g, '')
+      .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, name) => ENTITIES_IN_TEXT[name] ?? '')
+      .trim();
+    return `<${tag}${attrs} id="${nextHeadingAnchor(seen, text)}">${inner}</${tag}>`;
+  });
+}
+

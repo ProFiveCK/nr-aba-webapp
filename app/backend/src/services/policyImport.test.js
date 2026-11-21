@@ -14,8 +14,8 @@ test('a Word document arrives as plain structure, with its pictures stored', asy
     return '/api/policies/files/0b9a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d';
   });
 
-  assert.match(html, /^<h2>Purpose<\/h2><p>Staff must <strong>record every payment<\/strong> before it is released\.<\/p><h3>Steps<\/h3>/,
-    'Heading 1 becomes the first level under the page title, and colour and size are left behind');
+  assert.match(html, /^<h2 id="purpose">Purpose<\/h2><p>Staff must <strong>record every payment<\/strong> before it is released\.<\/p><h3 id="steps">Steps<\/h3>/,
+    'Heading 1 becomes the first level under the page title — with a section address — and colour and size are left behind');
   assert.match(html, /<table><tr><td><p>Role<\/p><\/td>/);
   assert.match(html, /<img alt="Chart alt text" src="\/api\/policies\/files\/0b9a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d" \/>/);
   assert.deepEqual(stored.map((s) => s.contentType), ['image/png'], 'only the picture a browser can show is stored');

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { MouseEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { headingAnchors, portalLinkTarget } from './policyContent';
+import { settleHeadingIds, portalLinkTarget } from './policyContent';
 
 export interface PolicySection {
     id: string;
@@ -21,8 +21,8 @@ export function PolicyBody({ html, onSections }: { html: string; onSections?: (s
 
     useLayoutEffect(() => {
         const headings = Array.from(ref.current?.querySelectorAll<HTMLHeadingElement>('h2, h3') ?? []);
-        const ids = headingAnchors(headings.map((heading) => heading.textContent ?? ''));
-        headings.forEach((heading, i) => { heading.id = ids[i]; });
+        const ids = settleHeadingIds(headings.map((heading) => heading.getAttribute('id')), headings.map((heading) => heading.textContent ?? ''));
+        headings.forEach((heading, i) => { if (!heading.id) heading.id = ids[i]; });
         onSections?.(headings.map((heading, i) => ({ id: ids[i], text: heading.textContent ?? '', level: heading.tagName === 'H2' ? 2 : 3 })));
     }, [html, onSections]);
 

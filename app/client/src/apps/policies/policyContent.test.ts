@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { aYearAfter, categoryLabel, categoryTree, fileSize, headingAnchors, portalLinkTarget, sectionsFromHtml, snippetParts } from './policyContent';
+import { aYearAfter, categoryLabel, categoryTree, fileSize, headingAnchors, portalLinkTarget, sectionsFromHtml, settleHeadingIds, snippetParts } from './policyContent';
 
 it('gives each heading a readable section address, numbering repeats', () => {
     expect(headingAnchors(['Purpose', 'Who approves?', 'Purpose', 'Café rules', '***']))
@@ -56,4 +56,10 @@ it('reads a body heading list into the same section addresses the reader gives',
             { id: 'scope-and-limits', text: 'Scope and limits' },
             { id: 'purpose-2', text: 'Purpose' },
         ]);
+});
+
+it('settles ids keeping kept addresses and numbering newcomers around them', () => {
+    expect(settleHeadingIds(['purpose', null, 'purpose-3'], ['Purpose', 'Scope', 'Purpose']))
+        .toEqual(['purpose', 'scope', 'purpose-3']);
+    expect(settleHeadingIds([null, null], ['Purpose', 'Purpose'])).toEqual(['purpose', 'purpose-2']);
 });

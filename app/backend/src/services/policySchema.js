@@ -1,3 +1,5 @@
+import { addHeadingIds } from '../lib/policyHtml.js';
+
 /**
  * Policies & Procedures tables.
  *
@@ -119,4 +121,18 @@ export async function initPolicySchema(client) {
       ON CONFLICT DO NOTHING`);
     await client.query('ALTER TABLE policy_documents DROP COLUMN category');
   }
+}
+
+/** The addresses older stored bodies lack: one quiet pass, idempotent by construction. */
+export async function addMissingPolicyHeadingIds(client) {
+  const { rows: versions } = await client.query('SELECT id, body_html FROM policy_versions');
+  let changed = 0;
+  for (const version of versions) {
+    const body = addHeadingIds(version.body_html);
+    if (body !== version.body_html) {
+      await client.query('UPDATE policy_versions SET body_html = $2 WHERE id = $1', [version.id, body]);
+      changed += 1;
+    }
+  }
+  if (changed) console.log(`[policies] Added section addresses to ${changed} stored version(s).`);
 }

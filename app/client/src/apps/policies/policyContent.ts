@@ -15,6 +15,9 @@ export function headingAnchors(texts: string[]): string[] {
         seen.set(base, count);
         return count === 1 ? base : `${base}-${count}`;
     });
+
+
+
 }
 
 /** A search passage split into plain and matched pieces, to show without any HTML. */
@@ -94,4 +97,28 @@ export function sectionsFromHtml(html: string): { id: string; text: string }[] {
         .filter(Boolean);
     const ids = headingAnchors(texts);
     return texts.map((text, i) => ({ id: ids[i], text }));
+}
+
+/**
+ * Section addresses across a whole document: every heading that already
+ * carries its address keeps it, the rest are numbered around them — so an
+ * older body the server has not migrated yet still settles the same way.
+ */
+export function settleHeadingIds(existing: (string | null)[], texts: string[]): string[] {
+    const seen = new Map<string, number>();
+    for (const id of existing) {
+        if (id) seen.set(id, (seen.get(id) ?? 0) + 1);
+    }
+    const out: string[] = [];
+    existing.forEach((id, i) => {
+        if (id) { out.push(id); return; }
+        const base = (texts[i]?.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
+            .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60)) || 'section';
+        let count = seen.get(base) ?? 0;
+        let slug = count === 0 ? base : `${base}-${count + 1}`;
+        while (seen.has(slug)) { count += 1; slug = `${base}-${count + 1}`; }
+        seen.set(slug, (seen.get(slug) ?? 0) + 1);
+        out.push(slug);
+    });
+    return out;
 }

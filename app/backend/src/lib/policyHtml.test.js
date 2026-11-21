@@ -31,7 +31,7 @@ describe('what a policy page may contain', () => {
 
   test('headings start below the page title, and Word-style bold and italic are kept', () => {
     assert.equal(cleanPolicyHtml('<h1>A</h1><h5>B</h5><p><b>C</b> <i>D</i></p>'),
-      '<h2>A</h2><h4>B</h4><p><strong>C</strong> <em>D</em></p>');
+      '<h2 id="a">A</h2><h4>B</h4><p><strong>C</strong> <em>D</em></p>');
   });
 
   test('tables keep their cells and merges but lose the editor sizing', () => {
@@ -62,5 +62,13 @@ describe('what a policy page may contain', () => {
     );
     assert.deepEqual(referencedPolicyIds(clean), [FILE]);
     assert.deepEqual(referencedPolicyIds(''), []);
+  });
+
+  test('section addresses: repeats get numbers, kept ids are kept, and a re-clean matches', () => {
+    const once = cleanPolicyHtml('<h2>Purpose</h2><h2>Purpose</h2><h3 id="kept">Third</h3><h2>Purpose</h2>');
+    assert.equal(once,
+      '<h2 id="purpose">Purpose</h2><h2 id="purpose-2">Purpose</h2>'
+      + '<h3 id="kept">Third</h3><h2 id="purpose-3">Purpose</h2>');
+    assert.equal(cleanPolicyHtml(once), once, 're-cleaning a body that already has addresses changes nothing');
   });
 });

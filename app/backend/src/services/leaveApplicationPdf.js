@@ -1,58 +1,54 @@
+import { readFileSync } from 'node:fs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
-// The printed form itself (labels, lines, headings, boilerplate) stays black,
-// like the original paper form. Anything actually filled in for this
-// application — the applicant's details, the ticks showing what was chosen,
-// the dates, the days, the approval line — is drawn in the portal's brand
-// blue, so a reader can tell at a glance what's "the form" and what's "this
-// person's answer" without hunting for it.
+// The approved copy is the official 2026 NPS Leave Application form
+// (assets/nps-leave-application-2026.pdf) with this application's answers
+// stamped onto it. The form itself stays exactly as HR designed it; anything
+// filled in for this application is drawn in the portal's brand blue, so a
+// reader can tell at a glance what's "the form" and what's "this person's
+// answer".
+const TEMPLATE = readFileSync(new URL('../../assets/nps-leave-application-2026.pdf', import.meta.url));
+
 const ink = rgb(0, 0, 0);
 const fill = rgb(0, 0.169, 0.498); // #002B7F
-const rule = rgb(0.55, 0.57, 0.62);
-const bandFill = rgb(0.9, 0.93, 0.98);
-const pageWidth = 595; // A4 (matches the original supplied form's page size)
-const pageHeight = 842;
-const margin = 42;
-const contentRight = pageWidth - margin;
-const contentWidth = contentRight - margin;
+const muted = rgb(0.45, 0.47, 0.52);
+const footerBand = rgb(0.106, 0.165, 0.29);
+const footerInk = rgb(0.659, 0.784, 0.804);
 
-// Drawn from scratch so every line and column is straight. The previous
-// version overlaid text on a scanned 2023 paper form; the scan itself was
-// photographed slightly askew, so text sitting on a perfectly horizontal
-// baseline drifted away from the scan's crooked printed lines the further it
-// sat from the top-left corner. Rebuilding the form as vectors removes the
-// scan (and its skew) entirely while keeping the same sections, wording and
-// reading order an officer would recognise from the paper original.
+// Positions on the template, in points measured from the top-left corner.
+// `line` is the top of the field's underline; values sit just above it.
+const FIELDS = {
+  name: { x: 38, right: 285, line: 161.85 },
+  email: { x: 299.65, right: 547, line: 161.85 },
+  department: { x: 38, right: 285, line: 185.55 },
+  position: { x: 299.65, right: 547, line: 185.55 },
+  dateFrom: { x: 38, right: 232, line: 227.6 },
+  dateTo: { x: 246.4, right: 337, line: 227.6 },
+  total: { x: 38, right: 232, line: 260 },
+  applicantSignature: { x: 38, right: 200, line: 585.55 },
+  approverSignature: { x: 38, right: 285, line: 773.55 },
+  approvedDate: { x: 299.65, right: 547, line: 773.55 },
+};
 
-const LEAVE_ROWS = [
-  { kind: 'annual', label: 'ANNUAL LEAVE' },
-  { kind: 'furlough', label: 'FURLOUGH LEAVE' },
-  { kind: 'sickWithMc', label: 'SICK LEAVE (WITH M/C) (7 DAYS)' },
-  { kind: 'sickWithoutMc', label: 'SICK LEAVE (WITHOUT M/C) (3 DAYS)' },
-  { kind: 'special', label: 'SPECIAL LEAVE' },
-  { kind: 'unpaid', label: 'LEAVE WITHOUT PAY' },
-  { kind: 'medical', label: 'MEDICAL LEAVE (3 MONTHS)' },
-  { kind: 'parental', label: 'MATERNITY/PATERNITY LEAVE' },
-  { kind: 'study', label: 'STUDY LEAVE' },
-  { kind: 'official', label: 'SPECIAL LEAVE (OFFICIAL)' },
-  { kind: 'adoption', label: 'ADOPTION LEAVE' },
-];
+// Left edge and baseline of each printed tick box in Section 3.
+const TYPE_BOXES = {
+  annual: { x: 36, baseline: 293 },
+  furlough: { x: 36, baseline: 322 },
+  sick: { x: 36, baseline: 351 },
+  sickWithMc: { x: 329, baseline: 360 },
+  sickWithoutMc: { x: 381, baseline: 360 },
+  special: { x: 36, baseline: 386 },
+  unpaid: { x: 36, baseline: 404 },
+  medical: { x: 36, baseline: 421 },
+  parental: { x: 36, baseline: 444 },
+  study: { x: 36, baseline: 468 },
+  official: { x: 36, baseline: 491 },
+  adoption: { x: 36, baseline: 514 },
+};
 
-const CHECKBOXES = [
-  { kind: 'annual', label: 'Annual leave', note: "(Requires 2 weeks' notice)" },
-  { indent: true, label: 'Prepayment of leave', note: '(Attach letter of request)' },
-  { kind: 'furlough', label: 'Furlough Leave', note: '(Requires 1 month notice)' },
-  { indent: true, label: 'Prepayment of leave', note: '(Attach letter of request)' },
-  { kind: 'sick', label: 'Sick leave', note: '(Attach medical certificate for sick leave more than 1 day)' },
-  { pair: true, left: 'With medical certificate', leftKind: 'sickWithMc', right: 'Without medical certificate', rightKind: 'sickWithoutMc' },
-  { kind: 'special', label: 'Special leave', note: '(State reason for leave)' },
-  { kind: 'unpaid', label: 'Leave without pay', note: '(Requires 1 month notice and letter stating reason)' },
-  { kind: 'medical', label: 'Medical leave', note: '(Attach Medical Certificate)' },
-  { kind: 'parental', label: 'Maternity/Paternity leave', note: '(Attach Medical Certificate)' },
-  { kind: 'study', label: 'Study leave', note: '(Attach relevant documents)' },
-  { kind: 'official', label: 'Special leave (Official)', note: '(Attach relevant documents)' },
-  { kind: 'adoption', label: 'Adoption leave', note: '(Attach relevant documents)' },
-];
+const APPROVED_BOX = { left: 189.5, right: 197.9, top: 721, bottom: 729.7 };
+const REASON ={ x: 38, right: 557, baselines: [543.5, 560] };
+const HR_CELLS = { before: [31, 124.75], after: [124.75, 218.5], top: 641.35, bottom: 662.4 };
 
 export function leaveApplicationFormKind(name) {
   const value = String(name || '').trim().toLowerCase();
@@ -73,10 +69,10 @@ export function leaveApplicationFormKind(name) {
   if (value === 'adoption' || value === 'adoption leave') return 'adoption';
   return null;
 }
-const formKind=leaveApplicationFormKind;
+const formKind = leaveApplicationFormKind;
 
-// Any sick-leave kind ticks the parent "Sick leave" box, same as a person
-// would circle both the category and the with/without-certificate option on
+// Any sick-leave kind ticks the parent "Sick Leave" box, same as a person
+// would tick both the category and the with/without-certificate option on
 // the paper form.
 function isSickKind(kind) {
   return kind === 'sickWithMc' || kind === 'sickWithoutMc' || kind === 'sickUnspecified';
@@ -96,6 +92,8 @@ function dateOnly(value) {
   if (Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(date);
 }
+
+const dayCount = (value) => `${Number(value).toFixed(2)} days`;
 
 function wrap(text, font, size, maxWidth) {
   const lines = [];
@@ -122,285 +120,160 @@ function wrap(text, font, size, maxWidth) {
   return lines;
 }
 
-export async function generateLeaveApplicationPdf(form,{firstPageOnly=false}={}) {
-  const pdf = await PDFDocument.create();
-  const page = pdf.addPage([pageWidth, pageHeight]);
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const italic = await pdf.embedFont(StandardFonts.HelveticaOblique);
-
-  // All drawing happens in "distance from the top" coordinates (`top`) and is
-  // converted to PDF's bottom-up space here, in one place, so every other
-  // helper below reads as a normal top-down page layout.
-  const toY = (top) => pageHeight - top;
-
-  const text = (str, x, top, opts = {}) => {
-    const size = opts.size ?? 8.5;
-    const face = opts.italic ? italic : opts.bold ? bold : font;
-    const color = opts.color ?? ink;
-    let content = printable(str).replace(/\s+/g, ' ').trim();
-    if (opts.maxWidth) {
-      while (content && face.widthOfTextAtSize(content, size) > opts.maxWidth) content = content.slice(0, -1);
-    }
-    let drawX = x;
-    if (opts.align === 'center') drawX = x - face.widthOfTextAtSize(content, size) / 2;
-    if (opts.align === 'right') drawX = x - face.widthOfTextAtSize(content, size);
-    page.drawText(content, { x: drawX, y: toY(top), size, font: face, color });
-    return face.widthOfTextAtSize(content, size);
-  };
-
-  const hLine = (x1, x2, top, opts = {}) => {
-    page.drawLine({ start: { x: x1, y: toY(top) }, end: { x: x2, y: toY(top) }, thickness: opts.thickness ?? 0.75, color: opts.color ?? ink });
-  };
-  const vLine = (x, top1, top2, opts = {}) => {
-    page.drawLine({ start: { x, y: toY(top1) }, end: { x, y: toY(top2) }, thickness: opts.thickness ?? 0.75, color: opts.color ?? ink });
-  };
-  const box = (x, top, w, h, opts = {}) => {
-    page.drawRectangle({ x, y: toY(top) - h, width: w, height: h, borderColor: opts.borderColor ?? ink, borderWidth: opts.borderWidth ?? 0.75, color: opts.fill });
-  };
-  // The circle is part of the printed form (black); an actual tick is this
-  // application's data, so it's drawn in the fill colour like everything
-  // else that was filled in rather than pre-printed.
-  const checkbox = (x, top, checked) => {
-    const r = 3.6;
-    page.drawCircle({ x: x + r, y: toY(top) + r - 1, size: r, borderColor: ink, borderWidth: 0.75 });
-    if (checked) {
-      text('X', x + r - 2.4, top - 0.6, { size: 7, bold: true, color: fill });
-    }
-  };
-  const field = (label, labelX, lineX1, lineX2, top, value, opts = {}) => {
-    text(label, labelX, top, { size: opts.labelSize ?? 8.5, bold: true });
-    hLine(lineX1, lineX2, top + 2);
-    if (value) text(value, lineX1 + 4, top, { size: opts.valueSize ?? 8.5, maxWidth: lineX2 - lineX1 - 8, color: fill });
-  };
-
-  // --- Header -------------------------------------------------------------
-  box(margin, 40, contentWidth, 46);
-  text('REPUBLIC OF NAOERO', pageWidth / 2, 53, { size: 11, bold: true, align: 'center' });
-  text('NAOERO PUBLIC SERVICE', pageWidth / 2, 66, { size: 9.5, bold: true, align: 'center' });
-  const titleWidth = text('LEAVE APPLICATION', pageWidth / 2, 80, { size: 9.5, bold: true, align: 'center' });
-  hLine(pageWidth / 2 - titleWidth / 2, pageWidth / 2 + titleWidth / 2, 82);
-
-  // --- Applicant details ---------------------------------------------------
-  field('Applicant Name:', margin, margin + 92, contentRight, 103, form.employee_name, { valueSize: 9.5 });
-  field('Department:', margin, margin + 70, 300, 119, form.department_code || '');
-  field('Division:', 318, 358, contentRight, 119, form.division_code || '');
-  field('Leave   Date   From:', margin, margin + 108, 300, 139, dateOnly(form.start_date));
-  field('To:', 318, 340, contentRight, 139, dateOnly(form.end_date));
-
-  // --- Leave type checklist -------------------------------------------------
-  text('Leave applied for:', margin, 157, { size: 9, bold: true });
-  let row = 171;
-  const rowStep = 12.2;
-  const selected = formKind(form.leave_type_name);
-  const government=form.regime==='government';
-  for (const original of CHECKBOXES) {
-    const item=government&&original.kind==='sick'?{...original,label:'Medical leave',note:'(With MC or approved non-MC absence)'}:
-      government&&original.kind==='medical'?{...original,label:'Extended medical leave'}:original;
-    if (item.pair) {
-      checkbox(58, row, selected === item.leftKind);
-      text(item.left, 70, row, { size: 8 });
-      checkbox(306, row, selected === item.rightKind);
-      text(item.right, 318, row, { size: 8 });
-    } else if (item.indent) {
-      checkbox(70, row, false);
-      text(item.label, 82, row, { size: 8 });
-      text(item.note, 306, row, { size: 8, italic: true, color: rule });
-    } else {
-      checkbox(46, row, selected === item.kind || (item.kind === 'sick' && isSickKind(selected)));
-      text(item.label, 58, row, { size: 8, bold: true });
-      text(item.note, 306, row, { size: 8, italic: true, color: rule });
-    }
-    row += rowStep;
-  }
-
-  // --- Explanation ----------------------------------------------------------
-  const explanationTop = row + 6;
-  text('Explanation / reason for leave', margin, explanationTop, { size: 9, bold: true });
-  const reason = String(form.reason || '').trim();
-  // Wrapped at the continuation page's font/size (9pt, full content width) since
-  // those are the lines actually drawn there; the single-line preview on this
-  // page is rendered smaller, so it always fits within whatever wrapped here.
-  const reasonLines = wrap(reason || 'No explanation recorded for this earlier application.', font, 9, contentWidth);
-  if (reasonLines.length <= 1) {
-    text(reasonLines[0] || '', margin + 4, explanationTop + 13, { size: 8, color: fill });
-  } else {
-    text(firstPageOnly?'Full explanation is retained in the application record.':'See explanation attached on page 2.', margin + 4, explanationTop + 13, { size: 8, bold: true, color: fill });
-  }
+// Short context the form has no dedicated box for: unlisted leave types,
+// parental entitlements. Printed under the reason so it stays on page one.
+function contextNotes(form, selected) {
+  const notes = [];
   if (!selected || selected === 'sickUnspecified') {
     const credit = form.balances?.find((balance) => balance.leave_type_name === form.leave_type_name)?.before;
     const label = selected === 'sickUnspecified'
       ? 'Sick leave: certificate status not recorded'
       : `Other approved leave type: ${form.leave_type_name}`;
-    text(`${label} - ${Number(form.days).toFixed(2)} days${Number.isFinite(Number(credit)) && credit != null ? `; credit ${Number(credit).toFixed(2)} days` : ''}`,
-      margin + 4, explanationTop + 25, { size: 7.5, maxWidth: contentWidth - 8, italic: true, color: fill });
+    notes.push(`${label} - ${dayCount(form.days)}${credit != null && Number.isFinite(Number(credit)) ? `; credit ${dayCount(credit)}` : ''}`);
   }
+  if (form.parental_note) notes.push(form.parental_note);
+  return notes.join(' ');
+}
 
-  const parentalLines=form.parental_note?wrap(form.parental_note,font,7,contentWidth-8):[];
-  parentalLines.forEach((line,index)=>text(line,margin+4,explanationTop+25+index*8,{size:7,color:fill}));
-  if(form.duration_unit==='hours')text(`Hourly leave: ${Number(form.hours)} hours (${Number(form.days)} days from the leave balance)`, margin + 4, explanationTop + 25, {size:7.5,color:fill});
-  const sigTop = explanationTop + 36 + Math.max(0,parentalLines.length-1)*8;
-  hLine(margin, contentRight, sigTop);
-  text('Applicant signature', 350, sigTop + 11, { size: 7.5 });
-  // A blank "/  /" only made sense on paper, for someone to hand-write a
-  // date next to their signature. This copy is generated from an
-  // already-decided, dated record, so the date the application was actually
-  // submitted is printed instead of leaving it for someone to fill in later.
-  text(dateOnly(form.applied_at), 470, sigTop + 11, { size: 7.5, color: fill });
+function totalRequested(form) {
+  if (form.duration_unit === 'hours') return `${Number(form.hours)} hours (${Number(form.days)} days from the leave balance)`;
+  return dayCount(form.days);
+}
 
-  // --- Department sign-off table --------------------------------------------
-  let tableTop = sigTop + 22;
-  box(margin, tableTop, contentWidth, 13, { fill: bandFill });
-  text('THIS SECTION TO BE COMPLETED BY DEPARTMENT — SECTION HEAD & HEAD OF DEPARTMENT', pageWidth / 2, tableTop + 9, { size: 6.8, bold: true, align: 'center' });
-  tableTop += 13;
+export async function generateLeaveApplicationPdf(form, { firstPageOnly = false } = {}) {
+  const pdf = await PDFDocument.load(TEMPLATE);
+  const page = pdf.getPage(0);
+  const { width: pageWidth, height: pageHeight } = page.getSize();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
 
-  const labelColRight = margin + 225;
-  const groupWidth = (contentRight - labelColRight) / 2;
-  const subColWidth = groupWidth / 4;
-  const group1X = labelColRight;
-  const group2X = labelColRight + groupWidth;
-  const subHeaders = ['HRS', 'DAYS', 'WEEKS', 'MONTHS'];
+  // Everything is placed in "distance from the top" coordinates and converted
+  // to PDF's bottom-up space here, in one place.
+  const toY = (top) => pageHeight - top;
 
-  const headerRowH = 12;
-  const subHeaderRowH = 11;
-  box(margin, tableTop, contentWidth, headerRowH + subHeaderRowH);
-  vLine(labelColRight, tableTop, tableTop + headerRowH + subHeaderRowH);
-  vLine(group2X, tableTop, tableTop + headerRowH + subHeaderRowH);
-  hLine(labelColRight, contentRight, tableTop + headerRowH);
-  text('LEAVE APPLIED FOR', group1X + groupWidth / 2, tableTop + 8.5, { size: 6.8, bold: true, align: 'center' });
-  text(form.balance_column_label||'AVAILABLE CREDIT', group2X + groupWidth / 2, tableTop + 8.5, { size: 6.8, bold: true, align: 'center' });
-  for (let i = 0; i < 4; i++) {
-    vLine(group1X + i * subColWidth, tableTop + headerRowH, tableTop + headerRowH + subHeaderRowH);
-    vLine(group2X + i * subColWidth, tableTop + headerRowH, tableTop + headerRowH + subHeaderRowH);
-    text(subHeaders[i], group1X + i * subColWidth + subColWidth / 2, tableTop + headerRowH + 8, { size: 6, bold: true, align: 'center' });
-    text(subHeaders[i], group2X + i * subColWidth + subColWidth / 2, tableTop + headerRowH + 8, { size: 6, bold: true, align: 'center' });
-  }
-  vLine(group1X + 4 * subColWidth, tableTop, tableTop + headerRowH + subHeaderRowH);
-  vLine(group2X + 4 * subColWidth, tableTop, tableTop + headerRowH + subHeaderRowH);
-
-  let rowTop = tableTop + headerRowH + subHeaderRowH;
-  const dataRowH = 12.6;
-  const daysX1 = group1X + subColWidth * 1.5;
-  const daysX2 = group2X + subColWidth * 1.5;
-  for (const original of LEAVE_ROWS) {
-    const def=government&&original.kind==='sickWithMc'?{...original,label:'MEDICAL LEAVE (WITH M/C)'}:
-      government&&original.kind==='sickWithoutMc'?{...original,label:'MEDICAL LEAVE (WITHOUT M/C)'}:
-      government&&original.kind==='medical'?{...original,label:'EXTENDED MEDICAL LEAVE'}:original;
-    box(margin, rowTop, contentWidth, dataRowH);
-    vLine(labelColRight, rowTop, rowTop + dataRowH);
-    vLine(group2X, rowTop, rowTop + dataRowH);
-    for (let i = 1; i < 4; i++) {
-      vLine(group1X + i * subColWidth, rowTop, rowTop + dataRowH);
-      vLine(group2X + i * subColWidth, rowTop, rowTop + dataRowH);
+  const text = (str, x, top, opts = {}) => {
+    const face = opts.bold ? bold : font;
+    let size = opts.size ?? 9;
+    let content = printable(str).replace(/\s+/g, ' ').trim();
+    if (opts.maxWidth) {
+      // Shrink a little before truncating, so a long name stays whole.
+      const minSize = opts.minSize ?? size;
+      while (size > minSize && face.widthOfTextAtSize(content, size) > opts.maxWidth) size -= 0.25;
+      while (content && face.widthOfTextAtSize(content, size) > opts.maxWidth) content = content.slice(0, -1);
     }
-    text(def.label, margin + 4, rowTop + 9, { size: 6.8 });
-    if (def.kind === selected) {
-      text(Number(form.days).toFixed(2), daysX1, rowTop + 9, { size: 7.5, bold: true, align: 'center', color: fill });
-    }
-    if (form.approval_snapshot_available && Array.isArray(form.balances)) {
-      const balance = form.balances.find((b) => formKind(b.leave_type_name) === def.kind);
-      if (balance && Number.isFinite(Number(balance.before))) {
-        text(Number(balance.before).toFixed(2), daysX2, rowTop + 9, { size: 7.5, align: 'center', color: fill });
-      }
-    }
-    rowTop += dataRowH;
+    const width = face.widthOfTextAtSize(content, size);
+    const drawX = opts.align === 'center' ? x - width / 2 : x;
+    page.drawText(content, { x: drawX, y: toY(top), size, font: face, color: opts.color ?? fill });
+  };
+
+  const field = (key, value, opts = {}) => {
+    const f = FIELDS[key];
+    if (value) text(value, f.x, f.line - 3, { size: 9, minSize: 6.5, maxWidth: f.right - f.x, ...opts });
+  };
+
+  // An X drawn inside one of the form's printed boxes (given by its inner
+  // edges, from the top). The APPROVED box sits on a dark band, so it gets a
+  // white fill first to keep the blue mark readable.
+  const tick = ({ left, right, top, bottom }, { background, thickness = 0.9 } = {}) => {
+    if (background) page.drawRectangle({ x: left, y: toY(bottom), width: right - left, height: bottom - top, color: background });
+    const inset = thickness * 0.8;
+    const [x1, x2, y1, y2] = [left + inset, right - inset, toY(bottom) + inset, toY(top) - inset];
+    page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness, color: fill });
+    page.drawLine({ start: { x: x1, y: y2 }, end: { x: x2, y: y1 }, thickness, color: fill });
+  };
+  // The small Section 3 boxes are text glyphs: TYPE_BOXES holds each glyph's
+  // left edge and baseline, and the visible square sits just inside that.
+  const typeTick = ({ x, baseline }) => tick({ left: x + 0.9, right: x + 5, top: baseline - 4.1, bottom: baseline - 0.2 });
+
+  // --- Section 1: applicant ------------------------------------------------
+  field('name', form.employee_name);
+  field('email', form.email);
+  field('department', [form.department_code, form.division_code].filter(Boolean).join(' / '));
+  field('position', form.position_title);
+
+  // --- Section 2: leave period ---------------------------------------------
+  field('dateFrom', dateOnly(form.start_date));
+  field('dateTo', dateOnly(form.end_date));
+  field('total', totalRequested(form));
+
+  // --- Section 3: type of leave --------------------------------------------
+  const selected = formKind(form.leave_type_name);
+  if (TYPE_BOXES[selected]) typeTick(TYPE_BOXES[selected]);
+  if (isSickKind(selected)) typeTick(TYPE_BOXES.sick);
+
+  const reasonWidth = REASON.right - REASON.x;
+  const reason = String(form.reason || '').trim();
+  // Wrapped at the continuation page's font/size (9pt, full width) since
+  // those are the lines actually drawn there when it overflows.
+  const reasonLines = wrap(reason || 'No explanation recorded for this earlier application.', font, 9, reasonWidth);
+  const notes = contextNotes(form, selected);
+  const noteLines = notes ? wrap(notes, font, 7.5, reasonWidth) : [];
+  const overflow = reasonLines.length + noteLines.length > REASON.baselines.length;
+  if (!overflow) {
+    [...reasonLines.map((line) => [line, 9]), ...noteLines.map((line) => [line, 7.5])]
+      .forEach(([line, size], index) => text(line, REASON.x, REASON.baselines[index], { size }));
+  } else {
+    text(firstPageOnly ? 'Full explanation is retained in the application record.' : 'See explanation attached on page 2.',
+      REASON.x, REASON.baselines[0], { size: 9, bold: true });
+    if (notes) text(notes, REASON.x, REASON.baselines[1], { size: 7.5, maxWidth: reasonWidth });
   }
-  if (!form.approval_snapshot_available) {
-    text('Approval-time balance unavailable; HR to verify.', margin, rowTop + 10, { size: 7, italic: true, color: fill });
-    rowTop += 12;
+
+  // A blank applicant signature only made sense on paper. This copy is
+  // generated from an already-decided, dated record, so the submission date
+  // is printed in its place.
+  if (form.applied_at) field('applicantSignature', `Submitted electronically ${dateOnly(form.applied_at)}`, { size: 7.5 });
+
+  // --- Section 4: HR verification ------------------------------------------
+  const cellCentre = ([left, right]) => (left + right) / 2;
+  const cellBaseline = (HR_CELLS.top + HR_CELLS.bottom) / 2 + 3;
+  if (form.approval_snapshot_available && Array.isArray(form.balances)) {
+    const balance = form.balances.find((b) => b.leave_type_name === form.leave_type_name)
+      || form.balances.find((b) => selected && formKind(b.leave_type_name) === selected);
+    if (balance && form.balance_column_label) {
+      // Paternity reports a single service-year figure, not a before/after
+      // pair; show it with its own caption rather than as a "before" value.
+      text(dayCount(balance.after), cellCentre(HR_CELLS.after), cellBaseline - 3, { size: 8, align: 'center' });
+      text(form.balance_column_label, cellCentre(HR_CELLS.after), cellBaseline + 5, { size: 5.5, align: 'center', color: muted });
+    } else if (balance) {
+      if (Number.isFinite(Number(balance.before))) text(dayCount(balance.before), cellCentre(HR_CELLS.before), cellBaseline, { size: 8.5, align: 'center' });
+      if (balance.after != null && Number.isFinite(Number(balance.after))) text(dayCount(balance.after), cellCentre(HR_CELLS.after), cellBaseline, { size: 8.5, align: 'center' });
+    }
+  } else {
+    text('Approval-time balance unavailable; HR to verify.', 320, cellBaseline, { size: 7.5 });
   }
 
-  // --- Recommendation and department sign-off --------------------------------
-  // This copy only ever exists for an approved application, so "recommended"
-  // is always yes — there's no separate recommendation ever recorded.
-  let y = rowTop + 14;
-  text('Leave recommended', margin, y, { size: 8 });
-  checkbox(140, y, true);
-  text('Yes', 152, y, { size: 8 });
-  checkbox(178, y, false);
-  text('No', 190, y, { size: 8 });
+  // --- Section 7: final approval -------------------------------------------
+  // This copy only ever exists for an approved application.
+  tick(APPROVED_BOX, { background: rgb(1, 1, 1), thickness: 1.4 });
+  field('approverSignature', `Approved electronically by ${form.approved_by_name || 'Recorded approver'}`, { size: 8.5 });
+  field('approvedDate', dateOnly(form.approved_at));
 
-  // The signature line sits further below the row above it than before, so
-  // there's an actual blank space for the Section Head to sign into rather
-  // than a line crowding straight into the text above it.
-  y += 26;
-  hLine(360, contentRight, y);
-  text('Section Head', pageWidth - (contentRight - 360) / 2, y + 10, { size: 7, align: 'center' });
+  // The supplied form's footer still reads "Nauru"; restate it with the
+  // Naoero name used everywhere else in the portal.
+  page.drawRectangle({ x: 27, y: toY(814.5), width: 521, height: 14, color: footerBand });
+  text('Naoero Public Service \xB7 Human Resource Division \xB7 Leave Application Form \xB7 2026', pageWidth / 2, 809.9,
+    { size: 6.95, align: 'center', color: footerInk });
 
-  y += 24;
-  // Keep the recorded electronic approval beside the Section Head sign-off.
-  text(`Treasury approval: ${form.approved_by_name || 'Recorded approver'}  |  ${dateOnly(form.approved_at)}`, contentRight, y, { size: 7.5, italic: true, color: fill, align: 'right', maxWidth: contentWidth });
-
-  y += 20;
-  field('State reason if NO:', margin, margin + 100, contentRight, y, '');
-  y += 20;
-  hLine(360, contentRight, y);
-  text('Head of Department', pageWidth - (contentRight - 360) / 2, y + 10, { size: 7, align: 'center' });
-
-  // --- HR verification --------------------------------------------------------
-  y += 20;
-  box(margin, y, contentWidth, 13, { fill: bandFill });
-  text('THIS SECTION TO BE COMPLETED BY HUMAN RESOURCE & LABOUR DEPARTMENT', pageWidth / 2, y + 9, { size: 6.8, bold: true, align: 'center' });
-  y += 13;
-  const hrCol2 = margin + 150;
-  const hrCol3 = margin + 320;
-  box(margin, y, contentWidth, 13);
-  vLine(hrCol2, y, y + 13);
-  vLine(hrCol3, y, y + 13);
-  text('LEAVE APPLIED', margin + 4, y + 9, { size: 6.8, bold: true, italic: true });
-  text('AVAILABLE CREDITS', hrCol2 + 4, y + 9, { size: 6.8, bold: true, italic: true });
-  text('COMMENTS/REASONS', hrCol3 + 4, y + 9, { size: 6.8, bold: true, italic: true });
-  y += 13;
-  box(margin, y, contentWidth, 13);
-  vLine(hrCol2, y, y + 13);
-  vLine(hrCol3, y, y + 13);
-  if (form.leave_type_name) text(form.leave_type_name, margin + 4, y + 9, { size: 7, color: fill });
-  y += 27;
-  field('Verified by:', margin, margin + 70, 260, y, '');
-
-  // Centred as one block rather than pinned to the left margin, so it reads
-  // as the form's final decision line rather than an afterthought — and
-  // lines up visually with the centred Chief Secretary signature below it.
-  y += 20;
-  const approvedLabel = 'APPROVED';
-  const notApprovedLabel = 'NOT APPROVED';
-  const boxSize = 7.2;
-  const gap = 9;
-  const approvedWidth = bold.widthOfTextAtSize(approvedLabel, 9.5);
-  const slashWidth = bold.widthOfTextAtSize('/', 9.5);
-  const notApprovedWidth = bold.widthOfTextAtSize(notApprovedLabel, 9.5);
-  const decisionWidth = boxSize + gap + approvedWidth + gap * 1.5 + slashWidth + gap * 1.5 + notApprovedWidth;
-  let decisionX = pageWidth / 2 - decisionWidth / 2;
-  checkbox(decisionX, y, true); // APPROVED; NOT APPROVED stays unmarked.
-  decisionX += boxSize + gap;
-  text(approvedLabel, decisionX, y, { size: 9.5, bold: true });
-  decisionX += approvedWidth + gap * 1.5;
-  text('/', decisionX, y, { size: 9.5, bold: true });
-  decisionX += slashWidth + gap * 1.5;
-  text(notApprovedLabel, decisionX, y, { size: 9.5, bold: true });
-
-  y += 24;
-  hLine(pageWidth / 2 - 70, pageWidth / 2 + 70, y);
-  text('Chief Secretary', pageWidth / 2, y + 11, { size: 8, align: 'center' });
-
-  text(`Application ref: ${form.id}`, margin, pageHeight - margin + 10, { size: 6.5, color: rule });
+  text(`Application ref: ${form.id}`, 36, 794, { size: 6, color: muted });
 
   pdf.setTitle(`Approved leave application - ${printable(form.employee_name)}`);
-  pdf.setSubject('Treasury-approved Naoero Public Service leave application');
+  pdf.setSubject('Approved Naoero Public Service leave application');
+  pdf.setProducer('Naoero Public Service leave portal');
 
-  if (reasonLines.length > 1 && !firstPageOnly) {
+  if (overflow && !firstPageOnly) {
     let extra;
     let extraY;
     const nextPage = () => {
       extra = pdf.addPage([pageWidth, pageHeight]);
-      extra.drawText('LEAVE APPLICATION - EXPLANATION', { x: margin, y: pageHeight - 60, font: bold, size: 13, color: ink });
-      extra.drawText(`Application ref: ${printable(form.id)}`, { x: margin, y: pageHeight - 82, font, size: 9, color: ink });
+      extra.drawText('LEAVE APPLICATION - EXPLANATION', { x: 42, y: pageHeight - 60, font: bold, size: 13, color: ink });
+      extra.drawText(`Application ref: ${printable(form.id)}`, { x: 42, y: pageHeight - 82, font, size: 9, color: ink });
       extraY = pageHeight - 110;
     };
     nextPage();
-    for (const line of reasonLines) {
+    const lines = notes ? [...reasonLines, '', ...wrap(notes, font, 9, reasonWidth)] : reasonLines;
+    for (const line of lines) {
       if (extraY < 55) nextPage();
-      extra.drawText(line, { x: margin, y: extraY, font, size: 9, color: fill });
+      extra.drawText(line, { x: 42, y: extraY, font, size: 9, color: fill });
       extraY -= 14;
     }
   }

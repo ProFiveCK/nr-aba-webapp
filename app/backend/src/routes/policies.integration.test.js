@@ -357,4 +357,61 @@ describe('policies and procedures', { skip: skipWithoutDatabase }, () => {
     const tagged = async (doc) => (await as(editor)('GET', `/${doc.id}`)).json.categories.map((t) => t.name);
     assert.deepEqual([await tagged(one), await tagged(two), await tagged(three)], [['Payments'], ['Payments'], []]);
   });
+
+  test('an earlier version can be restored as the next draft, once, and never over the version in force', async () => {
+    const created = await register();
+    await writeAndPublish(created.id, '<h2>First</h2><p>The original wording.</p>', 'Start.');
+    await writeAndPublish(created.id, '<h2>Second</h2><p>The replacement wording.</p>', 'Change.');
+    const page = (await as(editor)('GET', `/${created.id}`)).json;
+    assert.equal(page.published.version_no, 2);
+    const first = page.versions.at(-1);
+    assert.equal(first.version_no, 1);
+
+    const restored = await as(editor)('POST', `/${created.id}/versions/${first.id}/restore-draft`);
+    assert.equal(restored.status, 200);
+    assert.equal(restored.json.draft.version_no, 3);
+    assert.equal(restored.json.draft.body_html, '<h2>First</h2><p>The original wording.</p>');
+
+    // The version in force is untouched; readers see it, not the draft.
+    const readerPage = (await as(reader)('GET', `/${created.id}`)).json;
+    assert.equal(readerPage.published.version_no, 2);assert.equal(readerPage.draft, null);
+
+    // One draft at a time; an unknown version is a 404.
+    assert.equal((await as(editor)('POST', `/${created.id}/versions/${first.id}/restore-draft`)).status, 409);
+    assert.equal((await as(editor)('POST', `/${created.id}/versions/11111111-2222-4333-8444-555555555555/restore-draft`)).status, 404);
+    assert.equal((await as(reader)('POST', `/${created.id}/versions/${first.id}/restore-draft`)).status, 403);
+    const audit = await lastAudit(pool, 'policy.draft_restored', created.id);
+    assert.equal(audit.after.restored_from, 1);
+  });
+
+  test('the reference check reports internal links and files that no longer resolve', async () => {
+    const target = await register({ code: 'REF-TARGET', title: 'Withdrawn later' });
+    await writeAndPublish(target.id, '<h2>Target</h2><p>In force.</p>');
+    const source = await register({ code: 'REF-SOURCE', title: 'The referrer' });
+    const file = await upload(editor, `/${source.id}/files`, 'note.pdf', Buffer.from('%PDF-reference'));
+    await writeAndPublish(source.id,
+      `<p>See <a href="/policies/${target.id}">the target</a> and <a href="/policies/${source.id}#details">this same policy</a>.</p>`
+      + `<img src="/api/policies/files/${file.json.id}" alt="note"><p><a href="/api/policies/files/${file.json.id}">note.pdf</a></p>`, 'References.');
+
+    // Everything resolves: the self link and the stored file are fine.
+    const clean = await as(editor)('GET', '/reference-check');
+    assert.equal(clean.status, 200);
+    assert.equal(clean.json.documents, 2);
+    assert.equal(clean.json.issues.length, 0);
+    assert.equal((await as(reader)('GET', '/reference-check')).status, 403);
+
+    // A withdrawn target stops resolving; a file that leaves the library stops resolving.
+    await as(publisher)('POST', `/${target.id}/withdraw`, { reason: 'Superseded elsewhere.' });
+    const { rows: [pruned] } = await pool.query(`DELETE FROM policy_files WHERE id = $1 RETURNING id`, [file.json.id]);
+    await pool.query(`UPDATE policy_versions SET body_html = replace(body_html, $2, $3) WHERE document_id = $1`,
+      [source.id, pruned.id, '11111111-2222-4333-8444-555555555555']);
+    const issues = (await as(editor)('GET', '/reference-check')).json.issues;
+    const forSource = issues.filter((issue) => issue.code === 'REF-SOURCE');
+    assert.equal(forSource.length, 2);
+    assert.deepEqual(forSource.map((issue) => [issue.location, issue.target_kind]),
+      [['published', 'document'], ['published', 'file']]);
+    assert.match(forSource[0].issue, /withdrawn/);
+    assert.equal(forSource[0].target_label, 'REF-TARGET Withdrawn later');
+    assert.equal(forSource[1].target, '11111111-2222-4333-8444-555555555555');
+  });
 });

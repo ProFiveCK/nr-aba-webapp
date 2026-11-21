@@ -78,3 +78,20 @@ export function categoryLabel(categories: PolicyCategory[], id: string): string 
     const manual = category.parent_id ? categories.find((c) => c.id === category.parent_id) : null;
     return categoryPath({ name: category.name, parent_name: manual?.name });
 }
+
+const HTML_ENTITIES: Record<string, string> = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&nbsp;': ' ' };
+
+/**
+ * The h2/h3 headings of a policy body, in reading order, each with the stable
+ * section address the reader gives it — the same list the contents panel
+ * builds, for anywhere else that needs a document's sections (link picker).
+ */
+export function sectionsFromHtml(html: string): { id: string; text: string }[] {
+    const texts = [...String(html ?? '').matchAll(/<(?:h2|h3)(?:\s[^>]*)?>([\s\S]*?)<\/h[23]>/gi)]
+        .map(([, raw]) => raw)
+        .map((raw) => raw.replace(/<[^>]*>/g, ''))
+        .map((text) => text.replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (entity) => HTML_ENTITIES[entity] ?? entity).trim())
+        .filter(Boolean);
+    const ids = headingAnchors(texts);
+    return texts.map((text, i) => ({ id: ids[i], text }));
+}

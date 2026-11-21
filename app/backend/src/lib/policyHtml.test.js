@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import { cleanPolicyHtml, policyFileUrl, policyText, referencedFileIds } from './policyHtml.js';
+import { cleanPolicyHtml, policyFileUrl, policyText, referencedFileIds, referencedPolicyIds } from './policyHtml.js';
 
 const FILE = '0b9a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d';
 
@@ -51,5 +51,16 @@ describe('what a policy page may contain', () => {
     const html = cleanPolicyHtml(`<img src="${policyFileUrl(FILE)}"><a href="${policyFileUrl(FILE)}">form</a>`
       + `<a href="${policyFileUrl(other)}">other</a><a href="/api/policies/files/not-an-id">bad</a>`);
     assert.deepEqual(referencedFileIds(html), [FILE, other]);
+  });
+
+  test('the documents a policy links to, each once, anchors included', () => {
+    const clean = cleanPolicyHtml(
+      '<a href="/policies/' + FILE + '">a policy</a>'
+      + '<a href="/policies/' + FILE + '#scope">same again</a>'
+      + '<a href="https://example.com/policies/' + FILE + '">not the portal</a>'
+      + '<a href="/api/policies/files/' + FILE + '">a file</a>',
+    );
+    assert.deepEqual(referencedPolicyIds(clean), [FILE]);
+    assert.deepEqual(referencedPolicyIds(''), []);
   });
 });

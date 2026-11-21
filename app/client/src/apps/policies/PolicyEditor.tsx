@@ -14,6 +14,7 @@ import { formatDateTime } from '../../lib/date';
 import { useConfirm } from '../../contexts/useConfirm';
 import { useToast } from '../../contexts/useToast';
 import { Button, Card, LoadingState } from '../../components/Ui';
+import { LinkPicker } from './LinkPicker';
 import type { PolicyDocument, PolicyFile } from './types';
 
 const PICTURES = '.png,.jpg,.jpeg,.gif,.webp';
@@ -174,6 +175,7 @@ function EditorWorkspace({ policy }: { policy: PolicyDocument }) {
     const navigate = useNavigate();
     const { confirm, prompt } = useConfirm();
     const { addToast } = useToast();
+    const [linkPicker, setLinkPicker] = useState(false);
     const [revision, setRevision] = useState<number | null>(policy.draft?.revision ?? null);
     const [versionNo, setVersionNo] = useState(policy.draft?.version_no ?? (policy.versions[0]?.version_no ?? 0) + 1);
     const [savedAt, setSavedAt] = useState(policy.draft ? { at: policy.draft.updated_at, by: policy.draft.updated_by_name } : null);
@@ -228,15 +230,13 @@ function EditorWorkspace({ policy }: { policy: PolicyDocument }) {
         navigate(`/policies/${policy.id}${revision !== null ? '?view=draft' : ''}`);
     };
 
-    const addLink = async () => {
-        const entered = await prompt({ title: 'Add a link', message: 'A web address, an email address, or a portal address starting with /.', placeholder: 'https://', confirmLabel: 'Add link' });
-        const text = entered?.trim();
-        if (!text) return;
-        const href = /^[^\s@/]+@[^\s@/]+\.[^\s@/]+$/.test(text) ? `mailto:${text}`
-            : /^(https?:|mailto:|\/|#)/i.test(text) ? text : `https://${text}`;
+    // The picker hands over an address and, when it chose the words, the words
+    // to show; text already selected keeps itself and just gains the link.
+    const insertLink = (href: string, text: string | null) => {
         const chain = editor.chain().focus();
-        if (editor.state.selection.empty) chain.insertContent({ type: 'text', text, marks: [{ type: 'link', attrs: { href } }] }).run();
-        else chain.extendMarkRange('link').setLink({ href }).run();
+        if (!editor.state.selection.empty) { chain.extendMarkRange('link').setLink({ href }).run(); return; }
+        if (text) chain.insertContent({ type: 'text', text, marks: [{ type: 'link', attrs: { href } }] }).run();
+        else chain.setLink({ href }).run();
     };
 
     const uploadTo = async (path: string, file: File) => {
@@ -262,7 +262,9 @@ function EditorWorkspace({ policy }: { policy: PolicyDocument }) {
             } else {
                 const stored = await uploadTo(`/policies/${policy.id}/files`, file) as PolicyFile;
                 if (stored.is_picture && kind === 'picture') {
-                    editor.chain().focus().setImage({ src: stored.url, alt: stored.file_name.replace(/\.[^.]+$/, '') }).run();
+                    const fallback = stored.file_name.replace(/\.[^.]+$/, '');
+                    const described = await prompt({ title: 'Describe the picture', message: 'The words a screen reader reads for the picture, and its name when the picture cannot load.', placeholder: fallback, confirmLabel: 'Insert picture' });
+                    editor.chain().focus().setImage({ src: stored.url, alt: (described ?? '').trim() || fallback }).run();
                 } else {
                     editor.chain().focus().insertContent([
                         { type: 'text', text: stored.file_name, marks: [{ type: 'link', attrs: { href: stored.url } }] },
@@ -295,7 +297,7 @@ function EditorWorkspace({ policy }: { policy: PolicyDocument }) {
             </div>
 
             <Card padded={false} className="overflow-hidden">
-                <Toolbar editor={editor} busy={!!busy} onLink={() => void addLink()}
+                <Toolbar editor={editor} busy={!!busy} onLink={() => { setError(''); setLinkPicker(true); }}
                     onPicture={() => pictureInput.current?.click()}
                     onAttachment={() => attachmentInput.current?.click()}
                     onWord={() => wordInput.current?.click()} />
@@ -304,6 +306,7 @@ function EditorWorkspace({ policy }: { policy: PolicyDocument }) {
                     <EditorContent editor={editor} />
                 </div>
             </Card>
+            {linkPicker && <LinkPicker onInsert={insertLink} onClose={() => setLinkPicker(false)} />}
             <input ref={pictureInput} type="file" accept={PICTURES} hidden onChange={onPicked('picture')} />
             <input ref={attachmentInput} type="file" accept={ATTACHMENTS} hidden onChange={onPicked('attachment')} />
             <input ref={wordInput} type="file" accept=".docx" hidden onChange={onPicked('word')} />

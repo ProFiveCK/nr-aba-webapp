@@ -19,8 +19,8 @@
  */
 import { pool } from '../db.js';
 import { withTransaction } from '../lib/transaction.js';
-import { badRequest, notFound, ServiceError } from '../lib/serviceError.js';
-import { cleanPolicyHtml, policyFileUrl, policyText, referencedFileIds } from '../lib/policyHtml.js';
+import { badRequest, forbidden, notFound, ServiceError } from '../lib/serviceError.js';
+import { cleanPolicyHtml, policyFileUrl, policyText, referencedFileIds, referencedPolicyIds } from '../lib/policyHtml.js';
 import { PERMISSIONS, POLICY_TYPES } from '../config.js';
 import { sha256 } from '../middleware/upload.js';
 import { recordAudit } from './auditService.js';
@@ -207,7 +207,7 @@ async function visibleDocument(user, id) {
 
 async function versionWithFiles(db, where, params) {
   const { rows } = await db.query(
-    `SELECT v.id, v.version_no, v.status, v.body_html, v.change_summary, v.revision, v.file_ids,
+    `SELECT v.id, v.version_no, v.status, v.body_html, v.body_text, v.change_summary, v.revision, v.file_ids,
             v.published_at, v.superseded_at, v.updated_at,
             pb.display_name AS published_by_name, ub.display_name AS updated_by_name
        FROM policy_versions v
@@ -695,4 +695,114 @@ export async function deleteCategory(actor, id) {
     await client.query('DELETE FROM policy_categories WHERE id = $1', [id]);
     await recordAudit({ actor, action: 'policy.category.deleted', entityType: 'policy_category', entityId: id, before: { name: category.name, parent_id: category.parent_id }, client });
   });
+}
+
+/**
+ * Starts a draft from an earlier version's exact text — an explicit un-redo.
+ * Refused while another draft is in progress, since a document holds one; the
+ * restored text keeps the wording, and any pictures or files the source
+ * version named that are no longer stored are left out of the carry-over.
+ */
+export async function restoreVersionAsDraft(actor, id, versionId) {
+  await withTransaction(pool, async (client) => {
+    await lockChangeable(client, id);
+    if (!UUID.test(String(versionId))) throw notFound('That version is not in the library.');
+    const { rows: [version] } = await client.query(
+      `SELECT id, version_no, body_html, body_text, file_ids
+         FROM policy_versions
+        WHERE document_id = $1 AND id = $2 AND status <> 'draft'`, [id, versionId]);
+    if (!version) throw notFound('That version is not in the library.');
+    if (await lockDraft(client, id)) {
+      throw conflict('There is already a draft in progress. Read it, then discard it before restoring an earlier version.');
+    }
+    const { rows: [{ next }] } = await client.query(
+      'SELECT COALESCE(MAX(version_no), 0) + 1 AS next FROM policy_versions WHERE document_id = $1', [id]);
+    const { rows: kept } = await client.query(
+      'SELECT id FROM policy_files WHERE document_id = $1 AND id = ANY($2::uuid[])', [id, version.file_ids]);
+    const fileIds = kept.map((row) => row.id);
+    await client.query(
+      `INSERT INTO policy_versions (document_id, version_no, status, body_html, body_text, file_ids, change_summary, created_by, updated_by)
+       VALUES ($1, $2, 'draft', $3, $4, $5, $6, $7, $7)`,
+      [id, next, version.body_html, version.body_text, fileIds,
+       `Restored from version ${version.version_no}.`, actor.id]);
+    await recordAudit({ actor, action: 'policy.draft_restored', entityType: 'policy_document', entityId: id,
+      after: { restored_from: version.version_no, draft_version_no: next,
+               carried_files: fileIds.length, dropped_files: version.file_ids.length - fileIds.length }, client });
+  });
+  return getPolicy(actor, id);
+}
+
+/** Whether a policy still exists where readers can reach it, for a link check. */
+async function targetState(client, id) {
+  const { rows: [state] } = await client.query(
+    `SELECT d.code, d.title, d.retired_at IS NOT NULL AS retired,
+            EXISTS (SELECT 1 FROM policy_versions v WHERE v.document_id = d.id AND v.status = 'published') AS has_published
+       FROM policy_documents d
+      WHERE d.id = $1`, [id]);
+  return state || null;
+}
+
+/**
+ * Internal references that no longer resolve: a link to a withdrawn or
+ * never-published document, or to a file the library no longer stores. The
+ * live texts of every document in the library are checked — the version in
+ * force and, where one exists, the draft.
+ */
+export async function checkReferences(user) {
+  if (!policyRights(user).canManage) throw forbidden('The reference check is for people who write or publish policies.');
+  const { rows: documents } = await pool.query(
+    `SELECT d.id, d.code, d.title,
+            p.body_html AS published_html,
+            dr.body_html AS draft_html
+       FROM policy_documents d
+       LEFT JOIN policy_versions p ON p.document_id = d.id AND p.status = 'published'
+       LEFT JOIN policy_versions dr ON dr.document_id = d.id AND dr.status = 'draft'
+      WHERE d.retired_at IS NULL
+      ORDER BY lower(d.code)`);
+
+  const spots = documents.flatMap((d) => [
+    ...(d.published_html ? [{ id: d.id, code: d.code, title: d.title, location: 'published', html: d.published_html }] : []),
+    ...(d.draft_html ? [{ id: d.id, code: d.code, title: d.title, location: 'draft', html: d.draft_html }] : []),
+  ]);
+  const policyTargets = new Set(spots.flatMap((spot) => referencedPolicyIds(spot.html).filter((pid) => pid !== spot.id)));
+  const fileTargets = new Set(spots.flatMap((spot) => referencedFileIds(spot.html)));
+
+  const policyStates = new Map();
+  if (policyTargets.size) {
+    for (const row of (await pool.query(
+      `SELECT d.id, d.code, d.title, d.retired_at IS NOT NULL AS retired,
+              EXISTS (SELECT 1 FROM policy_versions v WHERE v.document_id = d.id AND v.status = 'published') AS has_published
+         FROM policy_documents d WHERE d.id = ANY($1::uuid[])`, [[...policyTargets]])).rows) {
+      policyStates.set(row.id, row);
+    }
+  }
+  const storedFiles = new Set();
+  if (fileTargets.size) {
+    for (const row of (await pool.query(
+      'SELECT id FROM policy_files WHERE id = ANY($1::uuid[])', [[...fileTargets]])).rows) {
+      storedFiles.add(row.id);
+    }
+  }
+
+  const issues = [];
+  for (const spot of spots) {
+    for (const target of referencedPolicyIds(spot.html)) {
+      if (target === spot.id) continue; // the page linking itself, including its own section anchors
+      const state = policyStates.get(target);
+      if (!state) {
+        issues.push({ ...spot, target_kind: 'document', target, target_label: null, issue: 'The linked document does not exist.' });
+      } else if (state.retired) {
+        issues.push({ ...spot, target_kind: 'document', target, target_label: `${state.code} ${state.title}`, issue: 'The linked document has been withdrawn.' });
+      } else if (!state.has_published) {
+        issues.push({ ...spot, target_kind: 'document', target, target_label: `${state.code} ${state.title}`, issue: 'The linked document has no version in force yet.' });
+      }
+    }
+    for (const file of referencedFileIds(spot.html)) {
+      if (!storedFiles.has(file)) {
+        issues.push({ ...spot, target_kind: 'file', target: file, target_label: null,
+          issue: 'A picture or file shown in the text is no longer stored.' });
+      }
+    }
+  }
+  return { issues, documents: documents.length };
 }

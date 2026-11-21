@@ -23,6 +23,8 @@ import {
   publishDraft,
   readPolicyFile,
   restorePolicy,
+  restoreVersionAsDraft,
+  checkReferences,
   retirePolicy,
   saveDraft,
   updateCategory,
@@ -71,6 +73,11 @@ router.delete('/categories/:categoryId', canPublish, async (req, res) => {
   res.status(204).end();
 });
 
+// Registered before '/:id' so "reference-check" is never read as a document id.
+router.get('/reference-check', requirePermission(PERMISSIONS.POLICY_EDIT, PERMISSIONS.POLICY_PUBLISH), async (req, res) => {
+  res.json(await checkReferences(req.user));
+});
+
 // Registered before '/:id' so "files" is never read as a document id.
 router.get('/files/:fileId', signedIn, async (req, res) => {
   const file = await readPolicyFile(req.user, req.params.fileId);
@@ -104,6 +111,15 @@ router.delete('/:id', canEdit, async (req, res) => {
 router.get('/:id/versions/:versionId', signedIn, async (req, res) => {
   res.json(await getPolicyVersion(req.user, req.params.id, req.params.versionId));
 });
+
+// Restores an earlier version's exact wording as the next draft.
+router.post(
+  '/:id/versions/:versionId/restore-draft',
+  canEdit,
+  async (req, res) => {
+    res.json(await restoreVersionAsDraft(actor(req), req.params.id, req.params.versionId));
+  },
+);
 
 router.put('/:id/draft', canEdit, async (req, res) => {
   res.json(await saveDraft(actor(req), req.params.id, req.body ?? {}));

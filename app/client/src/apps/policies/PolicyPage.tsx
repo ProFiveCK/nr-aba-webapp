@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Download, Pencil, Printer } from 'lucide-react';
+import { ArrowLeft, Download, GitCompare, Pencil, Printer } from 'lucide-react';
 import { apiClient } from '../../lib/api';
 import { formatDate, formatDateTime, todayIsoDate } from '../../lib/date';
 import { useConfirm } from '../../contexts/useConfirm';
 import { useToast } from '../../contexts/useToast';
 import { Button, Card, LoadingState } from '../../components/Ui';
 import { PolicyBody, type PolicySection } from './PolicyBody';
+import { PolicyDiffModal } from './PolicyDiffModal';
 import { PolicyDetailsModal } from './PolicyDetailsModal';
 import { PublishModal } from './PublishModal';
 import { fileSize, typeLabel } from './policyContent';
@@ -42,6 +43,7 @@ export function PolicyPage({ meta, onMetaChanged }: { meta: PolicyMeta; onMetaCh
     const [sections, setSections] = useState<PolicySection[]>([]);
     const [editingDetails, setEditingDetails] = useState(false);
     const [publishing, setPublishing] = useState(false);
+    const [comparing, setComparing] = useState<{ from: { id: string; version_no: number }; to: { id: string; version_no: number } } | null>(null);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -91,6 +93,10 @@ export function PolicyPage({ meta, onMetaChanged }: { meta: PolicyMeta; onMetaCh
     const restore = async () => {
         if (!await confirm({ title: 'Restore this document?', message: 'Readers will find it in the library again, at the version that was in force.', confirmLabel: 'Restore' })) return;
         try { replaceWith(await apiClient.post<PolicyDocument>(`/policies/${id}/restore`)); addToast('Document restored.', 'success'); } catch (err) { fail(err); }
+    };
+    const restoreVersion = async (version: { id: string; version_no: number }) => {
+        if (!await confirm({ title: `Restore version ${version.version_no} as a draft?`, message: 'Its exact wording becomes the next draft. The version in force is not changed until the draft is published.', confirmLabel: 'Restore as draft' })) return;
+        try { replaceWith(await apiClient.post(`/policies/${id}/versions/${version.id}/restore-draft`)); addToast(`Version ${version.version_no} restored as the draft.`, 'success'); } catch (err) { fail(err); }
     };
     const remove = async () => {
         if (!await confirm({ title: 'Delete this document?', message: 'It has never been published, so nothing is kept. This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' })) return;
@@ -188,6 +194,7 @@ export function PolicyPage({ meta, onMetaChanged }: { meta: PolicyMeta; onMetaCh
                                 {meta.can_publish && !retired && draft && !showDraft && !older && (
                                     <p className="text-xs text-gray-500">To publish, read the draft first.</p>
                                 )}
+                                {meta.can_edit && older && !draft && <Button variant="secondary" onClick={() => void restoreVersion({ id: older.id, version_no: older.version_no })}>Restore as a draft</Button>}
                                 {meta.can_edit && <Button variant="secondary" onClick={() => setEditingDetails(true)}>Edit details</Button>}
                                 {meta.can_edit && !retired && draft && published && <Button variant="secondary" onClick={discard}>Discard the draft</Button>}
                                 {meta.can_publish && !retired && policy.was_published && <Button variant="secondary" onClick={withdraw}>Withdraw</Button>}
@@ -232,7 +239,7 @@ export function PolicyPage({ meta, onMetaChanged }: { meta: PolicyMeta; onMetaCh
                         <Card>
                             <SideHeading>History</SideHeading>
                             <ol className="space-y-3">
-                                {policy.versions.map((version) => {
+                                {policy.versions.map((version, index) => {
                                     const current = (older ? older.id : showDraft ? null : published?.id) === version.id;
                                     const to = version.status === 'published' ? `/policies/${id}` : `/policies/${id}/versions/${version.id}`;
                                     return (
@@ -245,6 +252,16 @@ export function PolicyPage({ meta, onMetaChanged }: { meta: PolicyMeta; onMetaCh
                                             </p>
                                             {version.change_summary && <p className="text-gray-600">{version.change_summary}</p>}
                                             {version.published_by_name && <p className="text-xs text-gray-500">Published by {version.published_by_name}</p>}
+                                            {manager && index < policy.versions.length - 1 && (
+                                                <button type="button" className="mt-1 text-xs font-medium text-brand hover:underline"
+                                                    onClick={() => setComparing({
+                                                        from: { id: policy.versions[index + 1].id, version_no: policy.versions[index + 1].version_no },
+                                                        to: { id: version.id, version_no: version.version_no },
+                                                    })}>
+                                                    <GitCompare size={12} aria-hidden="true" className="mr-1 inline" />
+                                                    Compare with version {policy.versions[index + 1].version_no}
+                                                </button>
+                                            )}
                                         </li>
                                     );
                                 })}
@@ -257,6 +274,9 @@ export function PolicyPage({ meta, onMetaChanged }: { meta: PolicyMeta; onMetaCh
             {editingDetails && (
                 <PolicyDetailsModal meta={meta} policy={policy} onClose={() => setEditingDetails(false)}
                     onSaved={async (saved) => { setEditingDetails(false); setPolicy(saved); await onMetaChanged(); addToast('Details saved.', 'success'); }} />
+            )}
+            {comparing && (
+                <PolicyDiffModal policyId={id} from={comparing.from} to={comparing.to} onClose={() => setComparing(null)} />
             )}
             {publishing && draft && (
                 <PublishModal policy={policy} draft={draft} onClose={() => setPublishing(false)}

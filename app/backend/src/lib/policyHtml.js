@@ -16,6 +16,10 @@ import sanitizeHtml from 'sanitize-html';
 /** Where a policy's stored file is served. */
 export const policyFileUrl = (fileId) => `/api/policies/files/${fileId}`;
 
+const URL_ATTRIBUTE = /(?:src|href)="([^"]+)"/g;
+
+const POLICY_LINK = /\/policies\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[?#].*)?$/i;
+
 const FILE_URL = /^\/api\/policies\/files\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
 const OPTIONS = {
@@ -87,8 +91,18 @@ export function policyText(cleanHtml) {
 /** The stored files a clean body shows or links to, each once. */
 export function referencedFileIds(cleanHtml) {
   const ids = new Set();
-  for (const [, url] of String(cleanHtml ?? '').matchAll(/(?:src|href)="([^"]+)"/g)) {
+  for (const [, url] of String(cleanHtml ?? '').matchAll(URL_ATTRIBUTE)) {
     const match = FILE_URL.exec(url);
+    if (match) ids.add(match[1].toLowerCase());
+  }
+  return [...ids];
+}
+
+/** The library documents a clean body links to, each once, lowercase. */
+export function referencedPolicyIds(cleanHtml) {
+  const ids = new Set();
+  for (const [, url] of String(cleanHtml ?? '').matchAll(URL_ATTRIBUTE)) {
+    const match = POLICY_LINK.exec(url);
     if (match) ids.add(match[1].toLowerCase());
   }
   return [...ids];

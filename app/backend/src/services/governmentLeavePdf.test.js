@@ -31,8 +31,8 @@ test('approved hourly PDFs retain hours and balances and use Naoero on form and 
  data.evaluation.segments[0]={...data.evaluation.segments[0],charge:'0.5',scheduled_hours:7,leave_hours:3.5};
  const form=governmentApprovalFormSnapshot(data);assert.equal(form.hours,'3.5');assert.equal(form.days,'0.5');
  const text=await generatedPdfText(await generateGovernmentLeavePdf(data));
- assert.match(text,/REPUBLIC OF NAOERO/);assert.match(text,/NAOERO PUBLIC SERVICE/);
- assert.match(text,/Hourly leave: 3.5 hours/);assert.match(text,/0.5 days from the leave balance/);
+ assert.match(text,/REPUBLIC OF NAOERO/);assert.match(text,/Naoero Public Service/);
+ assert.match(text,/3.5 hours \(0.5 days from the leave balance\)/);assert.match(text,/0.5 days from the leave balance/);
  assert.match(text,/3.5 leave hours/);assert.doesNotMatch(text,/NAURU|Nauru|Acknowledgement is recorded separately/);
 });
 
@@ -44,7 +44,7 @@ test('downloaded approval form is one A4 page while the full retained PDF and gr
  const retained=await PDFDocument.load(await generateGovernmentLeavePdf(data));assert.ok(retained.getPageCount()>1);
  const bytes=await generateGovernmentLeavePdf(data,{firstPageOnly:true}),download=await PDFDocument.load(bytes);
  assert.equal(download.getPageCount(),1);assert.deepEqual(download.getPage(0).getSize(),{width:595.28,height:841.89});
- const text=await generatedPdfText(bytes);assert.match(text,/NAOERO PUBLIC SERVICE/);assert.match(text,/Hourly leave: 3.5 hours/);
+ const text=await generatedPdfText(bytes);assert.match(text,/Naoero Public Service/);assert.match(text,/3.5 hours \(0.5 days from the leave balance\)/);
  assert.match(text,/Full explanation is retained in the application record/);assert.doesNotMatch(text,/page 2|Daily absence charges|Calculation and policy references/);
  assert.equal(JSON.stringify(data),before);
 });

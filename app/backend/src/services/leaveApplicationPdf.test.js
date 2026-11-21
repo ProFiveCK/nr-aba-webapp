@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { PDFDocument } from 'pdf-lib';
 import { generateLeaveApplicationPdf } from './leaveApplicationPdf.js';
 
@@ -11,10 +12,11 @@ const form = {
   balances: [{ leave_type_name: 'Annual', before: 18, after: 13 }],
 };
 
-test('approved leave uses the supplied one-page A4 form', async () => {
+test('approved leave is stamped onto the supplied 2026 NPS form', async () => {
+  const template = await PDFDocument.load(readFileSync(new URL('../../assets/nps-leave-application-2026.pdf', import.meta.url)));
   const pdf = await PDFDocument.load(await generateLeaveApplicationPdf(form));
   assert.equal(pdf.getPageCount(), 1);
-  assert.deepEqual(pdf.getPage(0).getSize(), { width: 595, height: 842 });
+  assert.deepEqual(pdf.getPage(0).getSize(), template.getPage(0).getSize());
   assert.match(pdf.getTitle(), /Ana Example/);
 });
 
@@ -45,7 +47,7 @@ test('existing approvals use Naoero branding in newly downloaded forms',async()=
   const bytes=await generateLeaveApplicationPdf(form),pdf=await PDFDocument.load(bytes);
   assert.match(pdf.getSubject(),/Naoero/);
   const text=await generatedPdfText(bytes);
-  assert.match(text,/REPUBLIC OF NAOERO/);assert.match(text,/NAOERO PUBLIC SERVICE/);assert.doesNotMatch(text,/NAURU/);
+  assert.match(text,/Naoero Public Service/);assert.doesNotMatch(text,/NAURU|Nauru/);
 });
 
 test('first-page downloads omit explanation appendices and refer to the retained record',async()=>{
@@ -54,4 +56,10 @@ test('first-page downloads omit explanation appendices and refer to the retained
  const bytes=await generateLeaveApplicationPdf(long,{firstPageOnly:true}),pdf=await PDFDocument.load(bytes);
  assert.equal(pdf.getPageCount(),1);
  const text=await generatedPdfText(bytes);assert.match(text,/Full explanation is retained in the application record/);assert.doesNotMatch(text,/attached on page 2/);
+});
+
+test('the form carries the applicant, period, balances and final approval',async()=>{
+ const {generatedPdfText}=await import('../test-support/pdfText.js');
+ const text=await generatedPdfText(await generateLeaveApplicationPdf({...form,position_title:'Finance Officer',division_code:'Treasury'}));
+ for(const value of ['Ana Example','TRE / Treasury','Finance Officer','12 Oct 2026','16 Oct 2026','5.00 days','18.00 days','13.00 days','Approved electronically by Treasury Approver','01 Oct 2026'])assert.ok(text.includes(value),value);
 });

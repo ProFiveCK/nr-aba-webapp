@@ -25,9 +25,14 @@ const FIELDS = {
   dateFrom: { x: 38, right: 232, line: 227.6 },
   dateTo: { x: 246.4, right: 337, line: 227.6 },
   total: { x: 38, right: 232, line: 260 },
-  applicantSignature: { x: 38, right: 200, line: 585.55 },
-  approverSignature: { x: 38, right: 285, line: 773.55 },
-  approvedDate: { x: 299.65, right: 547, line: 773.55 },
+};
+
+// The signature lines stay blank for a wet signature. The electronic record
+// is printed beneath each line as two small lines beside its printed caption
+// ("Applicant Signature", "Section Head"), within the signature line's width.
+const SIGNATURE_NOTES = {
+  applicant: { x: 108, right: 201, baselines: [592.6, 599.8] },
+  sectionHead: { x: 271, right: 375, baselines: [592.6, 599.8] },
 };
 
 // Left edge and baseline of each printed tick box in Section 3.
@@ -48,7 +53,8 @@ const TYPE_BOXES = {
 
 const APPROVED_BOX = { left: 189.5, right: 197.9, top: 721, bottom: 729.7 };
 const REASON ={ x: 38, right: 557, baselines: [543.5, 560] };
-const HR_CELLS = { before: [31, 124.75], after: [124.75, 218.5], top: 641.35, bottom: 662.4 };
+const HR_NOTES = { x: 322, right: 553, baselines: [627, 635.2, 643.4, 651.6, 659.8] };
+const HR_CELLS = { before: [31, 124.75], after: [124.75, 218.5], nextDue: [218.5, 312.3], top: 641.35, bottom: 662.4 };
 
 export function leaveApplicationFormKind(name) {
   const value = String(name || '').trim().toLowerCase();
@@ -120,19 +126,22 @@ function wrap(text, font, size, maxWidth) {
   return lines;
 }
 
-// Short context the form has no dedicated box for: unlisted leave types,
-// parental entitlements. Printed under the reason so it stays on page one.
-function contextNotes(form, selected) {
+// Context the form has no box for - amendments, unlisted leave types,
+// parental entitlements, missing balances. Printed in the free space beside
+// the Section 4 table, so "Reason for leave" only ever holds the reason.
+function systemNotes(form, selected) {
   const notes = [];
+  if (form.amendment_note) notes.push(form.amendment_note);
   if (!selected || selected === 'sickUnspecified') {
     const credit = form.balances?.find((balance) => balance.leave_type_name === form.leave_type_name)?.before;
     const label = selected === 'sickUnspecified'
       ? 'Sick leave: certificate status not recorded'
-      : `Other approved leave type: ${form.leave_type_name}`;
-    notes.push(`${label} - ${dayCount(form.days)}${credit != null && Number.isFinite(Number(credit)) ? `; credit ${dayCount(credit)}` : ''}`);
+      : `Leave type not listed on this form: ${form.leave_type_name}`;
+    notes.push(`${label} - ${dayCount(form.days)}${credit != null && Number.isFinite(Number(credit)) ? `; credit ${dayCount(credit)}` : ''}.`);
   }
   if (form.parental_note) notes.push(form.parental_note);
-  return notes.join(' ');
+  if (!form.approval_snapshot_available) notes.push('Approval-time balance unavailable; HR to verify.');
+  return notes;
 }
 
 function totalRequested(form) {
@@ -206,22 +215,22 @@ export async function generateLeaveApplicationPdf(form, { firstPageOnly = false 
   // Wrapped at the continuation page's font/size (9pt, full width) since
   // those are the lines actually drawn there when it overflows.
   const reasonLines = wrap(reason || 'No explanation recorded for this earlier application.', font, 9, reasonWidth);
-  const notes = contextNotes(form, selected);
-  const noteLines = notes ? wrap(notes, font, 7.5, reasonWidth) : [];
-  const overflow = reasonLines.length + noteLines.length > REASON.baselines.length;
-  if (!overflow) {
-    [...reasonLines.map((line) => [line, 9]), ...noteLines.map((line) => [line, 7.5])]
-      .forEach(([line, size], index) => text(line, REASON.x, REASON.baselines[index], { size }));
+  const reasonOverflow = reasonLines.length > REASON.baselines.length;
+  if (!reasonOverflow) {
+    reasonLines.forEach((line, index) => text(line, REASON.x, REASON.baselines[index], { size: 9 }));
   } else {
     text(firstPageOnly ? 'Full explanation is retained in the application record.' : 'See explanation attached on page 2.',
       REASON.x, REASON.baselines[0], { size: 9, bold: true });
-    if (notes) text(notes, REASON.x, REASON.baselines[1], { size: 7.5, maxWidth: reasonWidth });
   }
 
-  // A blank applicant signature only made sense on paper. This copy is
-  // generated from an already-decided, dated record, so the submission date
-  // is printed in its place.
-  if (form.applied_at) field('applicantSignature', `Submitted electronically ${dateOnly(form.applied_at)}`, { size: 7.5 });
+  // The applicant and Section Head still sign on the lines; the electronic
+  // submission and approval are recorded beneath them, beside each caption.
+  const signatureNote = (key, lines) => {
+    const n = SIGNATURE_NOTES[key];
+    lines.forEach((line, index) => text(line, n.x, n.baselines[index], { size: 6, minSize: 4.75, maxWidth: n.right - n.x }));
+  };
+  if (form.applied_at) signatureNote('applicant', ['Submitted electronically', dateOnly(form.applied_at)]);
+  signatureNote('sectionHead', [`Approved electronically ${dateOnly(form.approved_at)}`.trim(), form.approved_by_name || 'Recorded approver']);
 
   // --- Section 4: HR verification ------------------------------------------
   const cellCentre = ([left, right]) => (left + right) / 2;
@@ -238,15 +247,21 @@ export async function generateLeaveApplicationPdf(form, { firstPageOnly = false 
       if (Number.isFinite(Number(balance.before))) text(dayCount(balance.before), cellCentre(HR_CELLS.before), cellBaseline, { size: 8.5, align: 'center' });
       if (balance.after != null && Number.isFinite(Number(balance.after))) text(dayCount(balance.after), cellCentre(HR_CELLS.after), cellBaseline, { size: 8.5, align: 'center' });
     }
-  } else {
-    text('Approval-time balance unavailable; HR to verify.', 320, cellBaseline, { size: 7.5 });
   }
+  const notes = systemNotes(form, selected).join(' ');
+  const noteLines = notes ? wrap(notes, font, 7, HR_NOTES.right - HR_NOTES.x) : [];
+  const notesOverflow = noteLines.length > HR_NOTES.baselines.length;
+  noteLines.slice(0, HR_NOTES.baselines.length).forEach((line, index, shown) => {
+    const last = notesOverflow && index === shown.length - 1;
+    text(last ? `${line.replace(/\s+\S*$/, '')} ...` : line, HR_NOTES.x, HR_NOTES.baselines[index], { size: 7 });
+  });
+  // The next service anniversary, when the charged leave entitlement renews.
+  if (form.next_due_date) text(dateOnly(form.next_due_date), cellCentre(HR_CELLS.nextDue), cellBaseline, { size: 8.5, align: 'center' });
 
   // --- Section 7: final approval -------------------------------------------
-  // This copy only ever exists for an approved application.
+  // This copy only ever exists for an approved application. The Chief
+  // Secretary's signature and date are left blank for signing.
   tick(APPROVED_BOX, { background: rgb(1, 1, 1), thickness: 1.4 });
-  field('approverSignature', `Approved electronically by ${form.approved_by_name || 'Recorded approver'}`, { size: 8.5 });
-  field('approvedDate', dateOnly(form.approved_at));
 
   // The supplied form's footer still reads "Nauru"; restate it with the
   // Naoero name used everywhere else in the portal.
@@ -260,7 +275,11 @@ export async function generateLeaveApplicationPdf(form, { firstPageOnly = false 
   pdf.setSubject('Approved Naoero Public Service leave application');
   pdf.setProducer('Naoero Public Service leave portal');
 
-  if (overflow && !firstPageOnly) {
+  const continuation = [
+    ...(reasonOverflow ? reasonLines : []),
+    ...(notesOverflow ? [...(reasonOverflow ? [''] : []), ...wrap(notes, font, 9, reasonWidth)] : []),
+  ];
+  if (continuation.length && !firstPageOnly) {
     let extra;
     let extraY;
     const nextPage = () => {
@@ -270,8 +289,7 @@ export async function generateLeaveApplicationPdf(form, { firstPageOnly = false 
       extraY = pageHeight - 110;
     };
     nextPage();
-    const lines = notes ? [...reasonLines, '', ...wrap(notes, font, 9, reasonWidth)] : reasonLines;
-    for (const line of lines) {
+    for (const line of continuation) {
       if (extraY < 55) nextPage();
       extra.drawText(line, { x: 42, y: extraY, font, size: 9, color: fill });
       extraY -= 14;

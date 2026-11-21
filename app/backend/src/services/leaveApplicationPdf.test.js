@@ -58,8 +58,8 @@ test('first-page downloads omit explanation appendices and refer to the retained
  const text=await generatedPdfText(bytes);assert.match(text,/Full explanation is retained in the application record/);assert.doesNotMatch(text,/attached on page 2/);
 });
 
-test('the form carries the applicant, period, balances and final approval',async()=>{
+test('the form carries the applicant, period, balances, next due date and electronic sign-offs',async()=>{
  const {generatedPdfText}=await import('../test-support/pdfText.js');
- const text=await generatedPdfText(await generateLeaveApplicationPdf({...form,position_title:'Finance Officer',division_code:'Treasury'}));
- for(const value of ['Ana Example','TRE / Treasury','Finance Officer','12 Oct 2026','16 Oct 2026','5.00 days','18.00 days','13.00 days','Approved electronically by Treasury Approver','01 Oct 2026'])assert.ok(text.includes(value),value);
+ const text=await generatedPdfText(await generateLeaveApplicationPdf({...form,email:'ana@example.test',position_title:'Finance Officer',division_code:'Treasury',applied_at:'2026-09-20',next_due_date:'2027-03-15'}));
+ for(const value of ['Ana Example','ana@example.test','TRE / Treasury','Finance Officer','12 Oct 2026','16 Oct 2026','5.00 days','18.00 days','13.00 days','15 Mar 2027','Submitted electronically','Approved electronically 01 Oct 2026','Treasury Approver'])assert.ok(text.includes(value),value);
 });

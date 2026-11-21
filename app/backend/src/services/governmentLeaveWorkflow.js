@@ -18,7 +18,7 @@ import {COMMON_CODES,leaveDurationInput,calculateEvaluation,fingerprint,segments
 import {medicalAssessment,singleMedicalShiftCharge} from '../lib/governmentLeaveWorkflowRules.js';
 import * as cases from './governmentLeaveCases.js';
 import {isCase} from '../lib/governmentLeaveCaseRules.js';
-import {generateGovernmentLeavePdf} from './governmentLeavePdf.js';
+import {generateGovernmentLeavePdf,governmentPdfDetails} from './governmentLeavePdf.js';
 import {approvalRouteFor,legacyRoute} from './governmentLeaveApprovalRoutes.js';
 import {queueCurrentLeaveApprover,queueLeaveDecision} from './governmentLeaveNotifications.js';
 
@@ -492,7 +492,7 @@ export async function finalizeApprovedRequest(pool,client,request,employee,actor
         grant.medical_uncertified={limit:medicalPolicy.rules.medical_uncertified_occasions,other_committed:currentEvaluation.medical_exemptions_used,
           committed_including_this_request:currentEvaluation.medical_exemptions_used+(request.medical_mode==='exemption'?1:0)};
       }
-      const bytes=await generateGovernmentLeavePdf(grant);
+      const bytes=await generateGovernmentLeavePdf(grant,{details:await governmentPdfDetails(client,grant)});
       await client.query("UPDATE hr_gov_requests SET status='approved',completed_at=NOW(),grant_snapshot=$2,final_pdf=$3,stage_index=$4 WHERE id=$1",[id,grant,Buffer.from(bytes),completed.at(-1).ordinal]);
 }
 export async function cancelRequest(pool,{user,actor,id,reason,client:existingClient,authorized=false}) {

@@ -145,6 +145,11 @@ describe('government event cases, financial commitments and amendments',{skip:sk
   const amendment=await c.submitCase(pool,{user:user(hr),actor:hr,employeeId:employee.id,data:{...event('amendment','2026-10-26'),related_request_id:original.id,amendment_action:'cancel_grant',assisted_reference:reason},simpleApproval:true});
   await decide(amendment.id,{certification_confirmed:true});assert.equal((await w.requestView(pool,user(hr),original.id)).amendment.action,'cancel_grant');
   assert.equal(Number((await pool.query("SELECT sum(amount)::text AS amount FROM hr_gov_ledger WHERE kind='reversal'")).rows[0].amount),1);
+  // The amendment's retained form shows the Special leave it cancelled, not an unlisted "Amendment" type.
+  const {generatedPdfText}=await import('../test-support/pdfText.js');
+  const amendedForm=(await generatedPdfText((await w.getRequest(pool,amendment.id)).final_pdf)).replace(/\n/g,' ');
+  assert.match(amendedForm,new RegExp(`Amendment: approved leave ref ${original.id.slice(0,8)} was cancelled; 1 days returned to the balance`));
+  assert.doesNotMatch(amendedForm,/not listed on this form|Other approved leave type/);
  });
  // First weekday at least `days` from the server's own date, which is what the cancel rule compares against.
  const ahead=days=>{const d=new Date(`${w.today()}T12:00:00Z`);d.setUTCDate(d.getUTCDate()+days);while([0,6].includes(d.getUTCDay()))d.setUTCDate(d.getUTCDate()+1);return d.toISOString().slice(0,10);};
